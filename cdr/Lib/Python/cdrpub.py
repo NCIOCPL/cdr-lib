@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.33 2002-09-26 20:41:07 ameyer Exp $
+# $Id: cdrpub.py,v 1.34 2002-10-11 20:43:59 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.33  2002/09/26 20:41:07  ameyer
+# Caught SystemExit from __invokeProcessScript() to be sure that the
+# exit actually takes place and isn't blocked by the catchall "except"
+# clause at the end of publish().
+#
 # Revision 1.32  2002/09/17 21:17:00  pzhang
 # Added __updateFirstPub().
 #
@@ -578,7 +583,7 @@ class Publish:
                        AND d.first_pub IS NULL
                        AND d.first_pub_knowable = 'Y'
                   ORDER BY ppd.doc_id
-                           """ % self.__jobId
+                           """ % self.__jobId, timeout = self.__timeOut
                            )
             rows = cursor.fetchall()
             for row in rows:
@@ -589,6 +594,8 @@ class Publish:
                                """ % (row[1], row[0])
                               )
                 conn.commit()
+            self.__updateMessage(
+                "Updated first_pub for %d documents. <BR>" % len(rows))
         except cdrdb.Error, info:
             self.__updateStatus(Publish.FAILURE, """Failure updating first_pub
                         for job %d: %s""" % (self.__jobId, info[1][0]))
@@ -727,7 +734,7 @@ class Publish:
                 self.__createWorkPPC(vendor_job, vendor_dest, jobId)
                 pubTypeCG = pubType
                 if self.__checkRemovedDocs or self.__interactiveMode:
-                    self.__updateMessage(link)
+                    self.__updateMessage(link, jobId)
                     self.__waitUserApproval(jobId)
             elif pubType == "Hotfix (Remove)":
                 self.__createWorkPPCHR(vendor_job, vendor_dest, jobId)
@@ -736,7 +743,7 @@ class Publish:
                 self.__createWorkPPCHE(vendor_job, vendor_dest, jobId)
                 pubTypeCG = "Hotfix"
                 if self.__checkRemovedDocs or self.__interactiveMode:
-                    self.__updateMessage(link)
+                    self.__updateMessage(link, jobId)
                     self.__waitUserApproval(jobId)
             else:
                 raise StandardError("pubType %s not supported." % pubType)
@@ -752,7 +759,7 @@ class Publish:
                 numDocs = row[0]
 
             if numDocs == 0:
-                msg = "No documents pushed to Cancer.gov."
+                msg = "No documents pushed to Cancer.gov.<BR>"
                 return [jobId, Publish.SUCCESS, msg]
 
             # Get last successful cg_jobId. GateKeeper does not
@@ -1497,8 +1504,7 @@ class Publish:
             if result[1]: warnings += result[1]
 
         # Validate the filteredDoc against Vendor DTD.
-        if self.__sysName == "Primary" and \
-            self.__validateDocs and filteredDoc:
+        if self.__validateDocs and filteredDoc:
             errObj = validateDoc(filteredDoc, docId = doc[0])
             for error in errObj.Errors:
                 errors += "%s<BR>" % error
@@ -2220,7 +2226,7 @@ Please do not reply to this message.
                 return
             elif status == Publish.FAILURE:
                 raise StandardError(
-                    "Job is killed by user at %s.<BR>" % now)
+                    "Job %d is killed by user at %s.<BR>" % (id, now))
             else:
                 msg = "Unexpected status: %s for job %d.<BR>" % (status, id)
                 raise StandardError(msg)
