@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.80 2003-11-04 16:55:54 bkline Exp $
+# $Id: cdr.py,v 1.81 2003-11-04 17:00:18 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.80  2003/11/04 16:55:54  bkline
+# Fixed bug in regular expression to extract <Err> content.  Added
+# option for extracting error strings as a sequence.
+#
 # Revision 1.78  2003/08/26 17:36:26  bkline
 # Added new functions expandFilterSet() and expandFilterSets().
 #
@@ -421,12 +425,18 @@ def getErrors(xml, errorsExpected = 1, asSequence = 0):
 
     # Version which returns the errors in a list.
     if asSequence:
+        if type(xml) not in (type(""), type(u"")):
+            return []
         pattern = re.compile("<Err>(.*?)</Err>", re.DOTALL)
         errs = pattern.findall(xml)
         if errorsExpected and not errs:
             return ["Internal failure"]
         return errs
 
+    # Make sure we have a string.
+    if type(xml) not in (type(""), type(u"")):
+        return ""
+    
     # Compile the pattern for the regular expression.
     pattern = re.compile("<Errors[>\s].*</Errors>", re.DOTALL)
 
