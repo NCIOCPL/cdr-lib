@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.31 2002-04-16 21:10:24 bkline Exp $
+# $Id: cdr.py,v 1.32 2002-05-14 12:56:55 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.31  2002/04/16 21:10:24  bkline
+# Added missing %s argument in publish().
+#
 # Revision 1.30  2002/04/09 21:02:23  bkline
 # Fixed typo in addDoc and repDoc (missing : after else).
 #
@@ -1534,6 +1537,42 @@ def unlock(credentials, docId, abandon = 'Y', force = 'Y', reason = '',
     err = checkErr(resp)
     if err: return err
     return ""
+
+#----------------------------------------------------------------------
+# Get the most recent versions for a document.
+#----------------------------------------------------------------------
+def listVersions(credentials, docId, nVersions = -1,
+                 host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command.
+    cmd = "<CdrListVersions><DocId>%s</DocId>" \
+          "<NumVersions>%d</NumVersions></CdrListVersions>" % (
+          normalize(docId), nVersions)
+
+    # Submit the commands.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    print resp
+
+    # Check for failure.
+    if resp.find("<Errors") != -1:
+        raise StandardError(extract(r"(<Errors[\s>].*</Errors>)", resp))
+
+    # Extract the versions.
+    versions    = []
+    versionExpr = re.compile("<Version>(.*?)</Version>", re.DOTALL)
+    numExpr     = re.compile("<Num>(.*)</Num>")
+    commentExpr = re.compile("<Comment>(.*)</Comment>", re.DOTALL)
+    verList     = versionExpr.findall(resp)
+    if verList:
+        for ver in verList:
+            numMatch     = numExpr.search(ver)
+            commentMatch = commentExpr.search(ver)
+            if not numMatch:
+                raise StandardError("listVersions: missing Num element")
+            num = int(numMatch.group(1))
+            comment = commentMatch and commentMatch.group(1) or None
+            versions.append((num, comment))
+    return versions
 
 #----------------------------------------------------------------------
 # Create a new publishing job.
