@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.95 2004-09-15 03:14:36 ameyer Exp $
+# $Id: cdr.py,v 1.96 2004-09-21 20:35:58 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.95  2004/09/15 03:14:36  ameyer
+# Changed getCDATA() to accept docs with no CDATA, returning them unmodified.
+#
 # Revision 1.94  2004/09/15 01:02:58  ameyer
 # Added stripBlankLines() and diffXmlDocs().
 #
@@ -3087,17 +3090,17 @@ def normalizeDoc(utf8DocString):
     return sFile.s
 
 #----------------------------------------------------------------------
-# Extract a CDATA section from a document.
+# Extract the first CDATA section from a document.
 # Simple version, only gets first CDATA, but we never use
 #  more than one.
-# If no CDATA, then assumes we've already extracted and
-#  silently returns original string.
+# If no CDATA, then returns None.
 #----------------------------------------------------------------------
 def getCDATA(utf8string):
-    data = extract(r"<!\[CDATA\[(.*?)]]>", utf8string)
+    pat = re.compile(r"<!\[CDATA\[(.*?)]]>", re.DOTALL)
+    data = pat.search(utf8string)
     if data:
-        return data
-    return utf8string
+        return data.group(1)
+    return None
 
 #----------------------------------------------------------------------
 # Compares two XML documents by normalizing each.  Returns non-zero
@@ -3111,19 +3114,38 @@ def compareXmlDocs(utf8DocString1, utf8DocString2):
 # Compare two XML documents by normalizing each.
 # Returns the output of a textual differencer as a sequence of lines.
 # See Python difflib.Differ.compare() for diff format.
+#   Pass:
+#     2 utf8 strings to compare
+#     chgOnly  - True=only show changed lines, else show all.
+#     useCDATA - True=call getCDATA on each string before compare.
 #----------------------------------------------------------------------
-def diffXmlDocs(utf8DocString1, utf8DocString2):
+def diffXmlDocs(utf8DocString1, utf8DocString2, chgOnly=True, useCDATA=False):
+    # Extract data if needed
+    if useCDATA:
+        d1 = getCDATA(utf8DocString1)
+        d2 = getCDATA(utf8DocString2)
+    else:
+        d1 = utf8DocString1
+        d2 = utf8DocString2
+
     # Normalize
-    doc1 = stripBlankLines(
-       xml.dom.minidom.parseString(getCDATA(utf8DocString1)).toprettyxml("  "))
-    doc2 = stripBlankLines(
-       xml.dom.minidom.parseString(getCDATA(utf8DocString2)).toprettyxml("  "))
+    doc1 = stripBlankLines(xml.dom.minidom.parseString(d1).toprettyxml("  "))
+    doc2 = stripBlankLines(xml.dom.minidom.parseString(d2).toprettyxml("  "))
 
     # Compare
     diffObj = difflib.Differ()
     diffSeq = diffObj.compare(doc1.splitlines(1),doc2.splitlines(1))
 
-    # Return the difference as a single string
+    # If caller only wants changed lines, drop all lines with leading space
+    if chgOnly:
+        chgSeq = []
+        for line in diffSeq:
+            if line[0] != ' ':
+                chgSeq.append (line)
+        # Return them as a (possibly empty) string
+        return "".join(chgSeq)
+
+    # Else return entire document as a string
     return "".join(diffSeq)
 
 #----------------------------------------------------------------------
