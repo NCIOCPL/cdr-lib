@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.34 2003-08-12 19:59:23 ameyer Exp $
+# $Id: cdrcgi.py,v 1.35 2003-09-12 12:36:38 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.34  2003/08/12 19:59:23  ameyer
+# Added optional logfile parameter to bail().  If given, the messages written
+# back to the browser are also written to the named logfile.
+#
 # Revision 1.33  2003/07/29 13:04:16  bkline
 # Took out call to convert HTML to latin 1 in sendPage().
 #
@@ -665,77 +669,175 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
 
 #----------------------------------------------------------------------
 # Construct query for advanced search page.
+#
+# The caller passes the following arguments:
+#
+#   searchFields
+#     a list of one or more objects with two attributes:
+#       * var:       a string containing the content of one of the
+#                    fields in the HTML search form
+#       * selectors: this can be either a single string or a list;
+#                    the normal case is the list, each member of which
+#                    is a string identifying the path(s) to be matched
+#                    in the query_term table; if a string contains an
+#                    ampersand, then the WHERE clause to find the
+#                    paths will use the SQL 'LIKE' keyword; otherwise
+#                    that clause with use '=' for an exact match.
+#                    If the selector is a single string, rather than
+#                    a list, it represents a column in the document
+#                    table which is to be compared with the value of
+#                    the var member of the SearchField object (for an
+#                    example, see SummarySearch.py, which has a
+#                    SearchField object for checking a value in the
+#                    active_status column of the document table
+#
+#   boolOp
+#     the string value 'AND' or 'OR' - used as a boolean connector
+#     between the WHERE clauses for each of the search fields passed
+#     in by the first argument.
+#
+#   docType
+#     either a string identifying which document type the result
+#     set must come from, or a list of strings identifying a choice
+#     of document types from the which the result set can be drawn.
+#
+# Modified 2003-09-11 RMK as follows:
+#   If the `selectors' attribute of a SearchField object is a list,
+#   then for any string in that list, if the string ends in the
+#   substring "/@cdr:ref[int_val]" then instead of matching the
+#   contents of the `var' attribute against the `value' column of
+#   the query_term table, an lookup will be added to the SQL query
+#   to find occurrences of the target string (in the var attribute)
+#   in the title column of the document table, joined to the int_val
+#   column of the query_term table.  This allow the users to perform
+#   advanced searches which include matches against titles of linked
+#   documents.
 #----------------------------------------------------------------------
+exampleQuery = """\
+SELECT d.id
+  FROM document d
+  JOIN doc_type t
+    ON t.id = d.doc_type
+   AND t.name = 'Citation'
+ WHERE d.id IN (SELECT doc_id
+                  FROM query_term
+                 WHERE value LIKE '%immunohistochemical%'
+                   AND path = '/Citation/PubmedArticle/%/Article/%Title'
+                    OR value LIKE '%immunohistochemical%'
+                   AND path = '/Citation/PDQCitation/CitationTitle')
+   AND d.id IN (SELECT doc_id
+                  FROM query_term
+                 WHERE value = 'Histopathology'
+                   AND path = '/Citation/PubmedArticle/MedlineCitation/MedlineJournalInfo/MedlineTA'
+                    OR path = '/Citation/PDQCitation/PublicationDetails/PublishedIn/@cdr:ref'
+                   AND int_val IN (SELECT id
+                                     FROM document
+                                    WHERE title = 'Histopathology'))"""
+
 def constructAdvancedSearchQuery(searchFields, boolOp, docType):
-    where   = ""
-    strings = ""
-    aliases = 0
-    qtUsed  = 0
-    boolOp  = boolOp == "AND" and " AND " or " OR "
+    where      = ""
+    strings    = ""
+    boolOp     = boolOp == "AND" and " AND " or " OR "
+
     for searchField in searchFields:
+
+        #--------------------------------------------------------------
+        # Skip empty fields.
+        #--------------------------------------------------------------
         if searchField.var:
-            queryOp  = getQueryOp(searchField.var)
-            queryVal = getQueryVal(searchField.var)
+
+            queryOp  = getQueryOp(searchField.var)  # '=' or 'LIKE'
+            queryVal = getQueryVal(searchField.var) # escape single quotes
+
+            #----------------------------------------------------------
+            # Remember the fields' values in a single string so we can
+            # show it to the user later, reminding him what he searched
+            # for.
+            #----------------------------------------------------------
             if strings: strings += ' '
             strings += queryVal.strip()
-            if where:
-                where += boolOp
+
+            #----------------------------------------------------------
+            # Start another portion of the WHERE clause.
+            #----------------------------------------------------------
+            if not where:
+                where = " WHERE "
             else:
-                where = "WHERE ("
+                where += boolOp
+
+            #----------------------------------------------------------
+            # Handle special case of match against a column in the
+            # document table.
+            #----------------------------------------------------------
             if type(searchField.selectors) == type(""):
-                where += "(document.%s %s '%s')" % (searchField.selectors,
-                                                   queryOp,
-                                                   queryVal)
+                where += "(d.%s %s '%s')" % (searchField.selectors,
+                                             queryOp,
+                                             queryVal)
                 continue
-            part = "("
-            partOp = ""
-            qtUsed = 1
-            if boolOp == " AND ":
-                aliases += 1
-                alias = "q%d" % aliases
+
+            #----------------------------------------------------------
+            # Build up a portion of the WHERE clause to represent this
+            # search field.
+            #----------------------------------------------------------
+            where += "d.id IN (SELECT doc_id FROM query_term"
+            prefix = " WHERE "
+
+            #----------------------------------------------------------
+            # Build up a sub-select which checks to see if the value
+            # desired for this field can be found in any of the
+            # paths identified by the SearchField object's selectors
+            # attribute.
+            #----------------------------------------------------------
             for selector in searchField.selectors:
                 pathOp = selector.find("%") == -1 and "=" or "LIKE"
-                part += partOp
-                if boolOp == " AND ":
-                    part += "(%s.path %s '%s' "\
-                            "AND %s.value %s '%s' "\
-                            "AND %s.doc_id = document.id)" % (
-                            alias, pathOp, selector,
-                            alias, queryOp, queryVal,
-                            alias)
+
+                #------------------------------------------------------
+                # Handle the normal case: a string stored in the doc.
+                #------------------------------------------------------
+                if not selector.endswith("/@cdr:ref[int_val]"):
+                    where += ("%spath %s '%s' AND value %s '%s'"
+                              % (prefix, pathOp, selector, queryOp, queryVal))
                 else:
-                    part += "(q.path %s '%s' AND q.value %s '%s')" % (
-                              pathOp,
-                              selector,
-                              queryOp,
-                              queryVal)
-                partOp = " OR "
-            where += part + ")"
+
+                    #--------------------------------------------------
+                    # Special code to handle searches for linked
+                    # documents.  We need a sub-subquery to look at
+                    # the title fields of the linked docs.
+                    #--------------------------------------------------
+                    where += ("%spath %s '%s' AND int_val IN "
+                              "(SELECT id FROM document WHERE title %s '%s')"
+                              % (prefix, pathOp, selector[:-9],
+                                 queryOp, queryVal))
+                prefix = " OR "
+            where += ")"
+
+    #------------------------------------------------------------------
+    # If the user didn't fill in any fields, we can't make a query.
+    #------------------------------------------------------------------
     if not where:
         return (None, None)
+
+    #------------------------------------------------------------------
+    # Join the document and doc_type tables.  We could be looking for
+    # a single document type or more than one document type.  If we're
+    # looking for more than one document type, the query has to get
+    # the document type in the result set for each of the documents
+    # found.
+    #------------------------------------------------------------------
     if type(docType) == type(""):
-        where += ") AND (document.doc_type = doc_type.id "\
-                  " AND doc_type.name = '%s') " % docType
-        query = 'SELECT DISTINCT document.id, document.title '\
-                           'FROM document, doc_type'
+        query = ("SELECT DISTINCT d.id, d.title FROM document d "
+                 "JOIN doc_type t ON t.id = d.doc_type AND t.name = '%s'"
+                 % docType)
     else:
-        where += ") AND (document.doc_type = doc_type.id "\
-                  " AND doc_type.name IN ("
+        query = ("SELECT DISTINCT d.id, d.title, t.name FROM document d "
+                 "JOIN doc_type t ON t.id = d.doc_type AND t.name IN (")
         sep = ""
         for dt in docType:
-            where += "%s'%s'" % (sep, dt)
+            query += "%s'%s'" % (sep, dt)
             sep = ","
-        where += "))"
-        query = 'SELECT DISTINCT document.id, document.title, doc_type.name '\
-                           'FROM document, doc_type'
+        query += ")"
 
-    if boolOp == " AND ":
-        for a in range(aliases):
-            query += ", query_term q%d" % (a + 1)
-    elif qtUsed:
-        query += ", query_term q"
-        where += "AND document.id = q.doc_id "
-    query += " " + where + "ORDER BY document.title"
+    query += where + " ORDER BY d.title"
     return (query, strings)
 
 #----------------------------------------------------------------------
