@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.87 2004-05-06 18:40:47 ameyer Exp $
+# $Id: cdr.py,v 1.88 2004-05-17 15:21:11 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,11 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.87  2004/05/06 18:40:47  ameyer
+# Changed getPubPort to check for env var first, then default and batch
+# pub ports.  Also checking to be sure there is a CdrServer listening on
+# any port before returning it.
+#
 # Revision 1.86  2004/04/02 17:06:54  bkline
 # Added (and used) new function _addRepDocActiveStatus().
 #
@@ -3011,3 +3016,22 @@ def isDevHost():
 def isProdHost():
     localhost = socket.gethostname()
     return localhost.upper().startswith(PROD_NAME.upper())
+
+#----------------------------------------------------------------------
+# Get the email address for the current session (if any).
+#----------------------------------------------------------------------
+def getEmail(session):
+    if not session:
+        return None
+    conn = cdrdb.connect()
+    cursor = conn.cursor()
+    cursor.execute("""\
+        SELECT u.email
+          FROM usr u
+          JOIN session s
+            ON s.usr = u.id
+         WHERE s.name = ?""", session)
+    rows = cursor.fetchall()
+    if not rows:
+        return None
+    return rows[0][0]
