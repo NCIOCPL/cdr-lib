@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrmailcommon.py,v 1.8 2004-07-08 19:02:21 bkline Exp $
+# $Id: cdrmailcommon.py,v 1.9 2005-03-03 13:57:10 bkline Exp $
 #
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2004/07/08 19:02:21  bkline
+# Added emailerConn() function.
+#
 # Revision 1.7  2003/05/14 13:26:06  bkline
 # Modified SQL queries to select only documents which have not been
 # blocked.
@@ -367,11 +370,8 @@ class RemailSelector:
 # Connect to one of the emailer databases.
 #----------------------------------------------------------------------
 def emailerConn(db, host = None):
-    if not host:
-        host = (cdr.isProdHost() and "pdqupdate.cancer.gov" or
-                                     "verdi.nci.nih.gov")
     try:
-        return MySQLdb.connect(host = host,
+        return MySQLdb.connect(host = host or cdr.emailerHost(),
                                db = db,
                                user = "dropbox",
                                passwd = '***REMOVED***')

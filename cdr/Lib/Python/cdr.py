@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.101 2004-11-29 19:55:23 bkline Exp $
+# $Id: cdr.py,v 1.102 2005-03-03 13:57:10 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.101  2004/11/29 19:55:23  bkline
+# Added getPublicationFilename() method to Doc class; added function
+# getVersionedBlobChangeDate().  Added optimization to compareXmlDocs().
+#
 # Revision 1.100  2004/11/17 02:11:10  ameyer
 # Added blob functionality to addDoc and repDoc using the common subroutine,
 # _addDocBlob().
@@ -348,6 +352,8 @@ PROD_NAME     = 'bach'
 DEV_NAME      = 'mahler'
 PROD_HOST     = '%s.%s' % (PROD_NAME, DOMAIN_NAME)
 DEV_HOST      = '%s.%s' % (DEV_NAME, DOMAIN_NAME)
+EMAILER_PROD  = 'pdqupdate.cancer.gov'
+EMAILER_DEV   = 'verdi.nci.nih.gov'
 CVSROOT       = "verdi.nci.nih.gov:/usr/local/cvsroot"
 DEFAULT_HOST  = 'localhost'
 DEFAULT_PORT  = 2019
@@ -3548,3 +3554,10 @@ def getVersionedBlobChangeDate(credentials, docId, version, conn = None,
             break
         lastVersion, lastDate = prevVersion, prevDate
     return lastDate
+
+#----------------------------------------------------------------------
+# Returns the DNS name for the emailer host corresponding to the
+# current CDR server.
+#----------------------------------------------------------------------
+def emailerHost():
+    return isProdHost() and EMAILER_PROD or EMAILER_DEV
