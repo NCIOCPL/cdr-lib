@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.54 2003-07-10 22:27:45 ameyer Exp $
+# $Id: cdrpub.py,v 1.55 2003-09-11 12:33:46 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.54  2003/07/10 22:27:45  ameyer
+# Added whitespace normalization to the comparison of newly published
+# docs against stored cancer.gov docs.
+#
 # Revision 1.53  2003/04/02 22:16:50  pzhang
 # Added feature "set:" for Filter Set enhancement.
 #
@@ -2654,7 +2658,7 @@ __parser.set_error_handler(__errHandler)
 #----------------------------------------------------------------------
 # Validate a given document against its DTD.
 #----------------------------------------------------------------------
-def validateDoc(filteredDoc, docId = 0):
+def validateDoc(filteredDoc, docId = 0, dtd = cdr2cg.PDQDTD):
 
     errObj      = ErrObject()
     docTypeExpr = re.compile(r"<!DOCTYPE\s+(.*?)\s+.*?>", re.DOTALL)
@@ -2664,7 +2668,7 @@ def validateDoc(filteredDoc, docId = 0):
     match = docTypeExpr.search(filteredDoc)
     if match:
         topElement = match.group(1)
-        docType    = docType % (topElement, cdr2cg.PDQDTD)
+        docType    = docType % (topElement, dtd)
         doc        = docTypeExpr.sub(docType, filteredDoc)
     else:
         errObj.Errors.append(
