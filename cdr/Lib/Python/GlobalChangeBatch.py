@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.2 2002-08-08 18:05:18 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.3 2002-08-09 03:48:05 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,10 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2002/08/08 18:05:18  ameyer
+# Revised handling of filtering of publishable versions.
+# Increased reporting to users in emailed report.
+#
 # Revision 1.1  2002/08/02 03:35:43  ameyer
 # Batch/background portion of global protocol change.
 # More to come.  This is the first working version.
@@ -93,6 +97,7 @@ cdr.logwrite ("GlobalChangeBatch: Created jobObj", LF) # DEBUG
 # Create a global change object of the proper type
 try:
     chg = cdrglblchg.createChg (jobObj.getArgs())
+    chgType = jobObj.getParm ('chgType')
 except cdrbatch.BatchException, be:
     # Log it and exit
     jobObj.fail ("GlobalChangeBatch: create chg object failed: %s" %\
@@ -129,11 +134,14 @@ chg.sessionVars[cdrcgi.SESSION] = session
 #----------------------------------------------------------------------
 # Run the actual global change
 #----------------------------------------------------------------------
-# Get key change parameters
-fromId = jobObj.getParm ('fromId')
-toId   = jobObj.getParm ('toId')
-cdr.logwrite ("GlobalChangeBatch: fromId=%s, toId=%s" % (fromId, toId), LF) # DEBUG
-
+# Get from/to change parameters
+if chgType == cdrglblchg.STATUS_CHG:
+    fromVal = jobObj.getParm ('fromStatusName')
+    toVal   = jobObj.getParm ('toStatusName')
+else:
+    fromVal = jobObj.getParm ('fromId')
+    toVal   = jobObj.getParm ('toId')
+cdr.logwrite ("GlobalChangeBatch: fromVal=%s, toVal=%s" % (fromVal, toVal), LF)
 
 # We'll store up to 3 versions of doc
 oldCwdXml = None    # Original current working document
@@ -163,7 +171,7 @@ failCount  = 0
 # Log
 cdr.logwrite ("Done selecting docs for final processing", LF)
 cdr.logwrite ("Processing %d docs, changing %s to %s" % \
-              (totalCount, fromId, toId), LF)
+              (totalCount, fromVal, toVal), LF)
 
 # Process each one
 progressMsg = "No docs processed yet"
@@ -199,7 +207,7 @@ try:
 
         # Filter current working document
         # XXXX Check that Volker uses these same variables in all scripts
-        parms = [['changeFrom', fromId], ['changeTo', toId]]
+        parms = [['changeFrom', fromVal], ['changeTo', toVal]]
 
         if not failed:
             # We need to check this back in at end
@@ -281,7 +289,7 @@ try:
                 repDocResp = cdr.repDoc (session, doc=str(oldCwdDocObj),
                     ver='Y', checkIn='N', verPublishable='N',
                     reason="Copy of working document from before global change "
-                           "of %s to %s at %s" % (fromId, toId,
+                           "of %s to %s at %s" % (fromVal, toVal,
                                                   time.ctime (time.time())))
                 if repDocResp.startswith ("<Errors"):
                     failed = logDocErr (docId,
@@ -302,7 +310,7 @@ try:
                 repDocResp = cdr.repDoc (session, doc=str(chgPubVerDocObj),
                     ver='Y', val='Y', checkIn='N', verPublishable='Y',
                     reason="Last publishable version, revised by global change "
-                           "of %s to %s at %s" % (fromId, toId,
+                           "of %s to %s at %s" % (fromVal, toVal,
                                                   time.ctime (time.time())))
                 cdr.logwrite ("Replaced published version in CDR", LF)
                 if repDocResp.startswith ("<Errors"):
@@ -318,7 +326,7 @@ try:
             repDocResp = cdr.repDoc (session, doc=str(chgCwdDocObj),
                 ver=saveCWDPubVer, verPublishable=saveCWDPubVer, checkIn='Y',
                 reason="Revised by global change " \
-                       "of %s to %s at %s" % (fromId, toId,
+                       "of %s to %s at %s" % (fromVal, toVal,
                                               time.ctime (time.time())))
             if repDocResp.startswith ("<Errors"):
                 failed = logDocErr (docId, "attempting to store changed CWD",
@@ -361,10 +369,6 @@ except Exception, ex:
     progressMsg += \
         "<br><h3>Exception halted processing doc %d:</h3>\n<p>%s</p>\n" % \
                     (docId, str(ex))
-except StandardError, er:
-    progressMsg += \
-        "<br><h3>Error halted processing doc %d:</h3>\n<p>%s</p>\n" % \
-                    (docId, str(er))
 
 # Final report
 cdr.logwrite ("Finished processing", LF)

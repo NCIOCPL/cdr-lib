@@ -1,9 +1,12 @@
 #------------------------------------------------------------
-# $Id: cdrglblchg.py,v 1.2 2002-08-06 22:52:20 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.3 2002-08-09 03:47:46 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2002/08/06 22:52:20  ameyer
+# Fixed SQL select statement for organizations.
+#
 # Revision 1.1  2002/08/02 03:38:56  ameyer
 # Global change common routines for batch and interactive use.
 # First working version.
@@ -19,7 +22,7 @@ import xml.dom.minidom, cdr, cdrdb, cdrbatch, cdrcgi
 # Strings representing different types of change, also used as prompts
 PERSON_CHG = "Person"
 ORG_CHG    = "Organization"
-STATUS_CHG = "ProtStatus"
+STATUS_CHG = "OrgProtStatus"
 
 # Max number of elements in a pick list
 MAX_PICK_LIST_SIZE = 100
@@ -50,7 +53,7 @@ def createChg (sessionVars):
         chg = OrgChg()
         sessionVars['docType'] = 'Organization'
     if chgType == STATUS_CHG:
-        chg = StatusChg()
+        chg = OrgStatusChg()
         sessionVars['docType'] = 'Organization'
 
     # Can't happen unless there's a bug
@@ -168,12 +171,53 @@ SELECT TOP %d d.id, d.title
 
         # Get list, up to max (caller may have limited too)
         for row in rows:
-            html += "<option value='%s'>%s</option>" % (row[0], row[1])
+            html += " <option value='%s'>%s</option>\n" % (row[0], row[1])
 
-        html += "</select>"
+        html += "</select>\n"
 
     return html
 
+
+#------------------------------------------------------------
+# Generate a picklist of valid values from a schema
+#------------------------------------------------------------
+def _genValidValPickList (docType, vvType, action):
+    """
+    Construct an html picklist of valid values for a particular
+    schema complex type.
+    The name of the picklist is the same as the name of the
+    schema type, prepended by action, e.g.,
+        genValidValPickList ('InScopeProtocol', 'StatusName', 'from')
+        returns "<select name='fromStatusName' ..."
+    Bob's getDoctype does the work.
+
+    Pass:
+        docType - Doctype name.
+        vvType  - Name of complex type in schema containing valid values.
+        action  - 'from' or 'to'
+    Returns:
+        HTML format selectable picklist.
+    """
+    # Get the valid value list from the schema
+    dt = cdr.getDoctype (('rmk', '***REDACTED***'), 'InScopeProtocol')
+    vals = []
+    for vvList in dt.vvLists:
+        if vvList[0] == vvType:
+            vals = vvList[1]
+            break
+
+    # Should never happen
+    if vals == []:
+        raise cdrbatch.BatchException ("No valid value list found " \
+                          "for %s in doctype %s" % vvType, docType)
+
+    # Construct an html picklist
+    html = "<select name='%s%s'>\n" % (action, vvType)
+    for val in vals:
+        html += " <option value='%s'>%s</option>\n" % (val, val)
+    html += "</select>\n"
+
+    return html
 
 
 #------------------------------------------------------------
@@ -211,6 +255,14 @@ def _execQry (qry):
 #------------------------------------------------------------
 class GlblChg:
 
+    # Holds filter to find specific locations with Person or Organization
+    # Defined in subclasses
+    locFilter = None
+
+    def __init__(self):
+        # Holds variables for this session, assigned in factory method
+        self.sessionVars = []
+
     # Connection and cursor objects for actions with this object
     def reportWillChange (self):
         """
@@ -245,16 +297,33 @@ class GlblChg:
         Return:
             HTML with 0, 1, or 2 lines of selections of from and to docs.
         """
-        html = ""
+        haveSoFar = 0
+        html = "<hr><table border='0' cellspacing='6'>"
         if self.sessionVars.has_key ('fromTitle'):
-            html += "<hr><p>Changing links from %s (%s)</p>\n" %\
+            html += "<tr><td align='right'>Changing links from: </td>\n"
+            html += "<td> %s (%s)</td></tr>\n" % \
                  (self.sessionVars['fromId'], self.sessionVars['fromTitle'])
+            haveSoFar = 1
         if self.sessionVars.has_key ('toTitle'):
-            html += \
-                "<p>&nbsp;&nbsp;&nbsp;&nbsp;Changing links to %s (%s)</p>\n" %\
+            html += "<tr><td align='right'>Changing links to: </td>\n"
+            html += "<td> %s (%s)</td></tr>\n" % \
                 (self.sessionVars['toId'], self.sessionVars['toTitle'])
-        if len(html) > 0:
-            html += "<hr>\n"
+            haveSoFar = 1
+        if self.sessionVars.has_key ('fromStatusName'):
+            html += \
+              "<tr><td align='right'>Changing protocol status from: </td>\n"
+            html += "<td> %s</td></tr>\n" % self.sessionVars['fromStatusName']
+            haveSoFar = 1
+        if self.sessionVars.has_key ('toStatusName'):
+            html += \
+              "<tr><td align='right'>Changing protocol status to: </td>\n"
+            html += "<td> %s</td></tr>\n" % self.sessionVars['toStatusName']
+            haveSoFar = 1
+
+        if haveSoFar:
+            html += "</table></font><hr>\n"
+        else:
+            html = "<hr>\n"
 
         return html
 
@@ -401,7 +470,6 @@ class GlblChg:
 
         return ("Choose address fragment", html, None)
 
-
     def getFromPick (self, name):
         docType = self.sessionVars['docType']
         return ("Choose %s for change" % docType,
@@ -418,6 +486,23 @@ class GlblChg:
         return ("Choose %s for change" % docType,
                 _getPickList (docType, name, 'to'), None)
 
+    def getFromToStatus (self):
+        """ Create a screen to get from and to OrgSiteStatus values
+            Returns tuple ready for sendGlblChgPage """
+        html = """
+<table border='0'>
+ <tr>
+  <td align='right'>Select status to change from</td>
+  <td>%s</td>
+ </tr><tr>
+  <td align='right'>Select status to change to</td>
+  <td>%s</td>
+ </tr>
+</table>""" % (_genValidValPickList ('InScopeProtocol', 'StatusName', 'from'),
+               _genValidValPickList ('InScopeProtocol', 'StatusName', 'to'))
+
+        return ("Pick status to change from/to", html, None)
+
     def getRestrId (self):
         """ Create the restrictions screen """
         return ("Restrict changes to protocols with Lead Org",
@@ -428,6 +513,9 @@ class GlblChg:
         return ("Choose protocol Lead Org to restrict changes to",
                 _getPickList ('Organization', name, 'restr'), None)
 
+    def selDocs (self):
+        """ Select documents - implemented only in subclasses """
+        pass
 
 
 #------------------------------------------------------------
@@ -440,6 +528,9 @@ class PersonChg (GlblChg):
     #   filters
     chgFilter = ['name:Global Change: Person Link']
     locFilter = ['name:Person Locations Picklist']
+
+    def __init__(self):
+        GlblChg.__init__(self)
 
     def selDocs (self):
         """
@@ -520,6 +611,9 @@ class OrgChg (GlblChg):
     chgFilter = ['name:Global Change: Organization Link']
     locFilter = ['name:Organization Locations Picklist']
 
+    def __init__(self):
+        GlblChg.__init__(self)
+
     def selDocs (self):
         """
         See PersonChg.selDocs()
@@ -567,3 +661,94 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
 
         # Call a common routine to get the rows corresponding to the query
         return _execQry (qry)
+
+
+#------------------------------------------------------------
+# Organization status global change object
+#------------------------------------------------------------
+class OrgStatusChg (GlblChg):
+
+    # Name of filter for OrgStatus global changes
+    # There is no location picklist.  All locations are affected.
+    chgFilter = ['name:Global Change: XXXX - TO BE NAMED']
+
+    def __init__(self):
+        GlblChg.__init__(self)
+
+    # The selection queries are virtually identical to those in OrgChg
+    # The only difference is that we ignore the fragment id at the end
+    #   of the OrgSiteID/@cdr:ref
+    # Unfortunately that requires a restatement of the queries
+    def selDocs (self):
+        """
+        See PersonChg.selDocs()
+        """
+
+        # fromId looks like "CDR0000001234". OrgSiteID is "CDR0000001234#F1".
+        # We only need the CDR id.  We don't care about the fragment.
+        # The query for organizations ran 46 times faster (!) when I
+        #   searched for:
+        #        protorg.int_val = 1234
+        #   than for:
+        #        protorg.value LIKE 'CDR0000001234%'
+        # So we get the integer value here
+        fromIdNum = cdr.exNormalize (self.sessionVars['fromId'])[1]
+
+        # If no restrictions
+        if not self.sessionVars.has_key ('restrId'):
+            qry = """
+SELECT DISTINCT doc.id, doc.title FROM document doc
+  JOIN query_term protorg
+    ON protorg.doc_id = doc.id
+  JOIN query_term protstat
+    ON protstat.doc_id = doc.id
+  JOIN query_term orgstat
+    ON orgstat.doc_id = doc.id
+ WHERE protorg.path =
+   '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteID/@cdr:ref'
+   AND protorg.int_val = %d
+   AND protstat.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrgProtocolStatuses/CurrentOrgStatus/StatusName'
+   AND (protstat.value = 'Active' OR
+        protstat.value = 'Approved-not yet active' OR
+        protstat.value = 'Temporarily closed')
+   AND orgstat.path =
+   '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteStatus'
+   AND orgstat.value = '%s'
+   AND LEFT (orgstat.node_loc, 16) = LEFT (protorg.node_loc, 16)
+ ORDER BY doc.title
+""" % (fromIdNum,
+       self.sessionVars['fromStatusName'])
+
+        # Else restrict them by a particular lead organization
+        else:
+            qry = """
+SELECT DISTINCT doc.id, doc.title FROM document doc
+  JOIN query_term protorg
+    ON protorg.doc_id = doc.id
+  JOIN query_term protstat
+    ON protstat.doc_id = doc.id
+  JOIN query_term orgstat
+    ON orgstat.doc_id = doc.id
+  JOIN query_term leadorg
+    ON leadorg.doc_id = doc.id
+ WHERE protorg.path =
+   '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteID/@cdr:ref'
+   AND protorg.int_val = %d
+   AND protstat.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrgProtocolStatuses/CurrentOrgStatus/StatusName'
+   AND (protstat.value = 'Active' OR
+        protstat.value = 'Approved-not yet active' OR
+        protstat.value = 'Temporarily closed')
+   AND leadorg.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrganizationID/@cdr:ref'
+   AND orgstat.path =
+   '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteStatus'
+   AND orgstat.value = '%s'
+   AND LEFT (orgstat.node_loc, 16) = LEFT (protorg.node_loc, 16)
+   AND leadorg.value = '%s'
+ ORDER BY doc.title
+""" % (fromIdNum,
+       self.sessionVars['fromStatusName'],
+       self.sessionVars['restrId'])
+
+        # Call a common routine to get the rows corresponding to the query
+        return _execQry (qry)
+
