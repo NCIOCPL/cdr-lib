@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.36 2002-11-05 16:05:51 pzhang Exp $
+# $Id: cdrpub.py,v 1.37 2002-11-06 21:56:40 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.36  2002/11/05 16:05:51  pzhang
+# Enhanced interface per Eileen's input.
+#
 # Revision 1.35  2002/11/01 19:16:43  pzhang
 # Used binary read and utf-8 instead of latin-1.
 #
@@ -1797,7 +1800,8 @@ class Publish:
                 self.__debugLog("Sending mail to %s." % self.__email)
                 sender    = self.__cdrEmail
                 subject   = "CDR Publishing Job Status"
-                receivers = string.split(self.__email, ",")
+                receivers = string.replace(self.__email, ";", ",")
+                receivers = string.split(receivers, ",")
                 message   = """
 Job %d has completed or changed status.  You can view a status report for this job at:
 
