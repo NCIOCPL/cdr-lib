@@ -1,8 +1,11 @@
 #
 # Script for command line and CGI publishing.
 #
-#$Id: publish.py,v 1.1 2001-10-01 15:07:21 Pzhang Exp $
+#$Id: publish.py,v 1.2 2001-10-05 15:08:01 Pzhang Exp $
 #$Log: not supported by cvs2svn $
+#Revision 1.1  2001/10/01 15:07:21  Pzhang
+#Initial revision
+#
 #
 
 from win32com.client import Dispatch
@@ -302,8 +305,11 @@ class Publish:
             # Only one subset per publishing?
             subset = self.__getSubSet(docElem)
 
-            # Get the subset specifications node.
-            # Not care about process script at this point.
+            # Handle process script. 
+            # Exit if there is a process script.
+            self.__invokeProcessScript(subset)
+
+            # Get the subset specifications node.                        
             self.__specs = self.__getSpecs(subset)        
             
             # Get the action to check publishing permission.
@@ -1233,27 +1239,67 @@ class Publish:
         fileObj = open(dir + "/" + fileName, 'w')
         fileObj.write(document)
 
+    #----------------------------------------------------------------
+    # Handle process script. This is specific for Bob's Python script.
+    # If this subset does not contain process script, simply return.
+    # The cmd string should be determined by options in the control
+    #   document, not hard-coded unless we agree that all the process
+    #	script will only accept JobId as its only argument.
+    #----------------------------------------------------------------
+    def __invokeProcessScript(self, subset):
+        if NCGI: print "in __invokeProcessScript\n"
+        scriptName = ""
+        for node in subset.childNodes:
+            # The 'choice' in schema requires one and only
+            #   one element in this subset. 
+            # Second 'if' is not needed. Leave it there for safety
+            #   or for future schema updates.
+            if node.nodeName == "SubsetSpecifications":
+                return 
+            if node.nodeName == "ProcessScript":
+                for n in node.childNodes:
+                    if n.nodeType == xml.dom.minidom.Node.TEXT_NODE:
+                        scriptName += n.nodeValue
+	# Is the location of the script always in cdr.SCRIPTS?
+        scriptName = cdr.SCRIPTS + "/" + scriptName
+        if not os.path.isfile(scriptName):
+            if NCGI: print scriptName + " not found!"
+            sys.exit(1)
+        cmd = scriptName + " %d" % self.__procId
+        if NCGI: print "'" + cmd + "' is running!"
+        os.system(cmd)
+        sys.exit(0)
+
 # Accept one argument which is the __procId. ctrlDoc (title) will
 #    not be used to select control document in new design.
 def main():    
     
     # Prove we've been here.
-    f = open("d:/cdr/log/publish.log", "a")
-    os.dup2(f.fileno(), 1)
-    if NCGI: print "=====Job started at: %s" % time.ctime(time.time())
+    
+    if NCGI: 
+        f = open("d:/cdr/log/publish.log", "a")
+        os.dup2(f.fileno(), 1)
+        print "=====Job started at: %s" % time.ctime(time.time())
+
     try:    
         # Make sure we have the process JobId
         if len(sys.argv) < 2: 
-            raise PublishError, "*Error: Usage: pubmod.py jobId."
+            if NCGI: print "*Error: Usage: pubmod.py jobId."
+            sys.exit(1)
        
         p = Publish("Fake", "Fake", "Fake", [], [], string.atoi(sys.argv[1]))
         p.publish() 
 
-    except Exception, error:
-        if NCGI: print "Unhandled error.", str(error)
-    
-    if NCGI: print "=====Job ended at: %s" % time.ctime(time.time())
-    f.close()           
+    except:        
+        if NCGI: 
+            import traceback
+            os.dup2(f.fileno(), 2)
+            traceback.print_tb(sys.exc_traceback)  
+            os.dup2(f.fileno(), 1)     
+
+    if NCGI: 
+        print "=====Job ended at: %s" % time.ctime(time.time())
+        f.close()           
 
 # No longer useful with the new design. Leave it here for reference.
 def main_old():    
