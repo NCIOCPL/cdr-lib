@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.51 2003-03-05 16:19:58 pzhang Exp $
+# $Id: cdrpub.py,v 1.52 2003-03-05 17:36:13 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.51  2003/03/05 16:19:58  pzhang
+# Counted non-null messages as a failure. It could be set due to
+# XSLT message instruction with terminate='no'.
+#
 # Revision 1.50  2003/02/14 20:10:13  pzhang
 # Dropped document type and added job description at prolog level.
 #
@@ -1859,7 +1863,7 @@ class Publish:
                     else:
                         msg = "Aborting: too many errors encountered"                    
                     raise StandardError(msg)
-        elif warnings:
+        if warnings:
             self.__addDocMessages(doc, warnings)
             self.__warningCount += 1
             if self.__publishIfWarnings == "No":
@@ -1896,14 +1900,28 @@ class Publish:
     # Record warning or error messages for a document.
     #------------------------------------------------------------------
     def __addDocMessages(self, doc, messages, failure = None):
+
         try:
             cursor = self.__conn.cursor()
+            cursor.execute("""
+                SELECT messages, failure
+                  FROM pub_proc_doc
+                 WHERE doc_id = ?
+                   AND pub_proc = ?
+                           """, (doc[0], self.__jobId)
+                          )
+            row  = cursor.fetchone()
+            msg  = (row and row[0] or '') + messages       
+
+            # Don't reset column failure if the input is None!
+            fail = failure or (row and row[1])
+
             cursor.execute("""\
                 UPDATE pub_proc_doc
                    SET messages = ?,
                        failure  = ?
                  WHERE pub_proc = ?
-                   AND doc_id   = ?""", (messages, failure,
+                   AND doc_id   = ?""", (msg, fail,
                                          self.__jobId, doc[0]))
         except cdrdb.Error, info:
             msg = 'Failure recording message for document %d: %s' % \
