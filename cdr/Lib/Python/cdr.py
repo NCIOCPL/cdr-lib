@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.92 2004-08-11 17:54:07 bkline Exp $
+# $Id: cdr.py,v 1.93 2004-08-27 13:47:46 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.92  2004/08/11 17:54:07  bkline
+# Added new function addExternalMapping().
+#
 # Revision 1.91  2004/07/08 19:03:44  bkline
 # Made logwrite() a little more bulletproof by ignoring all exceptions,
 # not just the ones we expect.
@@ -3119,3 +3122,36 @@ def addExternalMapping(credentials, usage, value, id = None,
     errors = getErrors(resp, errorsExpected = False, asSequence = True)
     if errors:
         raise Exception(errors)
+
+#----------------------------------------------------------------------
+# Change the active_status column for a document.
+#----------------------------------------------------------------------
+def setDocStatus(credentials, docId, newStatus, host = DEFAULT_HOST,
+                 port = DEFAULT_PORT):
+    id   = "<DocId>%s</DocId>" % normalize(docId)
+    stat = "<NewStatus>%s</NewStatus>" % newStatus
+    cmd  = "<CdrSetDocStatus>%s%s</CdrSetDocStatus>" % (id, stat)
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    errs = getErrors(resp, errorsExpected = False, asSequence = True)
+    if errs:
+        raise Exception(errs)
+
+#----------------------------------------------------------------------
+# Retrieve the active status for a document.
+#----------------------------------------------------------------------
+def getDocStatus(credentials, docId, host = DEFAULT_HOST):
+    conn = cdrdb.connect('CdrGuest', dataSource = host)
+    cursor = conn.cursor()
+    idTuple = exNormalize(docId)
+    id = idTuple[1]
+    cursor.execute("SELECT active_status FROM all_docs WHERE id = ?", id)
+    rows = cursor.fetchall()
+    if not rows:
+        raise Exception(['Invalid document ID %s' % docId])
+    return rows[0][0]
+
+#----------------------------------------------------------------------
+# Convenience wrapper for unblocking a document.
+#----------------------------------------------------------------------
+def unblockDoc(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
+    setDocStatus(credentials, docId, "A", host, port)
