@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.67 2005-01-24 21:20:50 bkline Exp $
+# $Id: cdrpub.py,v 1.68 2005-01-28 19:16:01 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.67  2005/01/24 21:20:50  bkline
+# Changed cdr.getDoc() for Media document to use the publishing port.
+# Eliminated overlong code line.
+#
 # Revision 1.66  2005/01/18 19:39:44  venglisc
 # Minor rewording of a status message and adding of a line break in HTML
 # output.
@@ -356,6 +360,7 @@ class Publish:
     __lockNextDoc  = threading.Lock()
     __lockLog      = threading.Lock()
     __lockManifest = threading.Lock()
+    __lockDb       = threading.Lock()
 
     # Publish this many docs in parallel
     __numThreads  = PUB_THREADS
@@ -2248,9 +2253,11 @@ has started</B>).<BR>""" % cgWorkLink
                                     port = self.__pubPort)
                 name = cdrDoc.getPublicationFilename()
                 self.__saveDoc(cdrDoc.blob, destDir + '/' + subDir, name, "wb")
+                self.__lockDb.acquire(1)
                 lastChange = cdr.getVersionedBlobChangeDate('guest', docId,
                                                             doc.getVersion(),
                                                             self.__conn)
+                self.__lockDb.release()
                 title = cdrDoc.ctrl.get('DocTitle', '').strip()
                 title = title.replace('\r', '').replace('\n', ' ')
                 self.__lockManifest.acquire(1)
