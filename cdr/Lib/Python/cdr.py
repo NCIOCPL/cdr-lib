@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.40 2002-07-11 21:04:31 ameyer Exp $
+# $Id: cdr.py,v 1.41 2002-07-16 14:26:51 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.40  2002/07/11 21:04:31  ameyer
+# Added date/time stamp to logwrite.
+#
 # Revision 1.39  2002/07/11 14:52:26  ameyer
 # Added logwrite function.
 #
@@ -134,7 +137,7 @@
 # Import required packages.
 #----------------------------------------------------------------------
 import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
-import smtplib, time
+import os, smtplib, time
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -148,7 +151,8 @@ LOGOFF_STRING = "<CdrCommand><CdrLogoff/></CdrCommand></CdrCommandSet>"
 PYTHON        = "d:\\python\\python.exe"
 BASEDIR       = "d:/cdr"
 SMTP_RELAY    = "MAILFWD.NIH.GOV"
-DEFAULT_LOGFILE = "d:/cdr/Log/debug.log"
+DEFAULT_LOGDIR  = "d:/cdr/Log"
+DEFAULT_LOGFILE = DEFAULT_LOGDIR + "/debug.log"
 
 #----------------------------------------------------------------------
 # Normalize a document id to form 'CDRnnnnnnnnnn'.
@@ -1878,7 +1882,7 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE):
     f = None
     try:
         f = open (logfile, "a")
-        f.write ("----------- %s -----------\n" % time.ctime())
+        f.write ("!<%d> %s: " % (os.getpid(), time.ctime()))
         if type (msgs) == type (()):
             for msg in msgs:
                 f.write (msg)
