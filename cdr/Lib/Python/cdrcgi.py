@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.47 2004-02-03 15:53:44 bkline Exp $
+# $Id: cdrcgi.py,v 1.48 2004-04-06 18:51:49 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.47  2004/02/03 15:53:44  bkline
+# Fixed typo (corrected cgict to cgitb).
+#
 # Revision 1.46  2004/02/03 15:38:21  bkline
 # Plugged in cgitb debugging help.
 #
@@ -665,7 +668,10 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
     </TR>"""
 
     if extraField:
-        html += """\
+        if type(extraField[0]) not in (type([]), type(())):
+            extraField = [extraField]
+        for ef in extraField:
+            html += """\
     <TR>
      <TD        NOWRAP
                 CLASS       = "Page"
@@ -675,7 +681,7 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
 %s
      </TD>
     </TR>
-""" % (extraField[0], extraField[1])
+""" % (ef[0], ef[1])
 
     html += """\
     <TR>
