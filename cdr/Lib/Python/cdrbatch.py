@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.10 2004-02-25 02:25:46 ameyer Exp $
+# $Id: cdrbatch.py,v 1.11 2004-02-26 22:04:01 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,9 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2004/02/25 02:25:46  ameyer
+# Removed another unneeded commit.
+#
 # Revision 1.9  2004/02/24 22:57:26  ameyer
 # Modified fetchone() call to fetchall() to insure that cursor has
 # been cleared.  Will write error if not.
@@ -548,15 +551,29 @@ class CdrBatch:
     def getEmail(self):     return self.__email
     def getCursor(self):    return self.__cursor
 
-    # For this one, data may have gone into the database as ASCII
+    #------------------------------------------------------------------
+    # Complex accessor for args
+    #
+    # Value for an argument can be a string, or a list.
+    # Data may have gone into the database as ASCII
     #   but always comes out as unicode
     # Caller should say if he wants 16 bit unicode preserved
+    # Else we convert to utf-8.
+    #------------------------------------------------------------------
     def getParm(self, key, ucode=0):
         if self.__args.has_key (key):
+            val = self.__args[key]
             if ucode:
-                return self.__args[key]
+                # Simply return what we have
+                return val
             else:
-                return (self.__args[key]).encode('utf-8')
+                # Convert to utf-8, but may have to do it on each list item
+                if type(val)==type([]):
+                    for i in range(len(val)):
+                        val[i] = val[i].encode('utf-8')
+                else:
+                    val.encode('utf-8')
+                return val
         return None
 
 
