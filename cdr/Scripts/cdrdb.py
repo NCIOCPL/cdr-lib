@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.9 2001-12-19 20:24:42 bkline Exp $
+# $Id: cdrdb.py,v 1.10 2001-12-19 20:31:03 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2001/12/19 20:24:42  bkline
+# Added date/time formatting and support for CdrPublishing login.
+#
 # Revision 1.8  2001/08/06 22:21:22  bkline
 # Implemented commit(), rollback(), and setAutoCommit() on Connection.
 #
@@ -687,7 +690,7 @@ class Connection:
 #----------------------------------------------------------------------
 # Connect to the CDR using known login account.
 #----------------------------------------------------------------------
-def connect(user = 'cdr'):
+def connect(user = 'cdr', dataSource = 'localhost'):
     """
     Factory for creating a connection to the database.  Returns a 
     Connection Object. It takes a number of parameters which are 
@@ -707,10 +710,10 @@ def connect(user = 'cdr'):
 
     try:
         adoConn.Open("Provider=SQLOLEDB;\
-                      Data Source=mmdb2;\
+                      Data Source=%s;\
                       Initial Catalog=cdr;\
                       User ID=%s;\
-                      Password=%s" % (user, password))
+                      Password=%s" % (dataSource, user, password))
     except:
         raise DatabaseError, ("connect", buildErrorList(adoConn))
     return Connection(adoConn)
