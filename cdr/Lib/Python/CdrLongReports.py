@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.17 2004-09-23 14:07:46 venglisc Exp $
+# $Id: CdrLongReports.py,v 1.18 2005-01-19 23:27:19 venglisc Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.17  2004/09/23 14:07:46  venglisc
+# Modified string passed by UI to display on report. (Bug 1337)
+#
 # Revision 1.16  2004/09/21 14:57:48  venglisc
 # Added third header line to Excel report output.  Minor formatting of header
 # (increased row size). (Bug 1337)
@@ -1318,6 +1321,64 @@ SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
                                    'Approved-not yet active',
                                    'Temporarily closed')
                                    */ """, self.id, timeout = 500)
+            for (protId, docId, orgStat, personName,
+                 loStat) in self.cursor.fetchall():
+                key = (protId, docId, loStat)
+                if not protLinks.has_key(key):
+                    protLinks[key] = protLink = ProtLink(docId, protId, loStat)
+                else:
+                    protLink = protLinks[key]
+                protLink.isOrgSite = 1
+                protLink.orgStat = orgStat
+                if personName and personName not in protLink.personnel:
+                    protLink.personnel[personName] = ProtPerson(personName)
+                done += 1
+                #job.setProgressMsg(msg + (" (%d of %d rows processed)"
+                #                       % (done, len(rows))))
+
+            #---------------------------------------------------------------
+            # Links to this org as participating org with Clinical Trial Off
+            #---------------------------------------------------------------
+            msg = ("Gathering links to CDR%010d as "
+                   "participating org with Clinical Trial Office"
+                   % self.id)
+            job.setProgressMsg(msg)
+            cdr.logwrite(msg, LOGFILE)
+            done = 0
+            self.cursor.execute("""\
+SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
+                'Clinical Trial Office', lo_stat.value
+                -- , trial_office.value
+           FROM query_term org_id
+           JOIN query_term prot_id
+             ON prot_id.doc_id = org_id.doc_id
+            AND LEFT(prot_id.node_loc, 8) = LEFT(org_id.node_loc, 8)
+           JOIN query_term org_stat
+             ON org_stat.doc_id = org_id.doc_id
+            AND LEFT(org_stat.node_loc, 16) = LEFT(org_id.node_loc, 16)
+           JOIN query_term trial_office
+             ON trial_office.doc_id = org_id.doc_id
+            AND LEFT(trial_office.node_loc, 16) = LEFT(org_id.node_loc, 16)
+           JOIN query_term lo_stat
+             ON lo_stat.doc_id = org_stat.doc_id
+            AND LEFT(lo_stat.node_loc, 8) = LEFT(org_stat.node_loc, 8)
+          WHERE org_id.int_val   = ?
+            AND org_id.path      = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/ProtocolSites'
+                                 + '/OrgSite/OrgSiteID/@cdr:ref'
+            AND prot_id.path     = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/LeadOrgProtocolID'
+            AND org_stat.path    = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/ProtocolSites'
+                                 + '/OrgSite/OrgSiteStatus'
+            AND trial_office.path= '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/ProtocolSites'
+                                 + '/OrgSite/OrgSiteContact'
+                                 + '/ClinicalTrialOffice/@cdr:ref'
+            AND lo_stat.path     = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/LeadOrgProtocolStatuses'
+                                 + '/CurrentOrgStatus/StatusName'
+                                   """, self.id, timeout = 500)
             for (protId, docId, orgStat, personName,
                  loStat) in self.cursor.fetchall():
                 key = (protId, docId, loStat)
