@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.63 2004-12-16 21:00:16 bkline Exp $
+# $Id: cdrpub.py,v 1.64 2004-12-18 18:07:50 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.63  2004/12/16 21:00:16  bkline
+# Added subdirectory name for saving media documents.
+#
 # Revision 1.62  2004/12/16 20:50:24  bkline
 # Renamed media manifest file at Volker's request.  Sorted manifest file
 # contents at Volker's request.  Fixed threading bug.
@@ -224,7 +227,7 @@
 #----------------------------------------------------------------------
 
 import cdr, cdrdb, os, re, string, sys, xml.dom.minidom, xml.sax
-import socket, cdr2cg, time, threading
+import socket, cdr2cg, time, threading, glob, base64
 from xml.parsers.xmlproc import xmlval, xmlproc
 
 #-----------------------------------------------------------------------
@@ -592,8 +595,8 @@ class Publish:
             # Must turn cacheing off before end, even if exception raised.
             cdr.cacheInit(self.__credentials,
                           cacheOn=1, cacheType=Publish.CACHETYPE,
-                          port=self.__pubPort);
-            self.__cacheingOn = 1;
+                          port=self.__pubPort)
+            self.__cacheingOn = 1
 
             # Two passes through the subset specification are required.
             # The first pass publishes documents specified by the user, and
@@ -737,10 +740,11 @@ class Publish:
                     #     the output directory for a CG-push job, which
                     #     doesn't create an output directory.
                     #     [RMK 2004-11-08]
-                    try:
-                        os.rename(dest, dest_base)
-                    except:
-                        pass
+                    if dest and dest_base:
+                        try:
+                            os.rename(dest, dest_base)
+                        except:
+                            pass
 
                     if not self.__isPrimaryJob() or self.__reportOnly:
                         self.__updateStatus(Publish.SUCCESS)
@@ -818,7 +822,7 @@ class Publish:
                 try:
                     cdr.cacheInit(self.__credentials,
                                   cacheOn=0, cacheType=Publish.CACHETYPE,
-                                  port=self.__pubPort);
+                                  port=self.__pubPort)
                 except:
                     pass
             sys.exit(0)
@@ -835,10 +839,10 @@ class Publish:
             try:
                 cdr.cacheInit(self.__credentials,
                               cacheOn=0, cacheType=Publish.CACHETYPE,
-                              port=self.__pubPort);
+                              port=self.__pubPort)
             except:
                 pass
-            self.cacheingOn = 0;
+            self.cacheingOn = 0
 
         # Mark job as failed if it wasn't a live job.
         if self.__reportOnly:
@@ -1013,6 +1017,7 @@ class Publish:
                     raise StandardError(
                         "Corresponding vendor job does not exist.<BR>")
 
+                # XXX is this really a doc ID? [RMK 2004-12-17]
                 docId = row[0]
                 dest  = row[1]
 
@@ -1280,6 +1285,7 @@ has started</B>).<BR>""" % cgWorkLink
         # see if it needs updating. If needed, we insert a row into
         # pub_proc_cg_work with xml set to the new document.
         try:
+            # XXX Why is the subselect needed? [RMK 2004-12-17]
             qry = """
                 SELECT ppc.id, t.name, ppc.xml, ppd2.subdir, ppd2.doc_version
                   FROM pub_proc_cg ppc, doc_type t, document d,
@@ -1314,9 +1320,12 @@ has started</B>).<BR>""" % cgWorkLink
                 xml    = row[2]
                 subdir = row[3]
                 ver    = row[4]
-                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
-                fileTxt= open(path, "rb").read()
-                fileTxt= unicode(fileTxt, 'utf-8')
+                if dType == 'Media':
+                    fileTxt = self.__getCgMediaDoc(vendor_dest, subdir, docId)
+                else:
+                    path    = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
+                    fileTxt = open(path, "rb").read()
+                    fileTxt = unicode(fileTxt, 'utf-8')
 
                 # Whitespace-normalized compare to stored file
                 if spNorm.sub(u" ", xml) != spNorm.sub(u" ", fileTxt):
@@ -1366,9 +1375,12 @@ has started</B>).<BR>""" % cgWorkLink
                 dType  = row[1]
                 subdir = row[2]
                 ver    = row[3]
-                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
-                xml    = open(path, "rb").read()
-                xml    = unicode(xml, 'utf-8')
+                if dType == 'Media':
+                    xml = self.__getCgMediaDoc(vendor_dest, subdir, docId)
+                else:
+                    path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
+                    xml    = open(path, "rb").read()
+                    xml    = unicode(xml, 'utf-8')
                 try:
                     cursor2.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
@@ -1426,6 +1438,7 @@ has started</B>).<BR>""" % cgWorkLink
                         AND d.doc_type IN (%s)
                         AND ppd_cg.doc_id = ppc.id
                         AND ppd_cg.pub_proc = ppc.pub_proc
+                        AND t.name <> 'Media' /* XXX Alan's recommendation */
                         AND NOT EXISTS (
                                 SELECT *
                                   FROM pub_proc_doc ppd
@@ -1465,6 +1478,30 @@ has started</B>).<BR>""" % cgWorkLink
             msg = "Failure executing query to find doc types " \
                   "for job %d: %s" % (vendor_job, info[1][0])
             raise StandardError(msg)
+
+    #------------------------------------------------------------------
+    # Generate the XML to be sent to Cancer.gov for a media document.
+    #------------------------------------------------------------------
+    def __getCgMediaDoc(self, vendorDest, subdir, docId):
+        names = glob.glob("%s/%s/CDR%010d.*" % (vendorDest, subdir, docId))
+        if not names:
+            raise StandardError("Failure locating media file for CDR%d" %
+                                docId)
+        name = names[0]
+        if name.endswith('.jpg'):
+            mediaType = 'image/jpeg'
+        elif name.endswith('.gif'):
+            mediaType = 'image/gif'
+        else:
+            raise StandardError("Unsupported media type: %s" % name)
+        fp = file(name, 'rb')
+        bytes = fp.read()
+        fp.close()
+        return u"""\
+<Media Type='%s' Size='%d' Encoding='base64'>
+%s</Media>
+""" % (mediaType, len(bytes), base64.encodestring(bytes))
+        
 
     #------------------------------------------------------------------
     # Different version of __createWorkPPC for Hotfix (Remove)
@@ -1564,10 +1601,16 @@ has started</B>).<BR>""" % cgWorkLink
                 xml    = row[2]
                 subdir = row[3]
                 ver    = row[4]
-                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
-                fileTxt   = open(path, "rb").read()
-                fileTxt   = unicode(fileTxt, 'utf-8')
+                if dType == 'Media':
+                    fileTxt = self.__getCgMediaDoc(vendor_dest, subdir, docId)
+                else:
+                    path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
+                    fileTxt   = open(path, "rb").read()
+                    fileTxt   = unicode(fileTxt, 'utf-8')
 
+                # XXX Why aren't we doing the same normalization here as
+                #     in the original __createWorkPPC() method? [RMK
+                #     2004-12-17]
                 if xml != fileTxt:
                     cursor2.execute("""
                         INSERT INTO pub_proc_cg_work (id, vendor_job,
@@ -1613,9 +1656,12 @@ has started</B>).<BR>""" % cgWorkLink
                 dType  = row[1]
                 subdir = row[2]
                 ver    = row[3]
-                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
-                xml    = open(path, "rb").read()
-                xml    = unicode(xml, 'utf-8')
+                if dType == 'Media':
+                    xml = self.__getCgMediaDoc(vendor_dest, subdir, docId)
+                else:
+                    path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
+                    xml    = open(path, "rb").read()
+                    xml    = unicode(xml, 'utf-8')
                 cursor2.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
                                                   doc_type, xml, num)
@@ -2468,6 +2514,9 @@ has started</B>).<BR>""" % cgWorkLink
                                 if self.__errorCount > threshold:
                                     raise
                             self.__addJobMessages(arg)
+
+                            # XXX Why are we falling through to the following
+                            #     code if the call to get doc fails???
                         docs.append(Doc(doc[0], doc[1], doc[2]))
                         self.__alreadyPublished[oneId] = 1
                         row = cursor.fetchone()
