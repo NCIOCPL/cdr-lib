@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.62 2002-10-24 19:57:19 ameyer Exp $
+# $Id: cdr.py,v 1.63 2002-10-29 21:00:16 pzhang Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.62  2002/10/24 19:57:19  ameyer
+# Fixed bug in getQueryTermValueForId().
+#
 # Revision 1.61  2002/10/23 02:32:12  ameyer
 # Made getQueryTermValueForId() return single sequence.
 #
@@ -2038,14 +2041,17 @@ def reindex(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
            email = '', noOutput = 'N', allowNonPub = 'N', docTime = None,
-           host = DEFAULT_HOST, port = DEFAULT_PORT):
+           host = DEFAULT_HOST, port = DEFAULT_PORT, allowInActive = 'N'):
 
     # Create the command.
     pubSystem   = "<PubSystem>%s</PubSystem>" % pubSystem or ""
     pubSubset   = "<PubSubset>%s</PubSubset>" % pubSubset or ""
     email       = email and "<Email>%s</Email>" % email   or ""
     noOutput    = noOutput and "<NoOutput>%s</NoOutput>" % noOutput
-    allowNonPub = allowNonPub and "<AllowNonPub>%s</AllowNonPub>" % allowNonPub
+    allowNonPub = (allowNonPub == 'N') and 'N' or 'Y'
+    allowNonPub = "<AllowNonPub>%s</AllowNonPub>" % allowNonPub
+    allowInAct  = (allowInActive == 'N') and 'N' or 'Y'
+    allowInAct  = "<AllowInActive>%s</AllowInActive>" % allowInAct
     parmElem    = ''
     docsElem    = ''
     if parms:
@@ -2068,13 +2074,14 @@ def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
             docsElem += "<Doc Id='%s' Version='%s'/>" % (id, version)
         docsElem += "</DocList>"
 
-    cmd = "<CdrPublish>%s%s%s%s%s%s%s</CdrPublish>" % (pubSystem,
+    cmd = "<CdrPublish>%s%s%s%s%s%s%s%s</CdrPublish>" % (pubSystem,
                                                        pubSubset,
                                                        parmElem,
                                                        docsElem,
                                                        email,
                                                        noOutput,
-                                                       allowNonPub)
+                                                       allowNonPub,
+                                                       allowInAct)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
