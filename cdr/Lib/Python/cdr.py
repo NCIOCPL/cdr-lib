@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.20 2002-02-19 18:37:50 bkline Exp $
+# $Id: cdr.py,v 1.21 2002-02-19 22:09:40 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.20  2002/02/19 18:37:50  bkline
+# Preserved docId passed to filterDoc if string.
+#
 # Revision 1.19  2002/02/15 06:56:31  ameyer
 # Modified putLinkType to detect add/modify transactions in a different
 # way.
@@ -402,11 +405,15 @@ def valDoc(credentials, docType, docId = None, doc = None,
 #----------------------------------------------------------------------
 def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
               host = DEFAULT_HOST, port = DEFAULT_PORT, parm = [],
-              no_output = 'N'):
+              no_output = 'N', docVer = None):
 
     # Create the command.
-    if type(docId) == type(9): docId = normalize(docId)
-    if docId: docElem = "<Document href='%s'/>" % docId
+    if docId:
+        verAttr = ''
+        if docVer: 
+            if type(docVer) == type(9): verAttr = " version='%d'" % docVer
+            else: verAttr = " version='%s'" % docVer
+        docElem = "<Document href='%s'%s/>" % (normalize(docId), verAttr)
     elif doc: docElem = "<Document><![CDATA[%s]]></Document>" % doc
     else: return "<Errors><Err>Document not specified.</Err></Errors>"
 
