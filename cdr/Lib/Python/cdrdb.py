@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.15 2003-02-14 20:30:37 bkline Exp $
+# $Id: cdrdb.py,v 1.16 2004-10-22 12:20:50 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.15  2003/02/14 20:30:37  bkline
+# Added extension helper function strftime().
+#
 # Revision 1.14  2002/09/03 12:49:19  bkline
 # Added optional db parameter to connect().
 #
@@ -293,7 +296,11 @@ class Cursor:
                     (u"expected %d parameters, received %d" %
                      (nParams - 1, len(parameters)),))
         for i in range(len(parameters)):
-            params.Item(i + 1).Value = parameters[i]
+            p = params.Item(i + 1)
+            if p.Type in BINARY.nativeTypes:
+                p.Value = buffer(parameters[i])
+            else:
+                p.Value = parameters[i]
         try:
             self.__rs, rowsAffected = cmd.Execute()
             fields = self.__rs.Fields
@@ -381,7 +388,11 @@ class Cursor:
                             (u"expected %d parameters, received %d" %
                              (len(cmdParams), len(params)),))
                 for i in range(len(params)):
-                    cmdParams.Item(i).Value = params[i]
+                    p = cmdParams.Item(i)
+                    if p.Type in BINARY.nativeTypes:
+                        p.Value = buffer(params[i])
+                    else:
+                        p.Value = params[i]
             self.__rs, rowsAffected = cmd.Execute()
             fields = self.__rs.Fields
             if len(fields):
@@ -484,6 +495,8 @@ class Cursor:
                     val = data[col][row]
                     if type(val) == type(self.__dateTimeObject):
                         val = val.Format("%Y-%m-%d %H:%M:%S")
+                    elif self.description[col][1] == BINARY:
+                        val = str(val)
                     vals.append(val)
                 rows.append(vals)
             return rows
