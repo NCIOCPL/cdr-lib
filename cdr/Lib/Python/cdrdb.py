@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.7 2001-08-06 18:03:58 bkline Exp $
+# $Id: cdrdb.py,v 1.8 2001-08-06 22:21:22 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2001/08/06 18:03:58  bkline
+# Switched hardcoded error strings to Unicode.
+#
 # Revision 1.6  2001/08/06 15:55:30  bkline
 # Fixed a collection item notation bug in Cursor.execute().
 #
@@ -573,7 +576,11 @@ class Cursor:
 #----------------------------------------------------------------------
 class Connection:
 
-    def __init__(self, adoConn): self.__adoConn = adoConn
+    def __init__(self, adoConn): 
+        self.__adoConn    = adoConn
+        self.__inTrans    = 0
+        self.__autoCommit = 1
+        self.setAutoCommit(0)
 
     def close(self): 
         """
@@ -587,7 +594,7 @@ class Connection:
         try:
             self.__adoConn.Close()
         except:
-            errorList = buildErrorList(self.__conn)
+            errorList = buildErrorList(self.__adoConn)
             if errorList:
                 raise Error, ("Connection.close", errorList)
             raise InternalError, ("Connection.close",
@@ -601,8 +608,18 @@ class Connection:
         it back on.
         """
 
-        raise NotSupportedError, ("Connection.commit",
-                (u"commit() method not yet implemented",))
+        try:
+            self.__adoConn.CommitTrans()
+            if self.__autoCommit: self.__inTrans = 0
+            else:
+                self.__adoConn.BeginTrans()
+                self.__inTrans = 1
+        except:
+            errorList = buildErrorList(self.__adoConn)
+            if errorList:
+                raise Error, ("Connection.commit", errorList)
+            raise InternalError, ("Connection.commit",
+                    (u"unexpected failure",))
 
     def rollback(self): 
         """
@@ -611,8 +628,18 @@ class Connection:
         changes first will cause an implicit rollback to be performed.
         """
 
-        raise NotSupportedError, ("Connection.rollback",
-                (u"rollback() method not yet implemented",))
+        try:
+            self.__adoConn.RollbackTrans()
+            if self.__autoCommit: self.__inTrans = 0
+            else:
+                self.__adoConn.BeginTrans()
+                self.__inTrans = 1
+        except:
+            errorList = buildErrorList(self.__adoConn)
+            if errorList:
+                raise Error, ("Connection.rollback", errorList)
+            raise InternalError, ("Connection.rollback",
+                    (u"unexpected failure",))
 
     def cursor(self): 
         """
@@ -620,6 +647,34 @@ class Connection:
         """
 
         return Cursor(self.__adoConn)
+
+    def setAutoCommit(self, on = 1):
+        """
+        Turns autocommit on or off.  If autocommit is on, then
+        implicit transactions are not used (in contradiction to
+        the SQL standard, but in keeping with SQL Server's default
+        behavior).
+        """
+
+        try:
+            if on:
+                #self.__adoConn.Execute("SET IMPLICIT_TRANSACTIONS OFF")
+                if self.__autoCommit: return
+                self.__autoCommit = 1
+                if self.__inTrans:
+                    self.commit()
+            else:
+                #self.__adoConn.Execute("SET IMPLICIT_TRANSACTIONS ON")
+                if not self.__autoCommit: return
+                self.__autoCommit = 0
+                self.__adoConn.BeginTrans()
+                self.__inTrans = 1
+        except:
+            errorList = buildErrorList(self.__adoConn)
+            if errorList:
+                raise Error, ("Connection.setAutoCommit", errorList)
+            raise InternalError, ("Connection.setAutoCommit",
+                    (u"unexpected failure",))
 
 #----------------------------------------------------------------------
 # Connect to the CDR using known login account.
