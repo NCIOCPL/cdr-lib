@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.23 2002-08-16 21:36:36 pzhang Exp $
+# $Id: cdrpub.py,v 1.24 2002-08-20 22:07:31 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.23  2002/08/16 21:36:36  pzhang
+# Added __waitUserApproval function.
+#
 # Revision 1.22  2002/08/16 20:19:30  pzhang
 # Added new implementation for Hotfix-Export.
 #
@@ -100,9 +103,13 @@ class Publish:
     __pd2cg    = "Push_Documents_To_Cancer.Gov"
     __cdrHttp  = "http://%s.nci.nih.gov/cgi-bin/cdr" % socket.gethostname()
     __ignoreUserDocList = 0
-    __isInteractiveMode = 0
-    __checkRemovedDocs  = 0
-
+    __interactiveMode = 0
+    __checkRemovedDocs  = 1
+    __vendorDocsOnly    = 0
+    __includeLinkedDocs = 1
+    __reportOnly        = 0
+    __validateDocs      = 1
+   
     #---------------------------------------------------------------
     # Load the job settings from the database.  User-specified
     # documents will already have been recorded in the pub_proc_doc
@@ -211,6 +218,25 @@ class Publish:
                   (self.__jobId, info[1][0])
             self.__updateStatus(Publish.FAILURE, msg)
             raise StandardError(msg)
+   
+        if self.__params.has_key("PushToCancerGov") and \
+            self.__params["PushToCancerGov"] != "Yes":
+            self.__vendorDocsOnly = 1
+        if self.__params.has_key("IncludeLinkedDocs") and \
+            self.__params["IncludeLinkedDocs"] != "Yes":
+            self.__includeLinkedDocs = 0
+        if self.__params.has_key("InteractiveMode") and \
+            self.__params["InteractiveMode"] != "No":
+            self.__interactiveMode = 1	
+        if self.__params.has_key("CheckRemovedDocs") and \
+            self.__params["CheckRemovedDocs"] != "Yes":
+            self.__checkRemovedDocs = 0	
+        if self.__params.has_key("ReportOnly") and \
+            self.__params["ReportOnly"] != "No":
+            self.__reportOnly = 1	
+        if self.__params.has_key("ValidateDocs") and \
+            self.__params["ValidateDocs"] != "Yes":
+            self.__validateDocs = 0	
 
     #---------------------------------------------------------------
     # This is the major public entry point to publishing.
@@ -298,9 +324,9 @@ class Publish:
                     # Refer to the control document for this tricky 
                     # implementation.
                     if self.__sysName == "Primary" and \
-                        self.__subsetName == "Hotfix-Export": 
-                        self.__waitUserApproval()                       
-                        self.__addLinkedDocsToPPD()
+                        self.__subsetName == "Hotfix-Export":
+                        if self.__includeLinkedDocs:                                        
+                            self.__addLinkedDocsToPPD()
                         self.__ignoreUserDocList = 1
                         userListedDocsRemaining = 0
                         continue
@@ -330,7 +356,9 @@ class Publish:
                                             numDocs, time.ctime()))
                             numFailures = self.__getFailures()
                             self.__updateMessage("""%d docs failed so 
-                                far.<BR>""" % numFailures)                       
+                                far.<BR>""" % numFailures)  
+                            if self.__interactiveMode:
+                                self.__waitUserApproval()
 
                         self.__alreadyPublished[doc[0]] = 1
                         userListedDocsRemaining -= 1
@@ -375,9 +403,9 @@ class Publish:
             numFailures = self.__getFailures() 
             if numFailures > 0:
                 msg = """Total of %d docs failed. 
-                    <A href="%s/FilterFailures.py?id=%d">Check the failure
-                    details.</A><BR>""" % (numFailures, self.__cdrHttp, 
-                    self.__jobId)  
+                    <A href="%s/PubStatus.py?id=%d&type=FilterFailure">Check 
+                    the failure details.</A><BR>""" % (numFailures, 
+                    self.__cdrHttp, self.__jobId)  
                 self.__updateMessage(msg)
             else:
                 self.__updateMessage("Total of 0 docs failed.<BR>")                    
@@ -393,11 +421,15 @@ class Publish:
                     except:
                         pass
 
+                    if self.__sysName != "Primary" or \
+                        self.__vendorDocsOnly:
+                        self.__updateStatus(Publish.SUCCESS)
+
                     # Filtered documents have to be in dest before sending 
                     # them to Cancer.gov. The following piece of code is
                     # quite confusing. Keep in mind that there are possibly
                     # two jobs involved.                 
-                    if self.__sysName == "Primary":
+                    else:                        
 
                         # Single job for sending filtered documents only,
                         # not producing the filtered documents again.
@@ -470,6 +502,10 @@ class Publish:
                     pass
 
         # Send email to notify user of job status.
+        if self.__reportOnly:
+            self.__updateStatus(Publish.FAILURE, """The job statue is 
+                set to Failure because it was running for pre-publishing 
+                reports.<BR>""")
         self.__sendMail()
 
     #------------------------------------------------------------------
@@ -562,16 +598,24 @@ class Publish:
                     return [jobId, Publish.FAILURE, msg]
         
             # Create a working table pub_proc_cg_work to hold information
-            # on transactions to Cancer.gov.            
+            # on transactions to Cancer.gov.  
+            cgWorkLink = self.__cdrHttp + "/PubStatus.py?id=1&type=CgWork"
+            link = "<A href='%s'>Check removed docs</A><BR>" % cgWorkLink         
             if pubType == "Full Load" or pubType == "Export":
                 self.__createWorkPPC(vendor_job, vendor_dest, jobId) 
                 pubTypeCG = pubType 
+                if self.__checkRemovedDocs or self.__interactiveMode:                   
+                    self.__updateMessage(link)
+                    self.__waitUserApproval()
             elif pubType == "Hotfix (Remove)":
                 self.__createWorkPPCHR(vendor_job, vendor_dest, jobId)
                 pubTypeCG = "Hotfix"
             elif pubType == "Hotfix (Export)":
                 self.__createWorkPPCHE(vendor_job, vendor_dest, jobId)  
                 pubTypeCG = "Hotfix" 
+                if self.__checkRemovedDocs or self.__interactiveMode:
+                    self.__updateMessage(link)
+                    self.__waitUserApproval()
             else:
                 raise StandardError("pubType %s not supported." % pubType)   
             
@@ -1226,7 +1270,7 @@ class Publish:
 
         # Validate the filteredDoc against Vendor DTD.       
         if self.__sysName == "Primary" and \
-            self.__subsetName[0:13] != "Hotfix-Remove" and filteredDoc:
+            self.__validateDocs and filteredDoc:
             errObj = validateDoc(filteredDoc, docId = doc[0])
             if len(errObj.Errors):
                 errors = "Validating failed with errors."
@@ -1909,7 +1953,7 @@ Please do not reply to this message.
         status = Publish.WAIT
         msg = "Job is waiting for user's approval at %s.<BR>" % time.ctime()
         msg += "Change the publishing job status using Manage Publishing " \
-               "Job link under Publishing. <BR>"
+               "Job Status link under Publishing. <BR>"
         self.__updateStatus(status, msg, id)
         self.__sendMail(id)
 
