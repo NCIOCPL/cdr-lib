@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.26 2002-08-30 20:14:01 pzhang Exp $
+# $Id: cdrpub.py,v 1.27 2002-09-03 21:54:13 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.26  2002/08/30 20:14:01  pzhang
+# Fixed a couple of minor bugs.
+#
 # Revision 1.25  2002/08/30 19:40:46  pzhang
 # Merged control parameter PushToCancerGov to ReportOnly.
 # Put invalid filtered documents in InvalidDocs subdirectory.
@@ -110,10 +113,10 @@ class Publish:
     __pd2cg    = "Push_Documents_To_Cancer.Gov"
     __cdrHttp  = "http://%s.nci.nih.gov/cgi-bin/cdr" % socket.gethostname()
     __ignoreUserDocList = 0
-    __interactiveMode = 0
+    __interactiveMode = 1
     __checkRemovedDocs  = 1    
     __includeLinkedDocs = 1
-    __reportOnly        = 0
+    __reportOnly        = 1
     __validateDocs      = 1
    
     #---------------------------------------------------------------
@@ -229,14 +232,14 @@ class Publish:
             self.__params["IncludeLinkedDocs"] != "Yes":
             self.__includeLinkedDocs = 0
         if self.__params.has_key("InteractiveMode") and \
-            self.__params["InteractiveMode"] != "No":
-            self.__interactiveMode = 1	
+            self.__params["InteractiveMode"] != "Yes":
+            self.__interactiveMode = 0	
         if self.__params.has_key("CheckRemovedDocs") and \
             self.__params["CheckRemovedDocs"] != "Yes":
             self.__checkRemovedDocs = 0	
         if self.__params.has_key("ReportOnly") and \
-            self.__params["ReportOnly"] != "No":
-            self.__reportOnly = 1	
+            self.__params["ReportOnly"] != "Yes":
+            self.__reportOnly = 0	
         if self.__params.has_key("ValidateDocs") and \
             self.__params["ValidateDocs"] != "Yes":
             self.__validateDocs = 0	
@@ -1281,7 +1284,7 @@ class Publish:
                 invalDoc = "InvalidDocs"
                 
         # Save the output as instructed.
-        if self.__no_output != 'Y' and filteredDoc and not self.__reportOnly:
+        if self.__no_output != 'Y' and filteredDoc:
             try:
                 subDir = invalDoc or subDir
                 destDir = destDir + "/" + subDir
