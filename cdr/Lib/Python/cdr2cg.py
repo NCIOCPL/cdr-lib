@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.14 2002-11-14 20:22:07 pzhang Exp $
+# $Id: cdr2cg.py,v 1.15 2003-02-14 20:04:47 pzhang Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.14  2002/11/14 20:22:07  pzhang
+# Added version infor for CG team.
+#
 # Revision 1.13  2002/11/01 19:16:05  pzhang
 # Used binary write in log.
 #
@@ -104,12 +107,12 @@ requestWrapper      = """\
 
 initRequestTemplate = """\
   <Request xmlns="http://gatekeeper.cancer.gov">
-   <source>%s</source>
+   <source>%s</source>  
    <requestID>Initiate Request</requestID>
    <message>
     <PubEvent>
      <pubType>%s</pubType>
-     <docType>%s</docType>
+     <description>%s</description>
      <lastJobID>%d</lastJobID>
     </PubEvent>
    </message>
@@ -117,12 +120,12 @@ initRequestTemplate = """\
 
 dataPrologTemplate = """\
   <Request xmlns="http://gatekeeper.cancer.gov">
-   <source>%s</source>
+   <source>%s</source>   
    <requestID>%d</requestID>
    <message>
     <PubEvent>
-     <pubType>%s</pubType>
-     <docType>%s</docType>
+     <pubType>%s</pubType>     
+     <description>%s</description>
      <lastJobID>%d</lastJobID>
      <docCount>%d</docCount>
     </PubEvent>
@@ -131,7 +134,7 @@ dataPrologTemplate = """\
 
 docTemplateHead= """\
   <Request xmlns="http://gatekeeper.cancer.gov">
-   <source>%s</source>
+   <source>%s</source>   
    <requestID>%d</requestID>
    <message>
     <PubData>
@@ -184,9 +187,6 @@ class PubEventResponse:
             One of Hotfix, Export, Remove, or Full Load; echoed
             from request
 
-        docType
-            echoed from request
-
         lastJobId
             ID of last job of this type successfully processed by
             Cancer.Gov
@@ -196,12 +196,10 @@ class PubEventResponse:
     """
 
     def __init__(self, node):
-        pubTypeElem        = getChildElement(node, "pubType", 1)
-        docTypeElem        = getChildElement(node, "docType", 1)
+        pubTypeElem        = getChildElement(node, "pubType", 1)        
         lastJobIdElem      = getChildElement(node, "lastJobID", 1)
         docCountElem       = getChildElement(node, "docCount")
-        self.pubType       = getTextContent(pubTypeElem)
-        self.docType       = getTextContent(docTypeElem)
+        self.pubType       = getTextContent(pubTypeElem)        
         if lastJobIdElem is not None:
             try:
                 self.lastJobId = int(getTextContent(lastJobIdElem))
@@ -370,18 +368,18 @@ def sendRequest(body, app = application, host = host, headers = headers):
     logString("RESPONSE", data)
     return data
 
-def initiateRequest(pubType, docType, lastJobId):
+def initiateRequest(jobDesc, pubType, lastJobId):
     xmlString = sendRequest(initRequestTemplate % (source,
-                                                   pubType, 
-                                                   docType, 
+                                                   pubType,
+                                                   jobDesc,
                                                    lastJobId))
     return Response(xmlString)
     
-def sendDataProlog(jobId, pubType, docType, lastJobId, docCount):
-    xmlString = sendRequest(dataPrologTemplate % (source,
+def sendDataProlog(jobDesc, jobId, pubType, lastJobId, docCount):
+    xmlString = sendRequest(dataPrologTemplate % (source,                                                  
                                                   jobId, 
-                                                  pubType, 
-                                                  docType, 
+                                                  pubType,
+                                                  jobDesc,
                                                   lastJobId,
                                                   docCount))
     return Response(xmlString)
@@ -398,22 +396,6 @@ def sendDocument(jobId, docNum, transType, docType, docId, docVer, doc = ""):
    
     return Response(xmlString)
 
-def removeDocuments(jobId, docType, docIdList, lastJobId):
-    if not docIdList: return
-    if type(docIdList) not in (type(()), type([])):
-        docIdList = [docIdList]
-    resp = sendDataProlog(jobId, "Remove", docType, lastJobId, len(docIdList))
-    if resp.type != "OK":
-        raise StandardError("sending data prolog in removeDocuments: %s (%s)" %
-                           (resp.type, resp.message))
-    for i in xrange(len(docIdList)):
-        docId = docIdList[i]
-        resp = sendDocument(jobId, i + 1, "Delete", docType, docId, 1)
-        if resp.type != "OK":
-            raise StandardError("sending document %d (CDR%010d) in "
-                                "removeDocuments: %s (%s)" %
-                               (i + 1, docId, resp.type, resp.message))
-            
 def pubPreview(xml, typ):
     req = pubPreviewTemplate % (xml, typ)
     xmlString = sendRequest(
@@ -442,7 +424,7 @@ if __name__ == "__main__":
 
     # See if the GateKeeper is awake.
     sys.stderr.write("initiating request ...\n")
-    response = initiateRequest("Export", docType, lastJobId)
+    response = initiateRequest("Command-line testing.", "Export", lastJobId)
     if response.type != "OK":
         print "%s: %s" % (response.type, response.message)
         if response.fault:
@@ -454,7 +436,7 @@ if __name__ == "__main__":
 
     # Prepare the server for a batch of documents.
     sys.stderr.write("sending data prolog ...\n")
-    response = sendDataProlog(jobId, "Export", docType,
+    response = sendDataProlog("Command-line testing.", jobId, "Export", 
                               response.details.lastJobId, 1)
     if response.type != "OK":
         print "%s: %s" % (response.type, response.message)
