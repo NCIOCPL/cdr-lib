@@ -1,16 +1,19 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.2 2001-03-27 21:15:27 bkline Exp $
+# $Id: cdrcgi.py,v 1.3 2001-04-08 22:52:42 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2001/03/27 21:15:27  bkline
+# Paramaterized body background for HTML; added RCS Log keyword.
+#
 #----------------------------------------------------------------------
 
 #----------------------------------------------------------------------
 # Import external modules needed.
 #----------------------------------------------------------------------
-import cgi, cdr, sys
+import cgi, cdr, sys, codecs
 
 #----------------------------------------------------------------------
 # Create some useful constants.
@@ -121,3 +124,13 @@ def bail(message, banner = "CDR Web Interface"):
     page = page + "<H2>%s</H2></FORM></BODY></HTML>" % message
     sendPage(page)
     sys.exit(0)
+
+#----------------------------------------------------------------------
+# Encode XML for transfer to the CDR Server using utf-8.
+#----------------------------------------------------------------------
+def encode(xml): return unicode(xml, 'latin-1').encode('utf-8')
+
+#----------------------------------------------------------------------
+# Convert CDR Server's XML from utf-8 to latin-1 encoding.
+#----------------------------------------------------------------------
+def decode(xml): return unicode(xml, 'utf-8').encode('latin-1')
