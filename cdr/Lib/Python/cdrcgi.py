@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.29 2002-11-07 13:08:23 bkline Exp $
+# $Id: cdrcgi.py,v 1.30 2002-11-13 16:57:28 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.29  2002/11/07 13:08:23  bkline
+# Added slot for stylesheet in standard header.
+#
 # Revision 1.28  2002/09/05 16:31:14  pzhang
 # Added port parameter to get session.
 #
@@ -118,7 +121,7 @@ HEADER   = """\
   <LINK REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
  %s</HEAD>
  <BODY BGCOLOR='EEEEEE'>
-  <FORM ACTION='/cgi-bin/cdr/%s' METHOD='%s'>
+  <FORM ACTION='/cgi-bin/cdr/%s' METHOD='%s'%s>
    <TABLE WIDTH='100%%' CELLSPACING='0' CELLPADDING='0' BORDER='0'>
     <TR>
      <TH NOWRAP BGCOLOR='silver' ALIGN='left' BACKGROUND='/images/nav1.jpg'>
@@ -149,8 +152,8 @@ SUBBANNER = """\
 # Display the header for a CDR web form.
 #----------------------------------------------------------------------
 def header(title, banner, subBanner, script = '', buttons = None, bkgd = '',
-           numBreaks = 2, method = 'POST', stylesheet=''):
-    html = HEADER % (title, stylesheet, script, method, banner)
+           numBreaks = 2, method = 'POST', stylesheet='', formExtra = ''):
+    html = HEADER % (title, stylesheet, script, method, formExtra, banner)
     if buttons:
         html = html + B_CELL
         for button in buttons:
@@ -210,7 +213,10 @@ Content-type: text/%s
 #----------------------------------------------------------------------
 # Emit an HTML page containing an error message and exit.
 #----------------------------------------------------------------------
-def bail(message, banner = "CDR Web Interface"):
+def bail(message, banner = "CDR Web Interface", extra = None):
+    if extra:
+        for arg in extra:
+            message += "<br>%s" % cgi.escape(arg)
     page = header("CDR Error", banner, "An error has occured", "", [])
     page = page + "<B>%s</B></FORM></BODY></HTML>" % message
     sendPage(page)
@@ -302,6 +308,7 @@ def mainMenu(session, news = None):
       <LI><A HREF='%s/EditQueryTermDefs.py%s'>Manage Query Term Definitions</A></LI>
       <LI><A HREF='%s/EditLinkControl.py%s'>Manage Linking Tables</A></LI>
       <LI><A HREF='%s/EditFilters.py%s'>Manage Filters</A></LI>
+      <LI><A HREF='%s/EditFilterSets.py%s'>Manage Filter Sets</A></LI>
       <LI><A HREF='%s/Publishing.py%s'>Publishing</A></LI>
       <LI><A HREF='%s/Reports.py%s'>Reports</A></LI>
       <LI><A HREF='%s/Mailers.py%s'>Mailers</A></LI>
@@ -313,6 +320,7 @@ def mainMenu(session, news = None):
       <LI><A HREF='%s/Logout.py%s'>Log Out</A></LI>
      </OL>
     """ % (BASE, session,
+           BASE, session,
            BASE, session,
            BASE, session,
            BASE, session,
