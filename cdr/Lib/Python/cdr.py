@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.44 2002-07-31 05:03:11 ameyer Exp $
+# $Id: cdr.py,v 1.45 2002-08-15 23:35:32 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.44  2002/07/31 05:03:11  ameyer
+# Fixed idSessionUser.
+#
 # Revision 1.43  2002/07/25 17:21:30  bkline
 # Added comment about the reason argument in addDoc/repDoc.
 #
@@ -173,7 +176,7 @@ def normalize(id):
         idNum = id
     else:
         digits = re.sub('[^\d]', '', id)
-        idNum  = string.atoi(digits)
+        idNum  = int(digits)
     return "CDR%010d" % idNum
 
 #----------------------------------------------------------------------
@@ -217,7 +220,7 @@ def exNormalize(id):
         if not result:
             raise StandardError ("Invalid CDR ID string: " + id)
 
-        idNum = string.atoi (result.group ('num'))
+        idNum = int (result.group ('num'))
         frag  = result.group ('frag')
 
     # Sanity check on number
@@ -349,7 +352,7 @@ def login(userId, passWord, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #   Tuple of (userid, password)
 #   Or single error string.
 #----------------------------------------------------------------------
-def idSessionUser(mySession, session):
+def idSessionUser(mySession, getSession):
 
     # Direct access to db.  May replace later with secure server function.
     try:
@@ -365,16 +368,16 @@ def idSessionUser(mySession, session):
             "SELECT u.name, u.password " \
             "  FROM usr u, session s " \
             " WHERE u.id = s.usr " \
-            "   AND s.name = '%s'" % session)
+            "   AND s.name = '%s'" % getSession)
         usrRow = cursor.fetchone()
         if type(usrRow)==type(()) or type(usrRow)==type([]):
             return usrRow
         else:
-            # return "User unknown for session %s" % session
+            # return "User unknown for session %s" % getSession
             return usrRow
     except cdrdb.Error, info:
         return "Error selecting usr for session: %s - %s" % \
-                (session, info[1][0])
+                (getSession, info[1][0])
 
 #----------------------------------------------------------------------
 # Determine whether a session is authorized to do something
@@ -518,7 +521,7 @@ def addDoc(credentials, file = None, doc = None,
     # Load the document if necessary.
     if file: doc = open(file, "r").read()
     if not doc:
-        if file: return "<Errors><Err>%s not found</Err></Errors>" % (fileName)
+        if file: return "<Errors><Err>%s not found</Err></Errors>" % file
         else:    return "<Errors><Err>Document missing.</Err></Errors>"
 
     # Create the command.
@@ -564,7 +567,7 @@ def repDoc(credentials, file = None, doc = None,
     # Load the document if necessary.
     if file: doc = open(file, "r").read()
     if not doc:
-        if file: return "<Errors><Err>%s not found</Err></Errors>" % (fileName)
+        if file: return "<Errors><Err>%s not found</Err></Errors>" % file
         else:    return "<Errors><Err>Document missing.</Err></Errors>"
 
     # Create the command.
@@ -757,12 +760,12 @@ def report(credentials, name, parms, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # Class to contain one hit from query result set.
 #----------------------------------------------------------------------
 class QueryResult:
-    def __init__(this, docId, docType, docTitle):
-        this.docId      = docId
-        this.docType    = docType
-        this.docTitle   = docTitle
-    def __repr__(this):
-        return "%s (%s) %s\n" % (this.docId, this.docType, this.docTitle)
+    def __init__(self, docId, docType, docTitle):
+        self.docId      = docId
+        self.docType    = docType
+        self.docTitle   = docTitle
+    def __repr__(self):
+        return "%s (%s) %s\n" % (self.docId, self.docType, self.docTitle)
 
 #----------------------------------------------------------------------
 # Process a CDR query.  Returns a tuple with two members, the first of
@@ -801,7 +804,7 @@ def search(credentials, query, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # Class to contain CDR document type information.
 #----------------------------------------------------------------------
 class dtinfo:
-    def __init__(this,
+    def __init__(self,
                  type       = None,
                  format     = None,
                  versioning = None,
@@ -812,18 +815,18 @@ class dtinfo:
                  vvLists    = None,
                  comment    = None,
                  error      = None):
-        this.type           = type
-        this.format         = format
-        this.versioning     = versioning
-        this.created        = created
-        this.schema_mod     = schema_mod
-        this.dtd            = dtd
-        this.schema         = schema
-        this.vvLists        = vvLists
-        this.comment        = comment
-        this.error          = error
-    def __repr__(this):
-        if this.error: return this.error
+        self.type           = type
+        self.format         = format
+        self.versioning     = versioning
+        self.created        = created
+        self.schema_mod     = schema_mod
+        self.dtd            = dtd
+        self.schema         = schema
+        self.vvLists        = vvLists
+        self.comment        = comment
+        self.error          = error
+    def __repr__(self):
+        if self.error: return self.error
         return """\
 [CDR Document Type]
             Name: %s
@@ -837,14 +840,14 @@ class dtinfo:
 %s
          Comment:
 %s
-""" % (this.type or '',
-       this.format or '',
-       this.versioning or '',
-       this.created or '',
-       this.schema_mod or '',
-       this.schema or '',
-       this.dtd or '',
-       this.comment or '')
+""" % (self.type or '',
+       self.format or '',
+       self.versioning or '',
+       self.created or '',
+       self.schema_mod or '',
+       self.schema or '',
+       self.dtd or '',
+       self.comment or '')
 
 #----------------------------------------------------------------------
 # Retrieve document type information from the CDR.
@@ -952,16 +955,16 @@ def modDoctype(credentials, info, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
 
 class Term:
-    def __init__(this, id, name):
-        this.id       = id
-        this.name     = name
-        this.parents  = []
-        this.children = []
+    def __init__(self, id, name):
+        self.id       = id
+        self.name     = name
+        self.parents  = []
+        self.children = []
 
 class TermSet:
-    def __init__(this, error = None):
-        this.terms = {}
-        this.error = error
+    def __init__(self, error = None):
+        self.terms = {}
+        self.error = error
 
 #----------------------------------------------------------------------
 # Gets context information for term's position in terminology tree.
@@ -1754,7 +1757,7 @@ def exceptionInfo():
 #----------------------------------------------------------------------
 # Send email to a list of recipients.
 #----------------------------------------------------------------------
-def sendMail(sender, recips, subject = "", body = ""):
+def sendMail(sender, recips, subject = "", body = "", html = 0):
     if not recips:
         return "sendMail: no recipients specified"
     if type(recips) != type([]) and type(recips) != type(()):
@@ -1763,12 +1766,21 @@ def sendMail(sender, recips, subject = "", body = ""):
     for recip in recips[1:]:
         recipList += (",\n  %s" % recip)
     try:
+        # Headers
         message = """\
 From: %s
 To: %s
 Subject: %s
+""" % (sender, recipList, subject)
 
-%s""" % (sender, recipList, subject, body)
+        # Set content type for html
+        if html:
+            message += "Content-type: text/html; charset=iso-8859-1\n"
+
+        # Separator line + body
+        message += "\n %s" % body
+
+        # Send it
         server = smtplib.SMTP(SMTP_RELAY)
         server.sendmail(sender, recips, message)
         server.quit()
