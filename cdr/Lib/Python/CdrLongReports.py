@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.7 2003-09-10 12:51:16 bkline Exp $
+# $Id: CdrLongReports.py,v 1.8 2003-09-11 12:40:30 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2003/09/10 12:51:16  bkline
+# Broke out logic to restrict mailer-non-respondent report to the
+# specified date range into a separate SQL query.
+#
 # Revision 1.6  2003/09/09 22:18:23  bkline
 # Fixed SQL queries and name bug for inactive persons in mailer
 # non-respondent report.
@@ -942,9 +946,9 @@ class NonRespondentsReport:
 
         # Tell the user where to find it.
         body = """\
-The OSP report you requested on Protocols can be viewed at
-%s.
-""" % url
+The %s Mailer Non-Respondents report you requested can be
+viewed at %s.
+""" % (self.docType, url)
         sendMail(job, "Report results", body)
         job.setProgressMsg(msg)
         job.setStatus(cdrbatch.ST_COMPLETED)
@@ -1343,7 +1347,7 @@ SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
 
         # Tell the user where to find it.
         body = """\
-The report you requested on Protocols associated with CDR%d
+The Organization Protocol Review report you requested for CDR%d
 can be viewed at
 %s.
 """ % (self.id, url)
