@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.23 2002-02-27 20:27:08 bkline Exp $
+# $Id: cdr.py,v 1.24 2002-03-01 22:20:21 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.23  2002/02/27 20:27:08  bkline
+# Removed extra logout function definition.
+#
 # Revision 1.22  2002/02/19 23:16:51  ameyer
 # Eliminated SCRIPTS.  Now using BASEDIR - pointing to a more generic place.
 #
@@ -404,15 +407,17 @@ def valDoc(credentials, docType, docId = None, doc = None,
 #----------------------------------------------------------------------
 def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
               host = DEFAULT_HOST, port = DEFAULT_PORT, parm = [],
-              no_output = 'N', docVer = None):
+              no_output = 'N', docVer = None, docDate = None):
 
     # Create the command.
     if docId:
         verAttr = ''
         if docVer:
-            if type(docVer) == type(9): verAttr = " version='%d'" % docVer
+            if type(docVer) == type(9): qual = " version='%d'" % docVer
             else: verAttr = " version='%s'" % docVer
-        docElem = "<Document href='%s'%s/>" % (normalize(docId), verAttr)
+        elif docDate:
+            qual = " docDate='%s'" % docDate
+        docElem = "<Document href='%s'%s/>" % (normalize(docId), qual)
     elif doc: docElem = "<Document><![CDATA[%s]]></Document>" % doc
     else: return "<Errors><Err>Document not specified.</Err></Errors>"
 
