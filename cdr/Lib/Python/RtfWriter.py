@@ -28,11 +28,14 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: RtfWriter.py,v 1.3 2005-02-24 04:32:04 bkline Exp $
+# $Id: RtfWriter.py,v 1.4 2005-03-03 14:42:30 bkline Exp $
 #
 # Module for generating RTF documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2005/02/24 04:32:04  bkline
+# Cleanup of pydoc comments.
+#
 # Revision 1.2  2005/02/24 02:20:35  bkline
 # Fleshed out comments for pydoc.
 #
@@ -515,7 +518,7 @@ class FormLetter(Document):
 
         2. Create a new FormLetter object, passing in the name of the
            template, the title, the subject, the pathname for the
-           location of the NCI logo, and (for Editorial Board
+           location of the DHHS logo, and (for Editorial Board
            invitation letters) the specific invitation document
            used for this board.
 
@@ -580,7 +583,7 @@ class FormLetter(Document):
         """
         Creates a new instance of the derived FormLetter class.  The
         caller should override the pngName parameter with the correct
-        location of the NCI logo image if it is not in the current
+        location of the DHHS logo image if it is not in the current
         working directory.  Set binImage if the image is not to be
         stored using only 7-bit ASCII characters (though this causes
         the resulting RTF document to deviate slightly from the base
@@ -623,7 +626,7 @@ class FormLetter(Document):
 
         """
         Private method used to embed a serialized representation of
-        an image (in this case, the NCI logo used in the letterhead).
+        an image (in this case, the DHHS logo used in the letterhead).
         """
         
         if not image:
@@ -692,8 +695,8 @@ class FormLetter(Document):
         where xxxx is the title of miscellaneous document to be
         retrieved and inserted into the body of the letter.  The
         single required parameter is the Python regular expression
-        match object used to locate all such patterns.  This method
-        is invoked indirectly by the sub() method of the regular
+        match object used to locate this pattern.  This method is
+        invoked indirectly by the sub() method of the regular
         expression object for the pattern.
         """
         

@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 """
 
     Module for extracting data from Excel 97+ workbooks.
@@ -142,11 +144,15 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: ExcelReader.py,v 1.6 2005-01-06 22:55:55 bkline Exp $
+# $Id: ExcelReader.py,v 1.7 2005-03-03 14:42:30 bkline Exp $
 #
 # Module for extracting cell values from Excel spreadsheets.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2005/01/06 22:55:55  bkline
+# Added more debugging information; fixed RTF and Far East length
+# calculation bugs.
+#
 # Revision 1.5  2004/11/04 13:13:58  bkline
 # Removed superfluous quote mark in doc string.
 #
@@ -252,7 +258,7 @@ class Workbook:
         """Generates an XML representation of the workbook, using
         UTF-8 encoding.  Useful for storing the data in a format
         which is readable on another machine where this module is
-        noe available, but the standard XML parsing tools are.
+        not available, but the standard XML parsing tools are.
 
         By default, the XML document wraps all of the cells on
         a given row in a Row element, with each cell in a Col
