@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.16 2003-09-16 19:43:28 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.17 2003-11-05 01:44:54 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,12 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.16  2003/09/16 19:43:28  ameyer
+# Moved assignment of filter parameters from here to cdrglblchg.py.
+# Now performing filterDoc operations in a loop, allowing multiple
+# filters with dynamically assigned parameters to be applied to each
+# document.
+#
 # Revision 1.15  2003/09/09 15:41:51  ameyer
 # Added proper job failure after database error selecting docs.
 #
@@ -155,8 +161,9 @@ except cdrbatch.BatchException, be:
     jobObj.fail ("GCBatch: create chg object failed: %s" %\
                  str(be), logfile=LF)
 
-cdr.logwrite ("GCBatch: Created chg object of type=%s" % chgType,LF) # DEBUG
-
+# Debug logging
+cdr.logwrite ("GCBatch: Created chg object of type=%s" % chgType,LF)
+chg.dumpSsVars()
 
 #----------------------------------------------------------------------
 # Setup session
@@ -228,6 +235,12 @@ for idTitle in originalDocs:
         chgCwdXml    = None     # Transformed CWD
         chgPubVerXml = None     # Transformed version of last pub version
 
+        # No filtering done yet
+        chg.filtered = [0,0]
+        chg.doneChgs = []
+        chg.doneChgs.append ({})
+        chg.doneChgs.append ({})
+
         # No problems yet
         failed     = None
         checkedOut = 0
@@ -258,26 +271,37 @@ for idTitle in originalDocs:
             # Get version info
             cdr.logwrite ("Checking lastVersions", LF)
             result = cdr.lastVersions (session, docIdStr)
-            cdr.logwrite ("Finished checking lastVersions", LF)
             if type(result) == type("") or type(result) == type(u""):
                 failed = logDocErr (docId, "fetching last version information",
                                     result)
             else:
                 (lastVerNum, lastPubVerNum, isChanged) = result
+                cdr.logwrite ("lastVerNum=%d lastPubVerNum=%d isChanged=%s" %\
+                              (lastVerNum, lastPubVerNum, isChanged), LF)
 
                 # Execute one or more filters to produce changed CWD
                 passNumber = 0
                 result     = 1
                 cdr.logwrite ("Filtering CWD", LF)
                 while result:
-                    result = chg.getFilterInfo (passNumber)
+                    result = chg.getFilterInfo (cdrglblchg.FLTR_CWD)
                     if result:
-                        filtResp = cdr.filterdoc (session, filter=result[0],
-                                   parm=result[2], docId=docId, docVer=None)
-                    passNumber += 1
+                        cdr.logwrite (\
+                           " filter=%s\n  parms=%s\n  docId=%d pass=%d" % \
+                           (result[0], result[1], docId, passNumber), LF)
+                        if result:
+                            filtResp = cdr.filterDoc (session,
+                                       filter=result[0], parm=result[1],
+                                       docId=docId, docVer=None)
+                        passNumber += 1
+
+                if passNumber == 0:
+                    failed = logDocErr (docId, "Filtering CWD",
+                                "No filters found via getFilterInfo()");
 
                 if type(filtResp) != type(()):
-                    failed = logDocErr (docId, "filtering CWD", filtResp)
+                    failed = logDocErr (docId, "filtering CWD, pass=%d" % \
+                                        passNumber, filtResp)
                 else:
                     # Get document, ignore messages (filtResp[1])
                     chgCwdXml = filtResp[0]
@@ -312,15 +336,24 @@ for idTitle in originalDocs:
                     result     = 1
                     cdr.logwrite ("Filtering last version", LF)
                     while result:
-                        result = chg.getFilterInfo (passNumber)
+                        result = chg.getFilterInfo (cdrglblchg.FLTR_PUB)
                         if result:
-                            filtResp = cdr.filterdoc (session, filter=result[0],
-                                       parm=result[2], docId=docId,
+                            cdr.logwrite (\
+                               " filter=%s\n  parms=%s\n  docId=%d pass=%d" % \
+                               (result[0], result[1], docId, passNumber), LF)
+                            filtResp = cdr.filterDoc (session, filter=result[0],
+                                       parm=result[1], docId=docId,
                                        docVer=lastPubVerNum)
-                        passNumber += 1
+                            passNumber += 1
+
+                    if passNumber == 0:
+                        failed = logDocErr (docId, "Filtering last version",
+                                    "No filters found via getFilterInfo()");
+
                     if type(filtResp) != type(()):
                         failed = logDocErr(docId,
-                                 "filtering last publishable version", filtResp)
+                             "filtering last publishable version, pass=%d" %
+                              passNumber, filtResp)
                     else:
                         chgPubVerXml = filtResp[0]
                     cdr.logwrite ("Finished filtering last version", LF)
