@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.65 2004-12-21 13:17:16 bkline Exp $
+# $Id: cdrpub.py,v 1.66 2005-01-18 19:39:44 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.65  2004/12/21 13:17:16  bkline
+# Backed out terminology snapshot code, which will be moved to the program
+# which does the NLM trial export.
+#
 # Revision 1.64  2004/12/18 18:07:50  bkline
 # Modified cg-push code to accomodate Media documents.
 #
@@ -3046,9 +3050,10 @@ Please do not reply to this message.
         # Put a stop there.
         status = Publish.WAIT
         msg = "Job is waiting for user's approval at %s.<BR>" % time.ctime()
-        msg += "Change the publishing job status using Manage Publishing " \
-               "Job Status link under Publishing. <BR>"
+        msg += "Change the publishing job status using the menu item <BR>" \
+               "<B>Manage Publishing Job Status</B> under the Publishing Menu. <BR>"
         self.__updateStatus(status, msg)
+        msg += "<BR>"
         self.__sendMail()
 
         # Wait until user does something.
