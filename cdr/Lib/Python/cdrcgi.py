@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.11 2002-05-24 18:03:22 bkline Exp $
+# $Id: cdrcgi.py,v 1.12 2002-05-30 17:01:06 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.11  2002/05/24 18:03:22  bkline
+# Fixed encoding bug in Advanced Search screens.
+#
 # Revision 1.10  2002/04/12 19:56:21  bkline
 # Added import statement for cdrdb module.
 #
@@ -141,7 +144,10 @@ def getRequest(fields):
 # Send an HTML page back to the client.
 #----------------------------------------------------------------------
 def sendPage(page):
-    print "Content-type: text/html\n\n" + page
+    print """\
+Content-type: text/html
+    
+""" + page
     sys.exit(0)
 
 #----------------------------------------------------------------------
@@ -702,6 +708,11 @@ def advancedSearchResultsPage(docType, rows, strings, filter):
 """ % (i + 1, cgi.escape(unicodeToLatin1(title), 1), 
        dtcol, '/cgi-bin/cdr/Filter.py', 
        docId, filt, docId)
+
+        # Requested by LG, Issue #193.
+        if docType == "Protocol":
+            html += "<TR><TD COLWIDTH='3'>&nbsp;</TD></TR>\n"
+        
     return html + "  </TABLE>\n </BODY>\n</HTML>\n"
 
 #----------------------------------------------------------------------
