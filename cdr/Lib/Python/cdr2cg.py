@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.16 2003-03-25 19:00:24 pzhang Exp $
+# $Id: cdr2cg.py,v 1.17 2004-12-23 01:36:28 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.16  2003/03/25 19:00:24  pzhang
+# Used physical path for PDQDTD.
+#
 # Revision 1.15  2003/02/14 20:04:47  pzhang
 # Dropped DocType and added description at prolog level.
 #
@@ -57,24 +60,17 @@
 import httplib, re, sys, time, xml.dom.minidom, socket, string
 
 #----------------------------------------------------------------------
-# Namespaces we don't really need.
-#----------------------------------------------------------------------
-"""
-    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-"""
-
-#----------------------------------------------------------------------
 # Module data.
 #----------------------------------------------------------------------
 debuglevel          = 0
 localhost           = socket.gethostname()
 source              = "CDR Staging"
+host                = "gatekeeper.cancer.gov"
 if string.upper(localhost) == "BACH":
     source = "CDR Production"
 elif string.upper(localhost) == "MAHLER":
     source = "CDR Development"
-host                = "gatekeeper.cancer.gov"
+    host   = "dev1.cancer.gov"
 port                = 80
 soapNamespace       = "http://schemas.xmlsoap.org/soap/envelope/"
 application         = "/GateKeeper/GateKeeper.asmx"
@@ -152,7 +148,7 @@ docTemplateTail = """\
   </Request>"""
 
 pubPreviewTemplate = """
-  <ReturnXML xmlns="http://stage.cancer.gov/CDRPreview/">
+  <ReturnXML xmlns="http://gatekeeper.cancer.gov/CDRPreview/">
    <content>%s</content>
    <template_type>%s</template_type>
   </ReturnXML>
@@ -404,9 +400,10 @@ def pubPreview(xml, typ):
     xmlString = sendRequest(
         req, 
         app     = '/CDRPreview/WSProtocol.asmx',
-        host    = 'stage.cancer.gov', 
+        host    = host,
         headers = { 'Content-type': 'text/xml; charset="utf-8"',
-                    'SOAPAction'  : 'http://stage.cancer.gov/CDRPreview/ReturnXML' })
+                    'SOAPAction'  :
+                    'http://gatekeeper.cancer.gov/CDRPreview/ReturnXML' })
     return Response(xmlString, 0)
 
 #----------------------------------------------------------------------
@@ -449,10 +446,6 @@ if __name__ == "__main__":
     sys.stderr.write("sending first document ...\n")
     response = sendDocument(jobId, 1, "Export", docType, docId, 1,
                             open("CDR%d.xml" % docId).read())
-    if response.type != "OK":
-        print "%s: %s" % (response.type, response.message)
-        sys.exit(1)
-   
     if response.type != "OK":
         print "%s: %s" % (response.type, response.message)
         sys.exit(1)
