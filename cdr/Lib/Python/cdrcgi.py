@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.44 2004-01-27 17:17:24 bkline Exp $
+# $Id: cdrcgi.py,v 1.45 2004-02-03 14:41:00 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.44  2004/01/27 17:17:24  bkline
+# Fixed handling of non-ascii strings argument in advancedSearchResultsPage().
+#
 # Revision 1.43  2004/01/23 15:47:03  bkline
 # Fixed typo (missing `if' in last modification).
 #
@@ -525,7 +528,7 @@ SELECT DISTINCT value, value
 def generateHtmlPicklist(conn, fieldName, query, pattern):
     try:
         cursor = conn.cursor()
-        cursor.execute(query)
+        cursor.execute(query, timeout=300)
         rows = cursor.fetchall()
         cursor.close()
         cursor = None
