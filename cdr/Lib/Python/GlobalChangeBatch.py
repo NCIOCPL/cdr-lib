@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.10 2002-11-27 01:38:32 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.11 2003-03-27 18:36:04 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,10 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2002/11/27 01:38:32  ameyer
+# Slight change to double check that personId can only be sent if
+# leadOrgId also exists.
+#
 # Revision 1.9  2002/11/27 01:36:52  ameyer
 # Added parameters to status change filter for the lead org id and
 # person id, if user has entered them.
@@ -98,7 +102,7 @@ def logDocErr (docId, where, msg):
 #----------------------------------------------------------------------
 # Setup job
 #----------------------------------------------------------------------
-cdr.logwrite ("GlobalChangeBatch: Started batch job", LF) # DEBUG
+cdr.logwrite ("GCBatch: Started batch job", LF) # DEBUG
 
 # Get job id
 if len (sys.argv) < 2:
@@ -113,7 +117,7 @@ except ValueError:
         "Last parameter '%s' passed to GlobalChangeBatch.py is not a job id"
         % jobIdArg, LF)
     sys.exit (1)
-cdr.logwrite ("GlobalChangeBatch: Got jobId", LF) # DEBUG
+cdr.logwrite ("GCBatch: Got jobId=%d" % jobId, LF) # DEBUG
 
 # Create the job object
 # This loads a row from the batch_job table and sets the status to 'In process'
@@ -122,7 +126,6 @@ try:
 except cdrbatch.BatchException, be:
     cdr.logwrite ("Unable to create batch job object: %s" % str(be), LF)
     sys.exit (1)
-cdr.logwrite ("GlobalChangeBatch: Created jobObj", LF) # DEBUG
 
 # Create a global change object of the proper type
 try:
@@ -130,10 +133,10 @@ try:
     chgType = jobObj.getParm ('chgType')
 except cdrbatch.BatchException, be:
     # Log it and exit
-    jobObj.fail ("GlobalChangeBatch: create chg object failed: %s" %\
+    jobObj.fail ("GCBatch: create chg object failed: %s" %\
                  str(be), logfile=LF)
 
-cdr.logwrite ("GlobalChangeBatch: Created chg object", LF) # DEBUG
+cdr.logwrite ("GCBatch: Created chg object of type=%s" % chgType,LF) # DEBUG
 
 
 #----------------------------------------------------------------------
@@ -141,40 +144,66 @@ cdr.logwrite ("GlobalChangeBatch: Created chg object", LF) # DEBUG
 #----------------------------------------------------------------------
 # Find original session
 session = jobObj.getParm (cdrcgi.SESSION)
-cdr.logwrite ("GlobalChangeBatch: Using session: %s" % session, LF)
+cdr.logwrite ("GCBatch: Using session: %s" % session, LF)
 
 # Find the original user associated with this session
 resp = cdr.idSessionUser (None, session)
 if type(resp)==type("") or type(resp)==type(u""):
     # Failed - log and exit
     jobObj.fail ("Can't identify original user: " + resp, logfile=LF)
-cdr.logwrite ("GlobalChangeBatch: Got userid", LF) # DEBUG
+cdr.logwrite ("GCBatch: Got userid=%s" % resp[0], LF) # DEBUG
 
 # Re-login the original user
 session = cdr.login (resp[0], resp[1])
 if session.startswith ("<Error"):
     jobObj.fail ("Can't login original user: %s:%s" % (resp[0], resp[1]),
                  logfile=LF)
-cdr.logwrite ("GlobalChangeBatch: Got new session: %s" % session, LF) # DEBUG
+cdr.logwrite ("GCBatch: Got new session: %s" % session, LF) # DEBUG
 
 # Object needs to know new session, not old one
-chg.sessionVars[cdrcgi.SESSION] = session
+chg.ssVars[cdrcgi.SESSION] = session
 
 
 #----------------------------------------------------------------------
 # Run the actual global change
 #----------------------------------------------------------------------
-# Get from/to change parameters
-if chgType == cdrglblchg.STATUS_CHG:
-    fromId    = jobObj.getParm ('fromId')
-    fromVal   = jobObj.getParm ('fromStatusName')
-    toVal     = jobObj.getParm ('toStatusName')
-    leadOrgId = jobObj.getParm ('restrId')
-    personId  = jobObj.getParm ('restrPiId')
-else:
-    fromVal = jobObj.getParm ('fromId')
-    toVal   = jobObj.getParm ('toId')
-cdr.logwrite ("GlobalChangeBatch: fromVal=%s, toVal=%s" % (fromVal, toVal), LF)
+# Set filter parameters and comments for different types of change
+parms = []
+description = ""
+if chgType == cdrglblchg.PERSON_CHG or chgType == cdrglblchg.ORG_CHG:
+    parms.append (['changeFrom', jobObj.getParm ('fromId')])
+    parms.append (['changeTo', jobObj.getParm ('toId')])
+    description = "global change of %s to %s on %s" % \
+                   (jobObj.getParm ('fromId'),
+                    jobObj.getParm ('toId'),
+                    time.ctime (time.time()))
+
+elif chgType == cdrglblchg.INS_ORG_CHG:
+    parms.append (['leadOrgID', jobObj.getParm ('restrId')])
+    parms.append (['newOrgSiteID', jobObj.getParm ('insertOrgId')])
+    parms.append (['newPersonID', jobObj.getParm ('insertPersId')])
+    if jobObj.getParm ('coopType'):
+        parms.append (['coop', jobObj.getParm ('coopType')])
+    if jobObj.getParm ('specificRole'):
+        parms.append (['setRole', jobObj.getParm ('specificRole')])
+    if jobObj.getParm ('specificPhone'):
+        parms.append (['setSpecificPhone', jobObj.getParm ('specificPhone')])
+    description = "global insert of orgsite %s on %s" % \
+                  (jobObj.getParm ('insertOrgId'),
+                    time.ctime (time.time()))
+
+elif chgType == cdrglblchg.STATUS_CHG:
+    parms.append (['orgId', jobObj.getParm ('fromId')])
+    parms.append (['oldStatus', jobObj.getParm ('fromStatusName')])
+    parms.append (['newStatus', jobObj.getParm ('toStatusName')])
+    if jobObj.getParm ('restrId'):
+        parms.append (['leadOrgId', jobObj.getParm ('restrId')])
+        if jobObj.getParm ('restrPiId'):
+            parms.append (['personId', jobObj.getParm ('restrPiId')])
+    description = "global status change from %s to %s on %s" % \
+                  (jobObj.getParm ('fromStatusName'),
+                   jobObj.getParm ('toStatusName'),
+                    time.ctime (time.time()))
 
 # We'll build two lists of docs to report
 # Documents successfully changed, id + title tuples
@@ -189,7 +218,7 @@ cdr.logwrite ("Selecting docs for final processing", LF)
 try:
     originalDocs = chg.selDocs()
 except cdrbatch.BatchException, be:
-    cdr.logwrite ("GlobalChangeBatch: Unable to select docs: %s" % str(be), LF)
+    cdr.logwrite ("GCBatch: Unable to select docs: %s" % str(be), LF)
 
 # Initialize counts
 totalCount = len (originalDocs)
@@ -199,8 +228,7 @@ excpCount  = 0
 
 # Log
 cdr.logwrite ("Done selecting docs for final processing", LF)
-cdr.logwrite ("Processing %d docs, changing %s to %s" % \
-              (totalCount, fromVal, toVal), LF)
+cdr.logwrite ("Processing %d docs" % totalCount, LF)
 
 # Process each one
 progressMsg = "No docs processed yet"
@@ -242,20 +270,6 @@ for idTitle in originalDocs:
 
             # Remember that we need to check this back in at end
             checkedOut = 1
-
-        # Set list of filter parameters for modifying doc based on type
-        if chgType == cdrglblchg.STATUS_CHG:
-            parms = [['orgId', fromId],
-                     ['oldStatus', fromVal],
-                     ['newStatus', toVal]]
-            # Optional parms on status change
-            if leadOrgId:
-                parms.append (['leadOrgId', leadOrgId])
-                if personId:
-                    parms.append (['personId', personId])
-        else:
-            parms = [['changeFrom', fromVal],
-                     ['changeTo', toVal]]
 
         if not failed:
 
@@ -334,9 +348,7 @@ for idTitle in originalDocs:
                 cdr.logwrite ("Saving copy of working doc before change", LF)
                 repDocResp = cdr.repDoc (session, doc=str(oldCwdDocObj),
                     ver='Y', checkIn='N', verPublishable='N',
-                    comment="Copy of working document before global change "
-                           "of %s to %s on %s" % (fromVal, toVal,
-                                                  time.ctime (time.time())))
+                    comment="Copy of working document before %s" % description)
                 if repDocResp.startswith ("<Errors"):
                     failed = logDocErr (docId,
                              "attempting to create version of pre-change doc",
@@ -355,9 +367,8 @@ for idTitle in originalDocs:
                 cdr.logwrite ("About to replace published version in CDR", LF)
                 repDocResp = cdr.repDoc (session, doc=str(chgPubVerDocObj),
                     ver='Y', val='Y', checkIn='N', verPublishable='Y',
-                    comment="Last publishable version, revised by global "
-                           "change of %s to %s on %s" % (fromVal, toVal,
-                                                  time.ctime (time.time())))
+                    comment="Last publishable version, revised by %s" % \
+                             description)
                 cdr.logwrite ("Replaced published version in CDR", LF)
                 if repDocResp.startswith ("<Errors"):
                     failed = logDocErr (docId,
@@ -372,9 +383,7 @@ for idTitle in originalDocs:
             repDocResp = cdr.repDoc (session, doc=str(chgCwdDocObj),
                 ver=saveCWDPubVer, verPublishable=saveCWDPubVer,
                 val=saveCWDPubVer, checkIn='Y',
-                comment="Revised by global change " \
-                       "of %s to %s on %s" % (fromVal, toVal,
-                                              time.ctime (time.time())))
+                comment="Revised by %s" % description)
             if repDocResp.startswith ("<Errors"):
                 failed = logDocErr (docId, "attempting to store changed CWD",
                                     repDocResp)
