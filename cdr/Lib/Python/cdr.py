@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.25 2002-03-04 15:04:53 bkline Exp $
+# $Id: cdr.py,v 1.26 2002-03-19 00:33:06 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.25  2002/03/04 15:04:53  bkline
+# Replaced verAttr with qual in filterDoc().
+#
 # Revision 1.24  2002/03/01 22:20:21  bkline
 # Added docDate parameter to filterDoc() function.
 #
@@ -378,12 +381,13 @@ def delDoc(credentials, docId, val = 'N', reason = '',
 # Validate a CDR document.
 #----------------------------------------------------------------------
 def valDoc(credentials, docType, docId = None, doc = None,
-           valLinks = 'Y', valSchema = 'Y',
+           valLinks = 'Y', valSchema = 'Y', validateOnly = 'Y',
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Create the command.
     if docId:
-        doc = "<DocId ValidateOnly='Y'>%s</DocId>" % normalize(docId)
+        doc = "<DocId ValidateOnly='%s'>%s</DocId>" % (validateOnly,
+                                                       normalize(docId))
     if not doc:
         raise StandardError("valDoc: no doc or docId specified")
     if valLinks == 'Y' and valSchema == 'Y':
