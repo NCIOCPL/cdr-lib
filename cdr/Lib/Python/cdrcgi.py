@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.18 2002-07-02 13:47:16 bkline Exp $
+# $Id: cdrcgi.py,v 1.19 2002-07-02 14:18:04 ameyer Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.18  2002/07/02 13:47:16  bkline
+# Plugged in cdrcgi.DAY_ONE; added getFullUserName().
+#
 # Revision 1.17  2002/06/28 20:13:57  bkline
 # Plugged in QcReport.py for Organization advanced search.
 #
@@ -267,9 +270,11 @@ def mainMenu(session, news = None):
       <LI><A HREF='%s/Reports.py%s'>Reports</A></LI>
       <LI><A HREF='%s/Mailers.py%s'>Mailers</A></LI>
       <LI><A HREF='%s/MergeProt.py%s'>Merge Protocol</A></LI>
+      <LI><A HREF='%s/GlobalChange.py%s'>Make Global Changes</A></LI>
       <LI><A HREF='%s/Logout.py%s'>Log Out</A></LI>
      </OL>
     """ % (BASE, session,
+           BASE, session,
            BASE, session,
            BASE, session,
            BASE, session,
