@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.13 2002-11-01 19:16:05 pzhang Exp $
+# $Id: cdr2cg.py,v 1.14 2002-11-14 20:22:07 pzhang Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.13  2002/11/01 19:16:05  pzhang
+# Used binary write in log.
+#
 # Revision 1.12  2002/10/23 20:44:20  pzhang
 # Used a single GateKeeper with 3 different sources: Development,
 #     Staging, and Production.
@@ -134,7 +137,7 @@ docTemplateHead= """\
     <PubData>
      <docNum>%d</docNum>
      <transactionType>%s</transactionType>
-     <CDRDoc Type="%s" ID="CDR%010d">"""
+     <CDRDoc Type="%s" ID="CDR%010d" Version="%d">"""
 
 docTemplateTail = """\
      </CDRDoc>
@@ -383,11 +386,11 @@ def sendDataProlog(jobId, pubType, docType, lastJobId, docCount):
                                                   docCount))
     return Response(xmlString)
 
-def sendDocument(jobId, docNum, transType, docType, docId, doc = ""): 
+def sendDocument(jobId, docNum, transType, docType, docId, docVer, doc = ""): 
     
     # The mixed UTF-8 and ASCII string is disallowed by python.
     req = docTemplateHead % (source, jobId, docNum, transType, 
-                             docType, docId)    
+                             docType, docId, docVer)    
     req = req.encode('utf-8') + doc   
     req += docTemplateTail.encode('utf-8') 
    
@@ -405,7 +408,7 @@ def removeDocuments(jobId, docType, docIdList, lastJobId):
                            (resp.type, resp.message))
     for i in xrange(len(docIdList)):
         docId = docIdList[i]
-        resp = sendDocument(jobId, i + 1, "Delete", docType, docId)
+        resp = sendDocument(jobId, i + 1, "Delete", docType, docId, 1)
         if resp.type != "OK":
             raise StandardError("sending document %d (CDR%010d) in "
                                 "removeDocuments: %s (%s)" %
@@ -459,7 +462,7 @@ if __name__ == "__main__":
 
     # Send the first document.
     sys.stderr.write("sending first document ...\n")
-    response = sendDocument(jobId, 1, "Export", docType, docId,
+    response = sendDocument(jobId, 1, "Export", docType, docId, 1,
                             open("CDR%d.xml" % docId).read())
     if response.type != "OK":
         print "%s: %s" % (response.type, response.message)

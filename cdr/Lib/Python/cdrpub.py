@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.38 2002-11-07 23:12:58 pzhang Exp $
+# $Id: cdrpub.py,v 1.39 2002-11-14 20:21:46 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.38  2002/11/07 23:12:58  pzhang
+# Changed default values for subset parameters.
+#
 # Revision 1.37  2002/11/06 21:56:40  pzhang
 # Allowed semicolon as an email address separator.
 #
@@ -815,7 +818,7 @@ class Publish:
 
             # Send all new and updated documents.
             cursor.execute ("""
-                SELECT id, doc_type, xml
+                SELECT id, num, doc_type, xml
                   FROM pub_proc_cg_work
                  WHERE NOT xml IS NULL
                             """, timeout = self.__timeOut)
@@ -826,15 +829,16 @@ class Publish:
                 DocTypeLine = re.compile("<!DOCTYPE.*?>\s*", re.DOTALL)
                 for row in rows:
                     id      = row[0]
-                    docType = row[1]
+                    version = row[1]
+                    docType = row[2]
                     if docType == "InScopeProtocol":
                         docType = "Protocol"
-                    xml = row[2].encode('utf-8')
+                    xml = row[3].encode('utf-8')
                     xml = XmlDeclLine.sub("", xml)
                     xml = DocTypeLine.sub("", xml)
 
                     response = cdr2cg.sendDocument(jobId, docNum,
-                                "Export", docType, id, xml)
+                                "Export", docType, id, version, xml)
                     if response.type != "OK":
                         msg += "sent document: %d<BR>" % id
                         msg += "send failed. %s: %s<BR>" % \
@@ -852,7 +856,7 @@ class Publish:
 
             # Remove all the removed documents.
             cursor.execute ("""
-                SELECT id, doc_type
+                SELECT id, num, doc_type
                   FROM pub_proc_cg_work
                  WHERE xml IS NULL
                             """)
@@ -861,11 +865,12 @@ class Publish:
             if delCount > 0:
                 for row in rows:
                     id        = row[0]
-                    docType   = row[1]
+                    version   = row[1]
+                    docType   = row[2]
                     if docType == "InScopeProtocol":
                         docType = "Protocol"
                     response = cdr2cg.sendDocument(jobId, docNum, "Remove",
-                                                   docType, id)
+                                                   docType, id, version)
                     if response.type != "OK":
                         msg += "deleted document: %d<BR>" % id
                         msg += "deleting failed. %s: %s<BR>" % \
@@ -943,7 +948,7 @@ class Publish:
         # into pub_proc_cg_work with xml set to the new document.
         try:
             qry = """
-                SELECT ppc.id, t.name, ppc.xml, ppd2.subdir
+                SELECT ppc.id, t.name, ppc.xml, ppd2.subdir, ppd2.doc_version
                   FROM pub_proc_cg ppc, doc_type t, document d,
                        pub_proc_doc ppd2
                  WHERE d.id = ppc.id
@@ -965,6 +970,7 @@ class Publish:
                 type   = row[1]
                 xml    = row[2]
                 subdir = row[3]
+                ver    = row[4]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
                 file   = open(path, "rb").read()
                 file   = unicode(file, 'utf-8')
@@ -972,9 +978,10 @@ class Publish:
                 if xml != file:
                     cursor.execute("""
                         INSERT INTO pub_proc_cg_work (id, vendor_job,
-                                        cg_job, doc_type, xml)
-                             VALUES (?, ?, ?, ?, ?)
-                                   """, (id, vendor_job, cg_job, type, file)
+                                        cg_job, doc_type, xml, num)
+                             VALUES (?, ?, ?, ?, ?, ?)
+                                   """, (id, vendor_job, cg_job, type, 
+                                         file, ver)
                                   )
         except:
             raise StandardError("Setting U to pub_proc_cg_work failed.")
@@ -986,7 +993,7 @@ class Publish:
         # pub_proc_cg.
         try:
             cursor.execute ("""
-                     SELECT ppd.doc_id, t.name, ppd.subdir
+                     SELECT ppd.doc_id, t.name, ppd.subdir, ppd.doc_version
                        FROM pub_proc_doc ppd, doc_type t, document d
                       WHERE ppd.pub_proc = ?
                         AND d.id = ppd.doc_id
@@ -1004,14 +1011,15 @@ class Publish:
                 id     = row[0]
                 type   = row[1]
                 subdir = row[2]
+                ver    = row[3]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
                 xml    = open(path, "rb").read()
                 xml    = unicode(xml, 'utf-8')
                 cursor.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
-                                                  doc_type, xml)
-                         VALUES (?, ?, ?, ?, ?)
-                               """, (id, vendor_job, cg_job, type, xml)
+                                                  doc_type, xml, num)
+                         VALUES (?, ?, ?, ?, ?, ?)
+                               """, (id, vendor_job, cg_job, type, xml, ver)
                               )
         except:
             raise StandardError("Setting A to pub_proc_cg_work failed.")
@@ -1141,7 +1149,7 @@ class Publish:
         # into pub_proc_cg_work with xml set to the new document.
         try:
             qry = """
-                SELECT ppc.id, t.name, ppc.xml, ppd2.subdir
+                SELECT ppc.id, t.name, ppc.xml, ppd2.subdir, ppd2.doc_version
                   FROM pub_proc_cg ppc, doc_type t, document d,
                        pub_proc_doc ppd2
                  WHERE d.id = ppc.id
@@ -1163,6 +1171,7 @@ class Publish:
                 type   = row[1]
                 xml    = row[2]
                 subdir = row[3]
+                ver    = row[4]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
                 file   = open(path, "rb").read()
                 file   = unicode(file, 'utf-8')
@@ -1170,9 +1179,10 @@ class Publish:
                 if xml != file:
                     cursor.execute("""
                         INSERT INTO pub_proc_cg_work (id, vendor_job,
-                                        cg_job, doc_type, xml)
-                             VALUES (?, ?, ?, ?, ?)
-                                   """, (id, vendor_job, cg_job, type, file)
+                                        cg_job, doc_type, xml, num)
+                             VALUES (?, ?, ?, ?, ?, ?)
+                                   """, (id, vendor_job, cg_job, type, 
+                                         file, ver)
                                   )
         except:
             raise StandardError("Setting U to pub_proc_cg_work failed.")
@@ -1184,7 +1194,7 @@ class Publish:
         # pub_proc_cg.
         try:
             cursor.execute ("""
-                     SELECT ppd.doc_id, t.name, ppd.subdir
+                     SELECT ppd.doc_id, t.name, ppd.subdir, ppd.doc_version
                        FROM pub_proc_doc ppd, doc_type t, document d
                       WHERE ppd.pub_proc = ?
                         AND d.id = ppd.doc_id
@@ -1202,14 +1212,15 @@ class Publish:
                 id     = row[0]
                 type   = row[1]
                 subdir = row[2]
+                ver    = row[3]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
                 xml    = open(path, "rb").read()
                 xml    = unicode(xml, 'utf-8')
                 cursor.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
-                                                  doc_type, xml)
-                         VALUES (?, ?, ?, ?, ?)
-                               """, (id, vendor_job, cg_job, type, xml)
+                                                  doc_type, xml, num)
+                         VALUES (?, ?, ?, ?, ?, ?)
+                               """, (id, vendor_job, cg_job, type, xml, ver)
                               )
         except:
             raise StandardError("Setting A to pub_proc_cg_work failed.")
