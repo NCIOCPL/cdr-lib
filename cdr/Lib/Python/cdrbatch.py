@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.1 2002-08-02 03:43:34 ameyer Exp $
+# $Id: cdrbatch.py,v 1.2 2002-09-19 18:02:21 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,9 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2002/08/02 03:43:34  ameyer
+# common routines for batch jobs.  Inherit from here.
+#
 #
 #----------------------------------------------------------------------
 
@@ -109,7 +112,7 @@ def sendSignal (conn, jobId, newStatus, whoami):
                 and status != ST_SUSPENDED:
         msg = "Job must be in initiated or suspended state to signal in_process"
     if newStatus == ST_STOP \
-                and status != IN_PROCESS:
+                and status != ST_IN_PROCESS:
         msg = "Job must be in_process before stopping it"
     if newStatus == ST_STOPPED \
                 and status != ST_IN_PROCESS \
@@ -403,9 +406,16 @@ class CdrBatch:
     def getArgs(self):      return self.__args
     def getEmail(self):     return self.__email
     def getCursor(self):    return self.__cursor
-    def getParm(self, key):
+
+    # For this one, data may have gone into the database as ASCII
+    #   but always comes out as unicode
+    # Caller should say if he wants 16 bit unicode preserved
+    def getParm(self, key, ucode=0):
         if self.__args.has_key (key):
-            return self.__args[key]
+            if ucode:
+                return self.__args[key]
+            else:
+                return (self.__args[key]).encode('utf-8')
         return None
 
 
@@ -489,7 +499,7 @@ class CdrBatch:
                     self.setStatus (ST_ABORTED)
                     self.setProgressMsg (reason)
                 except BatchException, be:
-                    self.log ("Unable to update job status on failure: " % \
+                    self.log ("Unable to update job status on failure: %s" % \
                               str(be), logfile)
 
             # Can't use this job any more, close it's connection
@@ -503,7 +513,8 @@ class CdrBatch:
         self.log (reason, logfile)
 
         # Exit here
-        sys.exit (1)
+        if exit:
+            sys.exit (1)
 
 
     #------------------------------------------------------------------
@@ -525,10 +536,10 @@ class CdrBatch:
             self.__status = statusRow[3]
             self.__lastDt = statusRow[4]
 
-            return (self.__status, self.__lastDt)
-
         except BatchException, e:
             self.fail ("Unable to get status: %s" % e)
+
+        return (self.__status, self.__lastDt)
 
 
     #------------------------------------------------------------------
