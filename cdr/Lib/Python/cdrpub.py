@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.25 2002-08-30 19:40:46 pzhang Exp $
+# $Id: cdrpub.py,v 1.26 2002-08-30 20:14:01 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.25  2002/08/30 19:40:46  pzhang
+# Merged control parameter PushToCancerGov to ReportOnly.
+# Put invalid filtered documents in InvalidDocs subdirectory.
+#
 # Revision 1.24  2002/08/20 22:07:31  pzhang
 # Added many control parameters.
 #
@@ -521,8 +525,8 @@ class Publish:
                 cursor.execute("""\
                     SELECT TOP 1 id, output_dir
                       FROM pub_proc
-                     WHERE status='%s' 
-                       AND pub_subset='%s'
+                     WHERE status = '%s' 
+                       AND pub_subset = '%s'
                        AND pub_system = %d
                   ORDER BY id DESC
                   """ % (Publish.SUCCESS, subsetName, self.__ctrlDocId))
@@ -605,7 +609,7 @@ class Publish:
                 pubTypeCG = pubType 
                 if self.__checkRemovedDocs or self.__interactiveMode:                   
                     self.__updateMessage(link)
-                    self.__waitUserApproval()
+                    self.__waitUserApproval(jobId)
             elif pubType == "Hotfix (Remove)":
                 self.__createWorkPPCHR(vendor_job, vendor_dest, jobId)
                 pubTypeCG = "Hotfix"
@@ -614,7 +618,7 @@ class Publish:
                 pubTypeCG = "Hotfix" 
                 if self.__checkRemovedDocs or self.__interactiveMode:
                     self.__updateMessage(link)
-                    self.__waitUserApproval()
+                    self.__waitUserApproval(jobId)
             else:
                 raise StandardError("pubType %s not supported." % pubType)   
             
@@ -1152,11 +1156,8 @@ class Publish:
 
             if row and row[0]:
                 return row[0] 
-            else:
-                msg = """Failure executing query to find last successful
-                         jobId for this subset: %s""" % subsetName
-                raise StandardError(msg)                 
-           
+            # else: return jobId 0 for the first timer.
+       
         except cdrdb.Error, info:
             msg = """Failure executing query to find last successful
                      jobId for this subset: %s""" % subsetName
