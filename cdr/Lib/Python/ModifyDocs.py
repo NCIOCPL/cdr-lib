@@ -1,11 +1,18 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.8 2005-01-26 00:14:51 bkline Exp $
+# $Id: ModifyDocs.py,v 1.9 2005-01-26 23:43:21 bkline Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2005/01/26 00:14:51  bkline
+# Changed logic to avoid validating documents for which we have no
+# record of validation having been performed in the past.  This
+# avoids stripping XMetaL processing instruction prompts from
+# protocols for which the ScientificInfo document has not yet been
+# folded in.
+#
 # Revision 1.7  2004/11/22 20:58:46  bkline
 # Fixed a typo in the comment for the transformation/versioning logic.
 # Added another substantial comment to explain why the test to determine
@@ -39,6 +46,11 @@ import cdr, cdrdb, cdrglblchg, sys, time, re
 LOGFILE = 'd:/cdr/log/ModifyDocs.log'
 ERRPATT = re.compile(r"<Err>(.*?)</Err>", re.DOTALL)
 DEBUG   = 0
+
+#----------------------------------------------------------------------
+# Custom exception indicating that we can't check out a document.
+#----------------------------------------------------------------------
+class DocumentLocked(Exception): pass
 
 #----------------------------------------------------------------------
 # Module level variables (statics)
@@ -151,8 +163,8 @@ class Doc:
         self.cwd       = cdr.getDoc(self.session, self.id, 'Y', getObject = 1)
         if type(self.cwd) in (type(""), type(u"")):
             err = cdr.checkErr(self.cwd) or self.cwd
-            raise Exception("Unable to check out CWD for CDR%010d: %s" %
-                            (self.id, err))
+            raise DocumentLocked("Unable to check out CWD for CDR%010d: %s" %
+                                 (self.id, err))
         self.newCwd    = self.transform.run(self.cwd)
         self.lastv     = None
         self.lastp     = None
