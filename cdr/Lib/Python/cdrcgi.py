@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.23 2002-07-15 20:19:21 bkline Exp $
+# $Id: cdrcgi.py,v 1.24 2002-07-17 18:52:28 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.23  2002/07/15 20:19:21  bkline
+# New argument (textType) for sendPage() function.  Mods for Summary
+# advanced search display.
+#
 # Revision 1.22  2002/07/11 17:20:10  bkline
 # Fixed problems with miscellaneous document advanced search.
 #
@@ -278,6 +282,7 @@ def mainMenu(session, news = None):
       <LI><A HREF='%s/EditCSSs.py%s'>Manage CSS Stylesheets</A></LI>
       <LI><A HREF='%s/EditQueryTermDefs.py%s'>Manage Query Term Definitions</A></LI>
       <LI><A HREF='%s/EditLinkControl.py%s'>Manage Linking Tables</A></LI>
+      <LI><A HREF='%s/EditFilters.py%s'>Manage Filters</A></LI>
       <LI><A HREF='%s/Publishing.py%s'>Publishing</A></LI>
       <LI><A HREF='%s/Reports.py%s'>Reports</A></LI>
       <LI><A HREF='%s/Mailers.py%s'>Mailers</A></LI>
@@ -286,6 +291,7 @@ def mainMenu(session, news = None):
       <LI><A HREF='%s/Logout.py%s'>Log Out</A></LI>
      </OL>
     """ % (BASE, session,
+           BASE, session,
            BASE, session,
            BASE, session,
            BASE, session,
