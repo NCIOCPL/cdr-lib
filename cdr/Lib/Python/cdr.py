@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.90 2004-06-30 20:44:56 ameyer Exp $
+# $Id: cdr.py,v 1.91 2004-07-08 19:03:44 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.90  2004/06/30 20:44:56  ameyer
+# Added new cacheInit() function.
+#
 # Revision 1.89  2004/05/17 16:17:37  bkline
 # Modified getTextContent() to accomodate change in the parser's handling
 # of CDATA sections.
@@ -2649,7 +2652,7 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback = 0):
             except:
                 pass
 
-    except IOError:
+    except:
         pass
 
     # Close file if opened.  This ensures that caller will see his
@@ -2657,7 +2660,7 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback = 0):
     if f:
         try:
             f.close()
-        except IOError:
+        except:
             pass
 
 
