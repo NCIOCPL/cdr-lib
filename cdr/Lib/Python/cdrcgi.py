@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.42 2004-01-23 15:45:46 bkline Exp $
+# $Id: cdrcgi.py,v 1.43 2004-01-23 15:47:03 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.42  2004/01/23 15:45:46  bkline
+# Added try block for main menu code which detects whether the user
+# is Volker.
+#
 # Revision 1.41  2004/01/09 16:48:52  venglisc
 # Added function to search for GlossaryTerm by Audience
 #
@@ -358,7 +362,7 @@ def mainMenu(session, news = None):
     <ol>
 """
     try:
-        userPair[0].lower() == 'venglisc':
+        if userPair[0].lower() == 'venglisc':
             menu += """\
      <li>
       <a href='%s/EditFilters.py%s'>Manage Filters (Just for you, Volker!)</a>
