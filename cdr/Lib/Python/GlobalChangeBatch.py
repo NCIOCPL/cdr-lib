@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.19 2003-12-24 18:17:07 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.20 2004-01-30 02:25:27 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,10 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.19  2003/12/24 18:17:07  ameyer
+# Added retrieval of warnings from the cdr.repDoc calls.  Any warnings are
+# included in the final output report.
+#
 # Revision 1.18  2003/11/14 02:16:34  ameyer
 # Completion of changes for global terminology change.
 # More may be done as testing continues.
@@ -318,11 +322,18 @@ changedDocs = [("<b>CDR ID</b>", "<b>P</b>", "<b>Title</b>")]
 failedDocs  = [("<b>CDR ID</b>", "<b>P</b>", "<b>Title</b>", "<b>Reason</b>")]
 
 # Get the list of documents - different for each type of change
+docIdStr = jobObj.getParm ("glblDocIds")
+if not docIdStr:
+    jobObj.fail ("Could not retrieve document IDs from CGI form", logfile=LF)
+docIdList = docIdStr.split(',')
+
+cdr.logwrite ("Retrieving doc titles for final processing", LF)
+
 # Gets list of tuples of id + title
-cdr.logwrite ("Selecting docs for final processing", LF)
 try:
-    originalDocs = chg.selDocs()
+    originalDocs = cdrglblchg.getIdTitles (docIdList)
 except cdrbatch.BatchException, be:
+    cdr.logwrite ("Exception in getIdTitles", LF)
     jobObj.fail ("GCBatch: Unable to select docs: %s" % str(be), logfile=LF)
 
 # Initialize counts
@@ -332,7 +343,7 @@ failCount  = 0
 excpCount  = 0
 
 # Log
-cdr.logwrite ("Done selecting docs for final processing", LF)
+cdr.logwrite ("Done selecting doc titles for final processing", LF)
 cdr.logwrite ("Processing %d docs" % totalCount, LF)
 
 # Process each one
