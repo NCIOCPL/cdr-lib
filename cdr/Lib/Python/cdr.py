@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.96 2004-09-21 20:35:58 ameyer Exp $
+# $Id: cdr.py,v 1.97 2004-10-14 22:05:20 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.96  2004/09/21 20:35:58  ameyer
+# Changes to new diffXmlDoc() function and subroutines - supporting output
+# of entire doc with changes in context, or differences only.
+#
 # Revision 1.95  2004/09/15 03:14:36  ameyer
 # Changed getCDATA() to accept docs with no CDATA, returning them unmodified.
 #
@@ -2416,7 +2420,10 @@ Subject: %s
         server.sendmail(sender, recips, message)
         server.quit()
     except:
-        return "sendMail failure: %s" % exceptionInfo()
+        # Log the error and return it to caller
+        msg = "sendMail failure: %s" % exceptionInfo()
+        logwrite(msg)
+        return msg
 
 #----------------------------------------------------------------------
 # Check in a CDR document.
