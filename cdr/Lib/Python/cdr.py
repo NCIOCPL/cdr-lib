@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.64 2002-11-12 11:43:57 bkline Exp $
+# $Id: cdr.py,v 1.65 2002-11-13 16:57:54 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.64  2002/11/12 11:43:57  bkline
+# Added filter set support.
+#
 # Revision 1.63  2002/10/29 21:00:16  pzhang
 # Added allowInActive parameter to publish() to handle Hotfix-Remove.
 #
@@ -2320,7 +2323,6 @@ def wrapException(caller, errElems):
 def extractResponseNode(caller, responseString):
     docElem = xml.dom.minidom.parseString(responseString).documentElement
     when = docElem.getAttribute('Time')
-    print responseString
     cdrResponseElems = docElem.getElementsByTagName('CdrResponse')
     if not cdrResponseElems:
         errElems = docElem.getElementsByTagName('Err')
@@ -2414,7 +2416,6 @@ def packFilterSet(filterSet):
 #----------------------------------------------------------------------
 def addFilterSet(session, filterSet, host = DEFAULT_HOST, port = DEFAULT_PORT):
     cmd  = "<CdrAddFilterSet>%s</CdrAddFilterSet>" % packFilterSet(filterSet)
-    print "cmd=[%s]" % cmd
     resp = sendCommands(wrapCommand(cmd, session), host, port)
     node = extractResponseNode('addFilterSet', resp)
     return node.specificElement.getAttribute('TotalFilters')
@@ -2453,7 +2454,7 @@ def getFilterSet(session, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
             elif node.nodeName == 'FilterSetDescription':
                 desc = textContent
             elif node.nodeName == 'FilterSetNotes':
-                notes = textContent
+                notes = textContent or None
             elif node.nodeName == 'Filter':
                 member = IdAndName(node.getAttribute('DocId'), textContent)
                 members.append(member)
@@ -2461,3 +2462,12 @@ def getFilterSet(session, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
                 member = IdAndName(int(node.getAttribute('SetId')), textContent)
                 members.append(member)
     return FilterSet(name, desc, notes, members)
+
+#----------------------------------------------------------------------
+# Delete an existing CDR filter set.
+#----------------------------------------------------------------------
+def delFilterSet(session, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
+    cmd  = "<CdrDelFilterSet><FilterSetName>%s" \
+           "</FilterSetName></CdrDelFilterSet>" % name
+    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    extractResponseNode('delFilterSet', resp)
