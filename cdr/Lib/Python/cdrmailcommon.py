@@ -1,11 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrmailcommon.py,v 1.7 2003-05-14 13:26:06 bkline Exp $
+# $Id: cdrmailcommon.py,v 1.8 2004-07-08 19:02:21 bkline Exp $
 #
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2003/05/14 13:26:06  bkline
+# Modified SQL queries to select only documents which have not been
+# blocked.
+#
 # Revision 1.6  2003/03/05 02:50:40  ameyer
 # Added code to handle selection of remailer for single, named document.
 #
@@ -31,7 +35,7 @@
 #
 #----------------------------------------------------------------------
 
-import sys, cdr, cdrdb
+import sys, cdr, cdrdb, MySQLdb
 
 
 # Log file for debugging - module variable, not instance
@@ -359,3 +363,17 @@ class RemailSelector:
             raise "database error deleting job %d from remailer_ids: %s" \
                   % (self.__jobId, str(info[1][0]))
 
+#----------------------------------------------------------------------
+# Connect to one of the emailer databases.
+#----------------------------------------------------------------------
+def emailerConn(db, host = None):
+    if not host:
+        host = (cdr.isProdHost() and "pdqupdate.cancer.gov" or
+                                     "verdi.nci.nih.gov")
+    try:
+        return MySQLdb.connect(host = host,
+                               db = db,
+                               user = "dropbox",
+                               passwd = '***REMOVED***')
+    except:
+        raise Exception("Failure connecting to %s" % db)
