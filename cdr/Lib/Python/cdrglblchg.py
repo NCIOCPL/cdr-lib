@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.9 2002-10-17 23:13:47 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.10 2002-11-20 00:42:53 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2002/10/17 23:13:47  ameyer
+# Fixed bug introduced recently that attempted to pass replacement parameters
+# where none existed.
+#
 # Revision 1.8  2002/10/03 19:38:32  ameyer
 # Fixed sessionVar stored as integer that should have been string.
 # Fixed ugly error message.
@@ -187,6 +191,10 @@ SELECT TOP %d d.id, d.title
             html = """
 <h3>Choose Lead Organization to restrict global change:</h3>
 """
+        elif action == 'restrPi':
+            html = """
+<h3>Choose Principal Investigator to restrict global change:</h3>
+"""
 
         html += "<select name='%sId' size='15'>\n" % action
 
@@ -325,8 +333,6 @@ class GlblChg:
                 pVer = vers
             else:
                 pubVer = vers[1]
-                cdr.logwrite ("Version info: %d, %d, %s" % \
-                              (vers[0], vers[1], vers[2]), LF)
                 if pubVer < 0:
                     pVer = 'N'
                 else:
@@ -368,6 +374,18 @@ class GlblChg:
               "<tr><td align='right'>Changing protocol status to: </td>\n"
             html += "<td> %s</td></tr>\n" % self.sessionVars['toStatusName']
             haveSoFar = 1
+        if self.sessionVars.has_key ('restrTitle'):
+            html += \
+              "<tr><td align='right'>" +\
+              "Restricting to protocols with lead org: </td>\n"
+            html += "<td> %s</td></tr>\n" % self.sessionVars['restrTitle']
+            haveSoFar = 1
+        if self.sessionVars.has_key ('restrPiTitle'):
+            html += \
+              "<tr><td align='right'>" +\
+              "Restricting to protocols with lead org PI: </td>\n"
+            html += "<td> %s</td></tr>\n" % self.sessionVars['restrPiTitle']
+            haveSoFar = 1
         if self.sessionVars.has_key ('chgCount'):
             html += \
               "<tr><td align='right'>Count of documents to change: </td>\n"
@@ -383,12 +401,13 @@ class GlblChg:
 
     def genInputHtml (self, action):
         """
-        Generate a 'from' or 'to' document id/name input screen for
-        a user to enter the document identifer to change from or to.
+        Generate a 'from' or 'to' or whatever document id/name input
+        screen for a user to enter the document identifer to change or
+        use in a restriction.
 
         Pass:
             docType - Name of document type for presentation to user.
-            action  - 'from' or 'to'
+            action  - Usage for this id, 'from', 'to', 'restr', 'restrPi'
         Return:
             HTML form contents for presentation.
         """
@@ -396,15 +415,23 @@ class GlblChg:
         docType = self.sessionVars['docType']
         chgType = self.sessionVars['chgType']
 
-        # Some unfortunate manipulations
+        # Some unfortunate manipulations because nothing is ever a
+        #   general case in this system.
         if chgType == STATUS_CHG:
             actMsg = "Change status for organization"
         else:
             actMsg = "Change %s links %s:" % (docType, action)
+
+        # May override unfortunate manipulations with more of the same
         if action == 'restr':
-            actMsg = \
-        'Restrict change to protocols with particular lead org, or leave blank'
+            actMsg = 'Restrict change to protocols with particular ' +\
+                     'lead org, or leave blank'
             docType = 'Organization'
+        elif action == 'restrPi':
+            actMsg = 'Restrict change to protocols with particular ' + \
+                     'Principal Investigator or leave blank'
+            docType = 'Person'
+
         actMsg = "<h3>" + actMsg + "</h3>"
 
         # Construct input form, prefaced by what we've done so far
@@ -454,7 +481,6 @@ class GlblChg:
             content string
             No custom buttons (None)
         """
-        # return ("Change person link:", _genInputHtml ("Person", "from"), None)
         return ("Enter id or name of 'from' document",
                 self.genInputHtml ("from"), None)
 
@@ -578,10 +604,20 @@ class GlblChg:
         return ("Restrict changes to protocols with Lead Org",
                 self.genLeadOrgHtml(), None)
 
+    def getRestrPiId (self):
+        """ Create a different kind of restrictions screen """
+        return ("Restrict changes to protocols with Principal Investigator",
+                self.genInputHtml ("restrPi"), None)
+
     def getRestrPick (self, name):
         """ Just like getFromPick """
         return ("Choose protocol Lead Org to restrict changes to",
                 _getPickList ('Organization', name, 'restr'), None)
+
+    def getRestrPiPick (self, name):
+        """ Like getFromPick """
+        return ("Choose Principal Investigator to restrict changes to",
+                _getPickList ('Person', name, 'restrPi'), None)
 
     def selDocs (self):
         """ Select documents - implemented only in subclasses """
@@ -802,7 +838,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
        self.sessionVars['fromStatusName'])
 
         # Else restrict them by a particular lead organization
-        else:
+        elif not self.sessionVars.has_key ('restrPiId'):
             qry = """
 SELECT DISTINCT doc.id, doc.title FROM document doc
   JOIN query_term protorg
@@ -830,6 +866,45 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
 """ % (fromIdNum,
        self.sessionVars['fromStatusName'],
        self.sessionVars['restrId'])
+
+        # Else restrict them by a lead organization AND specific person
+        #   at that protocol site
+        else:
+            qry = """
+SELECT DISTINCT doc.id, doc.title FROM document doc
+  JOIN query_term protorg
+    ON protorg.doc_id = doc.id
+  JOIN query_term protstat
+    ON protstat.doc_id = doc.id
+  JOIN query_term orgstat
+    ON orgstat.doc_id = doc.id
+  JOIN query_term leadorg
+    ON leadorg.doc_id = doc.id
+  JOIN query_term protpers
+    ON protpers.doc_id = doc.id
+ WHERE protorg.path =
+   '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteID/@cdr:ref'
+   AND protorg.int_val = %d
+   AND protstat.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrgProtocolStatuses/CurrentOrgStatus/StatusName'
+   AND (protstat.value = 'Active' OR
+        protstat.value = 'Approved-not yet active' OR
+        protstat.value = 'Temporarily closed')
+   AND leadorg.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrganizationID/@cdr:ref'
+   AND orgstat.path =
+   '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteStatus'
+   AND orgstat.value = '%s'
+   AND LEFT (orgstat.node_loc, 16) = LEFT (protorg.node_loc, 16)
+   AND leadorg.value = '%s'
+   AND protpers.path =
+   '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteContact/SpecificPerson/Person/@cdr:ref'
+   AND protpers.int_val = %s
+   AND LEFT (orgstat.node_loc, 16) = LEFT (protpers.node_loc, 16)
+ ORDER BY doc.title
+""" % (fromIdNum,
+       self.sessionVars['fromStatusName'],
+       self.sessionVars['restrId'],
+       cdr.exNormalize(self.sessionVars['restrPiId'])[1])
+        cdr.logwrite ("Query: %s" % qry, LF)
 
         # Call a common routine to get the rows corresponding to the query
         return _execQry (qry)
