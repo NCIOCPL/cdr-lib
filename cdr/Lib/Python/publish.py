@@ -1,8 +1,12 @@
 #
 # Script for command line and CGI publishing.
 #
-#$Id: publish.py,v 1.4 2001-12-03 23:14:15 Pzhang Exp $
+#$Id: publish.py,v 1.5 2002-01-31 18:20:49 mruben Exp $
 #$Log: not supported by cvs2svn $
+#Revision 1.4  2001/12/03 23:14:15  Pzhang
+#Added code for email notification.
+#Disabled updateStatuses since pub_event is now a view.
+#
 #Revision 1.3  2001/10/05 18:50:49  Pzhang
 #Changed Publish.SUCCESS to SUCCEED, Fail to Failure, Wait to Waiting.
 #
@@ -92,7 +96,9 @@ class Publish:
         pickList = []
         tuple = ["", "", "", ""]
 
-        sql = "SELECT title, id, xml FROM document WHERE doc_type = 58"
+        sql = "SELECT d.title, d.id, d.xml FROM document d " \
+              "JOIN doc_type t ON d.doc_type = t.id " \
+              "WHERE t.name = 'PublishingSystem' "
         rs = self.__execSQL(sql)
         
         while not rs.EOF:
