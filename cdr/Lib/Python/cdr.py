@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.89 2004-05-17 16:17:37 bkline Exp $
+# $Id: cdr.py,v 1.90 2004-06-30 20:44:56 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.89  2004/05/17 16:17:37  bkline
+# Modified getTextContent() to accomodate change in the parser's handling
+# of CDATA sections.
+#
 # Revision 1.88  2004/05/17 15:21:11  bkline
 # Added function getEmail().
 #
@@ -2547,6 +2551,57 @@ class PubStatus:
 
 def pubStatus(self, jobId, getDocInfo = 0):
     return "XXX this is a stub"
+
+#----------------------------------------------------------------------
+# Turn cacheing on or off in the CdrServer
+#----------------------------------------------------------------------
+def cacheInit(credentials, cacheOn, cacheType,
+              host=DEFAULT_HOST, port=DEFAULT_PORT):
+    """
+    Submit a transaction to the server to turn cacheing on or off.
+    At this time, cacheing is only of interest for publishing jobs,
+    and the only type of cacheing we do is term denormalization
+    cacheing - so that a given Term document id used in a protocol
+    need only be looked up once, its document XML only parsed once,
+    and the XML string for the denormalization need only be constructed
+    once.  However the interface supports other types of cacheing if
+    and when we create them.
+
+    Pass:
+        credentials - As usual.
+        cacheOn     - true  = Turn cacheing on.
+                      false = Turn it off.
+        cacheType   - Currently known types are all synonyms of each other,
+                      one of:
+                        "term"
+                        "pub"
+                        "all"
+        host / port - As usual.
+
+    Return:
+        Void.
+
+    Raise:
+        Standard error if error returned by host.  Possible errors
+        are connection oriented, or invalid parameters.
+    """
+    # Attribute tells the server what to do
+    cmdAttr = "off"
+    if cacheOn:
+        cmdAttr = "on"
+
+    # Construct XML transaction
+    cmd = "<CdrCacheing " + cmdAttr + "='" + cacheType + "'/>"
+
+    # Send it
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+
+    # If error occurred, raise exception
+    err = checkErr(resp)
+    if err:
+        raise StandardError (err)
+
+    return None
 
 #----------------------------------------------------------------------
 # Write messages to a logfile.
