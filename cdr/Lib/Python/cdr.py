@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.99 2004-11-05 05:54:35 ameyer Exp $
+# $Id: cdr.py,v 1.100 2004-11-17 02:11:10 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.99  2004/11/05 05:54:35  ameyer
+# Modified getDoc() to retrieve xml and/or blob, with default to xml only.
+# Currently returning blob as base64.  Will probably change this later.
+#
 # Revision 1.98  2004/11/05 05:16:52  ameyer
 # Added some new support for blobs, including zero length blobs (indicating
 # that a blob should be deleted/dissociated from a document).
@@ -1013,6 +1017,71 @@ def _addRepDocActiveStatus(doc, newStatus):
     return (parts[0] + "\n<DocActiveStatus>" + newStatus
             + "</DocActiveStatus>\n" + parts[1])
 
+#----------------------------------------------------------------------
+# Add a blob to a document, replacing existing blob if necessary
+#----------------------------------------------------------------------
+def _addDocBlob(doc, blob=None, blobFileName=None):
+    """
+    If either a blob (array of bytes) or the name of a file containing
+    a blob is passed, then:
+
+        Delete any existing CdrDocBlob in the doc.
+        Add in the blob from the byte string or file as a base64
+          encoded CdrDocBlob subelement of a CdrDoc.
+
+    As a convenience, _addDocBlob accepts the case where blob and
+    blobFileName are both None, returning doc unchanged.  This is
+    so we don't have to check these parms in two different places.
+
+    Pass:
+        doc          - Document in CdrDoc utf-8 format.
+        blob         - Optional blob as a string of bytes, NOT base64.
+                        base64 conversion will be applied here.
+                        May be None, may be empty.
+                        An empty blob ("") causes an empty CdrDocBlob
+                        element to be inserted in the doc, which in turn
+                        causes any blob associated with this doc in the
+                        database to be disassociated and, if it is not
+                        versioned, deleted.
+        blobFileName - Optional name of file containing binary bytes, not
+                        in base64.  May be None.  May be the name of a
+                        zero length file.
+
+    Return:
+        Possibly revised CdrDoc string.
+
+    Raises:
+        StandardError if both blob and blobFileName are passed, or no
+        CdrDoc end tag is found.
+    """
+    # Common case, we're just checking for the caller
+    if (blob == None and not blobFileName):
+        return doc
+
+    # Check parms
+    if (blob and blobFileName):
+        raise StandardError("_addDocBlob called with two blobs, one in " +
+                            "memory and one in named file")
+
+    # Encode blob from memory or file
+    encodedBlob = makeDocBlob(blob, blobFileName, wrapper='CdrDocBlob')
+
+    # Delete any existing blob in doc.  We'll replace it
+    delBlobPat  = re.compile(r"\n*<CdrDocBlob.*</CdrDocBlob>\n*", re.DOTALL)
+    strippedDoc = delBlobPat.sub('', doc)
+
+    # Prepare replacement
+    encodedBlob = "\n" + encodedBlob + "\n</CdrDoc>\n"
+
+    # Add the new blob just before the CdrDoc end tag
+    addBlobPat = re.compile("\n*</CdrDoc>\n*", re.DOTALL)
+    newDoc     = addBlobPat.sub(encodedBlob, strippedDoc)
+
+    # Should never happen
+    if newDoc == strippedDoc:
+        raise StandardError("_addDocBlob: could not find CdrDoc end tag")
+
+    return newDoc
 
 #----------------------------------------------------------------------
 # Add a new document to the CDR Server.
@@ -1030,8 +1099,38 @@ def _addRepDocActiveStatus(doc, newStatus):
 def addDoc(credentials, file = None, doc = None, comment = '',
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
            verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
-           activeStatus = None,
+           activeStatus = None, blob = None, blobFile = None,
            host = DEFAULT_HOST, port = DEFAULT_PORT):
+    """
+    Add a document to the repository.
+
+    Pass:
+        credentials   - From cdr.login.
+        file          - Optional name of file containing CdrDoc format data.
+        doc           - Optional CdrDoc string, unicode or utf-8.
+                         Must pass file or doc.
+        comment       - For the comment field in the document table and
+                         the doc_version table.
+        checkin       - 'Y' = checkin (i.e., unlock) the record.
+        val           - 'Y' = validate document.
+        reason        - For audit trail.  If no reason given, uses comment.
+        ver           - 'Y' = create a new version.
+        verPublishable- 'Y' = make new version publishable.  Only if ver='Y'.
+        setLinks      - 'Y' = update linking tables.
+        showWarnings  - 'Y' = retrieve any warnings, e.g., from filters.
+        activeStatus  - 'I', 'A', 'D', to change document active_status.
+                         If None, no change.
+        blob          - Unencoded byte string for blob, if any.
+                         Will be converted to base64 for transmission, so
+                         don't convert before passing it to addDoc.
+        blobFile      - Alternative way to get blob - from file of bytes.
+        host          - Computer.
+        port          - CdrServer listening port.
+
+    Return:
+        CDR ID of newly stored document, in full "CDR0000nnnnnn" format.
+        Else errors.
+    """
 
     # Load the document if necessary.
     if file: doc = open(file, "r").read()
@@ -1050,6 +1149,9 @@ def addDoc(credentials, file = None, doc = None, comment = '',
     # Change the active_status if requested; raises exception on failure.
     if activeStatus:
         doc = _addRepDocActiveStatus(doc, activeStatus)
+
+    # Add the blob, if any
+    doc = _addDocBlob(doc, blob, blobFile)
 
     # Create the command.
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
@@ -1090,8 +1192,20 @@ def addDoc(credentials, file = None, doc = None, comment = '',
 def repDoc(credentials, file = None, doc = None, comment = '',
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
            verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
-           activeStatus = None,
+           activeStatus = None, blob = None, blobFile = None, delBlob=0,
            host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    """
+    Replace an existing document.
+
+    Pass:
+        See addDoc for details.  New parameters are:
+        delBlob         - 1 = delete the blob.  If it has not been versioned
+                           it will disappear from the database.
+                          Passing an empty blob will have the same effect,
+                           i.e., blob='', not blob=None, which has no effect
+                           on blobs.
+    """
 
     # Load the document if necessary.
     if file: doc = open(file, "r").read()
@@ -1110,6 +1224,11 @@ def repDoc(credentials, file = None, doc = None, comment = '',
     # Change the active_status if requested; raises exception on failure.
     if activeStatus:
         doc = _addRepDocActiveStatus(doc, activeStatus)
+
+    # Blob management
+    if delBlob:
+        blob = ''
+    doc = _addDocBlob(doc, blob, blobFile)
 
     # Create the command.
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
