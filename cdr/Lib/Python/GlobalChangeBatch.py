@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.7 2002-09-24 19:31:16 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.8 2002-11-13 02:38:32 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,9 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2002/09/24 19:31:16  ameyer
+# Fixed bugs in handling of data returned by cdr.lastVersions().
+#
 # Revision 1.6  2002/09/19 18:01:09  ameyer
 # Reorganized to place try block inside for loop instead of outside so
 # that an exception would not halt all processing.
@@ -51,7 +54,7 @@
 #
 #----------------------------------------------------------------------
 
-import sys, socket, time, cdr, cdrbatch, cdrglblchg, cdrcgi, traceback
+import sys, socket, time, string, cdr, cdrbatch, cdrglblchg, cdrcgi, traceback
 
 
 # Define log file
@@ -284,7 +287,7 @@ for idTitle in originalDocs:
                 if lastPubVerNum == lastVerNum and isChanged == 'N':
                     saveCWDPubVer = 'Y'
                     cdr.logwrite ("Publishable version matches CWD, " \
-                                  "will save it as publisable version", LF)
+                                  "will save it as publishable version", LF)
 
                 else:
                     # Last published version is different from the CWD
@@ -442,10 +445,15 @@ if goodCount:
 
 html += "\n</body></html>\n"
 
+# Convert string of email addresses to a list
+trTbl = string.maketrans (",;", "  ")
+email = string.translate (jobObj.getEmail().encode("ascii"), trTbl)
+emailList = string.split (email)
+
 # Send it by email
 cdr.logwrite ("About to email final report to %s" % jobObj.getEmail(), LF)
 resp = cdr.sendMail ("cdr@%s.nci.nih.gov" % socket.gethostname(),
-                     (jobObj.getEmail(),),
+                     emailList,
                      subject="Final report on global change",
                      body=html,
                      html=1)
