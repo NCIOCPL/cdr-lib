@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.9 2002-11-27 01:36:52 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.10 2002-11-27 01:38:32 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,10 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2002/11/27 01:36:52  ameyer
+# Added parameters to status change filter for the lead org id and
+# person id, if user has entered them.
+#
 # Revision 1.8  2002/11/13 02:38:32  ameyer
 # Added support for multiple emails.
 #
@@ -247,8 +251,8 @@ for idTitle in originalDocs:
             # Optional parms on status change
             if leadOrgId:
                 parms.append (['leadOrgId', leadOrgId])
-            if personId:
-                parms.append (['personId', personId])
+                if personId:
+                    parms.append (['personId', personId])
         else:
             parms = [['changeFrom', fromVal],
                      ['changeTo', toVal]]
