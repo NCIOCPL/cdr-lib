@@ -2,8 +2,11 @@
 #
 # Script for command line and CGI publishing.
 #
-# $Id: cdrpub.py,v 1.4 2002-02-22 16:41:31 pzhang Exp $
+# $Id: cdrpub.py,v 1.5 2002-02-22 19:01:14 pzhang Exp $
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2002/02/22 16:41:31  pzhang
+# Fixed a bug in getParameters returning None instead of [].
+#
 # Revision 1.3  2002/02/20 22:31:47  pzhang
 # First version of cdrpub.py merged with publish.py.
 #
@@ -162,9 +165,10 @@ class Publish:
         # Connect to CDR. Abort when failed. Cannot log status in this case.
         self.__getConn()
 
-        # Initialized the list of tuples: (name, desc, sysName).
+        # Initialized the list of tuples: 
+        #   (subsetName, desc, sysName, param, userselect).
         pickList = []
-        tuple = ["", "", ""]
+        tuple = ["", "", "", "", ""]
 
         sql = "SELECT xml FROM document WHERE id = %s" % self.strCtrlDocId
         rs = self.__execSQL(sql)
@@ -188,6 +192,8 @@ class Publish:
                     if node.nodeName == 'SystemSubset':
                         tuple[0] = ''
                         tuple[1] = ''
+                        tuple[3] = ''
+                        tuple[4] = ''
                         for n in node.childNodes:
                             if n.nodeName == 'SubsetName':
                                 for m in n.childNodes:
@@ -197,7 +203,17 @@ class Publish:
                                 for m in n.childNodes:
                                     if m.nodeType == xml.dom.minidom.Node.TEXT_NODE:
                                         tuple[1] = tuple[1] + m.nodeValue
-
+                            if n.nodeName == 'SubsetParameters':
+                                tuple[3] = 'Yes'
+                            if n.nodeName == 'SubsetSpecifications':
+                                for m in n.childNodes:
+                                    if m.nodeName == 'SubsetSpecification':
+                                        for k in m.childNodes:
+                                            if k.nodeName == 'SubsetSelection':
+                                                for j in k.childNodes:
+                                                    if j.nodeName == 'UserSelect':
+                                                        tuple[4] = 'Yes'
+                                       
                         deep = copy.deepcopy(tuple)
                         pickList.append(deep)
 
@@ -234,6 +250,8 @@ class Publish:
         return self.__getParameters(self.__getSubSet(docElem))
 
     # This is a CGI helper function.
+    # Return -1 if not publishable.
+    # Return the version number if publishable.
     def isPublishable(self, docId):
 
         # Connect to CDR. Abort when failed. Cannot log status in this case.
@@ -243,15 +261,20 @@ class Publish:
         id = self.__getDocId(docId)
         version = self.__getVersion(docId)
 
-        # Query into doc_version table
-        sql = "SELECT id FROM doc_version WHERE id = %s AND num = %s " \
-                "AND publishable = 'Y' " % (id, version)
+        # Use the current publishable version, if exists.
+        if version == -1:
+            sql = "SELECT num FROM doc_version WHERE id = %s AND " \
+                "publishable = 'Y' ORDER BY num DESC" % id
+
+        # Query into doc_version table to verify this version.
+        else:
+            sql = "SELECT num FROM doc_version WHERE id = %s AND " \
+                "num = %s AND publishable = 'Y' " % (id, version)
         rs = self.__execSQL(sql)
 
-        ret = 0
-        while not rs.EOF:
-            ret = 1
-            rs.MoveNext()
+        ret = -1
+        if not rs.EOF:
+            ret = rs.Fields("num").Value
         rs.Close()
         rs = None
         self.__cdrConn = None
@@ -697,7 +720,7 @@ Please do not reply to this message.
                 if NCGI: self.__logPub(node.childNodes[0].nodeValue)
                 return node.childNodes[0].nodeValue
 
-        return None
+        return ""
 
     #----------------------------------------------------------------
     # Return id if there is a row in the publishing_process table
