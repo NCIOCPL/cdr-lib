@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.40 2002-11-20 16:38:20 pzhang Exp $
+# $Id: cdrpub.py,v 1.41 2002-12-03 21:10:54 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.40  2002/11/20 16:38:20  pzhang
+# Fixed a bug in missing updating pub_proc from PPCW to PPC.
+# Added more try blocks to detect why Setting A to PPCW failed.
+#
 # Revision 1.39  2002/11/14 20:21:46  pzhang
 # Added version infor for CG team.
 #
@@ -750,7 +754,7 @@ class Publish:
             cgWorkLink = self.__cdrHttp + "/PubStatus.py?id=1&type=CgWork"
             link = "<A style='text-decoration: underline;' href='%s'> \
                 Check pushed docs</A>(<B>inaccurate after next pushing \
-                job has started</B>).<BR>" % cgWorkLink          
+                job has started or this job succeeds</B>).<BR>" % cgWorkLink          
             if pubType == "Full Load" or pubType == "Export":
                 self.__createWorkPPC(vendor_job, vendor_dest, jobId)
                 pubTypeCG = pubType
