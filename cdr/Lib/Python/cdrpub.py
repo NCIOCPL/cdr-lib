@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.47 2003-01-24 22:03:44 pzhang Exp $
+# $Id: cdrpub.py,v 1.48 2003-01-28 20:37:25 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.47  2003/01/24 22:03:44  pzhang
+# Added code to make sure that distinct rows are inserted
+# into pub_proc_cg_work table.
+#
 # Revision 1.46  2003/01/23 20:37:33  pzhang
 # Added code to generate DateFirstPublished element
 # in a vendor document when it is first published.
@@ -1149,6 +1153,10 @@ class Publish:
         # is obtained from the cg_job in pub_proc_cg. If we want the most
         # recent version, we will either reconstruct the query or update
         # pub_proc column in pub_proc_cg for each job. 
+        # We don't regard filter failure as "removed or blocked", so
+        # every document in pub_proc_doc belonging to this vendor_job
+        # is considered as good although the failed ones were not used
+        # for update comparison.
 
         # Removed documents must have a doc_type belonging to this
         # Export subset [e.g., Protocol, Summary, Term, etc.].
