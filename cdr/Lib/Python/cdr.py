@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.59 2002-10-04 00:41:14 ameyer Exp $
+# $Id: cdr.py,v 1.60 2002-10-23 02:21:55 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.59  2002/10/04 00:41:14  ameyer
+# Enhanced logwrite to accept tuple or list.
+#
 # Revision 1.58  2002/10/01 21:29:21  ameyer
 # Added parameter allowNonPub to publish().  Passes it to the server to
 # allow the publishing system to publish documents not marked publishable.
@@ -503,6 +506,48 @@ def lastVersions (session, docId, host=DEFAULT_HOST, port=DEFAULT_PORT):
     isChanged = extract ("<IsChanged>(.+)</IsChanged>", resp)
 
     return (int(lastAny), int(lastPub), isChanged)
+
+#----------------------------------------------------------------------
+# Search the query term table for values
+#----------------------------------------------------------------------
+def getQueryTermValueForId (path, docId, conn = None):
+    """
+    Search for values pertaining to a particular path and id, or just
+    for a particular path.
+    Parameters:
+        path  - query_term.path, i.e., name of an index.
+        docId - limit search to specific id.
+        conn  - use this connection, or create one if None.
+    Return:
+        Sequence of values.  May be None.
+    Raises:
+        StandardError if any failure.
+    """
+    # Create connection if none available
+    if not conn:
+        try:
+            conn = cdrdb.connect ("CdrGuest")
+        except cdrdb.Error, info:
+            raise StandardError (
+              "getQueryTermValueForId: can't connect to DB: %s" % info[1][0])
+
+    # Normalize id to integer
+    id = exNormalize(docId)[1]
+
+    # Search table
+    try:
+        # Using % substitution because it should be completely safe and faster
+        cursor = conn.cursor()
+        cursor.execute (
+          "SELECT value FROM query_term WHERE path = '%s' AND doc_id = %d",
+          (path, id))
+        rows = cursor.fetchall()
+        if len(rows) == 0:
+            return None
+        return rows
+    except cdrdb.Error, info:
+        raise StandardError (
+          "getQueryTermValueForId: database error: %s" % info[1][0])
 
 #----------------------------------------------------------------------
 # Extract the text content of a DOM element.
