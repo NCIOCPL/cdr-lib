@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.9 2005-01-26 23:43:21 bkline Exp $
+# $Id: ModifyDocs.py,v 1.10 2005-03-04 19:19:45 bkline Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2005/01/26 23:43:21  bkline
+# Added custom exception DocumentLocked.
+#
 # Revision 1.8  2005/01/26 00:14:51  bkline
 # Changed logic to avoid validating documents for which we have no
 # record of validation having been performed in the past.  This
@@ -227,7 +230,7 @@ class Doc:
         lastSavedXml  = None
         docId         = self.cwd.id
         everValidated = self.lastp and True or self.__everValidated(job.cursor)
-        job.log("everValidated = %s" % everValidated)
+        #job.log("everValidated = %s" % everValidated)
 
         # Only save to database in run mode
         # Only write to output files in test mode
