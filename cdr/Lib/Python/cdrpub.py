@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.15 2002-08-07 19:47:38 pzhang Exp $
+# $Id: cdrpub.py,v 1.16 2002-08-08 15:18:21 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.15  2002/08/07 19:47:38  pzhang
+# Added code to handle Subdirectory of SubsetSpecification.
+#
 # Revision 1.14  2002/08/07 14:41:49  pzhang
 # Added features to push documents to Cancer.gov. It is far from the
 # final version and contains many bugs. Save this version before
@@ -545,13 +548,14 @@ class Publish:
                             """)
             rows    = cursor.fetchall()  
            
-            if len(rows) > 0: 
-                
+            if len(rows) > 0:                 
                 XmlDeclLine = re.compile("<\?xml.*?\?>\s*", re.DOTALL)
                 DocTypeLine = re.compile("<!DOCTYPE.*?>\s*", re.DOTALL)                   
                 for row in rows:                
                     id      = row[0]
-                    docType = row[1]                
+                    docType = row[1]  
+                    if docType == "InScopeProtocol":
+                        docType = "Protocol"              
                     xml = XmlDeclLine.sub("", row[2])
                     xml = DocTypeLine.sub("", xml)
 
@@ -573,10 +577,11 @@ class Publish:
             rows = cursor.fetchall()  
            
             if len(rows)  > 0: 
-
                 for row in rows:               
                     id        = row[0]               
-                    docType   = row[1]  
+                    docType   = row[1] 
+                    if docType == "InScopeProtocol":
+                        docType = "Protocol"   
                     response = cdr2cg.sendDocument(jobId, docNum, "Remove", 
                                                    docType, id)                 
                     if response.type != "OK":
@@ -653,6 +658,7 @@ class Publish:
                              FROM pub_proc_doc ppd
                             WHERE ppd.doc_id = ppc.id 
                               AND ppd.pub_proc = %d
+                              AND ppd.failure IS NULL
                               )
                             """ % (vendor_job, vendor_job)        
             cursor.execute(qry)
@@ -684,6 +690,7 @@ class Publish:
                       WHERE ppd.pub_proc = ?
                         AND d.id = ppd.doc_id
                         AND d.doc_type = t.id 
+                        AND ppd.failure IS NULL
                         AND NOT EXISTS ( 
                                 SELECT * 
                                   FROM pub_proc_cg ppc
@@ -798,6 +805,7 @@ class Publish:
                       WHERE ppd.pub_proc = ?
                         AND d.id = ppd.doc_id
                         AND d.doc_type = t.id 
+                        AND ppd.failure IS NULL
                             """, (vendor_job)
                            )      
             rows = cursor.fetchall()
