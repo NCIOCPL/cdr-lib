@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.84 2004-02-26 21:03:40 bkline Exp $
+# $Id: cdr.py,v 1.85 2004-03-31 13:29:04 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.84  2004/02/26 21:03:40  bkline
+# Expanded, generalized support for dynamic discovery of host name.
+#
 # Revision 1.83  2004/02/03 15:38:21  bkline
 # Plugged in cgitb debugging help.
 #
@@ -751,18 +754,25 @@ def _addRepDocComment(doc, comment):
         Both doc and comment must be UTF-8.  (Else must add conversions here.)
     """
 
+    # Sanity check.
+    if not doc:
+        raise StandardError("_addRepDocComment(): missing doc argument")
+    
     # Search for and delete existing DocComment
     delPat = re.compile (r"\n*<DocComment.*</DocComment>\n*", re.DOTALL)
-    newDoc = delPat.sub ('', doc)
+    newDoc = delPat.sub ('', doc).replace('<DocComment/>', '')
 
     # Search for CdrDocCtl to insert new DocComment after it
+    newDoc = newDoc.replace('<CdrDocCtl/>', '<CdrDocCtl></CdrDocCtl>')
     insPat = re.compile (r"(?P<first>.*<CdrDocCtl[^>]*>)\n*(?P<last>.*)",
                          re.DOTALL)
     insRes = insPat.search (newDoc)
-    parts  = insRes.group ('first', 'last')
-    if len (parts) != 2:
+    if insRes:
+        parts = insRes.group ('first', 'last')
+    if not insRes or len (parts) != 2:
         # Should never happen unless there's a bug
-        raise StandardError ("addRepDocComment: No CdrDocCtl in doc:\n" % doc)
+        raise StandardError ("addRepDocComment: No CdrDocCtl in doc:\n%s" %
+                             doc)
 
     # Comment must be compatible with CdrDoc utf-8
     if type(comment) == type(u""):
