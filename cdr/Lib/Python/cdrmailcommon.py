@@ -1,11 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrmailcommon.py,v 1.4 2002-11-01 05:24:13 ameyer Exp $
+# $Id: cdrmailcommon.py,v 1.5 2002-11-06 03:06:31 ameyer Exp $
 #
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2002/11/01 05:24:13  ameyer
+# Changed getRelatedId to retrieve a single scalar object - recipient no longer
+# needed here.
+#
 # Revision 1.3  2002/11/01 02:42:57  ameyer
 # New version using multi-temp-table queries developed by Bob.
 #
@@ -17,7 +21,7 @@
 #
 #----------------------------------------------------------------------
 
-import sys, cdrdb
+import sys, cdr, cdrdb
 
 
 # Log file for debugging - module variable, not instance
@@ -122,14 +126,22 @@ class RemailSelector:
         # This is selecting document ids of mailer tracking documents,
         #   not primary documents that are mailed.
         try:
+            # Log for timing reasons
+            cdr.logwrite ("Starting #orig_mailers remail selection", LOGFILE)
+
             self.__cursor.execute ("""
              SELECT mailer.doc_id
                INTO #orig_mailers
                FROM query_term mailer
                JOIN query_term mailer_sent
                  ON mailer_sent.doc_id = mailer.doc_id
+               JOIN query_term mailer_job
+                 ON mailer_job.doc_id = mailer.doc_id
+               JOIN pub_proc
+                 ON mailer_job.int_val = pub_proc.id
               WHERE mailer.path = '/Mailer/Type'
                 AND mailer.value IN (%s)
+                AND pub_proc.status <> 'Failure'
                 AND mailer_sent.path = '/Mailer/Sent'
                 AND mailer_sent.value
             BETWEEN CONVERT(CHAR(10), DATEADD(DAY, -%d, GETDATE()), 121)
@@ -142,6 +154,7 @@ class RemailSelector:
         # Create another temporary table containing all mailers in the
         #   above table that received a response.
         try:
+            cdr.logwrite ("Starting #got_response remail selection", LOGFILE)
             self.__cursor.execute ("""
              SELECT query_term.doc_id
                INTO #got_response
@@ -159,6 +172,8 @@ class RemailSelector:
         # How many have we already sent out remailers for (might be some
         #   overlap with the previous set).
         try:
+            cdr.logwrite ("Starting #already_remailed remail selection",
+                           LOGFILE)
             self.__cursor.execute ("""
              SELECT #orig_mailers.doc_id
                INTO #already_remailed
@@ -166,7 +181,7 @@ class RemailSelector:
                JOIN #orig_mailers
                  ON #orig_mailers.doc_id = query_term.int_val
               WHERE query_term.path = '/Mailer/RemailerFor/@cdr:ref'
-            """)
+            """, timeout=180)
         except cdrdb.Error, info:
             raise 'db error creating temporary table #already_remailed %s'\
                   % str(info[1][0])
@@ -179,6 +194,7 @@ class RemailSelector:
         #    job to make sure we aren't creating a remailer for a mailer that,
         #    in fact, never went out.
         try:
+            cdr.logwrite ("Starting #remail_temp remail selection", LOGFILE)
             self.__cursor.execute ("""
                  SELECT DISTINCT TOP %d document.id AS doc,
                         MAX(doc_version.num) AS ver,
@@ -202,6 +218,7 @@ class RemailSelector:
                         )
                GROUP BY document.id, #orig_mailers.doc_id
             """ % maxMailers)
+            cdr.logwrite ("Completed all remail selection", LOGFILE)
 
             # Tell user how many hits there were
             return self.__cursor.rowcount
