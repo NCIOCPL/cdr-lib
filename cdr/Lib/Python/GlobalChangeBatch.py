@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.18 2003-11-14 02:16:34 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.19 2003-12-24 18:17:07 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,10 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.18  2003/11/14 02:16:34  ameyer
+# Completion of changes for global terminology change.
+# More may be done as testing continues.
+#
 # Revision 1.17  2003/11/05 01:44:54  ameyer
 # Changes to allow a document to be filtered multiple times for one global
 # change, each with different filters and/or parameters.
@@ -467,28 +471,33 @@ for idTitle in originalDocs:
                 chgPubVerDocObj = cdr.Doc(id=docIdStr, type='InScopeProtocol',
                                           x=chgPubVerXml, encoding='utf-8')
                 cdr.logwrite ("About to replace published version in CDR", LF)
-                repDocResp = cdr.repDoc (session, doc=str(chgPubVerDocObj),
+                (repId, repErrs) = cdr.repDoc(session,doc=str(chgPubVerDocObj),
                     ver='Y', val='Y', checkIn='N', verPublishable='Y',
+                    showWarnings = 1,
                     comment="Last publishable version, revised by %s" % \
                              chg.description)
                 cdr.logwrite ("Replaced published version in CDR", LF)
-                if repDocResp.startswith ("<Errors"):
-                    failed = logDocErr (docId,
-                    "attempting to store last publishable version after change",
-                    repDocResp)
+                if repErrs:
+                    msg = \
+                 "attempting to store last publishable version after change" +\
+                 "<br>Store may have failed, or version may not be publishable"
+                    failed = logDocErr (docId, msg, repErrs)
 
         if not failed:
             # Finally, the working document
             chgCwdDocObj = cdr.Doc(id=docIdStr, type='InScopeProtocol',
                                    x=chgCwdXml, encoding='utf-8')
             cdr.logwrite ("Saving CWD after change", LF)
-            repDocResp = cdr.repDoc (session, doc=str(chgCwdDocObj),
+            (repId, repErrs) = cdr.repDoc (session, doc=str(chgCwdDocObj),
                 ver="Y", verPublishable=saveCWDPubVer,
-                val=saveCWDPubVer, checkIn='Y',
+                val=saveCWDPubVer, checkIn='Y', showWarnings = 1,
                 comment="Revised by %s" % chg.description)
-            if repDocResp.startswith ("<Errors"):
-                failed = logDocErr (docId, "attempting to store changed CWD",
-                                    repDocResp)
+            if repErrs:
+                msg = "attempting to store changed CWD"
+                if saveCWDPubVer == 'Y':
+                    msg += \
+                 "<br>Store may have failed, or version may not be publishable"
+                failed = logDocErr (docId, msg, repErrs)
 
             else:
                 # Replace was successful.  Document checked in
