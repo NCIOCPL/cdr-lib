@@ -142,11 +142,17 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: ExcelReader.py,v 1.3 2004-10-12 01:27:09 bkline Exp $
+# $Id: ExcelReader.py,v 1.4 2004-10-12 11:36:29 bkline Exp $
 #
 # Module for extracting cell values from Excel spreadsheets.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2004/10/12 01:27:09  bkline
+# Sped up the XML document generation by almost two orders of magnitude,
+# by using the string join operator on a list of strings for the pieces
+# of the document rather than string concatenation.  Fleshed out the
+# module's documentation.
+#
 # Revision 1.2  2004/10/11 00:14:52  bkline
 # Added support for CONTINUE records.  Fixed an encoding bug (str(cell)
 # now returns a UTF-8--encoded string).
@@ -218,7 +224,7 @@ class Workbook:
         """
 
         # Initial values for workbook's members.
-        self.formats    = self.__builtinFormats()
+        self.formats    = self.getBuiltinFormats()
         self.biffVer    = 'BIFF8'
         self.flag1904   = False
         self.xf         = []
@@ -226,10 +232,10 @@ class Workbook:
         self.sst        = []
         self.sheets     = []
         self.__sheets   = {}
-        self.buf        = self.__loadWorkbookStream(fileName, fileBuf)
+        self.buf        = self.loadWorkbookStream(fileName, fileBuf)
 
         # Load the workbook's global block.
-        self.__parseGlobals()
+        self.parseGlobals()
 
         # Load the data for each of the worksheets in the book.
         for sheet in self.sheets:
@@ -317,7 +323,7 @@ class Workbook:
         x.append(u"</Book>")
         return u"".join(x).encode('utf-8')
 
-    def __loadWorkbookStream(self, fileName = None, fileBuf = None):
+    def loadWorkbookStream(self, fileName = None, fileBuf = None):
         
         """
         Extracts the Workbook stream as an 8-bit-character string
@@ -329,9 +335,9 @@ class Workbook:
         """
         
         if fileName:
-            oleStorage = OleStorage.OleStorage(fileName)
+            oleStorage = OleStorage.OleStorage(name = fileName)
         elif fileBuf:
-            oleStorage = OleStorage.OleStorage(fileBuf = fileBuf)
+            oleStorage = OleStorage.OleStorage(buf = fileBuf)
         else:
             raise Exception("fileName or fileBuf must be specified")
         bookStream = oleStorage.getRootDirectory().open("Workbook")
@@ -341,7 +347,7 @@ class Workbook:
             raise Exception("Excel workbook not found")
         return bookStream.read()
 
-    def __parseGlobals(self):
+    def parseGlobals(self):
 
         """
         Loads the pieces we're interested in from the top block
@@ -495,7 +501,7 @@ class Workbook:
         except:
             raise IndexError
 
-    def __builtinFormats(self):
+    def getBuiltinFormats(self):
         
         """Returns a pre-built dictionary of the formats assumed
         by Excel."""
@@ -670,7 +676,7 @@ class Worksheet:
             # RK record
             if record.id == 0x027E:
                 (row, col, xf, val) = struct.unpack("<3hl", record.data)
-                val = self.__parseRk(val)
+                val = self.parseRk(val)
                 self.cells[(row,col)] = Cell(row, col, book,
                                                       xf, val)
 
@@ -681,7 +687,7 @@ class Worksheet:
                 end   = 10
                 while end < len(record.data):
                     xf, rk = struct.unpack("<hl", record.data[start:end])
-                    val = self.__parseRk(rk)
+                    val = self.parseRk(rk)
                     self.cells[(r, c)] = Cell(r, c, book, xf, val)
                     start += 6
                     end   += 6
@@ -776,7 +782,7 @@ class Worksheet:
                 self.__rows[cell.row] = row
             row.addCell(cell)
 
-    def __parseRk(self, v):
+    def parseRk(self, v):
         
         """
         Extract a compactly packed numeric value.  The bits are
