@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.19 2002-08-12 16:49:18 pzhang Exp $
+# $Id: cdrpub.py,v 1.20 2002-08-13 23:07:50 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.19  2002/08/12 16:49:18  pzhang
+# Added updateMessage function to help trace publishing process.
+#
 # Revision 1.18  2002/08/08 22:43:38  pzhang
 # Added AbortOnError as a parameter so that user can change this value.
 # Made comparison of xml and file work for updating documents.
@@ -199,12 +202,12 @@ class Publish:
     # This is the major public entry point to publishing.
     #---------------------------------------------------------------
     def publish(self):
-
+        
         try:
 
             # Record the fact that the job is in process.
             self.__updateStatus(Publish.RUN)
-
+      
             # Load the publishing system's control document from the DB.
             docElem = self.__getCtrlDoc()
 
@@ -249,6 +252,12 @@ class Publish:
             specSubdirs             = []
             userListedDocsRemaining = len(self.__userDocList)
             self.__debugLog("Processing user-listed documents.")
+            
+            # Number of documents have been filtered and validated.
+            numDocs = 0          
+            self.__updateMessage(
+                "Start filtering/validating at %s.<BR>" % time.ctime())
+
             for spec in self.__specs.childNodes:
 
                 if spec.nodeName == "SubsetSpecification":
@@ -285,6 +294,14 @@ class Publish:
                         # subdirs when calling cdr.publish(). This may
                         # change in release XX.                    
                         self.__publishDoc(doc, filters, destType, dest)
+                        numDocs += 1
+                        if numDocs % 1000 == 0:
+                            self.__updateMessage(
+                                "Filtered/validated %d docs at %s.<BR>" % (
+                                            numDocs, time.ctime()))
+                            numFailures = self.__getFailures()
+                            self.__updateMessage("""%d docs failed so 
+                                far.<BR>""" % numFailures)                       
 
                         self.__alreadyPublished[doc[0]] = 1
                         userListedDocsRemaining -= 1
@@ -314,7 +331,20 @@ class Publish:
                                       destType, dest, 
                                       Publish.STORE_ROW_IN_PUB_PROC_DOC_TABLE,
                                       specSubdirs[i])
+                                numDocs += 1
+                                if numDocs % 1000 == 0:
+                                    self.__updateMessage(
+                                        """Filtered/validated %d docs at 
+                                        %s.<BR>""" % (numDocs, time.ctime()))
+                                    numFailures = self.__getFailures()
+                                    self.__updateMessage("""%d docs failed 
+                                        so far.<BR>""" % numFailures)      
                     i += 1
+
+            self.__updateMessage("""Finish filtering/validating all %d docs 
+                                    at %s.<BR>""" % (numDocs, time.ctime())) 
+            numFailures = self.__getFailures()
+            self.__updateMessage("Total of %d docs failed.<BR>" % numFailures)   
 
             if self.__publishIfWarnings == "Ask" and self.__warningCount:
                 self.__updateStatus(Publish.WAIT, "Warnings encountered")
@@ -469,7 +499,7 @@ class Publish:
             if not cg_job:
                 msg += "<B>Failed:</B> %s\n" % resp[1]
                 msg += """<BR>Please run %s job separately or 
-                    again later.""" % self.__pd2cg
+                    again later.<BR>""" % self.__pd2cg
                 return [None, Publish.SUCCESS, msg]       
             jobId = int(cg_job)        
      
@@ -477,9 +507,9 @@ class Publish:
         if self.__params.has_key('PubType'):
             pubType = self.__params['PubType']
             if not cdr2cg.PUBTYPES.has_key(pubType):              
-                msg = "The value of parameter PubType, %s, is unsupported.\
-                       <BR>Please modify the control document or the source \
-                       code." % pubType
+                msg = """The value of parameter PubType, %s, is unsupported.
+                       <BR>Please modify the control document or the source 
+                       code.<BR>""" % pubType
                 return [jobId, Publish.FAILURE, msg]
         else:
             msg = "There is no parameter PubType in the control document."
@@ -523,10 +553,11 @@ class Publish:
                 msg = "No documents pushed to Cancer.gov."
                 return [jobId, Publish.SUCCESS, msg]
             
-            # Get last successful cg_jobId for this subset.
+            # Get last successful cg_jobId. GateKeeper does not
+            # care which subset it belongs to.
             # Returns 0 if there is no previous success.
             # Raise an exception when failed.
-            lastJobId = self.__getLastJobId(vendor_subsetName)   
+            lastJobId = self.__getLastCgJob()   
 
             docType = "Deprecated"
    
@@ -564,7 +595,7 @@ class Publish:
             rows    = cursor.fetchall()  
             addCount = len(rows)
             msg += "Pushing documents starts at %s.<BR>" % time.ctime()
-            self.__updateMessage(msg, cg_job) 
+            self.__updateMessage(msg, jobId) 
             msg = ""    
             if addCount > 0:                 
                 XmlDeclLine = re.compile("<\?xml.*?\?>\s*", re.DOTALL)
@@ -589,7 +620,7 @@ class Publish:
                     if docNum % 1000 == 0:
                         msg += "Pushed %d documents at %s.<BR>" % (
                                     docNum, time.ctime())
-                        self.__updateMessage(msg, cg_job)
+                        self.__updateMessage(msg, jobId)
                         msg = ""  
                 msg += "%d documents sent to Cancer.gov.<BR>" % addCount
                 self.__updateMessage(msg, cg_job)
@@ -620,10 +651,10 @@ class Publish:
                     if docNum % 1000 == 0:
                         msg += "Pushed %d documents at %s.<BR>" % (
                                     docNum, time.ctime())
-                        self.__updateMessage(msg, cg_job)
+                        self.__updateMessage(msg, jobId)
                         msg = ""
                 msg += "%d documents removed from Cancer.gov.<BR>" % delCount    
-                self.__updateMessage(msg, cg_job)
+                self.__updateMessage(msg, jobId)
                 msg = ""                               
             
             # Before we claim success, we will have to update 
@@ -639,7 +670,7 @@ class Publish:
             else:
                 raise StandardError("pubType %s not supported." % pubType)  
                        
-            msg += "Done at %s.<BR>" % time.ctime() 
+            msg += "Pushing done at %s.<BR>" % time.ctime() 
                    
         except StandardError, arg:
             msg += arg[0]
@@ -1041,14 +1072,46 @@ class Publish:
             row = cursor.fetchone()
 
             if row and row[0]:
-                jobId = row[0] 
+                return row[0] 
+            else:
+                msg = """Failure executing query to find last successful
+                         jobId for this subset: %s""" % subsetName
+                raise StandardError(msg)                 
            
         except cdrdb.Error, info:
             msg = """Failure executing query to find last successful
                      jobId for this subset: %s""" % subsetName
             raise StandardError(msg) 
              
-        return jobId          
+        return jobId   
+    
+    #------------------------------------------------------------------
+    # Return the last successful cg_job for any pushes.   
+    #------------------------------------------------------------------
+    def __getLastCgJob(self):
+        try:
+            cursor = self.__conn.cursor()
+            cursor.execute("""
+                    SELECT MAX(pp.id)
+                      FROM pub_proc pp
+                     WHERE pp.status = ?                 
+                       AND pp.pub_subset LIKE ?
+                       AND pp.pub_system = ?                         
+                           """, (Publish.SUCCESS, 
+                                 "%s%%" % self.__pd2cg,
+                                 self.__ctrlDocId)
+                          )
+            row = cursor.fetchone()
+
+            if row and row[0]:
+                return row[0] 
+            else:
+                return 0
+           
+        except cdrdb.Error, info:
+            msg = """Failure executing query to find last successful
+                     cg_job.<BR>"""
+            raise StandardError(msg)          
 
     #------------------------------------------------------------------
     # Publish one document.
@@ -1733,6 +1796,34 @@ Please do not reply to this message.
                  WHERE id        = ?""", (message, id))
         except cdrdb.Error, info:
             msg = 'Failure setting status for job %d: %s' % (id, info[1][0])
+            self.__debugLog(msg)
+            raise StandardError(msg)
+
+    #----------------------------------------------------------------------
+    # Get the number of failed documents in pub_proc_doc table.
+    #----------------------------------------------------------------------
+    def __getFailures(self):
+        id = self.__jobId
+        try:
+            cursor = self.__conn.cursor()
+            cursor.execute("""
+                SELECT count(*)
+                  FROM pub_proc_doc
+                 WHERE failure = 'Y'
+                   AND pub_proc = %d 
+                           """ % id
+                          )
+            row = cursor.fetchone() 
+            if row and row[0]:           
+                return row[0]
+            else:
+                msg = 'Failure getting failed docs for job %d.<BR>' % id            
+                self.__updateMessage(msg)
+                return 0
+                     
+        except cdrdb.Error, info:
+            msg = 'Failure getting failed docs for job %d: %s' % (id, 
+                                                            info[1][0])
             self.__debugLog(msg)
             raise StandardError(msg)
 
