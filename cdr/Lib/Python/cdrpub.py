@@ -1,10 +1,17 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.31 2002-09-11 20:47:09 pzhang Exp $
+# $Id: cdrpub.py,v 1.32 2002-09-17 21:17:00 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.31  2002/09/11 20:47:09  pzhang
+# Added a global __timeOut variable.
+# Encoded file to unicode after it is read from file system.
+# Added __getSubsetDocTypes() to support publishing individual doc type.
+# Updated Hotfix-Export code so that it will compare files for new and
+#     updated documents as in Export.
+#
 # Revision 1.30  2002/09/06 21:49:20  pzhang
 # Added __canPush().
 # Added timeout parameter to cursor.execute().
@@ -538,8 +545,43 @@ class Publish:
             self.__updateStatus(Publish.FAILURE, """The job status is 
                 set to Failure because it was running for pre-publishing 
                 reports.<BR>""")
+
+        # Update first_pub in all_docs table.
+        self.__updateFirstPub()
+
         self.__sendMail()
 
+    #------------------------------------------------------------------
+    # Update first_pub when appropriate.  
+    #------------------------------------------------------------------
+    def __updateFirstPub(self):
+        try:
+            conn = cdrdb.connect("cdr")
+            cursor = conn.cursor()
+            cursor.execute("""\
+                    SELECT ppd.doc_id, ppj.completed
+                      FROM pub_proc_doc ppd, primary_pub_job ppj, all_docs d
+                     WHERE ppd.doc_id = d.id
+                       AND ppd.pub_proc = ppj.id
+                       AND ppj.id = %d
+                       AND d.first_pub IS NULL
+                       AND d.first_pub_knowable = 'Y'                   
+                  ORDER BY ppd.doc_id             
+                           """ % self.__jobId
+                           )
+            rows = cursor.fetchall()
+            for row in rows:
+                cursor.execute("""\
+                    UPDATE all_docs
+                       SET first_pub = '%s'
+                     WHERE id = %d                 
+                               """ % (row[1], row[0])
+                              )
+                conn.commit()
+        except cdrdb.Error, info:
+            self.__updateStatus(Publish.FAILURE, """Failure updating first_pub 
+                        for job %d: %s""" % (self.__jobId, info[1][0]))
+  
     #------------------------------------------------------------------
     # Allow only one pushing job run.
     # Return 0 if there is a pending pushing job.
