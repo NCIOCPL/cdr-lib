@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.13 2003-04-26 16:33:12 bkline Exp $
+# $Id: GlobalChangeBatch.py,v 1.14 2003-06-05 18:38:29 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,9 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.13  2003/04/26 16:33:12  bkline
+# Added encoding argument to cdr.Doc() constructor invocation.
+#
 # Revision 1.12  2003/04/08 18:29:39  ameyer
 # Modified to always create a new version, whether the CWD is identical to the
 # last publishable version or not.  Pre and post-change versions of the
@@ -287,7 +290,7 @@ for idTitle in originalDocs:
             cdr.logwrite ("Checking lastVersions", LF)
             result = cdr.lastVersions (session, docIdStr)
             cdr.logwrite ("Finished checking lastVersions", LF)
-            if type (result) == type ("") or type (result) == (u""):
+            if type(result) == type("") or type(result) == type(u""):
                 failed = logDocErr (docId, "fetching last version information",
                                     result)
             else:
@@ -483,12 +486,18 @@ trTbl = string.maketrans (",;", "  ")
 email = string.translate (jobObj.getEmail().encode("ascii"), trTbl)
 emailList = string.split (email)
 
+# Make html safe for email
+if type(html)==type(u""):
+    safeHtml = cdrcgi.unicodeToLatin1 (html)
+else:
+    safeHtml = html
+
 # Send it by email
 cdr.logwrite ("About to email final report to %s" % jobObj.getEmail(), LF)
 resp = cdr.sendMail ("cdr@%s.nci.nih.gov" % socket.gethostname(),
                      emailList,
                      subject="Final report on global change",
-                     body=html,
+                     body=safeHtml,
                      html=1)
 if resp:
     # Returns None if no error
