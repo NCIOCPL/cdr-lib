@@ -1,17 +1,26 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
 #
-# $Id: CgiQuery.py,v 1.2 2003-03-04 22:52:36 bkline Exp $
+# $Id: CgiQuery.py,v 1.3 2003-04-09 21:57:40 bkline Exp $
 #
 # Base class for CGI database query interface.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2003/03/04 22:52:36  bkline
+# Added test to make sure object was not null before doing string
+# replacement.
+#
 # Revision 1.1  2002/12/10 13:35:58  bkline
 # Base class for ad-hoc SQL query tool with WEB interface.
 #
 #----------------------------------------------------------------------
-import cgi, re, sys, time
+import cgi, re, sys, time, cdrdb
 
+unicodePattern = re.compile(u"([\u0080-\uffff])")
+def encode(unicodeString):
+    return re.sub(unicodePattern,
+                  lambda match: u"&#x%X;" % ord(match.group(0)[0]),
+                  unicodeString).encode('ascii')
 class CgiQuery:
 
     def __init__(self, conn, system, script):
@@ -158,13 +167,16 @@ Cache-control: no-cache, must-revalidate
                 rowNum += 1
                 html += "<tr>\n"
                 for col in row:
+                    if type(col) == type(u""):
+                        col = encode(col)
                     val = col and cgi.escape(str(col)) or "&nbsp;"
-                    html += "<td valign='top' class='%s'>%s</td>\n" % (cls, val)
+                    html += "<td valign='top' class='%s'>%s</td>\n" % (cls,
+                                                                       val)
                 html += "</tr>\n"
                 row = cursor.fetchone()
             html += "</table>"
             self.results = html
-        except StandardError, info:
+        except cdrdb.Error, info:
             self.bail("Failure executing query:\n%s\n%s" % (
                 cgi.escape(self.queryText),
                 cgi.escape(info[1][0])))
