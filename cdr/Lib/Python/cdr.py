@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.67 2002-11-22 14:40:48 bkline Exp $
+# $Id: cdr.py,v 1.68 2002-12-05 18:33:39 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.67  2002/11/22 14:40:48  bkline
+# Removed superfluous space before body in sendMail().
+#
 # Revision 1.66  2002/11/13 20:36:05  bkline
 # Plugged in filter set mechanism for filterDoc().
 #
@@ -2065,9 +2068,9 @@ def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
            host = DEFAULT_HOST, port = DEFAULT_PORT, allowInActive = 'N'):
 
     # Create the command.
-    pubSystem   = "<PubSystem>%s</PubSystem>" % pubSystem or ""
-    pubSubset   = "<PubSubset>%s</PubSubset>" % pubSubset or ""
-    email       = email and "<Email>%s</Email>" % email   or ""
+    pubSystem   = pubSystem and ("<PubSystem>%s</PubSystem>" % pubSystem) or ""
+    pubSubset   = pubSubset and ("<PubSubset>%s</PubSubset>" % pubSubset) or ""
+    email       = email and "<Email>%s</Email>" % email or ""
     noOutput    = noOutput and "<NoOutput>%s</NoOutput>" % noOutput
     allowNonPub = (allowNonPub == 'N') and 'N' or 'Y'
     allowNonPub = "<AllowNonPub>%s</AllowNonPub>" % allowNonPub
