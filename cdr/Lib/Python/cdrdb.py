@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.5 2001-08-06 14:38:26 bkline Exp $
+# $Id: cdrdb.py,v 1.6 2001-08-06 15:55:30 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2001/08/06 14:38:26  bkline
+# Enhanced exception error information; implemented nextset().
+#
 # Revision 1.4  2001/08/06 04:33:01  bkline
 # Switched to SQLOLEDB provider.
 #
@@ -335,12 +338,18 @@ class Cursor:
         cmd                  = win32com.client.Dispatch("ADODB.Command")
         cmd.ActiveConnection = self.__conn
         cmd.CommandText      = query
+        cmd.CommandType      = win32com.client.constants.adCmdText
         try:
             if params:
+                cmdParams = cmd.Parameters
                 if type(params) != type(()) and type(params) != type([]):
                     params = (params,)
+                if len(cmdParams) != len(params):
+                    raise ProgrammingError, ("Cursor.execute",
+                            ("expected %d parameters, received %d" % 
+                             (len(cmdParams), len(params)),))
                 for i in range(len(params)):
-                    cmd.Parameters.Item[i].Value = paramSet[i]
+                    cmdParams.Item(i).Value = params[i]
             self.__rs, rowsAffected = cmd.Execute()
             fields = self.__rs.Fields
             if len(fields):
