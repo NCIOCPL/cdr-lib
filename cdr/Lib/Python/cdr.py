@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.28 2002-04-02 20:03:17 bkline Exp $
+# $Id: cdr.py,v 1.29 2002-04-09 20:19:53 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.28  2002/04/02 20:03:17  bkline
+# Added stub for pubStatus command; added docTime parameter to publish().
+#
 # Revision 1.27  2002/04/02 14:30:13  bkline
 # Added publish command.
 #
@@ -178,15 +181,16 @@ def checkErr(resp):
 #----------------------------------------------------------------------
 # Extract error elements from XML.
 #----------------------------------------------------------------------
-def getErrors(xml):
+def getErrors(xml, errorsExpected = 1):
 
     # Comile the pattern for the regular expression.
     pattern = re.compile("<Errors[>\s].*</Errors>", re.DOTALL)
 
     # Search for the <Errors> element.
     errors  =  pattern.search(xml)
-    if errors: return errors.group()
-    else:      return "<Errors><Err>Internal failure</Err></Errors>"
+    if errors:           return errors.group()
+    elif errorsExpected: return "<Errors><Err>Internal failure</Err></Errors>"
+    else:                return ""
 
 #----------------------------------------------------------------------
 # Extract a piece of the CDR Server's response.
@@ -289,10 +293,18 @@ class Doc:
 
 #----------------------------------------------------------------------
 # Add a new document to the CDR Server.
+# If showWarnings is set to non-zero value, the caller will be given
+# a tuple containing the document ID string as the first value, and
+# a possibly empty string containing an "Errors" element (for example,
+# for validation errors).  Otherwise (the default behavior), a single
+# value is returned containing a document ID in the form "CDRNNNNNNNNNN"
+# or the string for an Errors element.  We're using this parameter
+# (and its default) in order to preserve compatibility with code which
+# expects a simple return value.
 #----------------------------------------------------------------------
 def addDoc(credentials, file = None, doc = None,
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
-           verPublishable = 'Y', setLinks = 'Y',
+           verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Load the document if necessary.
@@ -313,15 +325,27 @@ def addDoc(credentials, file = None, doc = None,
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
 
-    # Extract the document ID.
-    return extract("<DocId.*>(CDR\d+)</DocId>", resp)
+    # Extract the document ID (and messages if requested).
+    docId = extract("<DocId.*>(CDR\d+)</DocId>", resp)
+    if not docId.startswith("CDR"):
+        if showWarnings:
+            return (None, docId)
+        else
+            return docId
+    errors = getErrors(resp, errorsExpected = 0)
+    if showWarnings:
+        return (docId, errors)
+    else:
+        return docId
 
 #----------------------------------------------------------------------
 # Replace an existing document in the CDR Server.
+# See documentation of addDoc above for explanation of showWarnings
+# argument.
 #----------------------------------------------------------------------
 def repDoc(credentials, file = None, doc = None,
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
-           verPublishable = 'Y', setLinks = 'Y',
+           verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Load the document if necessary.
@@ -342,8 +366,18 @@ def repDoc(credentials, file = None, doc = None,
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
 
-    # Extract the document ID.
-    return extract("<DocId.*>(CDR\d+)</DocId>", resp)
+    # Extract the document ID (and messages if requested).
+    docId = extract("<DocId.*>(CDR\d+)</DocId>", resp)
+    if not docId.startswith("CDR"):
+        if showWarnings:
+            return (None, docId)
+        else
+            return docId
+    errors = getErrors(resp, errorsExpected = 0)
+    if showWarnings:
+        return (docId, errors)
+    else:
+        return docId
 
 #----------------------------------------------------------------------
 # Retrieve a specified document from the CDR Server.
