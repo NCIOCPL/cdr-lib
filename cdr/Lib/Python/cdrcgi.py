@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.20 2002-07-05 18:04:05 bkline Exp $
+# $Id: cdrcgi.py,v 1.21 2002-07-05 18:10:52 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.20  2002/07/05 18:04:05  bkline
+# Fixed bug in advanced search page.
+#
 # Revision 1.19  2002/07/02 14:18:04  ameyer
 # Added global change entry to main menu.
 #
@@ -707,6 +710,7 @@ def advancedSearchResultsPageTop(docType, nRows, strings):
 def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
     html = advancedSearchResultsPageTop(docType, len(rows), strings)
 
+    session = session and ("&%s=%s" % (SESSION, session)) or ""
     for i in range(len(rows)):
         docId = "CDR%010d" % rows[i][0]
         title = rows[i][1]
@@ -719,14 +723,13 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
             dtcol = """\
     <TD       VALIGN = "top">%s</TD>
 """ % dt
-        sessvar = session and ("&%s=%s" % (SESSION, session)) or ""
 
         # XXX Consider using QcReport.py for all advanced search results pages.
         if docType == "Person" or docType == "Organization":
-            href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, sessvar)
+            href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
         else:
             href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId, filt,
-                                                          sessvar)
+                                                          session)
         html += """\
    <TR>
     <TD       NOWRAP
