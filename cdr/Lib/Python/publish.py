@@ -2,8 +2,11 @@
 #
 # Script for command line and CGI publishing.
 #
-# $Id: publish.py,v 1.8 2002-02-14 21:43:26 mruben Exp $
+# $Id: publish.py,v 1.9 2002-02-20 15:23:19 pzhang Exp $
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2002/02/14 21:43:26  mruben
+# Fixed log comment; changed no_output to self.no_output [bkline for mruben].
+#
 # Revision 1.7  2002/02/14 21:25:49  mruben
 # Suppressed unused docTypes variable; added no_output support [commit by RMK].
 #
@@ -1357,7 +1360,8 @@ Please do not reply to this message.
                     if n.nodeType == xml.dom.minidom.Node.TEXT_NODE:
                         scriptName += n.nodeValue
         # Is the location of the script always in cdr.SCRIPTS?
-        scriptName = cdr.SCRIPTS + "/" + scriptName
+        # SCRIPTS is changed to BASEDIR.
+        scriptName = cdr.BASEDIR + "/" + scriptName
         if not os.path.isfile(scriptName):
             if NCGI: print scriptName + " not found!"
             sys.exit(1)
