@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.11 2003-03-27 18:36:04 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.12 2003-04-08 18:29:39 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,11 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.11  2003/03/27 18:36:04  ameyer
+# Added some logic for new insert org global change.
+# Simplified and centralized handling of filter parameter and comment
+# data passed to cdr.filterDoc.
+#
 # Revision 1.10  2002/11/27 01:38:32  ameyer
 # Slight change to double check that personId can only be sent if
 # leadOrgId also exists.
@@ -381,7 +386,7 @@ for idTitle in originalDocs:
                                    x=chgCwdXml)
             cdr.logwrite ("Saving CWD after change", LF)
             repDocResp = cdr.repDoc (session, doc=str(chgCwdDocObj),
-                ver=saveCWDPubVer, verPublishable=saveCWDPubVer,
+                ver="Y", verPublishable=saveCWDPubVer,
                 val=saveCWDPubVer, checkIn='Y',
                 comment="Revised by %s" % description)
             if repDocResp.startswith ("<Errors"):
