@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.6 2002-07-25 20:56:01 pzhang Exp $
+# $Id: cdr2cg.py,v 1.7 2002-08-22 12:40:25 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2002/07/25 20:56:01  pzhang
+# Split docTemplate into docTemplateHead and docTemplateTail
+# and encoded them to UTF-8.
+#
 # Revision 1.5  2002/07/23 15:02:25  pzhang
 # Added PDQDTD string for PDQ.dtd location.
 #
@@ -62,7 +66,9 @@ PDQDTD = "http://mmdb2.nci.nih.gov/dtds/PDQ.dtd"
 #----------------------------------------------------------------------
 requestWrapper      = """\
 <?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:soap="%s">
+<soap:Envelope xmlns:soap="%s"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+               xmlns:xsd="http://www.w3.org/2001/XMLSchema">
  <soap:Body>
 %s
  </soap:Body>
@@ -110,6 +116,13 @@ docTemplateTail = """\
     </PubData>
    </message>
   </Request>"""
+
+pubPreviewTemplate = """
+  <ReturnXML xmlns="http://stage.cancer.gov/CDRPreview/">
+   <content>%s</content>
+   <template_type>%s</template_type>
+  </ReturnXML>
+"""
 
 class Fault:
     """
@@ -210,26 +223,29 @@ class Response:
             members in the case of a SOAP failure
     """
     
-    def __init__(self, xmlString):
+    def __init__(self, xmlString, publishing = 1):
 
         """Extract the values from the server's XML response string."""
 
         bodyElem         = extractBodyElement(xmlString)
-        respElem         = extractResponseElement(bodyElem)
-        respTypeElem     = getChildElement(respElem, "ResponseType", 1)
-        respMsgElem      = getChildElement(respElem, "ResponseMessage", 1)
-        peResponseElem   = getChildElement(respElem, "PubEventResponse")
-        pdResponseElem   = getChildElement(respElem, "PubDataResponse")
         faultElem        = getChildElement(bodyElem, "Fault")
-        self.type        = getTextContent(respTypeElem)
-        self.message     = getTextContent(respMsgElem)
         self.fault       = faultElem and Fault(faultElem) or None
-        if peResponseElem:
-            self.details = PubEventResponse(peResponseElem)
-        elif pdResponseElem:
-            self.details = PubDataResponse(pdResponseElem)
+        if publishing:
+            respElem         = extractResponseElement(bodyElem)
+            respTypeElem     = getChildElement(respElem, "ResponseType", 1)
+            respMsgElem      = getChildElement(respElem, "ResponseMessage", 1)
+            peResponseElem   = getChildElement(respElem, "PubEventResponse")
+            pdResponseElem   = getChildElement(respElem, "PubDataResponse")
+            self.type        = getTextContent(respTypeElem)
+            self.message     = getTextContent(respMsgElem)
+            if peResponseElem:
+                self.details = PubEventResponse(peResponseElem)
+            elif pdResponseElem:
+                self.details = PubDataResponse(pdResponseElem)
+            else:
+                self.details = None
         else:
-            self.details = None
+            self.xmlResult   = extractXmlResult(bodyElem)
 
 def getTextContent(node):
     text = ''
@@ -260,12 +276,22 @@ def extractBodyElement(xmlString):
     body    = getChildElement(docElem, "Body", 1)
     return body
 
+# For publish preview.
+def extractXmlResult(bodyNode):
+    xmlResponse = getChildElement(bodyNode, "ReturnXMLResponse")
+    if xmlResponse:
+        xmlResult = getChildElement(xmlResponse, "ReturnXMLResult")
+        if xmlResult:
+            xmlString = getTextContent(xmlResult)
+            return xmlString.replace("<![CDATA[", "").replace( "]]>", "")
+    return None
+
 def logString(type, str):
     if debuglevel:
         open("d:/cdr/log/cdr2cg.log", "a").write("==== %s %s ====\n%s\n" % 
             (time.ctime(), type, re.sub("\r", "", str)))
 
-def sendRequest(body):
+def sendRequest(body, app = application, host = host, headers = headers):
 
     # Defensive programming.
     tries = 3
@@ -279,7 +305,7 @@ def sendRequest(body):
             logString("REQUEST", request)
 
             # Submit the request and get the headers for the response.
-            conn.request("POST", "/GateKeeper.asmx", request, headers)
+            conn.request("POST", app, request, headers)
             response = conn.getresponse()
             #sys.stderr.write("got response from socket %s\n" % repr(conn.sock))
 
@@ -301,7 +327,7 @@ def sendRequest(body):
 
     # Check for failure.
     if not response:
-        raise StandardError("tried to connect 300 times!!!")
+        raise StandardError("tried to connect 3 times unsuccessfully")
     
     if response.status != 200:
         logString("HTTP ERROR", response.read())
@@ -354,6 +380,16 @@ def removeDocuments(jobId, docType, docIdList, lastJobId):
                                 "removeDocuments: %s (%s)" %
                                (i + 1, docId, resp.type, resp.message))
             
+def pubPreview(xml, typ):
+    req = pubPreviewTemplate % (xml, typ)
+    xmlString = sendRequest(
+        req, 
+        app     = '/CDRPreview/WSProtocol.asmx',
+        host    = 'stage.cancer.gov', 
+        headers = { 'Content-type': 'text/xml; charset="utf-8"',
+                    'SOAPAction'  : 'http://stage.cancer.gov/CDRPreview/ReturnXML' })
+    return Response(xmlString, 0)
+
 #----------------------------------------------------------------------
 # Take it out for a test spin.
 #----------------------------------------------------------------------
