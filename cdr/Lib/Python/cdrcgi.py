@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.16 2002-06-28 03:17:39 bkline Exp $
+# $Id: cdrcgi.py,v 1.17 2002-06-28 20:13:57 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.16  2002/06/28 03:17:39  bkline
+# Tweaked WEBSERVER using gethostbyaddr.
+#
 # Revision 1.15  2002/06/27 20:22:54  ameyer
 # Added tabularize.
 #
@@ -707,7 +710,7 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
         session = session and ("&%s=%s" % (SESSION, session)) or ""
 
         # XXX Consider using QcReport.py for all advanced search results pages.
-        if docType == "Person":
+        if docType == "Person" or docType == "Organization":
             href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
         else:
             href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId, filt,
