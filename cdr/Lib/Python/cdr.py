@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.79 2003-09-16 22:01:46 ameyer Exp $
+# $Id: cdr.py,v 1.80 2003-11-04 16:55:54 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -408,7 +408,7 @@ def wrapCommand(command, credentials):
 #----------------------------------------------------------------------
 def checkErr(resp):
     if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        expr = re.compile("<Err>(.*?)</Err>", re.DOTALL)
         err = expr.search(resp)
         err = err and err.group(1) or "Unknown failure"
         return err
@@ -417,9 +417,17 @@ def checkErr(resp):
 #----------------------------------------------------------------------
 # Extract error elements from XML.
 #----------------------------------------------------------------------
-def getErrors(xml, errorsExpected = 1):
+def getErrors(xml, errorsExpected = 1, asSequence = 0):
 
-    # Comile the pattern for the regular expression.
+    # Version which returns the errors in a list.
+    if asSequence:
+        pattern = re.compile("<Err>(.*?)</Err>", re.DOTALL)
+        errs = pattern.findall(xml)
+        if errorsExpected and not errs:
+            return ["Internal failure"]
+        return errs
+
+    # Compile the pattern for the regular expression.
     pattern = re.compile("<Errors[>\s].*</Errors>", re.DOTALL)
 
     # Search for the <Errors> element.
