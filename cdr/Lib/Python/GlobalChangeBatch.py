@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.21 2004-02-04 00:51:51 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.22 2004-02-26 22:05:40 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,9 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.21  2004/02/04 00:51:51  ameyer
+# Added capture and reporting of warning messages from the filters.
+#
 # Revision 1.20  2004/01/30 02:25:27  ameyer
 # Now processing documents with ID's passed from the CGI portion, rather
 # than re-executing the selection statement.  This is needed because a
@@ -332,10 +335,17 @@ changedDocs = [("<b>CDR ID</b>", "<b>P</b>", "<b>Title</b>", "<b>Msgs</b>")]
 failedDocs  = [("<b>CDR ID</b>", "<b>P</b>", "<b>Title</b>", "<b>Reason</b>")]
 
 # Get the list of documents - different for each type of change
-docIdStr = jobObj.getParm ("glblDocIds")
-if not docIdStr:
+docIds = jobObj.getParm ("glblDocIds")
+if not docIds:
     jobObj.fail ("Could not retrieve document IDs from CGI form", logfile=LF)
-docIdList = docIdStr.split(',')
+
+# We might have retrieved a single doc id, or a list
+# Make sure the format is a list
+docIdList = []
+if type(docIds) == type([]):
+    docIdList = docIds
+else:
+    docIdList.append(docIds)
 
 cdr.logwrite ("Retrieving doc titles for final processing", LF)
 
