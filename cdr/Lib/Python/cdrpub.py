@@ -2,8 +2,11 @@
 #
 # Script for command line and CGI publishing.
 #
-# $Id: cdrpub.py,v 1.6 2002-02-28 23:23:46 pzhang Exp $
+# $Id: cdrpub.py,v 1.7 2002-03-01 22:46:19 pzhang Exp $
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2002/02/28 23:23:46  pzhang
+# Don't care about destination directory if no_output != 'Y'.
+#
 # Revision 1.5  2002/02/22 19:01:14  pzhang
 # Updated getSubsets to return flags for Params and UserSelect.
 # Updated isPublishable to return version number or -1.
@@ -257,10 +260,11 @@ class Publish:
     # This is a CGI helper function.
     # Return -1 if not publishable.
     # Return the version number if publishable.
-    def isPublishable(self, docId):
+    def isPublishable(self, docId, keepConnected = ""):
 
         # Connect to CDR. Abort when failed. Cannot log status in this case.
-        self.__getConn()
+        if not self.__cdrConn:
+            self.__getConn()
 
         # Get doc_id and doc_version.
         id = self.__getDocId(docId)
@@ -268,12 +272,12 @@ class Publish:
 
         # Use the current publishable version, if exists.
         if version == -1:
-            sql = "SELECT num FROM doc_version WHERE id = %s AND " \
+            sql = "SELECT TOP 1 num FROM doc_version WHERE id = %s AND " \
                 "publishable = 'Y' ORDER BY num DESC" % id
 
         # Query into doc_version table to verify this version.
         else:
-            sql = "SELECT num FROM doc_version WHERE id = %s AND " \
+            sql = "SELECT TOP 1 num FROM doc_version WHERE id = %s AND " \
                 "num = %s AND publishable = 'Y' " % (id, version)
         rs = self.__execSQL(sql)
 
@@ -282,7 +286,9 @@ class Publish:
             ret = rs.Fields("num").Value
         rs.Close()
         rs = None
-        self.__cdrConn = None
+
+        if not keepConnected:
+            self.__cdrConn = None
 
         return ret
 
@@ -790,7 +796,7 @@ Please do not reply to this message.
             row = 1
             if self.params:
                 for parm in self.params:
-                    (name, value) = string.split(parm)
+                    (name, value) = string.split(parm, ";")
                     sql = """INSERT INTO pub_proc_parm (id, pub_proc, parm_name,
                         parm_value) VALUES (%d, %d, '%s', '%s')
                         """ % (row, id, name, value)
@@ -1192,13 +1198,18 @@ Please do not reply to this message.
         if NCGI: self.__logPub("in __publishDoc\n")
         if NCGI: self.__logPub("no_output=%s" % self.no_output)
 
-        msg = "Successfully published all documents: "
+        msg = ""
+        nDocsPublished = 0
         if NCGI: self.__logPub(localDocIds)
         for doc in localDocIds:
 
             # doc = docId/version format?
+            version = self.isPublishable(doc, "keepConnected")
+            if version == -1:
+                msg += "Doc %s: not publishable. <BR>" % doc
+                continue
             docId = self.__getDocId(doc)
-            version = self.__getVersion(doc)
+            
 
             # Don't publish a document more than once.
             if NCGI: self.__logPub(docId)
@@ -1207,9 +1218,6 @@ Please do not reply to this message.
                 if NCGI: self.__logPub("Duplicate docId: %s" % docId)
                 continue
             self.__docIds[docId] = docId
-
-            # Prepare the message to be logged.
-            msg += "%s, " % doc
 
             # Insert a row into pub_proc_doc table.
             self.__insertDoc(docId, version)
@@ -1228,11 +1236,13 @@ Please do not reply to this message.
                 filterParam = self.__getParams(filter)
 
             if NCGI: self.__logPub(filterIds)
-            pubDoc = cdr.filterDoc(self.credential, filterIds, docId,
-                                   no_output=self.no_output)
+            pubDoc = cdr.filterDoc(self.credential, filterIds, docId, 
+                        docVer=version, no_output=self.no_output)
 
             # Detect error here!
             # updateStatus(WARNING, pubDoc[1])
+            if pubDoc[1]:
+                msg += "Doc %s: %s<BR>" % (doc, pubDoc[1]) 
 
             # Save the file in the "new" subdirectory.
             if self.no_output != "Y" :
