@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.6 2002-09-19 18:01:09 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.7 2002-09-24 19:31:16 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,10 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2002/09/19 18:01:09  ameyer
+# Reorganized to place try block inside for loop instead of outside so
+# that an exception would not halt all processing.
+#
 # Revision 1.5  2002/08/16 03:15:11  ameyer
 # Switched from logging "reason" to "comment".
 # Fixed serious bug in version handling.
@@ -277,7 +281,7 @@ for idTitle in originalDocs:
                 #   but also because it makes the last publishable version
                 #   and the CWD identical in the eyes of the version
                 #   control software.
-                if lastPubVerNum == lastPubVerNum and not isChanged:
+                if lastPubVerNum == lastVerNum and isChanged == 'N':
                     saveCWDPubVer = 'Y'
                     cdr.logwrite ("Publishable version matches CWD, " \
                                   "will save it as publisable version", LF)
@@ -309,7 +313,7 @@ for idTitle in originalDocs:
             #    CWD before filtering - if it's not the same as last version
             #    Filtered publishable version, if there is one
             #    Filtered CWD
-            if isChanged:
+            if isChanged == 'Y':
                 cdr.logwrite ("Saving copy of working doc before change", LF)
                 repDocResp = cdr.repDoc (session, doc=str(oldCwdDocObj),
                     ver='Y', checkIn='N', verPublishable='N',
@@ -349,7 +353,8 @@ for idTitle in originalDocs:
                                    x=chgCwdXml)
             cdr.logwrite ("Saving CWD after change", LF)
             repDocResp = cdr.repDoc (session, doc=str(chgCwdDocObj),
-                ver=saveCWDPubVer, verPublishable=saveCWDPubVer, checkIn='Y',
+                ver=saveCWDPubVer, verPublishable=saveCWDPubVer,
+                val=saveCWDPubVer, checkIn='Y',
                 comment="Revised by global change " \
                        "of %s to %s on %s" % (fromVal, toVal,
                                               time.ctime (time.time())))
