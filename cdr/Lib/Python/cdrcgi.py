@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.48 2004-04-06 18:51:49 bkline Exp $
+# $Id: cdrcgi.py,v 1.49 2004-09-13 19:38:43 venglisc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.48  2004/04/06 18:51:49  bkline
+# Expanded extra field support in advanced search screen to handle
+# more than one.
+#
 # Revision 1.47  2004/02/03 15:53:44  bkline
 # Fixed typo (corrected cgict to cgitb).
 #
@@ -903,6 +907,8 @@ def advancedSearchResultsPageTop(docType, nRows, strings):
     .Page { font-family: Arial, Helvetica, sans-serif; color: #000066 }
     :link { color: navy }
     :link:visited { color: navy }
+    :link:hover   { background: #FFFFCC; }
+    tr.rowitem:hover { color: #FFFFCC; } /* Does not work for IE */
    -->
   </STYLE>
  </HEAD>
@@ -978,7 +984,7 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
             href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId, filt,
                                                           session)
         html += u"""\
-   <TR>
+   <TR CLASS="rowitem">
     <TD       NOWRAP
                WIDTH = "10"
               VALIGN = "top">
