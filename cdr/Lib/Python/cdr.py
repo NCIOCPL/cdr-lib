@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.29 2002-04-09 20:19:53 bkline Exp $
+# $Id: cdr.py,v 1.30 2002-04-09 21:02:23 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.29  2002/04/09 20:19:53  bkline
+# Modified addDoc() and repDoc to optionally return a tuple with the
+# document ID string and any warnings.
+#
 # Revision 1.28  2002/04/02 20:03:17  bkline
 # Added stub for pubStatus command; added docTime parameter to publish().
 #
@@ -330,7 +334,7 @@ def addDoc(credentials, file = None, doc = None,
     if not docId.startswith("CDR"):
         if showWarnings:
             return (None, docId)
-        else
+        else:
             return docId
     errors = getErrors(resp, errorsExpected = 0)
     if showWarnings:
@@ -371,7 +375,7 @@ def repDoc(credentials, file = None, doc = None,
     if not docId.startswith("CDR"):
         if showWarnings:
             return (None, docId)
-        else
+        else:
             return docId
     errors = getErrors(resp, errorsExpected = 0)
     if showWarnings:
