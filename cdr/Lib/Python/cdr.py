@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.8 2001-08-08 18:23:49 mruben Exp $
+# $Id: cdr.py,v 1.9 2001-09-17 16:08:39 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2001/08/08 18:23:49  mruben
+# improved interface to CdrFilter
+#
 # Revision 1.7  2001/07/31 17:23:07  bkline
 # Added versioning flag to addDoc() and repDoc() functions.
 #
@@ -337,7 +340,7 @@ def filterDoc(credentials, filterId, docId = None, doc = None,
         for l in parm:
             parmElem += "<Parm><Name>" + l[0] \
                       + "</Name><Value>" + l[1] \
-                      + "</Value>"
+                      + "</Value></Parm>"
     if parmElem:
         parmElem = "<Parms>%s</Parms>" % parmElem
         
