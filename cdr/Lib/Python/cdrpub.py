@@ -2,8 +2,11 @@
 #
 # Script for command line and CGI publishing.
 #
-# $Id: cdrpub.py,v 1.3 2002-02-20 22:31:47 pzhang Exp $
+# $Id: cdrpub.py,v 1.4 2002-02-22 16:41:31 pzhang Exp $
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2002/02/20 22:31:47  pzhang
+# First version of cdrpub.py merged with publish.py.
+#
 # Revision 1.10  2002/02/20 19:40:36  pzhang
 # Fixed __userXXX naming convention. Fixed a couple of bugs in SQL of isPermitted.
 #
@@ -937,7 +940,7 @@ Please do not reply to this message.
                 if NCGI: self.__logPub(pairs)
                 return pairs
 
-        return None
+        return pairs
 
     #----------------------------------------------------------------
     # Get warnings or errors from response
