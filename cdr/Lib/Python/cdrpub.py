@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.34 2002-10-11 20:43:59 pzhang Exp $
+# $Id: cdrpub.py,v 1.35 2002-11-01 19:16:43 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.34  2002/10/11 20:43:59  pzhang
+# Enhanced message display. Allowed validateDoc() call by non-primary job.
+#
 # Revision 1.33  2002/09/26 20:41:07  ameyer
 # Caught SystemExit from __invokeProcessScript() to be sure that the
 # exit actually takes place and isn't blocked by the catchall "except"
@@ -952,8 +955,8 @@ class Publish:
                 xml    = row[2]
                 subdir = row[3]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
-                file   = open(path, "r").read()
-                file   = unicode(file, 'latin-1')
+                file   = open(path, "rb").read()
+                file   = unicode(file, 'utf-8')
 
                 if xml != file:
                     cursor.execute("""
@@ -991,8 +994,8 @@ class Publish:
                 type   = row[1]
                 subdir = row[2]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
-                xml    = open(path, "r").read()
-                xml    = unicode(xml, 'latin-1')
+                xml    = open(path, "rb").read()
+                xml    = unicode(xml, 'utf-8')
                 cursor.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
                                                   doc_type, xml)
@@ -1150,8 +1153,8 @@ class Publish:
                 xml    = row[2]
                 subdir = row[3]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
-                file   = open(path, "r").read()
-                file   = unicode(file, 'latin-1')
+                file   = open(path, "rb").read()
+                file   = unicode(file, 'utf-8')
 
                 if xml != file:
                     cursor.execute("""
@@ -1189,8 +1192,8 @@ class Publish:
                 type   = row[1]
                 subdir = row[2]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
-                xml    = open(path, "r").read()
-                xml    = unicode(xml, 'latin-1')
+                xml    = open(path, "rb").read()
+                xml    = unicode(xml, 'utf-8')
                 cursor.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
                                                   doc_type, xml)
