@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.12 2001-12-19 20:23:18 bkline Exp $
+# $Id: cdr.py,v 1.13 2001-12-24 19:35:04 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.12  2001/12/19 20:23:18  bkline
+# Added options to doc save commands; added email support; added unlock()
+# function.
+#
 # Revision 1.11  2001/10/04 14:34:49  bkline
 # Added delDoc() function.
 #
@@ -339,6 +343,34 @@ def delDoc(credentials, docId, val = 'N', reason = '',
 
     # Extract the document ID.
     return extract("<DocId.*>(CDR\d+)</DocId>", resp)
+
+#----------------------------------------------------------------------
+# Validate a CDR document.
+#----------------------------------------------------------------------
+def valDoc(credentials, docType, docId = None, doc = None, 
+           valLinks = 'Y', valSchema = 'Y',
+           host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command.
+    if docId:
+        doc = "<DocId ValidateOnly='Y'>%s</DocId>" % normalize(docId)
+    if not doc:
+        raise StandardError("valDoc: no doc or docId specified")
+    if valLinks == 'Y' and valSchema == 'Y':
+        valTypes = "Links Schema"
+    elif valLinks == 'Y':
+        valTypes = "Links"
+    elif valSchema == 'Y':
+        valTypes = "Schema"
+    else:
+        raise StandardError("valDoc: no validation method specified")
+    cmd     = "<CdrValidateDoc DocType='%s' "\
+              "ValidationType='%s'>%s</CdrValidateDoc>" % (docType, 
+                                                           valTypes, 
+                                                           doc)
+
+    # Submit the commands.
+    return sendCommands(wrapCommand(cmd, credentials), host, port)
 
 #----------------------------------------------------------------------
 # Retrieve a specified document from the CDR Server using a filter.
