@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.28 2004-09-23 21:43:50 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.29 2004-10-07 20:02:14 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.28  2004/09/23 21:43:50  ameyer
+# In writeDocs(), if there are no differences between two files, write
+# a user friendly message instead of a zero-length file.
+#
 # Revision 1.27  2004/09/21 20:29:24  ameyer
 # Modified all instances of getFilterInfo() to return a third value that
 # says whether to save the output of the filter or discard it.  Used when
@@ -1017,15 +1021,18 @@ class GlblChg:
         html = "<hr><table border='0' cellspacing='6'>"
 
         # Document type checkboxes handled a bit differently
-        html += "<tr><td align='right'>Changing doc types: </td>\n"
-        docTypeStr = ""
-        if self.ssVars.has_key(TYPE_CDR_DOC) and self.ssVars[TYPE_CDR_DOC]=='Y':
-            docTypeStr = "InScopeProtocol "
-        if self.ssVars.has_key(TYPE_CTG_DOC) and self.ssVars[TYPE_CTG_DOC]=='Y':
-            docTypeStr += "CTGovProtocol"
-        if len(docTypeStr) == 0:
-            docTypeStr = "None selected"
-        html += "<td> %s </td></tr>\n" % docTypeStr
+        if str(self.__class__).endswith('TermChg'):
+            html += "<tr><td align='right'>Changing doc types: </td>\n"
+            docTypeStr = ""
+            if self.ssVars.has_key(TYPE_CDR_DOC) and \
+               self.ssVars[TYPE_CDR_DOC]=='Y':
+                docTypeStr = "InScopeProtocol "
+            if self.ssVars.has_key(TYPE_CTG_DOC) and \
+               self.ssVars[TYPE_CTG_DOC]=='Y':
+                docTypeStr += "CTGovProtocol"
+            if len(docTypeStr) == 0:
+                docTypeStr = "None selected"
+            html += "<td> %s </td></tr>\n" % docTypeStr
 
         # Doc ids and restrictions of various types
         if self.ssVars.has_key ('fromTitle'):
@@ -1919,6 +1926,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
         protstat.value = 'Temporarily closed')
    AND leadorg.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrganizationID/@cdr:ref'
    AND leadorg.value = ?
+   AND LEFT(leadorg.node_loc, 8) = LEFT(protpers.node_loc, 8)
  ORDER BY doc.title
 """
             # Return rows of id + title
@@ -2103,6 +2111,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
         protstat.value = 'Temporarily closed')
    AND leadorg.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrganizationID/@cdr:ref'
    AND leadorg.value = '%s'
+   AND LEFT(leadorg.node_loc, 8) = LEFT(protorg.node_loc, 8)
  ORDER BY doc.title
 """ % (protOrgMatchStr, self.ssVars['restrId'])
 
