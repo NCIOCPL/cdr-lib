@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.40 2003-12-30 16:50:32 bkline Exp $
+# $Id: cdrcgi.py,v 1.41 2004-01-09 16:48:52 venglisc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.40  2003/12/30 16:50:32  bkline
+# Extraced out common functionality into generateHtmlPicklist().
+#
 # Revision 1.39  2003/12/17 01:20:14  bkline
 # Fixed bug in CTGovProtocol advanced search report.
 #
@@ -483,6 +486,18 @@ SELECT DISTINCT s.id,
           WHERE clink.path = '/PoliticalSubUnit/Country/@cdr:ref'
        ORDER BY s.title, c.title"""
     pattern = "<option value='CDR%010d'>%s [%s]&nbsp;</option>"
+    return generateHtmlPicklist(conn, fName, query, pattern)
+
+#----------------------------------------------------------------------
+# Generate picklist for GlossaryAudience.
+#----------------------------------------------------------------------
+def glossaryAudienceList(conn, fName):
+    query  = """\
+SELECT DISTINCT value, value
+           FROM query_term
+          WHERE path = '/GlossaryTerm/TermDefinition/Audience'
+       ORDER BY value"""
+    pattern = "<option value='%s'>%s&nbsp;</option>"
     return generateHtmlPicklist(conn, fName, query, pattern)
 
 #----------------------------------------------------------------------
