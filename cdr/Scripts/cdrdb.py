@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.2 2001-08-05 20:25:03 bkline Exp $
+# $Id: cdrdb.py,v 1.3 2001-08-05 20:41:39 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2001/08/05 20:25:03  bkline
+# Fixed a couple of typos in the date/time formatting routines.
+#
 # Revision 1.1  2001/08/05 19:23:25  bkline
 # Initial revision
 #
@@ -562,11 +565,11 @@ def connect(user = 'cdr'):
     else: raise DatabaseError, "invalid login name"
 
     try:
-        adoConn.Open("PROVIDER=SQLOLEDB;\
-                      Server=cdr;\
-                      Database=cdr;\
-                      UID=%s;\
-                      Password=%s" % (user, password))
+        adoConn.Open("driver={SQL Server};\
+                      server=mmdb2;\
+                      database=cdr;\
+                      uid=%s;\
+                      pwd=%s" % (user, password))
     except:
         raise DatabaseError, "unable to connect to CDR account as %s" % user
     return Connection(adoConn)
