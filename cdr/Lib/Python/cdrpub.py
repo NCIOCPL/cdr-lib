@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.52 2003-03-05 17:36:13 pzhang Exp $
+# $Id: cdrpub.py,v 1.53 2003-04-02 22:16:50 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.52  2003/03/05 17:36:13  pzhang
+# Updated __addDocMessages() and __checkProblems to have both
+# error and warning recorded in messages column.
+#
 # Revision 1.51  2003/03/05 16:19:58  pzhang
 # Counted non-null messages as a failure. It could be set due to
 # XSLT message instruction with terminate='no'.
@@ -2309,7 +2313,11 @@ Please do not reply to this message.
     def __getFilter(self, node):
         for child in node.childNodes:
             if child.nodeName == "SubsetFilterName":
-                return "name:%s" % cdr.getTextContent(child)
+                nameOrSet = cdr.getTextContent(child)
+                if nameOrSet.find("set:") == 0:
+                    return nameOrSet
+                else:
+                    return "name:%s" % nameOrSet                    
             elif child.nodeName == "SubsetFilterId":
                 return cdr.getTextContent(child)
         raise StandardError("SubsetFilter must contain SubsetFilterName " \
