@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.4 2001-05-03 20:17:11 bkline Exp $
+# $Id: cdr.py,v 1.5 2001-05-18 19:19:06 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,13 +8,15 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2001/05/03 20:17:11  bkline
+# Stub versions of link command wrappers added.
+#
 # Revision 1.3  2001/04/08 22:50:06  bkline
 # Replaced getTerm implementation with version that uses results from
 # stored procedure.
 #
 # Revision 1.2  2001/04/08 16:31:53  bkline
 # Added report, search, doctype, and term tree support.
-#
 #
 #----------------------------------------------------------------------
 
@@ -294,6 +296,7 @@ class dtinfo:
                  schema_mod = None,
                  dtd        = None,
                  schema     = None,
+                 vvLists    = None,
                  comment    = None,
                  error      = None):
         this.type           = type
@@ -303,6 +306,7 @@ class dtinfo:
         this.schema_mod     = schema_mod
         this.dtd            = dtd
         this.schema         = schema
+        this.vvLists        = vvLists
         this.comment        = comment
         this.error          = error
     def __repr__(this):
@@ -335,7 +339,7 @@ class dtinfo:
 def getDoctype(credentials, doctype, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Create the command
-    cmd = "<CdrGetDocType Type='%s'/>" % doctype
+    cmd = "<CdrGetDocType Type='%s' GetEnumValues='Y'/>" % doctype
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -354,9 +358,11 @@ def getDoctype(credentials, doctype, host = DEFAULT_HOST, port = DEFAULT_PORT):
     commentExpr    = re.compile("<Comment>(.*)</Comment>", re.DOTALL)
     dtdExpr        = re.compile(r"<DocDtd>\s*<!\[CDATA\[(.*)\]\]>\s*</DocDtd>",
                                 re.DOTALL)
-    schemaExpr     = re.compile(r"<DocSchema>\s*<!\[CDATA\[(.*)\]\]>"
-                                r"\s*</DocSchema>",
+    schemaExpr     = re.compile(r"<DocSchema>(.*)</DocSchema>", re.DOTALL)
+    enumSetExpr    = re.compile(r"""<EnumSet\s+Node\s*=\s*"""
+                                r"""['"]([^'"]+)['"]\s*>(.*?)</EnumSet>""", 
                                 re.DOTALL)
+    vvExpr         = re.compile("<ValidValue>(.*?)</ValidValue>", re.DOTALL)
 
     # Parse out the components.
     type       = typeExpr      .search(results)
@@ -367,6 +373,14 @@ def getDoctype(credentials, doctype, host = DEFAULT_HOST, port = DEFAULT_PORT):
     dtd        = dtdExpr       .search(results)
     schema     = schemaExpr    .search(results)
     comment    = commentExpr   .search(results)
+    enumSets   = enumSetExpr   .findall(results)
+
+    # Extract the valid value lists, if any
+    vvLists = []
+    if enumSets:
+        for enumSet in enumSets:
+            vvList = vvExpr.findall(enumSet[1])
+            vvLists.append((enumSet[0], vvList))
     
     # Return a dtinfo instance.
     return dtinfo(type       = type       and type      .group(1) or '',
@@ -376,7 +390,30 @@ def getDoctype(credentials, doctype, host = DEFAULT_HOST, port = DEFAULT_PORT):
                   schema_mod = schema_mod and schema_mod.group(1) or '',
                   dtd        = dtd        and dtd       .group(1) or '',
                   schema     = schema     and schema    .group(1) or '',
-                  comment    = comment    and comment   .group(1) or '')
+                  comment    = comment    and comment   .group(1) or '',
+                  vvLists    = vvLists                            or None)
+
+#----------------------------------------------------------------------
+# Create a new document type for the CDR.
+#----------------------------------------------------------------------
+def addDoctype(credentials, info, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrAddDocType Type='%s' Format='%s' Versioning='%s'>"\
+          "<DocSchema>%s</DocSchema>"\
+        % (info.type, info.format, info.versioning, info.schema)
+    if info.comment:
+        cmd = cmd + "<Comment>%s</Comment>" % info.comment
+    cmd = cmd + "</CdrAddDocType>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return dtinfo(error = err)
+    return getDoctype(credentials, info.type, host, port)
 
 #----------------------------------------------------------------------
 # Modify existing document type information in the CDR.
@@ -385,7 +422,7 @@ def modDoctype(credentials, info, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrModDocType Type='%s' Format='%s' Versioning='%s'>"\
-          "<DocSchema><![CDATA[%s]]></DocSchema>"\
+          "<DocSchema>%s</DocSchema>"\
         % (info.type, info.format, info.versioning, info.schema)
     if info.comment:
         cmd = cmd + "<Comment>%s</Comment>" % info.comment
@@ -552,16 +589,35 @@ def getDoctypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
         return err
 
     # Parse the response.
-    return re.findall("<DocType>(.*)</DocType>", resp)
+    return re.findall("<DocType>(.*?)</DocType>", resp)
+
+#----------------------------------------------------------------------
+# Gets the list of CDR schema documents.
+#----------------------------------------------------------------------
+def getSchemaDocs(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrListSchemaDocs/>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # Parse the response.
+    return re.findall("<DocTitle>(.*?)</DocTitle>", resp)
 
 #----------------------------------------------------------------------
 # Holds information about a single CDR group.
 #----------------------------------------------------------------------
 class Group:
-    def __init__(self, name, actions = {}, users = [], comment = None):
+    def __init__(self, name, actions = None, users = None, comment = None):
         self.name    = name
-        self.actions = actions
-        self.users   = users
+        self.actions = actions or {}
+        self.users   = users or []
         self.comment = comment
 
 #----------------------------------------------------------------------
@@ -868,12 +924,28 @@ def delAction(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # Holds information about a single CDR link type.
 #----------------------------------------------------------------------
 class LinkType:
-    def __init__(self, name, linkSources = [], 
-                             linkTargets = [], 
-                             comment  = None):
+    def __init__(self, name, linkSources = None, 
+                             linkTargets = None, 
+                             linkProps   = None,
+                             comment     = None):
         self.name        = name
-        self.linkSources = linkSources
-        self.linkTargets = linkTargets
+        self.linkSources = linkSources or []
+        self.linkTargets = linkTargets or []
+        self.linkProps   = linkProps   or []
+        self.comment     = comment
+    def __str__(self):
+        return "LinkType(%s,\n%s,\n%s,\n%s,\n%s)" % (self.name,
+                                                 self.linkSources,
+                                                 self.linkTargets,
+                                                 self.linkProps,
+                                                 self.comment)
+
+#----------------------------------------------------------------------
+# Holds information about a single CDR link property.
+#----------------------------------------------------------------------
+class LinkProp:
+    def __init__(self, name, comment = None):
+        self.name        = name
         self.comment     = comment
 
 #----------------------------------------------------------------------
@@ -881,31 +953,141 @@ class LinkType:
 #----------------------------------------------------------------------
 def getLinkTypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
-    # Stub version.
-    return ["Investigator", "Cite", "AbstractRef", "Vocabulary"]
+    # Create the command
+    cmd = "<CdrListLinkTypes/>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # Parse the response
+    return re.findall("<Name>(.*)</Name>", resp)
 
 #----------------------------------------------------------------------
 # Retrieves information from the CDR for a link type.
 #----------------------------------------------------------------------
 def getLinkType(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
-    # Stub version.
-    if name == "Investigator":
-        return LinkType(name, [('Protocol', 'PrincipalInvestigator')],
-                              ['Org'],
-                              'This is a dummy produced by stub getLinkType()')
-    elif name == "Cite":
-        return LinkType(name, [('Protocol', 'ReportedIn')],
-                              ['Statement'],
-                              'This is a dummy produced by stub getLinkType()')
-    elif name == "AbstractRef":
-        return LinkType(name, [('Protocol', 'FullAbstract')],
-                              ['Protocol'],
-                              'This is a dummy produced by stub getLinkType()')
-    elif name == "Vocabulary":
-        return LinkType(name, [('Protocol', 'Diagnosis')],
-                              ['Term'],
-                              'This is a dummy produced by stub getLinkType()')
+    # Create the command
+    cmd = "<CdrGetLinkType><Name>%s</Name></CdrGetLinkType>" % name
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+    # Parse the response
+    name     = re.findall("<Name>(.*)</Name>", resp)[0]
+    cmtExpr  = re.compile("<LinkTypeComment>(.*)</LinkTypeComment>", re.DOTALL)
+    srcExpr  = re.compile("<LinkSource>(.*?)</LinkSource>", re.DOTALL)
+    tgtExpr  = re.compile("<TargetDocType>(.*?)</TargetDocType>", re.DOTALL)
+    prpExpr  = re.compile("<LinkProperties>(.*?)</LinkProperties>", re.DOTALL)
+    sdtExpr  = re.compile("<SrcDocType>(.*)</SrcDocType>", re.DOTALL)
+    fldExpr  = re.compile("<SrcField>(.*)</SrcField>", re.DOTALL)
+    prnExpr  = re.compile("<LinkProperty>(.*)</LinkProperty>", re.DOTALL)
+    prvExpr  = re.compile("<PropertyValue>(.*)</PropertyValue>", re.DOTALL)
+    prcExpr  = re.compile("<PropertyComment>(.*)</PropertyComment>", re.DOTALL)
+    comment  = cmtExpr.findall(resp)
+    sources  = srcExpr.findall(resp)
+    targets  = tgtExpr.findall(resp)
+    props    = prpExpr.findall(resp)
+    linkType = LinkType(name)
+    if comment:  linkType.comment     = comment[0]
+    if targets:  linkType.linkTargets = targets
+    for source in sources:
+        srcDocType  = sdtExpr.search(source).group(1)
+        srcField    = fldExpr.search(source).group(1)
+        linkType.linkSources.append((srcDocType, srcField))
+    for prop in props:
+        propName    = prnExpr.search(prop).group(1)
+        propVal     = prvExpr.search(prop)
+        propComment = prcExpr.search(prop)
+        propVal     = propVal and propVal.group(1) or None
+        propComment = propComment and propComment.group(1) or None
+        linkType.linkProps.append((propName, propVal, propComment))
+    return linkType
+
+#----------------------------------------------------------------------
+# Stores information for a CDR link type.
+#----------------------------------------------------------------------
+def putLinkType(credentials, name, linkType, host = DEFAULT_HOST, 
+                                             port = DEFAULT_PORT):
+
+    # Create the command
+    if name:
+        cmd = "<CdrModLinkType><Name>%s</Name>" % name
+        if linkType.name and name != linkType.name:
+            cmd += "<NewName>%s</NewName>" % linkType.name
+    else:
+        cmd = "<CdrAddLinkType><Name>%s</Name>" % linkType.name
+
+    # Add the comment, if present.
+    if linkType.comment is not None:
+        cmd += "<Comment>%s</Comment>" % linkType.comment
+
+    # Add the link sources.
+    for src in linkType.linkSources:
+        cmd += "<LinkSource><SrcDocType>%s</SrcDocType>" % src[0]
+        cmd += "<SrcField>%s</SrcField></LinkSource>" % src[1]
+
+    # Add the link targets.
+    for tgt in linkType.linkTargets:
+        cmd += "<TargetDocType>%s</TargetDocType>" % tgt
+
+    # Add the link properties.
+    for prop in linkType.linkProps:
+        cmd += "<LinkProperties><LinkProperty>%s</LinkProperty>" % prop[0]
+        cmd += "<PropertyValue>%s</PropertyValue>" % prop[1]
+        cmd += "<Comment>%s</Comment></LinkProperties>" % prop[2]
+
+    # Submit the request.
+    cmd += (name and "</CdrModLinkType>" or "</CdrAddLinkType>")
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # No errors to report if we get here.
+    return None
+
+#----------------------------------------------------------------------
+# Retrieves list of CDR link properties.
+#----------------------------------------------------------------------
+def getLinkProps(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrListLinkProps/>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # Parse the response
+    propExpr = re.compile("<LinkProperty>(.*?)</LinkProperty>", re.DOTALL)
+    nameExpr = re.compile("<Name>(.*)</Name>", re.DOTALL)
+    cmtExpr  = re.compile("<Comment>(.*)</Comment>", re.DOTALL)
+    ret      = []
+    props    = propExpr.findall(resp)
+    if props:
+        for prop in props:
+            name = nameExpr.findall(prop)[0]
+            cmt  = cmtExpr.findall(prop)
+            pr   = LinkProp(name)
+            if cmt: pr.comment = cmt[0]
+            ret.append(pr)
+    return ret
 
 #----------------------------------------------------------------------
 # Log out from the CDR.
