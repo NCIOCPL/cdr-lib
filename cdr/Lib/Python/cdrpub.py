@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.14 2002-08-07 14:41:49 pzhang Exp $
+# $Id: cdrpub.py,v 1.15 2002-08-07 19:47:38 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.14  2002/08/07 14:41:49  pzhang
+# Added features to push documents to Cancer.gov. It is far from the
+# final version and contains many bugs. Save this version before
+# the changes are lost or out of control.
+#
 # Revision 1.13  2002/08/01 15:52:26  pzhang
 # Used socket to get HOST instead of hard-coded mmdb2.
 # Added validateDoc module public method.
@@ -227,6 +232,7 @@ class Publish:
             # list documents of that document's type.
             self.__alreadyPublished = {}
             specFilters             = []
+            specSubdirs             = []
             userListedDocsRemaining = len(self.__userDocList)
             self.__debugLog("Processing user-listed documents.")
             for spec in self.__specs.childNodes:
@@ -236,6 +242,11 @@ class Publish:
                     # Gather together filters (with parms) used for this SS.
                     filters = self.__getFilters(spec)
                     specFilters.append(filters)
+
+                    # Get Subdirectory for this SS.
+                    # Empty string is returned if not exist.
+                    subdir = self.__getSubdir(spec)
+                    specSubdirs.append(subdir)
 
                     # That's all we have to do in this pass if there are no
                     # user-listed documents remaining to be published.
@@ -253,8 +264,14 @@ class Publish:
                         if doc[0] in self.__alreadyPublished:
                             continue
                         if docTypesAllowed and doc[2] not in docTypesAllowed:
-                            continue
+                            continue  
+                             
+                        # Don't want to use subdir for user-listed docs
+                        # due to complexity of specifying the multiple
+                        # subdirs when calling cdr.publish(). This may
+                        # change in release XX.                    
                         self.__publishDoc(doc, filters, destType, dest)
+
                         self.__alreadyPublished[doc[0]] = 1
                         userListedDocsRemaining -= 1
                         if not userListedDocsRemaining: break
@@ -281,7 +298,8 @@ class Publish:
                             for doc in docs:
                                 self.__publishDoc(doc, specFilters[i], 
                                       destType, dest, 
-                                      Publish.STORE_ROW_IN_PUB_PROC_DOC_TABLE)
+                                      Publish.STORE_ROW_IN_PUB_PROC_DOC_TABLE,
+                                      specSubdirs[i])
                     i += 1
 
             if self.__publishIfWarnings == "Ask" and self.__warningCount:
@@ -623,25 +641,29 @@ class Publish:
         # into pub_proc_cg_work with xml set to the new document.        
         try: 
             qry = """
-                SELECT ppc.id, t.name, ppc.xml
-                  FROM pub_proc_cg ppc, doc_type t, document d
+                SELECT ppc.id, t.name, ppc.xml, ppd2.subdir
+                  FROM pub_proc_cg ppc, doc_type t, document d,
+                       pub_proc_doc ppd2
                  WHERE d.id = ppc.id
                    AND d.doc_type = t.id 
+                   AND ppd2.doc_id = d.id
+                   AND ppd2.pub_proc = %d
                    AND EXISTS (
                            SELECT * 
                              FROM pub_proc_doc ppd
                             WHERE ppd.doc_id = ppc.id 
                               AND ppd.pub_proc = %d
                               )
-                            """ % vendor_job        
+                            """ % (vendor_job, vendor_job)        
             cursor.execute(qry)
             rows = cursor.fetchall()
             for row in rows:
-                id   = row[0]
-                type = row[1]
-                xml  = row[2]
-                path = "%s/CDR%d.xml" % (vendor_dest, id)
-                file = open(path, "r").read()
+                id     = row[0]
+                type   = row[1]
+                xml    = row[2]
+                subdir = row[3]
+                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
+                file   = open(path, "r").read()
                 if 1: # xml != file: UNICODE!!!
                     cursor.execute("""
                         INSERT INTO pub_proc_cg_work (id, vendor_job, 
@@ -657,7 +679,7 @@ class Publish:
         # pub_proc_cg. 
         try:                
             cursor.execute ("""
-                     SELECT ppd.doc_id, t.name
+                     SELECT ppd.doc_id, t.name, ppd.subdir
                        FROM pub_proc_doc ppd, doc_type t, document d
                       WHERE ppd.pub_proc = ?
                         AND d.id = ppd.doc_id
@@ -671,10 +693,11 @@ class Publish:
                            )      
             rows = cursor.fetchall()
             for row in rows:
-                id   = row[0]
-                type = row[1]              
-                path = "%s/CDR%d.xml" % (vendor_dest, id)
-                xml  = open(path, "r").read()              
+                id     = row[0]
+                type   = row[1]  
+                subdir = row[2]            
+                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
+                xml    = open(path, "r").read()              
                 cursor.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
                                                   doc_type, xml)
@@ -770,7 +793,7 @@ class Publish:
         # without ANY constraints.     
         try:                
             cursor.execute ("""
-                     SELECT ppd.doc_id, t.name
+                     SELECT ppd.doc_id, t.name, ppd.subdir
                        FROM pub_proc_doc ppd, doc_type t, document d
                       WHERE ppd.pub_proc = ?
                         AND d.id = ppd.doc_id
@@ -779,10 +802,11 @@ class Publish:
                            )      
             rows = cursor.fetchall()
             for row in rows:
-                id   = row[0]
-                type = row[1]              
-                path = "%s/CDR%d.xml" % (vendor_dest, id)
-                xml  = open(path, "r").read()              
+                id     = row[0]
+                type   = row[1] 
+                subdir = row[2]             
+                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
+                xml    = open(path, "r").read()              
                 cursor.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
                                                   doc_type, xml)
@@ -991,8 +1015,10 @@ class Publish:
     #   destDir     directory in which to write output
     #   recordDoc   flag indicating whether to add row to pub_proc_doc
     #               table
+    #   subDir      subdirectory to store a subset of vendor docs
     #------------------------------------------------------------------
-    def __publishDoc(self, doc, filters, destType, destDir, recordDoc = 0):
+    def __publishDoc(self, doc, filters, destType, destDir, 
+                     recordDoc = 0, subDir = ''):
 
         self.__debugLog("Publishing CDR%010d." % doc[0])
 
@@ -1034,6 +1060,7 @@ class Publish:
         # Save the output as instructed.
         if self.__no_output != 'Y' and filteredDoc:
             try:
+                destDir = destDir + "/" + subDir
                 if destType == Publish.FILE:
                     self.__saveDoc(filteredDoc, destDir, self.__fileName, "a")
                 elif destType == Publish.DOCTYPE:
@@ -1043,7 +1070,7 @@ class Publish:
             except:
                 errors = "Failure writing document CDR%010d" % doc[0]
         if recordDoc:
-            self.__addPubProcDocRow(doc)
+            self.__addPubProcDocRow(doc, subDir)
 
         # Handle errors and warnings.
         self.__checkProblems(doc, errors, warnings)
@@ -1120,7 +1147,7 @@ class Publish:
     #------------------------------------------------------------------
     # Record the publication of the specified document.
     #------------------------------------------------------------------
-    def __addPubProcDocRow(self, doc):
+    def __addPubProcDocRow(self, doc, subDir):
         try:
             cursor = self.__conn.cursor()
             cursor.execute("""\
@@ -1128,14 +1155,16 @@ class Publish:
                 (
                             pub_proc,
                             doc_id,
-                            doc_version
+                            doc_version,
+                            subdir
                 )
                      VALUES
                 (
                             ?,
                             ?,
+                            ?,
                             ?
-                )""", (self.__jobId, doc[0], doc[1]))
+                )""", (self.__jobId, doc[0], doc[1], subDir))
         except cdrdb.Error, info:
             msg = 'Failure adding row for document %d: %s' % \
                   (self.__jobId, info[1][0])
@@ -1483,7 +1512,7 @@ Please do not reply to this message.
             raise StandardError("SubsetFilters element must have at least " \
                                 "one SubsetFilter child element")
         return (filters, parms)
-
+   
     #----------------------------------------------------------------
     # Extract the document ID or title for a filter.
     #----------------------------------------------------------------
@@ -1512,6 +1541,16 @@ Please do not reply to this message.
         if not parmName:
             raise StandardError("Missing ParmName in SubsetFilterParm")
         return (parmName, parmValue)
+
+    #----------------------------------------------------------------
+    # Extract the Subdirectory value. Return "" if not found.    
+    #----------------------------------------------------------------
+    def __getSubdir(self, spec):       
+        for node in spec.childNodes:
+            if node.nodeName == "Subdirectory":
+                return cdr.getTextContent(node)
+                     
+        return ""
 
     #----------------------------------------------------------------
     # Find out which document types the user can list individual
