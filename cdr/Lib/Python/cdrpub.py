@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.29 2002-09-05 16:26:01 pzhang Exp $
+# $Id: cdrpub.py,v 1.30 2002-09-06 21:49:20 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.29  2002/09/05 16:26:01  pzhang
+# Changed default value of __interactiveMode to 0.
+#
 # Revision 1.28  2002/09/05 14:41:45  pzhang
 # Added port parameter to cdr.py function calls.
 # Made __reportOnly default to 0 so that pushing job will have value 0.
@@ -442,6 +445,8 @@ class Publish:
                     if self.__sysName != "Primary" or \
                         self.__reportOnly:
                         self.__updateStatus(Publish.SUCCESS)
+                    elif not self.__canPush():
+                        self.__updateStatus(Publish.FAILURE)                        
 
                     # Filtered documents have to be in dest before sending 
                     # them to Cancer.gov. The following piece of code is
@@ -527,6 +532,37 @@ class Publish:
         self.__sendMail()
 
     #------------------------------------------------------------------
+    # Allow only one pushing job run.
+    # Return 0 if there is a pending pushing job.
+    #------------------------------------------------------------------
+    def __canPush(self):
+        try:
+            cursor = self.__conn.cursor()
+            cursor.execute("""\
+                    SELECT TOP 1 id
+                      FROM pub_proc
+                     WHERE NOT status IN ('%s', '%s') 
+                       AND pub_subset LIKE '%s%%'
+                       AND pub_system = %d 
+                       AND NOT id = %d 
+                  ORDER BY id DESC             
+                           """ % (Publish.SUCCESS, Publish.FAILURE, 
+                                  self.__pd2cg, self.__ctrlDocId,
+                                  self.__jobId)
+                           )
+            row = cursor.fetchone()
+            if row:
+                msg = """Pushing job %d is pending. Please push again 
+                         later.<BR>""" % row[0] 
+                self.__updateMessage(msg)
+                return 0
+
+        except cdrdb.Error, info:
+            raise StandardError("""Failure finding pending pushing jobs 
+                        for job %d: %s""" % (self.__jobId, info[1][0]))
+        return 1
+
+    #------------------------------------------------------------------
     # Find the vendor job and destination directory based on parameter 
     # value SubSetName belonging to this job.    
     #------------------------------------------------------------------
@@ -548,7 +584,7 @@ class Publish:
                 row = cursor.fetchone()
                 if not row:
                     raise StandardError(
-                        "Getting vendor id, output_dir failed.") 
+                        "Corresponding vendor job does not exist.<BR>") 
 
                 id   = row[0]
                 dest = row[1]              
@@ -611,13 +647,17 @@ class Publish:
 
             # If pubType is "Full Load", clean up pub_proc_cg table.
             if pubType == "Full Load":
-                try: cursor.execute("DELETE pub_proc_cg") 
+                message = "Deleting pub_proc_cg at %s.<BR>" % time.ctime()
+                self.__updateMessage(message, jobId) 
+                try: cursor.execute("DELETE pub_proc_cg", timeout = 1200) 
                 except:
                     msg = "Deleting pub_proc_cg failed."
                     return [jobId, Publish.FAILURE, msg]
         
             # Create a working table pub_proc_cg_work to hold information
             # on transactions to Cancer.gov.  
+            message = "Creating pub_proc_cg_work at %s.<BR>" % time.ctime()
+            self.__updateMessage(message, jobId) 
             cgWorkLink = self.__cdrHttp + "/PubStatus.py?id=1&type=CgWork"
             link = "<A href='%s'>Check removed docs</A><BR>" % cgWorkLink         
             if pubType == "Full Load" or pubType == "Export":
@@ -685,17 +725,18 @@ class Publish:
                 msg += "%s: %s<BR>" % (response.type, response.message)
                 return [jobId, Publish.FAILURE, msg]  
             
+            msg += "Pushing documents starts at %s.<BR>" % time.ctime()
+            self.__updateMessage(msg, jobId) 
+            msg = ""   
+
             # Send all new and updated documents.                    
             cursor.execute ("""
                 SELECT id, doc_type, xml
                   FROM pub_proc_cg_work
                  WHERE NOT xml IS NULL
-                            """)
+                            """, timeout = 1200)
             rows    = cursor.fetchall()  
-            addCount = len(rows)
-            msg += "Pushing documents starts at %s.<BR>" % time.ctime()
-            self.__updateMessage(msg, jobId) 
-            msg = ""    
+            addCount = len(rows)             
             if addCount > 0:                 
                 XmlDeclLine = re.compile("<\?xml.*?\?>\s*", re.DOTALL)
                 DocTypeLine = re.compile("<!DOCTYPE.*?>\s*", re.DOTALL)                   
@@ -755,7 +796,10 @@ class Publish:
                 msg += "%d documents removed from Cancer.gov.<BR>" % delCount    
                 self.__updateMessage(msg, jobId)
                 msg = ""                               
-            
+            msg += "Pushing done at %s.<BR>" % time.ctime() 
+            self.__updateMessage(msg, jobId)
+            msg = ""
+
             # Before we claim success, we will have to update 
             # pub_proc_cg and pub_proc_doc from pub_proc_cg_work.
             # These transactions must succeed! Failure will cause
@@ -769,7 +813,9 @@ class Publish:
             else:
                 raise StandardError("pubType %s not supported." % pubType)  
                        
-            msg += "Pushing done at %s.<BR>" % time.ctime() 
+            msg += "Updating PPC/PPD tables done at %s.<BR>" % time.ctime() 
+            self.__updateMessage(msg, jobId)
+            msg = ""
                    
         except StandardError, arg:
             msg += arg[0]
@@ -796,13 +842,15 @@ class Publish:
 
         # Wipe out all rows in pub_proc_cg_work. Only one job can be run 
         # for Cancer.gov transaction. This is garanteed by the uniqueness 
-        # of the setset Name.
+        # of the subset Name.
         try:                   
             cursor.execute("""
                 DELETE pub_proc_cg_work
-                  """      ) 
+                  """, timeout = 1200) 
         except:
             raise StandardError("Deleting pub_proc_cg_work failed.")
+        msg = "Finished deleting pub_proc_cg_work at %s.<BR>" % time.ctime() 
+        self.__updateMessage(msg, cg_job)
 
         # Insert updated documents into pub_proc_cg_work. Updated documents
         # are those that are in both pub_proc_cg and pub_proc_doc belonging
@@ -826,7 +874,7 @@ class Publish:
                               AND ppd.failure IS NULL
                               )
                             """ % (vendor_job, vendor_job)        
-            cursor.execute(qry)
+            cursor.execute(qry, timeout = 1200)
             rows = cursor.fetchall()
             for row in rows:
                 id     = row[0]
@@ -845,7 +893,9 @@ class Publish:
                                    """, (id, vendor_job, cg_job, type, file)
                                   )
         except:
-            raise StandardError("Setting U to pub_proc_cg_work failed.") 
+            raise StandardError("Setting U to pub_proc_cg_work failed.")
+        msg = "Finished insertion for updating at %s.<BR>" % time.ctime() 
+        self.__updateMessage(msg, cg_job) 
     
         # Insert new documents into pub_proc_cg_work. New documents are 
         # those in pub_proc_doc belonging to vendor_job, but not in 
@@ -863,7 +913,7 @@ class Publish:
                                   FROM pub_proc_cg ppc
                                  WHERE ppc.id = ppd.doc_id                                
                                        )
-                            """, (vendor_job)
+                            """, (vendor_job), timeout = 1200
                            )      
             rows = cursor.fetchall()
             for row in rows:
@@ -879,7 +929,9 @@ class Publish:
                                """, (id, vendor_job, cg_job, type, xml)
                               )
         except:
-            raise StandardError("Setting A to pub_proc_cg_work failed.")     
+            raise StandardError("Setting A to pub_proc_cg_work failed.") 
+        msg = "Finished insertion for adding at %s.<BR>" % time.ctime() 
+        self.__updateMessage(msg, cg_job)     
 
         # Insert removed documents into pub_proc_cg_work.
         # Removed documents are those in pub_proc_cg, but not in
@@ -906,9 +958,11 @@ class Publish:
                                    AND ppd.pub_proc = %d
                                        )
                   """ % (vendor_job, cg_job, vendor_job)                          
-            cursor.execute(qry)
+            cursor.execute(qry, timeout = 1200)
         except:
             raise StandardError("Setting D to pub_proc_cg_work failed.")
+        msg = "Finished insertion for deleting at %s.<BR>" % time.ctime() 
+        self.__updateMessage(msg, cg_job) 
     
     #------------------------------------------------------------------
     # Different version of __createWorkPPC for Hotfix (Remove)
@@ -919,11 +973,11 @@ class Publish:
 
         # Wipe out all rows in pub_proc_cg_work. Only one job can be run 
         # for Cancer.gov transaction. This is garanteed by the uniqueness 
-        # of the setset Name.
+        # of the subset Name.
         try:                   
             cursor.execute("""
                 DELETE pub_proc_cg_work
-                  """      ) 
+                  """, timeout = 1200) 
         except:
             raise StandardError("Deleting pub_proc_cg_work failed.")
 
@@ -941,7 +995,7 @@ class Publish:
                         AND d.doc_type = t.id                        
                         AND ppd.pub_proc = %d                        
                   """ % (vendor_job, cg_job, vendor_job)                          
-            cursor.execute(qry)
+            cursor.execute(qry, timeout = 1200)
         except:
             raise StandardError("Setting D to pub_proc_cg_work failed.")
     
@@ -954,11 +1008,11 @@ class Publish:
 
         # Wipe out all rows in pub_proc_cg_work. Only one job can be run 
         # for Cancer.gov transaction. This is garanteed by the uniqueness 
-        # of the setset Name.
+        # of the subset Name.
         try:                   
             cursor.execute("""
                 DELETE pub_proc_cg_work
-                  """      ) 
+                  """, timeout = 1200) 
         except:
             raise StandardError("Deleting pub_proc_cg_work failed.")
        
@@ -973,7 +1027,7 @@ class Publish:
                         AND d.id = ppd.doc_id
                         AND d.doc_type = t.id 
                         AND ppd.failure IS NULL
-                            """, (vendor_job)
+                            """, (vendor_job), timeout = 1200
                            )      
             rows = cursor.fetchall()
             for row in rows:
@@ -997,6 +1051,7 @@ class Publish:
     # related tables to find out what is wrong.
     # Note that the order of execution for PPC is critical: delete, 
     # update, and insert.
+    # It takes less than 20 minutes.
     #------------------------------------------------------------------
     def __updateFromPPCW(self): 
 
@@ -1012,11 +1067,11 @@ class Publish:
                       FROM pub_proc_cg_work ppcw  
                      WHERE ppcw.xml IS NULL
                              )
-                            """) 
+                            """, timeout = 1200) 
         except:
             raise StandardError("Deleting from pub_proc_cg_work failed.")   
 
-        # Insert rows in PPD for removed documents.     
+        # Insert rows in PPD for removed documents.
         try:            
             cursor.execute ("""
                 INSERT INTO pub_proc_doc (doc_id, doc_version, pub_proc, 
@@ -1024,7 +1079,7 @@ class Publish:
                      SELECT ppcw.id, ppcw.num, ppcw.vendor_job, 'Y'
                        FROM pub_proc_cg_work ppcw
                       WHERE ppcw.xml IS NULL
-                            """)
+                            """, timeout = 1200)
         except:
             raise StandardError("Inserting D into pub_proc_doc failed.")  
             
@@ -1037,7 +1092,7 @@ class Publish:
                                   FROM pub_proc_cg ppc
                                  WHERE ppc.id = ppcw.id
                               )            
-                            """)                                
+                            """, timeout = 1200)                                
             rows = cursor.fetchall()
             for row in rows:               
                 cursor.execute("""
@@ -1060,7 +1115,7 @@ class Publish:
                                            FROM pub_proc_cg ppc
                                           WHERE ppc.id = ppcw.id
                                         )
-                            """)
+                            """, timeout = 1200)
         except:
             raise StandardError("Inserting into pub_proc_cg failed.") 
 
@@ -1083,7 +1138,7 @@ class Publish:
                     SELECT ppcw.id
                       FROM pub_proc_cg_work ppcw 
                              )
-                            """) 
+                            """, timeout = 1200) 
         except:
             raise StandardError("Deleting from pub_proc_cg_work failed.")   
 
@@ -1092,7 +1147,11 @@ class Publish:
             cursor.execute ("""
                      UPDATE pub_proc_doc 
                         SET removed = 'Y'
-                            """)
+                      WHERE pub_proc IN ( 
+                        SELECT ppcw.vendor_job
+                          FROM pub_proc_cg_work ppcw 
+                                        )
+                            """, timeout = 1200)
         except:
             raise StandardError("Updating D in pub_proc_doc failed.")  
 
@@ -1116,7 +1175,7 @@ class Publish:
                                   FROM pub_proc_cg ppc
                                  WHERE ppc.id = ppcw.id
                               )            
-                            """)                                
+                            """, timeout = 1200)                                
             rows = cursor.fetchall()
             for row in rows:               
                 cursor.execute("""
@@ -1139,7 +1198,7 @@ class Publish:
                                            FROM pub_proc_cg ppc
                                           WHERE ppc.id = ppcw.id
                                         )
-                            """)
+                            """, timeout = 1200)
         except:
             raise StandardError("Inserting into PPC from PPCW failed.") 
 
@@ -1491,7 +1550,7 @@ class Publish:
                     id     = queryResult.docId
                     type   = queryResult.docType
                     digits = re.sub('[^\d]', '', id)
-                    id     = string.atoi(digits)
+                    id     = int(digits)
                     if id in self.__alreadyPublished: continue
                     try:
                         doc = self.__findPublishableVersion(id)
