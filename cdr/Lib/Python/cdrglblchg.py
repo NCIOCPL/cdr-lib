@@ -1,8 +1,15 @@
-# $Id: cdrglblchg.py,v 1.12 2003-03-27 18:39:30 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.13 2003-04-22 18:34:29 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.12  2003/03/27 18:39:30  ameyer
+# Major rewrite of the module to encode the logic for each type of global
+# change in a script using a sequence of Stage objects.
+# This eliminated many routines, improved the generality and maintainability,
+# and simplified the CGI portion of the process.
+# Also added code and subclass for the new insert org global change.
+#
 # Revision 1.11  2002/11/20 00:46:32  ameyer
 # Removed some copious debug logging.
 #
@@ -769,6 +776,9 @@ class GlblChg:
 <table border='1'>
 """ % (docId, self.ssVars[titleType])
 
+        # First frag item is checked, then set unchecked for next
+        checked=' checked'
+
         # Caller may say that it is legal to select no fragment
         if optional:
             # See if we've already done this
@@ -784,14 +794,15 @@ class GlblChg:
             # Seed the pick list with an entry for no/all fragments
             # value attribute = doc id with no fragment added to it
             html += """
- <tr><td><input type='radio' name='%s' value='%s'>&nbsp;</input></td>
+ <tr><td><input type='radio' name='%s' value='%s' %s>&nbsp;</input></td>
      <td>No specific address fragment - all occurrences match regardless of
      presence or absence of fragment id</td></tr>
-""" % (idType, docId)
+""" % (idType, docId, checked)
+            # We've checked our default
+            checked = ''
 
         # Populate table with radio buttoned cdr ids and addresses
         # value attribute = doc id with fragment appended
-        checked=' checked'
         for addrInfo in idAddrs:
             html += """
  <tr><td><input type='radio' name='%s' value='%s'%s>%s</input></td>
