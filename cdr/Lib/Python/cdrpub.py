@@ -2,8 +2,11 @@
 #
 # Script for command line and CGI publishing.
 #
-# $Id: cdrpub.py,v 1.7 2002-03-01 22:46:19 pzhang Exp $
+# $Id: cdrpub.py,v 1.8 2002-03-15 23:38:56 pzhang Exp $
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2002/03/01 22:46:19  pzhang
+# Detected docs that are not publishable. Reorganized publishing messages.
+#
 # Revision 1.6  2002/02/28 23:23:46  pzhang
 # Don't care about destination directory if no_output != 'Y'.
 #
@@ -66,19 +69,22 @@ NCGI = 1
 #-------------------------------------------------------------------
 # class: Publish
 #    This class encapsulate the publishing data and methods.
-#    There is one publing method, publish(), for command line;
-#       Other methods are helpers for CGI script.
+#    There is one public method, publish(); other methods are 
+#       helpers for CGI script.
 #
 # Inputs to the contructor:
 #    strCtrlDocId:  a publishing system control document ID in STRING!
 #    subsetName:    a publishing system subset name.
 #    credential:    a Session ID (name in the session table).
-#    docIds:        (optional) a list of selected CDR document ID
+#    docIds:        a list of selected CDR document ID
 #                       and/or document version.
-#    params:        (optional) a list of subset parameters.
+#    params:        a list of subset parameters.
 #    jobId:         the process job id for a subset publishing.
-# Issues:           Passing parameters or using class variables?
-#                   Minimal error checking has been done.
+#    no_output:     a flag to control whether to drop filtered docs.
+#    docDate:       a DateTime to help pick the correct version of a 
+#                       document to be published.
+#    linkDate:      a DateTime to help pick the correct version of
+#                       the linked documents for a master document.
 #-------------------------------------------------------------------
 class Publish:
 
@@ -110,7 +116,9 @@ class Publish:
 
     # Do nothing but set local variables.
     def __init__(self, strCtrlDocId, subsetName, credential,
-                docIds, params, email = None, no_output = 'N', jobId = 0):
+                docIds, params, email = None, no_output = 'N', 
+                jobId = 0, docDate='', linkDate=''):
+        
         self.strCtrlDocId = strCtrlDocId
         self.subsetName = subsetName
         self.credential = credential
@@ -119,6 +127,10 @@ class Publish:
         self.email = email
         self.jobId = jobId
         self.no_output = no_output
+
+        now = time.localtime(time.time())
+        self.docDate = docDate or time.strftime("%m/%d/%Y %H:%M:%S", now)
+        self.linkDate = linkDate or time.strftime("%m/%d/%Y %H:%M:%S", now)
 
     # This is a CGI helper function.
     def getPubSys(self):
@@ -273,13 +285,15 @@ class Publish:
         # Use the current publishable version, if exists.
         if version == -1:
             sql = "SELECT TOP 1 num FROM doc_version WHERE id = %s AND " \
-                "publishable = 'Y' ORDER BY num DESC" % id
+                "publishable = 'Y' AND dt BETWEEN '03/01/2002 00:00:00' " \
+                "AND '%s' ORDER BY num DESC" % (id, self.docDate)
 
         # Query into doc_version table to verify this version.
         else:
             sql = "SELECT TOP 1 num FROM doc_version WHERE id = %s AND " \
                 "num = %s AND publishable = 'Y' " % (id, version)
         rs = self.__execSQL(sql)
+        if NCGI: self.__logPub(sql)
 
         ret = -1
         if not rs.EOF:
@@ -1277,7 +1291,7 @@ Please do not reply to this message.
         if id and id.group(1) != "":
             return id.group(1)
         else:
-            return 1
+            return -1
 
     #----------------------------------------------------------------
     # Update the publishing_process table.
