@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.6 2002-08-27 22:45:17 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.7 2002-09-24 23:38:05 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2002/08/27 22:45:17  ameyer
+# Now allowing user to enter organization ids with or without address
+# fragments.
+#
 # Revision 1.5  2002/08/16 03:16:52  ameyer
 # Replaced 'rmk' userid with CdrGuest.
 # Added publishable version check and report in the will change report.
@@ -149,13 +153,13 @@ def _getPickList (docType, searchString, action):
     qry = """
 SELECT TOP %d d.id, d.title
   FROM document d, doc_type t
- WHERE d.title LIKE '%s%%'
+ WHERE d.title LIKE ?
    AND d.doc_type = t.id
-   AND t.name = '%s'
+   AND t.name = ?
  ORDER BY d.title
-""" % (MAX_PICK_LIST_SIZE, searchString, docType)
+""" % MAX_PICK_LIST_SIZE
 
-    rows = _execQry (qry)
+    rows = _execQry (qry, (searchString + '%', docType))
 
     # Nothing there with that name?
     if not rows:
@@ -237,13 +241,14 @@ def _genValidValPickList (docType, vvType, action):
 #------------------------------------------------------------
 # Execute a query, returning rows
 #------------------------------------------------------------
-def _execQry (qry):
+def _execQry (qry, args=None):
     """
     Called by specific subclass objects to execute their particular
     queries.
 
     Pass:
         qry - Query string
+        args - Optional single arg or tuple of args for replacements.
     Return:
         Sequence of all matching database rows, each containing a
         sequence of:
@@ -254,7 +259,7 @@ def _execQry (qry):
     try:
         conn   = cdrdb.connect ('CdrGuest')
         cursor = conn.cursor()
-        cursor.execute (qry)
+        cursor.execute (qry, args)
         rows   = cursor.fetchall()
         cursor.close()
         return rows
@@ -388,7 +393,7 @@ class GlblChg:
         if chgType == STATUS_CHG:
             actMsg = "Change status for organization"
         else:
-            actMsg = "Change %s links %s" % (docType, action)
+            actMsg = "Change %s links %s:" % (docType, action)
         if action == 'restr':
             actMsg = \
         'Restrict change to protocols with particular lead org, or leave blank'
@@ -398,12 +403,12 @@ class GlblChg:
         # Construct input form, prefaced by what we've done so far
         html = self.showSoFarHtml() + """
 <table border='0'>
-<tr><td colspan='2'>%s:</td></tr>
+<tr><td colspan='2'>%s</td></tr>
 <tr><td align='right'>%s DocId: </td>
-    <td><input type='text' width='50' name='%sId'></td></tr>
+    <td><input type='text' size='30' name='%sId'></td></tr>
 <tr><td colspan='2'>&nbsp;&nbsp;&nbsp;&nbsp;Or</td></tr>
 <tr><td align='right'>%s Name: </td>
-    <td><input type='text' width='50' name='%sName'></td></tr>
+    <td><input type='text' size='30' name='%sName'></td></tr>
 </table>
     """ % (actMsg, docType, action, docType, action)
 
@@ -420,10 +425,10 @@ class GlblChg:
 <p>Restrict change to protocols with particular lead org, or leave blank</p>
 <table border='0'>
 <tr><td align='right'>Organization DocId: </td>
-    <td><input type='text' width='50' name='restrId'></td></tr>
+    <td><input type='text' size='30' name='restrId'></td></tr>
 <tr><td colspan='2'>&nbsp;&nbsp;&nbsp;&nbsp;Or</td></tr>
 <tr><td align='right'>Organization Name: </td>
-    <td><input type='text' width='50' name='restrName'></td></tr>
+    <td><input type='text' size='30' name='restrName'></td></tr>
 </table>
 """
         return html
@@ -647,18 +652,19 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
       OR protpers.path =
    '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteContact/SpecificPerson/Person/@cdr:ref'
        )
-   AND protpers.value = '%s'
+   AND protpers.value = ?
    AND protstat.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrgProtocolStatuses/CurrentOrgStatus/StatusName'
    AND (protstat.value = 'Active' OR
         protstat.value = 'Approved-not yet active' OR
         protstat.value = 'Temporarily closed')
    AND leadorg.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrganizationID/@cdr:ref'
-   AND leadorg.value = '%s'
+   AND leadorg.value = ?
  ORDER BY doc.title
-""" % (self.sessionVars['fromId'], self.sessionVars['restrId'])
+"""
 
         # Call a common routine to get the rows corresponding to the query
-        return _execQry (qry)
+        return _execQry (qry, (self.sessionVars['fromId'],
+                               self.sessionVars['restrId']))
 
 #------------------------------------------------------------
 # Organization specific global change object
