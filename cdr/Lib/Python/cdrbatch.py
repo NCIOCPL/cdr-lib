@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.6 2003-10-23 13:21:24 bkline Exp $
+# $Id: cdrbatch.py,v 1.7 2003-12-30 20:37:29 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,10 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2003/10/23 13:21:24  bkline
+# Added missing placeholder for string argument conversion in logging
+# of database exception error.
+#
 # Revision 1.5  2003/09/17 02:53:22  ameyer
 # Added support for stringification of non-string args passed to batch jobs.
 #
@@ -365,22 +369,61 @@ class CdrBatch:
             self.__email    = email
             self.__priority = priority
 
-            # Args are loaded into a dictionary - with checking
+            # Args are loaded into a dictionary - with type checking
             if args:
                 if type(args) != type (()) and type(args) != type([]):
                     self.fail (\
                         "Job arguments must be passed as a tuple of tuples")
+
                 for argPair in args:
                     if type(argPair) != type(()) or len(argPair) != 2:
                         self.fail (\
                             "Individual job arguments must be tuples of " +\
                             "(argname, argvalue)")
-                    # Conversions
-                    argname  = str(argPair[0])
-                    argvalue = str(argPair[1])
 
-                    # Store arguments in dictionary, by name
-                    self.__args[argname] = argvalue
+                    # Insure usable types
+                    argKey = argPair[0]
+                    argVal = argPair[1]
+
+                    # Keys have to be strings
+                    if type(argKey) != type(""):
+                        self.fail (\
+                          "Expecting job argument name of type string.\n" +
+                          "Got keytype=%s for arg key=%s val=%s" %
+                          (str(type(argKey)), str(argKey), str(argVal)))
+
+                    # Convert integers to strings
+                    if type(argVal) == type(0):
+                        argVal = str(argVal)
+
+                    # Convert simple strings to sequences for uniformity
+                    typVal = type(argVal)
+                    valSeq = []
+                    if (typVal == type("") or typVal == type(u"")):
+                        valSeq.append (argVal)
+
+                    # Or it may already be a sequence
+                    elif (typVal == type(()) or typVal == type([])):
+                        valSeq = argVal
+
+                    # Not supporting any other types at this time
+                    else:
+                        self.fail (\
+                          "Expecting job argument value of type string, " +
+                          "unicode or sequence\n"
+                          "Got valtype=%s for arg key=%s val=%s" %
+                          (str(type(argVal)), argKey, str(argVal)))
+
+                    # Components of sequence have to be strings
+                    for val in valSeq:
+                        if (type(val)!=type("") and type(val)!=type(u"")):
+                            self.fail (\
+                          "Expecting job arg sequence values to be strings\n"+\
+                          "Got valpart type=%s for arg key=%s val=%s" %
+                          (str(type(val)), argKey, str(val)))
+
+                    # Store key + arg list in dictionary, by name of arg
+                    self.__args[argKey] = valSeq
 
             # Others don't exist until job is queued and/or run
             self.__status      = None
@@ -444,7 +487,27 @@ class CdrBatch:
 
         # Load parameters into dictionary
         for row in rows:
-            self.__args[row[0]] = row[1]
+            argKey = row[0]
+            argVal = row[1]
+
+            # If this is the first value for this key, simply store it
+            if not self.__args.has_key (argKey):
+                self.__args[argKey] = argVal
+
+            # If more than one, re-create the original list
+            else:
+                # First one was loaded as a simple key, convert it to list
+                if type(self.__args[argKey]) != type([]):
+
+                    # Save value, delete key, re-create as a sequence
+                    firstArg = self.__args[argKey]
+                    del (self.__args[argKey])
+                    argSeq = []
+                    argSeq.append (firstArg)
+                    self.__args[argKey] = argSeq
+
+                # Append the new value
+                self.__args[argKey].append (argVal)
 
         # Signal object loaded and processing ready to begin
         sendSignal (self.__conn, self.__jobId, ST_IN_PROCESS, PROC_BATCHJOB)
@@ -513,19 +576,26 @@ class CdrBatch:
             self.fail("Database error queueing job: %s" % info[1][0])
 
         # If there are any arguments, save them for batch job to retrieve
-        # Args arrive as a tuple of tuples
+        # Args are a dictionary containing pairs of:
+        #    Argument name (a string)
+        #    Argument values (a sequence of one or more strings)
         if self.__args:
+            # For each argument name (key)
             for key in self.__args.keys():
-                # Install pairs in the database
-                try:
-                    self.__cursor.execute ("""
-                      INSERT INTO batch_job_parm (job, name, value)
-                           VALUES (?, ?, ?)
-                    """, (self.__jobId, key, self.__args[key]))
-                except cdrdb.Error, info:
-                    self.fail (\
-                         "Database error setting parameter %s=%s: %s" %\
-                          (key, self.__args[key], info[1][0]))
+
+                valSeq = self.__args[key]
+
+                # For each value in the sequence of values for this key
+                for val in valSeq:
+                    try:
+                        self.__cursor.execute ("""
+                          INSERT INTO batch_job_parm (job, name, value)
+                               VALUES (?, ?, ?)
+                        """, (self.__jobId, key, val))
+                    except cdrdb.Error, info:
+                        self.fail (\
+                             "Database error setting parameter %s=%s: %s" %\
+                              (key, val, info[1][0]))
 
         # Commit the job and its parameters together
         self.__conn.commit()
@@ -533,15 +603,18 @@ class CdrBatch:
     #------------------------------------------------------------------
     # Fail a batch job
     #------------------------------------------------------------------
-    def fail(self, reason, exit=1, logfile=LF):
+    def fail(self, why, exit=1, logfile=LF):
         """
         Save the reason why this job has failed and exit.
 
         Pass:
-            reason  - to log in logfile.
+            why     - reason to log in logfile.
             exit    - true=exit here, else raise exception.
             logfile - if caller doesn't want the standard batch job log.
         """
+        # Normalize reason, mainly for unicode
+        reason = str(why)
+
         # Try to set status, but only if we're not already in the midst
         #   of a recursive fail
         if not self.__failure:
