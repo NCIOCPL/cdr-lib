@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.8 2001-08-06 22:21:22 bkline Exp $
+# $Id: cdrdb.py,v 1.9 2001-12-19 20:24:42 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2001/08/06 22:21:22  bkline
+# Implemented commit(), rollback(), and setAutoCommit() on Connection.
+#
 # Revision 1.7  2001/08/06 18:03:58  bkline
 # Switched hardcoded error strings to Unicode.
 #
@@ -161,6 +164,7 @@
 
 import win32com.client
 import time
+import pywintypes
 
 # Until we do this bogus object creation, the constants are invisible.
 win32com.client.Dispatch("ADODB.Connection")
@@ -228,11 +232,12 @@ class Cursor:
     """
     
     def __init__(self, conn):
-        self.__conn      = conn
-        self.__rs        = None
-        self.description = None
-        self.rowcount    = -1
-        self.arraysize   = 100
+        self.__conn           = conn
+        self.__rs             = None
+        self.description      = None
+        self.rowcount         = -1
+        self.arraysize        = 100
+        self.__dateTimeObject = pywintypes.Time(0)
 
     def callproc(self, procname, parameters):
         """
@@ -455,7 +460,10 @@ class Cursor:
             for row in range(nRows):
                 vals = []
                 for col in range(nCols):
-                    vals.append(data[col][row])
+                    val = data[col][row]
+                    if type(val) == type(self.__dateTimeObject):
+                        val = val.Format("%Y-%m-%d %H:%M:%S")
+                    vals.append(val)
                 rows.append(vals)
             return rows
 
@@ -693,6 +701,7 @@ def connect(user = 'cdr'):
     adoConn = win32com.client.Dispatch("ADODB.Connection")
     if user == 'cdr': password = '***REMOVED***'
     elif user == 'CdrGuest': password = '***REDACTED***'
+    elif user == 'CdrPublishing': password = '***REMOVED***'
     else: raise DatabaseError, ("connect", 
             ((u"invalid login name %s" % user),))
 
