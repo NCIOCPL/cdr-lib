@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.19 2002-07-02 14:18:04 ameyer Exp $
+# $Id: cdrcgi.py,v 1.20 2002-07-05 18:04:05 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.19  2002/07/02 14:18:04  ameyer
+# Added global change entry to main menu.
+#
 # Revision 1.18  2002/07/02 13:47:16  bkline
 # Plugged in cdrcgi.DAY_ONE; added getFullUserName().
 #
@@ -716,14 +719,14 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
             dtcol = """\
     <TD       VALIGN = "top">%s</TD>
 """ % dt
-        session = session and ("&%s=%s" % (SESSION, session)) or ""
+        sessvar = session and ("&%s=%s" % (SESSION, session)) or ""
 
         # XXX Consider using QcReport.py for all advanced search results pages.
         if docType == "Person" or docType == "Organization":
-            href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
+            href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, sessvar)
         else:
             href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId, filt,
-                                                          session)
+                                                          sessvar)
         html += """\
    <TR>
     <TD       NOWRAP
