@@ -1,12 +1,40 @@
-#!/usr/bin/python
+"""
+
+Summary:
+
+    Extracts streams from Microsoft's Structured Storage files.
+
+    Provides read access to Microsoft's compound storage files ("OLE2
+    Structured Storage").  The basic idea of this file format is that
+    it provides a virtual file system inside a single file, with the
+    storages performing the role of directories, and streams inside
+    the storages analogous to individual files in a file system.  The
+   storages can be nested, providing the equivalent of subdirectories.
+
+    Handles endian issues portably, regardless of the byte ordering
+    in the file or for the native operating system.
+
+Example usage:
+
+    import OleStorage
+    storageObj = OleStorage.OleStorage(name = 'foo.xls')
+    # or storageObj = OleStorage.OleStorage(buf = fileBuf)
+    rootDir = storageObject.getRootDirectory()
+    streamObj = rootDir.open("Workbook")
+    buf = streamObj.read()
+    
+"""
 
 #----------------------------------------------------------------------
 #
-# $Id: OleStorage.py,v 1.1 2004-10-10 19:09:50 bkline Exp $
+# $Id: OleStorage.py,v 1.2 2004-10-12 12:57:11 bkline Exp $
 #
 # Module for reading OLE2 structured storage files.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2004/10/10 19:09:50  bkline
+# Support for reading Excel workbooks.
+#
 #----------------------------------------------------------------------
 import struct, sys
 
@@ -24,14 +52,21 @@ ROOT_STORAGE  = 5
 RED           = 0
 BLACK         = 1
 
+
 def doDump(file, what):
+    "Debug logging function."
     file.write(what)
 def showBytes(buf):
+    "Convert binary string of bytes to space-separated hex codes."
     s = ''
     for b in buf:
         s += "%02X " % ord(b)
     return s
 def showUnicode(buf):
+    """
+    Converts Unicode string to ASCII equivalent, replacing non-ASCII
+    characters to <2-byte-hex-code> tokens.
+    """
     s = ''
     for c in buf:
         n = ord(c)
@@ -42,10 +77,30 @@ def showUnicode(buf):
     return s
 
 class OleStorage:
-    def __init__(self, name):
-        self.__name = name
-        self.__file = open(name, 'rb')
-        buf = self.__file.read(HEADER_SIZE)
+    """
+    Object which holds the navigation information for a Microsoft
+    compound storage file.  None of the state information is
+    exposed in the public interface.  Usage of the class is
+    entirely through the public methods.
+    """
+    def __init__(self, name = None, fileBuf = None):
+        """Extracts the control information from a named file or
+        from an in-memory string.
+
+        Pass:
+
+            name  - absolute or relative path name for disk file; or
+            buf   - in-memory contents of structured storage file
+        """
+        if name:
+            self.__name = name
+            self.__file = open(name, 'rb')
+            buf = self.__file.read(HEADER_SIZE)
+        elif buf:
+            self.__name = None
+            self.__file = None
+        else:
+            raise Exception("must provide filename or buffer")
         self.__magicId   = self.__checkMagic(buf[0:8])
         self.__uid       = buf[8:24]
         self.__revNum    = buf[24:26]
@@ -78,16 +133,25 @@ class OleStorage:
         self.__shortStreamContainerStream = rootStream.read()
         entries = self.buildTree(rootEntry.root)
         self.__rootDir = OleStorage.Directory(entries, self)
-    def getRootDirectory(self): return self.__rootDir
-    def isShortStream(self, size): return size < self.__stdStreamMinSize
+
+    def getRootDirectory(self):
+        "Access method for top-level storage object."
+        return self.__rootDir
+    
+    def isShortStream(self, size):
+        "True if stream is short enough for special storage."
+        return size < self.__stdStreamMinSize
     def readSector(self, sectorId):
+        "Loads a sector from the file, specified by id."
         self.__file.seek(self.__getSectorOffset(sectorId))
         return self.__file.read(self.__sectorSize)
     def readShortSector(self, sectorId):
+        "Loads a short sector from a special storage area."
         start = self.__shortSectorSize * sectorId
         end   = start + self.__shortSectorSize
         return self.__shortStreamContainerStream[start:end]
     def buildTree(self, root, tree = None):
+        "Builds a directory list by recursively traversing its tree."
         if tree is None:
             tree = []
         entry = self.__dir[root]
@@ -98,17 +162,33 @@ class OleStorage:
             self.buildTree(entry.right, tree)
         return tree
             
-    def getShort(self, s):    return struct.unpack(self.__SHORT, s)[0]
-    def getLong(self, s):     return struct.unpack(self.__LONG, s)[0]
-    def getLongLong(self, s): return struct.unpack(self.__LONGLONG, s)[0]
-    def getFloat(self, s):    return struct.unpack(self.__FLOAT, s)[0]
-    def getDouble(self, s):   return struct.unpack(self.__DOUBLE, s)[0]
-    def getUnicode(self, s):  return unicode(s, self.__UTF16)
+    def getShort(self, s):
+        "Unpack a signed short integer from the buffer."
+        return struct.unpack(self.__SHORT, s)[0]
+    def getLong(self, s):
+        "Unpack a signed 4-byte integer from the buffer."
+        return struct.unpack(self.__LONG, s)[0]
+    def getLongLong(self, s):
+        "Unpack a signed 8-byte integer from the buffer."
+        return struct.unpack(self.__LONGLONG, s)[0]
+    def getFloat(self, s):
+        "Unpack a 4-byte floating-point value from the buffer."
+        return struct.unpack(self.__FLOAT, s)[0]
+    def getDouble(self, s):
+        "Unpack an 8-byte floating-point value from the buffer."
+        return struct.unpack(self.__DOUBLE, s)[0]
+    def getUnicode(self, s):
+        "Extract a Unicode string of 16-bit characters from the buffer."
+        return unicode(s, self.__UTF16)
     def __getSectorOffset(self, sectorId):
+        "Calculate the starting position for a sector from its ID."
         return HEADER_SIZE + self.__sectorSize * sectorId
     def __getShortSectorOffset(self, sectorId):
+        """Calculate the starting position for a short sector
+        from its ID."""
         return self.__shortSectorSize * sectorId
     def __loadSsat(self):
+        "Load the short sector allocation table from the buffer."
         unpackString = "%s%dl" % (self.__ORDER, self.__sectorSize / 4)
         self.ssat = []
         sid = self.__firstShortSectorTableSector
@@ -117,6 +197,7 @@ class OleStorage:
             self.ssat += struct.unpack(unpackString, buf)
             sid = self.sat[sid]
     def __checkMagic(self, s):
+        "Verify the integrity of the file by checking its header bytes."
         if s != MAGIC:
             raise Exception("Not a structured storage file")
         return s
@@ -163,6 +244,7 @@ class OleStorage:
         self.__DOUBLE   = order + 'd'
         self.__UTF16    = order == '<' and 'utf-16-le' or 'utf-16-be'
     def dump(self, f):
+        "Debugging method to dump the control information for the file."
         doDump(f, "   magic ID: %s\n" % showBytes(self.__magicId))
         doDump(f, "        UID: %s\n" % showBytes(self.__uid))
         doDump(f, "   revision: %s\n" % showBytes(self.__revNum))
@@ -193,6 +275,22 @@ class OleStorage:
         for entry in self.__dir:
             entry.dump(f)
     class DirectoryEntry:
+        """
+        Holds control information for a single directory entry.
+
+        Attributes:
+
+            name          - Unicode string for the entry's name
+            type          - valid values:
+                              * USER_STREAM (2)
+                              * USER_STORAGE (1)
+                              * ROOT_STORAGE (5)
+            color         - RED (0) or BLACK (1) for tree balancing
+            left, right   - children of the entry node in the tree
+            root          - finds the nodes of a directory tree
+            start         - offset position for a stream
+            size          - number of bytes in a stream
+        """
         def __init__(self, buf, oleStorage):
             nameLen       = oleStorage.getShort(buf[64:66]) - 2
             nameBytes     = buf[0:nameLen]
@@ -223,6 +321,24 @@ class OleStorage:
             doDump(f, "       size: %d\n" % self.size)
 
     class Stream:
+        """
+        Represents a user stream (the equivalent of a file in the
+        standard filesystem).
+
+        Attributes:
+
+            start     - initial position of the stream's bytes
+            size      - number of bytes in the stream
+            storage   - reference to the OleStorage object which
+                        owns this stream
+            short     - True=stream is small enough for special
+                        storage
+
+        Methods:
+
+            read()    - loads the bytes for a structure storage
+                        stream into an 8-bit-character string
+        """
         def __init__(self, start, size, short, storage):
             self.start   = start
             self.size    = size
@@ -242,6 +358,25 @@ class OleStorage:
                 raise Exception("stream truncated")
             return doc[:self.size]
     class Directory:
+
+        """
+        Structured storage directory information for one storage
+        object.
+
+        Properties:
+
+            entries    - list of directory contents (streams and
+                         nexted directories)
+            storage    - reference to structure storage object
+                         which owns this directory
+
+        Methods:
+
+            open(name) - creates and returns a Stream or Storage
+                         object for the named directory member if
+                         it exists; otherwise raises an exception
+        """
+        
         def __init__(self, entries, storage):
             self.entries = entries
             self.storage = storage
@@ -259,6 +394,7 @@ class OleStorage:
                         return OleStorage.Directory(entries, self.storage)
                     raise Exception("don't know how to open %s" % name)
             return None
+
 if __name__ == "__main__":
     oleStorage = OleStorage(sys.argv[1])
     oleStorage.dump(sys.stdout)
