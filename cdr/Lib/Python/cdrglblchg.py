@@ -1,9 +1,13 @@
 #------------------------------------------------------------
-# $Id: cdrglblchg.py,v 1.1 2002-08-02 03:38:56 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.2 2002-08-06 22:52:20 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2002/08/02 03:38:56  ameyer
+# Global change common routines for batch and interactive use.
+# First working version.
+#
 #------------------------------------------------------------
 
 import xml.dom.minidom, cdr, cdrdb, cdrbatch, cdrcgi
@@ -530,7 +534,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
   JOIN query_term protstat
     ON protstat.doc_id = doc.id
  WHERE protorg.path =
-   '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrgPersonnel/ProtocolSites/OrgSite/@cdr:ref'
+   '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteID/@cdr:ref'
    AND protorg.value = '%s'
    AND protstat.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrgProtocolStatuses/CurrentOrgStatus/StatusName'
    AND (protstat.value = 'Active' OR
@@ -550,7 +554,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
   JOIN query_term leadorg
     ON leadorg.doc_id = doc.id
  WHERE protorg.path =
-   '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrgPersonnel/ProtocolSites/OrgSite/@cdr:ref'
+   '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteID/@cdr:ref'
    AND protorg.value = '%s'
    AND protstat.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrgProtocolStatuses/CurrentOrgStatus/StatusName'
    AND (protstat.value = 'Active' OR
