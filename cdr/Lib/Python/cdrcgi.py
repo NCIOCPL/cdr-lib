@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.30 2002-11-13 16:57:28 bkline Exp $
+# $Id: cdrcgi.py,v 1.31 2003-01-29 21:00:19 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.30  2002/11/13 16:57:28  bkline
+# Added extra args to bail() and header().
+#
 # Revision 1.29  2002/11/07 13:08:23  bkline
 # Added slot for stylesheet in standard header.
 #
@@ -492,7 +495,7 @@ SELECT DISTINCT s.id,
 # Generate the top portion of an advanced search form.
 #----------------------------------------------------------------------
 def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
-                            conn):
+                            conn, errors = ""):
 
     html = """\
 <!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
@@ -536,6 +539,15 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
                 COLSPAN     = "2">&nbsp;</TD>
     </TR>
 """ % (title, BASE, script, SESSION, session, subtitle)
+
+    if errors:
+        html += """\
+    <TR>
+     <TD ALIGN="left" COLSPAN="2">
+      %s
+     </TD>
+    </TR>
+""" % errors
 
     for field in fields:
         if len(field) == 2:
