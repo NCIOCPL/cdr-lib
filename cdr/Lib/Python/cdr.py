@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.81 2003-11-04 17:00:18 bkline Exp $
+# $Id: cdr.py,v 1.82 2003-12-19 22:07:39 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.81  2003/11/04 17:00:18  bkline
+# Added check to getErrors() to make sure we were passed a string.
+#
 # Revision 1.80  2003/11/04 16:55:54  bkline
 # Fixed bug in regular expression to extract <Err> content.  Added
 # option for extracting error strings as a sequence.
@@ -436,7 +439,7 @@ def getErrors(xml, errorsExpected = 1, asSequence = 0):
     # Make sure we have a string.
     if type(xml) not in (type(""), type(u"")):
         return ""
-    
+
     # Compile the pattern for the regular expression.
     pattern = re.compile("<Errors[>\s].*</Errors>", re.DOTALL)
 
@@ -957,7 +960,12 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
         elif docDate:
             qual = " docDate='%s'" % docDate
         docElem = "<Document href='%s'%s/>" % (normalize(docId), qual)
-    elif doc: docElem = "<Document><![CDATA[%s]]></Document>" % doc
+    elif doc:
+        # Ensure that everything sent to host is properly encoded
+        # This is belt and suspenders.  Should be encoded okay already
+        if type(doc) == type(u""):
+            doc = doc.encode ("utf-8")
+        docElem = "<Document><![CDATA[%s]]></Document>" % doc
     else: return "<Errors><Err>Document not specified.</Err></Errors>"
 
     # The filter is given to us as a string containing the XML directly.
@@ -1003,6 +1011,9 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
                       + "</Name><Value>" + l[1] \
                       + "</Value></Parm>"
     if parmElem:
+        # Even parms can have non-ASCII in them and may need encoding
+        if type(parmElem) == type(u""):
+            parmElem = parmElem.encode ("utf-8")
         parmElem = "<Parms>%s</Parms>" % parmElem
 
     output = ""
@@ -1013,7 +1024,6 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
                                                docElem, parmElem)
 
     # Submit the commands.
-    # XXX DEBUG open("d:/tmp/filt.log", "a").write("%s\n" % cmd)
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
 
     # Extract the filtered document.
