@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.1 2002-05-09 12:51:50 bkline Exp $
+# $Id: cdr2cg.py,v 1.2 2002-05-09 14:06:08 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2002/05/09 12:51:50  bkline
+# Module for communicating with Cancer.Gov SOAP server (GateKeeper).
+#
 #----------------------------------------------------------------------
 import httplib, re, sys, xml.dom.minidom
 
@@ -169,6 +172,10 @@ class Response:
         details
             PubEventResponse for request initiation and data prolog
             exchanges; PubDataResponse for document transfers
+
+        fault
+            SOAP fault object containing faultcode and faultstring
+            members in the case of a SOAP failure
     """
     
     def __init__(self, xmlString):
@@ -267,15 +274,31 @@ def sendDataProlog(jobId, pubType, docType, lastJobId, docCount):
                                                   docCount))
     return Response(xmlString)
 
-def sendDocument(jobId, docNum, transactionType, docType, docId, doc):
+def sendDocument(jobId, docNum, transType, docType, docId, doc = ""):
     xmlString = sendRequest(docTemplate % (jobId,
                                            docNum,
-                                           transactionType,
+                                           transType,
                                            docType,
                                            docId,
                                            doc))
     return Response(xmlString)
 
+def removeDocuments(jobId, docType, docIdList, lastJobId):
+    if not docIdList: return
+    if type(docIdList) not in (type(()), type([])):
+        docIdList = [docIdList]
+    resp = sendDataProlog(jobId, "Remove", docType, lastJobId, len(docIdList))
+    if resp.type != "OK":
+        raise StandardError("sending data prolog in removeDocuments: %s (%s)" %
+                           (resp.type, resp.message))
+    for i in xrange(len(docIdList)):
+        docId = docIdList[i]
+        resp = sendDocument(jobId, i + 1, "Delete", docType, docId)
+        if resp.type != "OK":
+            raise StandardError("sending document %d (CDR%010d) in "
+                                "removeDocuments: %s (%s)" %
+                               (i + 1, docId, resp.type, resp.message))
+            
 #----------------------------------------------------------------------
 # Take it out for a test spin.
 #----------------------------------------------------------------------
