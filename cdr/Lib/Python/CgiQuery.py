@@ -1,11 +1,14 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
 #
-# $Id: CgiQuery.py,v 1.5 2003-09-11 12:34:27 bkline Exp $
+# $Id: CgiQuery.py,v 1.6 2005-01-24 23:03:22 bkline Exp $
 #
 # Base class for CGI database query interface.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2003/09/11 12:34:27  bkline
+# Made it possible to override the default timeout for queries.
+#
 # Revision 1.4  2003/07/29 13:10:26  bkline
 # Removed redundant cgi escaping.
 #
@@ -96,7 +99,7 @@ Cache-control: no-cache, must-revalidate
                 val = queries[q].replace("\r", "").replace("\n", "\\n")
             else:
                 val = ""
-            html += 'queries["%s"] = "%s";\n' % (key, val)
+            html += 'queries["%s"] = "%s";\n' % (key, val.replace('"', '\\"'))
         return html
 
     def dbCleanString(self, str):
