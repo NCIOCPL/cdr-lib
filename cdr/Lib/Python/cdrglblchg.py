@@ -1,9 +1,12 @@
-#------------------------------------------------------------
-# $Id: cdrglblchg.py,v 1.4 2002-08-13 21:16:12 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.5 2002-08-16 03:16:52 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2002/08/13 21:16:12  ameyer
+# Finished the third type of global change.
+# Ready for production unless further testing reveals some problem.
+#
 # Revision 1.3  2002/08/09 03:47:46  ameyer
 # Changes for organization status protocol global change.
 #
@@ -65,7 +68,6 @@ def createChg (sessionVars):
 
     # Save session variables here for shared access with GlobalChange.py
     chg.sessionVars = sessionVars
-    cdr.logwrite("Added sessionVars to chg object", LF)
 
     # Give caller our new object
     return chg
@@ -202,7 +204,11 @@ def _genValidValPickList (docType, vvType, action):
         HTML format selectable picklist.
     """
     # Get the valid value list from the schema
-    dt = cdr.getDoctype (('rmk', '***REDACTED***'), 'InScopeProtocol')
+    dt = cdr.getDoctype (('CdrGuest', 'never.0n-$undaY'), 'InScopeProtocol')
+    if type(dt)==type("") or type(dt)==type(u""):
+        cdr.logwrite ("Error getting valid values: %s" % dt, LF)
+        raise dt
+
     vals = []
     for vvList in dt.vvLists:
         if vvList[0] == vvType:
@@ -290,8 +296,28 @@ class GlblChg:
         # Remember the count
         self.sessionVars['chgCount'] = len(rows)
 
+        # Session for host query
+        session = self.sessionVars[cdrcgi.SESSION]
+
+        # Find out if there's a publishable version of each
+        newRows = [['<b>DocID</b>', '<b>P</b>', '<b>Title</b>']]
+        for row in rows:
+            docIdStr = cdr.exNormalize (row[0])[0]
+            vers = cdr.lastVersions (session, docIdStr)
+            if type(vers) == type("") or type(vers) == type(u""):
+                pVer = vers
+            else:
+                pubVer = vers[1]
+                cdr.logwrite ("Version info: %d, %d, %s" % \
+                              (vers[0], vers[1], vers[2]), LF)
+                if pubVer < 0:
+                    pVer = 'N'
+                else:
+                    pVer = 'Y'
+            newRows.append ([row[0], pVer, row[1]])
+
         # Create the table
-        html += cdr.tabularize (rows, " border='1'")
+        html += cdr.tabularize (newRows, " border='1'")
 
         # Hand it all back
         return html
@@ -351,13 +377,18 @@ class GlblChg:
         """
         # Type of document to change
         docType = self.sessionVars['docType']
+        chgType = self.sessionVars['chgType']
 
         # Some unfortunate manipulations
-        actMsg = "Change %s links %s" % (docType, action)
+        if chgType == STATUS_CHG:
+            actMsg = "Change status for organization"
+        else:
+            actMsg = "Change %s links %s" % (docType, action)
         if action == 'restr':
             actMsg = \
         'Restrict change to protocols with particular lead org, or leave blank'
             docType = 'Organization'
+        actMsg = "<h3>" + actMsg + "</h3>"
 
         # Construct input form, prefaced by what we've done so far
         html = self.showSoFarHtml() + """
