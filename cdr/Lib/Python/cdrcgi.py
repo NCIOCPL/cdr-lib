@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.41 2004-01-09 16:48:52 venglisc Exp $
+# $Id: cdrcgi.py,v 1.42 2004-01-23 15:45:46 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.41  2004/01/09 16:48:52  venglisc
+# Added function to search for GlossaryTerm by Audience
+#
 # Revision 1.40  2003/12/30 16:50:32  bkline
 # Extraced out common functionality into generateHtmlPicklist().
 #
@@ -354,12 +357,15 @@ def mainMenu(session, news = None):
     menu     = """\
     <ol>
 """
-    if userPair[0].lower() == 'venglisc':
-        menu += """\
+    try:
+        userPair[0].lower() == 'venglisc':
+            menu += """\
      <li>
       <a href='%s/EditFilters.py%s'>Manage Filters (Just for you, Volker!)</a>
      </li>
 """ % (BASE, session)
+    except:
+        pass
     for item in (
         ('BoardManagers.py', 'CIPS Board Managers'             ),
         ('CiatCipsStaff.py', 'CIAT/CIPS Staff'                 ),
