@@ -1,8 +1,13 @@
-# $Id: cdrglblchg.py,v 1.27 2004-09-21 20:29:24 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.28 2004-09-23 21:43:50 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.27  2004/09/21 20:29:24  ameyer
+# Modified all instances of getFilterInfo() to return a third value that
+# says whether to save the output of the filter or discard it.  Used when
+# a filter is only for validation, not real global change.
+#
 # Revision 1.26  2004/02/12 19:40:48  ameyer
 # Tests for required StudyCategory and/or InterventionType were incorrect.
 # Now fixed.
@@ -516,6 +521,10 @@ def writeDocs (dirName, docId, oldDoc, newDoc, verType):
 
         # Generate a diff
         diff = cdr.diffXmlDocs(oldDoc, newDoc)
+
+        # Might not be any differences, if not, make it more user-friendly
+        if not diff:
+            diff = "-- No differences --"
 
         # And write it
         fp = open(diffName, "w")
