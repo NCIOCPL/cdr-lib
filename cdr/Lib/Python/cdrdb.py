@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.14 2002-09-03 12:49:19 bkline Exp $
+# $Id: cdrdb.py,v 1.15 2003-02-14 20:30:37 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.14  2002/09/03 12:49:19  bkline
+# Added optional db parameter to connect().
+#
 # Revision 1.13  2002/09/02 00:38:00  bkline
 # Added optional timeout parameter to callproc().
 #
@@ -802,3 +805,41 @@ def TimeFromTicks(ticks):
 
 def TimestampFromTicks(ticks):
     return "%04d-%02d-%02d %02d:%02d:%02d" % time.localtime(ticks)[:6]
+
+# extension helper
+def strftime(format, canonicalString):
+    """
+    Takes canonical string form of date/time value and formats it
+    using the time module's strftime().  Unfortunately the Windows
+    platform doesn't have strptime(), so we have to roll our own.
+    """
+
+    # Only pull this in if we need it.
+    import re
+
+    # Assume YYYY-MM-DD HH:MM:SS format.
+    match = re.match(r"(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)",
+                     canonicalString)
+    if not match:
+        raise ProgrammingError("strftime()",
+                               ("invalid argument", canonicalString))
+
+    # Pull out the pieces.
+    try:
+        year   = int(match.group(1))
+        month  = int(match.group(2))
+        day    = int(match.group(3))
+        hour   = int(match.group(4))
+        minute = int(match.group(5))
+        second = int(match.group(6))
+    except:
+        raise ProgrammingError("strftime()",
+                               ("invalid argument", canonicalString))
+
+    # Create a tuple we can use with time.strftime().
+    time_tuple = (year, month, day, hour, minute, second, 0, 0, -1)
+
+    # Normalize to fill out the last three (unknown) values of the tuple.
+    time_tuple = time.localtime(time.mktime(time_tuple))
+
+    return time.strftime(format, time_tuple)
