@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.32 2003-03-04 22:55:05 bkline Exp $
+# $Id: cdrcgi.py,v 1.33 2003-07-29 13:04:16 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.32  2003/03/04 22:55:05  bkline
+# Added support for display format selection on advanced Protocol search
+# page.
+#
 # Revision 1.31  2003/01/29 21:00:19  bkline
 # Added another parameter to function for creating the top of an
 # advanced search page (for errors).
@@ -820,8 +824,7 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
      <A         HREF = "%s">%s</A>
     </TD>
    </TR>
-""" % (i + 1, cgi.escape(unicodeToLatin1(title), 1),
-       dtcol, href, docId)
+""" % (i + 1, cgi.escape(title), dtcol, href, docId)
 
         # Requested by LG, Issue #193.
         if docType == "Protocol":
