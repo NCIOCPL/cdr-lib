@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.41 2002-07-16 14:26:51 ameyer Exp $
+# $Id: cdr.py,v 1.42 2002-07-24 02:40:38 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.41  2002/07/16 14:26:51  ameyer
+# Added process id to logwrite, and changed format of message header.
+#
 # Revision 1.40  2002/07/11 21:04:31  ameyer
 # Added date/time stamp to logwrite.
 #
@@ -149,6 +152,7 @@ LOGON_STRING  = """<CdrCommandSet><CdrCommand><CdrLogon>
                    </CdrLogon></CdrCommand>"""
 LOGOFF_STRING = "<CdrCommand><CdrLogoff/></CdrCommand></CdrCommandSet>"
 PYTHON        = "d:\\python\\python.exe"
+PERL          = "d:\\bin\\Perl.exe"
 BASEDIR       = "d:/cdr"
 SMTP_RELAY    = "MAILFWD.NIH.GOV"
 DEFAULT_LOGDIR  = "d:/cdr/Log"
