@@ -136,9 +136,13 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.12 2002-05-23 22:05:29 ameyer Exp $
+# $Id: cdrdb.py,v 1.13 2002-09-02 00:38:00 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.12  2002/05/23 22:05:29  ameyer
+# setAutoCommit() now returns the previous state of the autocommit flag.
+# getAutoCommit() fetches the autocommit state.
+#
 # Revision 1.11  2002/04/23 22:54:06  bkline
 # Added optional timeout parameter to Cursor.execute().
 #
@@ -248,7 +252,7 @@ class Cursor:
         self.arraysize        = 100
         self.__dateTimeObject = pywintypes.Time(0)
 
-    def callproc(self, procname, parameters):
+    def callproc(self, procname, parameters, timeout = 30):
         """
         Call a stored database procedure with the given name. The sequence
         of parameters must contain one entry for each argument that the
@@ -267,6 +271,7 @@ class Cursor:
         cmd.CommandType      = win32com.client.constants.adCmdStoredProc
         cmd.CommandText      = procname
         cmd.ActiveConnection = self.__conn
+        cmd.CommandTimeout   = timeout
         #cmd.Parameters.Refresh()
         params               = cmd.Parameters
         nParams              = params.Count
