@@ -1,10 +1,18 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.44 2003-01-08 22:36:15 pzhang Exp $
+# $Id: cdrpub.py,v 1.45 2003-01-13 17:56:48 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.44  2003/01/08 22:36:15  pzhang
+# Revised the code in the following areas:
+#  1) Fixed SQL in __updateFromPPCW() with Bob's queries.
+#  2) Used fetchone() instead of fetchall().
+#  3) Set output_dir for pushing job to None.
+#  4) Used cg_job instead of vendor_job in pub_proc_cg.
+#  5) Added parameter newJobId into __debugLog().
+#
 # Revision 1.43  2002/12/20 23:27:55  pzhang
 # Updated pub_proc_doc with cg_job, not vendor_job after pushing is done.
 #
@@ -174,7 +182,6 @@ class Publish:
     __cdrEmail = "cdr@%s.nci.nih.gov" % socket.gethostname()
     __pd2cg    = "Push_Documents_To_Cancer.Gov"
     __cdrHttp  = "http://%s.nci.nih.gov/cgi-bin/cdr" % socket.gethostname()
-    __ignoreUserDocList = 0
     __interactiveMode = 0
     __checkPushedDocs  = 0
     __includeLinkedDocs = 0
@@ -349,6 +356,18 @@ class Publish:
             if destType == Publish.FILE:
                 self.__fileName = self.__getDestinationFile(options)
 
+            # Hotfix-Export requirement and implementation have
+            # changed. User-selected docs will not be processed as
+            # it was supposed to be. User will enter some documents
+            # and we will find all the linked documents in the backend
+            # when specified by user input. The linked documents will
+            # be inserted into table pub_proc_doc and appended to list
+            # __userDocList.
+            if self.__sysName == "Primary" and \
+                self.__subsetName == "Hotfix-Export":
+                if self.__includeLinkedDocs:
+                    self.__addLinkedDocsToPPD()                  
+
             # Two passes through the subset specification are required.
             # The first pass publishes documents specified by the user, and
             # builds the list of filters used for each specification.
@@ -388,22 +407,7 @@ class Publish:
                     # That's all we have to do in this pass if there are no
                     # user-listed documents remaining to be published.
                     if not userListedDocsRemaining:
-                        continue
-
-                    # Hotfix-Export requirement and implementation have
-                    # changed. User-selected docs will not be processed as
-                    # it was supposed to be. This trick is used only for
-                    # Hotfix-Export where all linked documents including
-                    # user-selected will be processed in their own typed SS.
-                    # Refer to the control document for this tricky
-                    # implementation.
-                    if self.__sysName == "Primary" and \
-                        self.__subsetName == "Hotfix-Export":
-                        if self.__includeLinkedDocs:
-                            self.__addLinkedDocsToPPD()
-                        self.__ignoreUserDocList = 1
-                        userListedDocsRemaining = 0
-                        continue
+                        continue                    
 
                     # Find out if this subset specification allows user
                     # doc lists.
@@ -437,14 +441,13 @@ class Publish:
                         if not userListedDocsRemaining: break
 
             # Make sure all the user-listed documents are accounted for.
-            if not self.__ignoreUserDocList:
-                for doc in self.__userDocList:
-                    if doc[0] not in self.__alreadyPublished:
-                        self.__checkProblems(doc,
-                                    "User-specified document CDR%010d "
-                                    "has document type %s which is "
-                                    "not allowed for this publication "
-                                    "type" % (doc[0], doc[2]), "")
+            for doc in self.__userDocList:
+                if doc[0] not in self.__alreadyPublished:
+                    self.__checkProblems(doc,
+                                "User-specified document CDR%010d "
+                                "has document type %s which is "
+                                "not allowed for this publication "
+                                "type" % (doc[0], doc[2]), "")
 
             # Now walk through the specifications again executing queries.
             self.__debugLog("Processing document-selection queries.")
@@ -1592,7 +1595,8 @@ class Publish:
             raise StandardError(msg)
 
     #------------------------------------------------------------------
-    # Update pub_proc_doc table with all linked documents.
+    # Update pub_proc_doc table and __userDocList with all linked 
+    # documents.
     #------------------------------------------------------------------
     def __addLinkedDocsToPPD(self):
 
@@ -1612,12 +1616,29 @@ class Publish:
         try:
             cursor = self.__conn.cursor()
             for id in hash.keys():
+
+                # Update the PPD table.
                 cursor.execute ("""
                     INSERT INTO pub_proc_doc
                                 (pub_proc, doc_id, doc_version)
                          VALUES  (?, ?, ?)
                                 """, (self.__jobId, id, hash[id])
                                )
+
+                # Update the __useDocList.                
+                cursor.execute ("""
+                         SELECT t.name
+                           FROM doc_type t, document d
+                          WHERE d.doc_type = t.id
+                            AND d.id = ?                                               
+                                """, id
+                               )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    self.__userDocList.append((id, hash[id], row[0]))
+                else:
+                    msg = "Failed in adding docs to __userDocList.<BR>"
+                    raise StandardError(msg)
         except cdrdb.Error, info:
             msg = 'Failure adding linked docs to PPD for job %d: %s' % (
                   self.__jobId, info[1][0])
@@ -1692,7 +1713,7 @@ class Publish:
                     self.__saveDoc(filteredDoc, destDir, "CDR%d.xml" % doc[0])
             except:
                 errors = "Failure writing document CDR%010d" % doc[0]
-        if recordDoc and not self.__ignoreUserDocList:
+        if recordDoc:
             self.__addPubProcDocRow(doc, subDir)
 
         # Handle errors and warnings.
@@ -1711,10 +1732,10 @@ class Publish:
             if self.__errorsBeforeAborting != -1:
                 if self.__errorCount > self.__errorsBeforeAborting:
                     if self.__errorsBeforeAborting:
-                        msg = "Aborting on error detected in CDR%010d" % doc[0]
+                        msg = "Aborting on error detected in CDR%010d<BR>" \
+                                % doc[0]
                     else:
-                        msg = "Aborting: too many errors encountered"
-                    self.__updateStatus(Publish.FAILURE, msg)
+                        msg = "Aborting: too many errors encountered"                    
                     raise StandardError(msg)
         elif warnings:
             self.__addDocMessages(doc, warnings)
