@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.33 2003-07-29 13:04:16 bkline Exp $
+# $Id: cdrcgi.py,v 1.34 2003-08-12 19:59:23 ameyer Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.33  2003/07/29 13:04:16  bkline
+# Took out call to convert HTML to latin 1 in sendPage().
+#
 # Revision 1.32  2003/03/04 22:55:05  bkline
 # Added support for display format selection on advanced Protocol search
 # page.
@@ -179,13 +182,13 @@ def header(title, banner, subBanner, script = '', buttons = None, bkgd = '',
 # Get a session ID based on current form field values.
 #----------------------------------------------------------------------
 def getSession(fields):
-   
+
     # If we already have a Session field value, use it.
     if fields.has_key(SESSION):
         session = fields[SESSION].value
         if len(session) > 0:
             return session
-   
+
     # Check for missing fields.
     if not fields.has_key(USERNAME) or not fields.has_key(PASSWORD):
         return None
@@ -195,9 +198,9 @@ def getSession(fields):
         return None
 
     # Log on to the CDR Server.
-    if fields.has_key(PORT):       
+    if fields.has_key(PORT):
         session = cdr.login(userId, password, port = cdr.getPubPort())
-    else:    
+    else:
         session = cdr.login(userId, password)
     if session.find("<Err") >= 0: return None
     else:                         return session
@@ -224,10 +227,23 @@ Content-type: text/%s
 #----------------------------------------------------------------------
 # Emit an HTML page containing an error message and exit.
 #----------------------------------------------------------------------
-def bail(message, banner = "CDR Web Interface", extra = None):
+def bail(message, banner = "CDR Web Interface", extra = None, logfile = None):
+    """
+    Send an error page to the browser with a specific banner and title.
+    Pass:
+        message - Display this.
+        banner  - Optional changed line for page banner.
+        extra   - Optional sequence of extra lines to append.
+        logfile - Optional name of logfile to write to.
+    Return:
+        No return. Exits here.
+    """
     if extra:
         for arg in extra:
             message += "<br>%s" % cgi.escape(arg)
+    if logfile:
+        cdr.logwrite ("cdrcgi bailout:\n %s" % message, logfile)
+
     page = header("CDR Error", banner, "An error has occured", "", [])
     page = page + "<B>%s</B></FORM></BODY></HTML>" % message
     sendPage(page)
@@ -883,7 +899,7 @@ def getFullUserName(session, conn):
                  WHERE session.name = ?""", session)
         name = cursor.fetchone()[0]
     except:
-        cdrcgi.bail("Unable to find current user name")
+        bail("Unable to find current user name")
     return name
 
 
