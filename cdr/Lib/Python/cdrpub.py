@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.69 2005-02-08 20:29:42 bkline Exp $
+# $Id: cdrpub.py,v 1.70 2005-03-09 16:15:06 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.69  2005/02/08 20:29:42  bkline
+# Initialized dest and dest_base earlier in publish() method.
+#
 # Revision 1.68  2005/01/28 19:16:01  bkline
 # Added a lock for use of the database connection by threaded operations.
 #
@@ -911,7 +914,7 @@ class Publish:
         # Log message
         msg = "publish: %s" % msg
         try:
-            self.__debugLog(msg, LOG, tb=1)
+            self.__debugLog(msg, tb=1)
         except:
             pass
 
