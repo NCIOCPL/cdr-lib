@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.26 2004-02-12 19:40:48 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.27 2004-09-21 20:29:24 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.26  2004/02/12 19:40:48  ameyer
+# Tests for required StudyCategory and/or InterventionType were incorrect.
+# Now fixed.
+#
 # Revision 1.25  2004/02/06 02:36:23  ameyer
 # Changed name of a filter to reflect changes in it's actions.
 #
@@ -111,11 +115,14 @@
 #
 #------------------------------------------------------------
 
-import xml.dom.minidom, sys, string, time, cdr, cdrdb, cdrbatch, cdrcgi
+import xml.dom.minidom, sys, os, string, time, cdr, cdrdb, cdrbatch, cdrcgi
 
 #------------------------------------------------------------
 # Constants
 #------------------------------------------------------------
+
+# A useful HTML constant
+BOXCHKD = " checked=1"
 
 # Strings representing different types of change, also used as prompts
 PERSON_CHG  = "Person"
@@ -123,6 +130,10 @@ ORG_CHG     = "Organization"
 STATUS_CHG  = "OrgProtStatus"
 TERM_CHG    = "Term"
 INS_ORG_CHG = "InsertOrg"
+
+# Protocol document types for terminology change
+TYPE_CDR_DOC = "typeCDR"
+TYPE_CTG_DOC = "typeCTG"
 
 # What a function might return
 RET_ERROR  = -1         # Function failed, see message
@@ -184,7 +195,7 @@ TERM_FIELD_ORDER = (\
     TERM_FLD_INTN, TERM_FLD_GENE, TERM_FLD_COND)
 
 # Map of field display names to full XML paths to these fields
-TERM_FIELDS = {\
+CDR_TERM_FIELDS = {\
  TERM_FLD_DIAG: "/InScopeProtocol/Eligibility/Diagnosis/@cdr:ref",
  TERM_FLD_EXC:  "/InScopeProtocol/Eligibility/ExclusionCriteria/@cdr:ref",
  TERM_FLD_INTV: "/InScopeProtocol/ProtocolDetail/StudyCategory/Intervention" +\
@@ -193,6 +204,17 @@ TERM_FIELDS = {\
                 "/InterventionNameLink/@cdr:ref",
  TERM_FLD_GENE: "/InScopeProtocol/ProtocolDetail/Gene/@cdr:ref",
  TERM_FLD_COND: "/InScopeProtocol/ProtocolDetail/Condition/@cdr:ref"}
+
+# Map of field display names for CTGovProtocols
+CTG_TERM_FIELDS = {\
+ TERM_FLD_DIAG: "/CTGovProtocol/PDQIndexing/Eligibility/Diagnosis/@cdr:ref",
+ TERM_FLD_EXC:  "/CTGovProtocol/Eligibility/ExclusionCriteria/@cdr:ref",
+ TERM_FLD_INTV: "/CTGovProtocol/PDQIndexing/StudyCategory/Intervention" +\
+                "/InterventionType/@cdr:ref",
+ TERM_FLD_INTN: "/CTGovProtocol/PDQIndexing/StudyCategory/Intervention" +\
+                "/InterventionNameLink/@cdr:ref",
+ TERM_FLD_GENE: "/CTGovProtocol/PDQIndexing/Gene/@cdr:ref",
+ TERM_FLD_COND: "/CTGovProtocol/PDQIndexing/Condition/@cdr:ref"}
 
 # Map of field display names to actual field names
 TERM_ELEMENT = {
@@ -364,7 +386,7 @@ def getStudyCategories (varName, defaultVal=None):
     Return:
         String of HTML for inclusion in the input form.
     """
-    # Get valid names
+    # Get valid names - they're the same for all protocol doc types
     vals = cdr.getVVList (('CdrGuest', 'never.0n-$undaY'),
                         docType='InScopeProtocol',
                         vvName='StudyCategoryName')
@@ -427,6 +449,80 @@ def getIdTitles (docIdList):
         idTitleList.append ((idNum, titles[0][0]))
 
     return idTitleList
+
+#------------------------------------------------------------
+# Create a directory to receive global change documents when
+# running in test mode.
+#------------------------------------------------------------
+def createOutputDir():
+    """
+    Create a subdirectory in /cdr/GlobalChange.
+    The name is the date and time concatenated together as:
+        YYYY-MM-DD_HH-MM-SS
+
+    Return:
+        Name of created directory.
+    """
+    t = time.localtime()
+    dirName = "%s/GlobalChange/%4d-%02d-%02d_%02d-%02d-%02d" % \
+               (cdr.BASEDIR, t[0], t[1], t[2], t[3], t[4], t[5])
+
+    try:
+        os.makedirs (dirName)
+    except:
+        msg = "Unable to create directory '%s'" % dirName
+        cdr.logwrite (msg, LF)
+        raise StandardError (msg)
+
+    cdr.logwrite ("Created directory '%s'" % dirName, LF)
+    return dirName
+
+#------------------------------------------------------------
+# Write a pair of document files plus a diff file to the file
+# system.
+#------------------------------------------------------------
+def writeDocs (dirName, docId, oldDoc, newDoc, verType):
+    """
+    Writes documents before and after global change.
+    Used in test mode to output everything to the file
+    system when we want to see the output, but don't want
+    to change the database.
+
+    Pass:
+        dirName - Directory to output to, from createOutputDir().
+        docId   - Used in constructing filenames.
+        oldDoc  - XML string for old document, in utf-8.
+                   Has to be the real XML, not CdrDoc with embedded CDATA.
+        newDoc  - XML string for new document, in utf-8.
+                   Has to be the real XML, not CdrDoc with embedded CDATA.
+        verType - "cwd" for current working doc, "pub" for last
+                   publishable version.
+    """
+    # Construct filenames.  exNormalize() can raise StandardError
+    idStr = cdr.exNormalize(docId)[0]
+    oldName = "%s/%s.%sold.xml" % (dirName, idStr, verType)
+    newName = "%s/%s.%snew.xml" % (dirName, idStr, verType)
+    diffName = "%s/%s.%s.diff" % (dirName, idStr, verType)
+
+    try:
+        # Write two docs as XML, not CDATA
+        fp = open(oldName, "w")
+        fp.write(oldDoc)
+        fp.close()
+
+        fp = open(newName, "w")
+        fp.write(newDoc)
+        fp.close()
+
+        # Generate a diff
+        diff = cdr.diffXmlDocs(oldDoc, newDoc)
+
+        # And write it
+        fp = open(diffName, "w")
+        fp.write(diff)
+        fp.close()
+    except:
+        raise StandardError("Error writing global change output files")
 
 #------------------------------------------------------------
 # Function return object contains information returned by a
@@ -722,7 +818,7 @@ class GlblChg:
 
         # Normalize any type of valid id
         try:
-            id = cdr.exNormalize(docId)[1]
+            oneId = cdr.exNormalize(docId)[1]
         except StandardError, e:
             result.setErrMsg ("Internal error: %s" % str(e))
             return result
@@ -733,7 +829,7 @@ class GlblChg:
       JOIN doc_type t
         ON d.doc_type = t.id
      WHERE d.id = %d
-    """ % id
+    """ % oneId
 
         try:
             conn   = cdrdb.connect ('CdrGuest')
@@ -747,15 +843,15 @@ class GlblChg:
             return result
 
         if not row:
-            msg = "Could not find doc with id=%d" % id
+            msg = "Could not find doc with id=%d" % oneId
             cdr.logwrite (msg, LF)
             result.setErrMsg (msg)
             return result
 
         title = row[0]
-        type  = row[1]
-        if type != docType:
-            msg = "Document %d is of type %s, not %s" % (id, type, docType)
+        dType = row[1]
+        if dType != docType:
+            msg = "Document %d is of type %s, not %s" % (oneId, dType, docType)
             cdr.logwrite (msg, LF)
             result.setErrMsg (msg)
             return result
@@ -910,6 +1006,19 @@ class GlblChg:
         """
         haveSoFar = 0
         html = "<hr><table border='0' cellspacing='6'>"
+
+        # Document type checkboxes handled a bit differently
+        html += "<tr><td align='right'>Changing doc types: </td>\n"
+        docTypeStr = ""
+        if self.ssVars.has_key(TYPE_CDR_DOC) and self.ssVars[TYPE_CDR_DOC]=='Y':
+            docTypeStr = "InScopeProtocol "
+        if self.ssVars.has_key(TYPE_CTG_DOC) and self.ssVars[TYPE_CTG_DOC]=='Y':
+            docTypeStr += "CTGovProtocol"
+        if len(docTypeStr) == 0:
+            docTypeStr = "None selected"
+        html += "<td> %s </td></tr>\n" % docTypeStr
+
+        # Doc ids and restrictions of various types
         if self.ssVars.has_key ('fromTitle'):
             html += "<tr><td align='right'>Changing links from: </td>\n"
             html += "<td> %s (%s)</td></tr>\n" % \
@@ -969,16 +1078,21 @@ class GlblChg:
             html += "<td> %s (%s)</td></tr>\n" % \
                  (self.ssVars['restrPiId'], self.ssVars['restrPiTitle'])
             haveSoFar = 1
+
+        # Terms are complicated, get them from a subroutine
         termHtml = self.showTermsSoFar()
         if len (termHtml) > 0:
             html += termHtml
             haveSoFar = 1
+
+        # Count of docs to change
         if self.ssVars.has_key ('chgCount'):
             html += \
               "<tr><td align='right'>Count of documents to change: </td>\n"
             html += "<td> %s</td></tr>\n" % self.ssVars['chgCount']
             haveSoFar = 1
 
+        # Don't show anything if there's nothing to show
         if haveSoFar:
             html += "</table></font><hr>\n"
         else:
@@ -1222,29 +1336,53 @@ class GlblChg:
         """
         # Silence pychecker warning about unused parms
         if parms != []:
-           return FuncReturn (RET_ERROR,
-                "Too many parms to getFromToStatus")
-
-        # Assume we haven't been here before
-        firstTime = 1
+           return FuncReturn (RET_ERROR, "Too many parms to getFromToStatus")
 
         # Header information
         html = self.showSoFarHtml() + """
-<h2>Select InScopeProtocols for terminology change</h2>
+<h2>Select protocols for terminology change</h2>
+"""
 
+        # Tells whether we've been here before
+        firstTime = 1
+
+        # This particular key is always present if we have been here before
+        if self.ssVars.has_key("trmReqField0"):
+            firstTime = 0
+
+        # Get protocol document types
+        typeCDR = ""
+        typeCTG = ""
+
+        if firstTime or self.ssVars.has_key(TYPE_CDR_DOC):
+            typeCDR = BOXCHKD
+            if not firstTime:
+                del (self.ssVars[TYPE_CDR_DOC])
+        if firstTime or self.ssVars.has_key(TYPE_CTG_DOC):
+            typeCTG = BOXCHKD
+            if not firstTime:
+                del (self.ssVars[TYPE_CTG_DOC])
+        html += """
+<span class='termblock'>Choose at least one protocol document type</span>
+<br /><br />
+<input name="%s" type="checkbox" value="Y"%s>InScopeProtocol documents</input>
+<input name="%s" type="checkbox" value="Y"%s>CTGovProtocol documents</input>
+<hr />
+""" % (TYPE_CDR_DOC, typeCDR, TYPE_CTG_DOC, typeCTG)
+
+        # Protocol status selections - an array of selected items, if any
+        html += """
 <span class='termblock'>Choose one or more protocol status values</span>
 <br /><br />
 <select name="%s" size="6" multiple="multiple">
 """ % TERM_STATVAL
-
-        # Protocol status selections - an array of selected items, if any
         selectedStatus = None
         if self.ssVars.has_key (TERM_STATVAL):
             selectedStatus = self.ssVars[TERM_STATVAL]
             del (self.ssVars[TERM_STATVAL])
-            firstTime = 0
 
         # Possible status values come from protocol schema valid values list
+        # Status values are the same for both protocol doc types
         session = self.ssVars[cdrcgi.SESSION]
         for status in cdr.getVVList (session, 'InScopeProtocol', "StatusName"):
 
@@ -1329,7 +1467,6 @@ class GlblChg:
                 if self.ssVars.has_key (name):
                     alreadySelected = self.ssVars[name]
                     del (self.ssVars[name])
-                    firstTime = 0
 
                 # Again, study category is a special case
                 #   String values come from a valid values table, they aren't
@@ -1353,7 +1490,6 @@ class GlblChg:
                     if self.ssVars.has_key (name):
                         alreadySelected = self.ssVars[name]
                         del (self.ssVars[name])
-                        firstTime = 0
                     html += """
   <td><input type="text" name="%s" size="10" maxlength="10" value="%s" /></td>\n"""%\
                     (name, alreadySelected)
@@ -1369,6 +1505,7 @@ class GlblChg:
             html = """
 <h4><font color='red'>Must select at least:
 <ul>
+  <li>one protocol document type</li>
   <li>one protocol status</li>
   <li>one required term (ALL) or one additional term (ANY)</li>
   <li>one Add or Delete term</li>
@@ -1578,6 +1715,9 @@ class GlblChg:
                         Each parameter is a tuple of:
                             parameter name
                             parameter value
+                    Indicate whether to save or discard filter output:
+                        True  = Keep output.
+                        False = Discard, filter is only used for validation.
             Else
                 None
         """
@@ -1793,7 +1933,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
             parms.append (['changeFrom', self.ssVars['fromId']])
             parms.append (['changeTo', self.ssVars['toId']])
 
-            return (filterName, parms)
+            return (filterName, parms, True)
 
         return None
 
@@ -1976,7 +2116,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
             parms.append (['changeFrom', self.ssVars['fromId']])
             parms.append (['changeTo', self.ssVars['toId']])
 
-            return (filterName, parms)
+            return (filterName, parms, True)
 
         return None
 
@@ -2220,7 +2360,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
                 if self.ssVars.has_key ('restrPiId'):
                     parms.append (['personId', self.ssVars['restrPiId']])
 
-            return (filterName, parms)
+            return (filterName, parms, True)
 
         return None
 
@@ -2385,7 +2525,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
             if self.ssVars.has_key ('specificPhone'):
                 parms.append (['setSpecificPhone',self.ssVars['specificPhone']])
 
-            return (filterName, parms)
+            return (filterName, parms, True)
 
         return None
 
@@ -2429,11 +2569,51 @@ class TermChg (GlblChg):
         """
         See PersonChg.selDocs()
         """
+        # Pairs of doc id + doc title
+        idTitles = []
+
+        # If handling InScopeProtocols, get their ids and titles
+        if self.ssVars.has_key(TYPE_CDR_DOC):
+            results = self.selOneDocType (TYPE_CDR_DOC)
+            if results:
+                idTitles += results
+        cdr.logwrite("Title count from first selection=%d" % len(idTitles),LF)
+
+        # Same for CTGovProtocols, appending them to InScopeProtocols, if any
+        if self.ssVars.has_key(TYPE_CTG_DOC):
+            results = self.selOneDocType (TYPE_CTG_DOC)
+            if results:
+                idTitles += results
+        cdr.logwrite("Title count after 2nd selection=%d" % len(idTitles),LF)
+
+        # Return ids and titles, or None if there aren't any
+        if len(idTitles):
+            return idTitles
+        return None
+
+    def selOneDocType (self, docType):
+        """
+        We select documents for global change up to two times, once
+        for each protocol document type.  The caller, selDocs() tells
+        us which type to fetch.
+
+        The logic is the same for each selection, but the fully qualified
+        names of the fields are different.
+
+        Pass:
+            docType - One of the document type constants:
+                TYPE_CDR_DOC
+                TYPE_CTG_DOC
+
+        Return:
+            Sequence of all matching database rows, each containing a
+            sequence of:
+                document id
+                document title
+        """
         # Constants for temporary table names
-        # XXXX - NEED TO CHECK THE LIFETIME OF THESE TABLES
-        #        MAY BE NECESSARY TO DROP OR CLEAR THEM FIRST
-        #        OR WORSE - MAKE THEM GLOBAL SO THAT EACH WILL
-        #        PERSIST FOR THE NEXT TRANSACTION
+        # These tables exist only for the life of this routine and
+        #   disappear when the cursor on which they are created is closed
         TTBL_REQ  = "#gcTermReq"
         TTBL_OPT  = "#gcTermOpt"
         TTBL_NOT  = "#gcTermNot"
@@ -2462,7 +2642,7 @@ class TermChg (GlblChg):
         done = 0
 
         # Create a temporary table of docs with the status values we want
-        statCnt = self.makeTempStatTable (cursor, TTBL_STAT,
+        statCnt = self.makeTempStatTable (cursor, docType, TTBL_STAT,
                                           self.ssVars[TERM_STATVAL])
         # If none, we're done
         if statCnt == 0:
@@ -2472,16 +2652,17 @@ class TermChg (GlblChg):
         if not done:
             reqCnt = 0
             if self.countSelTypes (TERMREQ, TERM_MAX_CRITERIA) > 0:
-                reqCnt = self.makeTempSelTable (cursor, TTBL_REQ, TERMREQ,
-                                                TERM_MAX_CRITERIA, "AND")
+                reqCnt = self.makeTempSelTable (cursor, docType, TTBL_REQ,
+                                            TERMREQ, TERM_MAX_CRITERIA, "AND")
                 # If no docs with required terms, we're done
                 if reqCnt == 0:
                     done = 1
+
         if not done:
             optCnt = 0
             if self.countSelTypes (TERMOPT, TERM_MAX_CRITERIA) > 0:
-                optCnt = self.makeTempSelTable (cursor, TTBL_OPT, TERMOPT,
-                                                TERM_MAX_CRITERIA, "OR")
+                optCnt = self.makeTempSelTable (cursor, docType, TTBL_OPT,
+                                            TERMOPT, TERM_MAX_CRITERIA, "OR")
                 # If optional terms specified, at least one must be in a doc
                 if optCnt == 0:
                     done = 1
@@ -2526,8 +2707,8 @@ class TermChg (GlblChg):
         if not done:
             notCnt = 0
             if self.countSelTypes (TERMNOT, TERM_MAX_CRITERIA) > 0:
-                 notCnt = self.makeTempSelTable (cursor, TTBL_NOT, TERMNOT,
-                                                 TERM_MAX_CRITERIA, "OR")
+                 notCnt = self.makeTempSelTable (cursor, docType, TTBL_NOT,
+                                            TERMNOT, TERM_MAX_CRITERIA, "OR")
 
             # If any found, discard intersection of these and previous results
             if notCnt > 0:
@@ -2548,13 +2729,16 @@ class TermChg (GlblChg):
             if self.ssVars.has_key (TERM_SCAT_VAL):
 
                 # Searching existing results for docs with StudyCategoryName
+                path = "/InScopeProtocol/ProtocolDetail"
+                if docType == TYPE_CTG_DOC:
+                    path = '/CTGovProtocol/PDQIndexing'
                 sCatCnt = _execUpdate ("""
 SELECT doc_id INTO %s
  FROM query_term
-WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
+WHERE path='%s/StudyCategory/StudyCategoryName'
   AND value = '%s'
   AND doc_id IN (SELECT doc_id FROM %s)
-  """ % (TTBL_SCAT, self.ssVars[TERM_SCAT_VAL], resultTbl), cursor=cursor)
+  """ % (TTBL_SCAT, path, self.ssVars[TERM_SCAT_VAL], resultTbl), cursor=cursor)
 
                 # If none, we're done
                 if sCatCnt == 0:
@@ -2572,8 +2756,8 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
         if not done:
             if self.countSelTypes (TERMDEL, TERM_MAX_CHANGES) > 0:
                 if self.countSelTypes (TERMADD, TERM_MAX_CHANGES) == 0:
-                    delCnt = self.makeTempSelTable (cursor, TTBL_DEL, TERMDEL,
-                                                    TERM_MAX_CHANGES, "OR")
+                    delCnt = self.makeTempSelTable (cursor, docType, TTBL_DEL,
+                                            TERMDEL, TERM_MAX_CHANGES, "OR")
                     if delCnt == 0:
                         return None
 
@@ -2614,10 +2798,10 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
             raise cdrbatch.BatchException (\
                 "Database error closing doc selection cursor: %s" % info[1][0])
 
-        # Return data, or nothing
+        # Return data or empty sequence
         if not done:
             return rows
-        return None
+        return []
 
     def getFilterInfo (self, filterVer):
         """
@@ -2676,7 +2860,7 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
 
                     # Done for now.  Return filter info with any required
                     #   qualifier parms (StudyCategory, InterventionType)
-                    return (filterName, self.addQualifierParms(parms))
+                    return (filterName, self.addQualifierParms(parms), True)
 
         # If no adds, or done them all, try deletes
         # Initial logic is the same, but filter setup is different
@@ -2699,7 +2883,7 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
 
                     # Done for now.  Return filter info with any required
                     #   qualifier parms (StudyCategory, InterventionType)
-                    return (filterName, self.addQualifierParms(parms))
+                    return (filterName, self.addQualifierParms(parms), True)
 
         # Finally, run the filter that checks for missing
         #   InterventionNameLink elements
@@ -2708,7 +2892,8 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
             self.doneChgs[filterVer]["INLCheck"] = 1
             filterName = \
                 ["name:Global Change: Check for Missing Terminology Elements"]
-            return (filterName, parms)
+            # Output of this one should not be stored (3rd arg indicates this)
+            return (filterName, parms, False)
 
         # If we got here, all filters have been processed
         return None
@@ -2750,7 +2935,7 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
                 count += 1
         return count
 
-    def makeTempStatTable (self, cursor, tblName, status):
+    def makeTempStatTable (self, cursor, docType, tblName, status):
         """
         Create a temporary table of doc ids of protocols having any
         of the requested current status values.
@@ -2759,17 +2944,25 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
             cursor  - Database cursor, needed because caller may need
                       multiple tables to be visible to each other.  Using
                       a single cursor for multiple actions can achieve that.
+            docType - One of the document type constants:
+                        TYPE_CDR_DOC
+                        TYPE_CTG_DOC
             tblName - Output goes to this table name.
                       Caller should put '#' or '##' on front, as desired
                         for SQL Server temporary table naming convention.
             status  - Sequence of one or more status values.
         """
+        # Path to status field is different for our two document types
+        path = '/InScopeProtocol/ProtocolAdminInfo/CurrentProtocolStatus'
+        if docType == TYPE_CTG_DOC:
+            path = '/CTGovProtocol/OverallStatus'
+
         # Base query
         qry = \
 """SELECT DISTINCT d.id as doc_id INTO %s FROM document d
      JOIN query_term q ON d.id = q.doc_id
-    WHERE q.path = '/InScopeProtocol/ProtocolAdminInfo/CurrentProtocolStatus'
-      AND (""" % tblName
+    WHERE q.path = '%s'
+      AND (""" % (tblName, path)
 
         # Debug
         cdr.logwrite ("Type status=%s, str(status)=%s" % (type(status),
@@ -2792,7 +2985,8 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
         # Search the database, returning count of rows created
         return _execUpdate (qry, args=None, cursor=cursor)
 
-    def makeTempSelTable (self, cursor, tblName, termUse, maxCnt, opCode):
+    def makeTempSelTable (self, cursor, docType, tblName,
+                          termUse, maxCnt, opCode):
         """
         Create a temporary table of doc ids of protcols with a particular
         type of usage - required, optional, or negated.
@@ -2801,6 +2995,9 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
             cursor  - Database cursor, needed because caller may need
                       multiple tables to be visible to each other.  Using
                       a single cursor for multiple actions can achieve that.
+            docType - Which kind of protocol document.  One of:
+                        TYPE_CDR_DOC
+                        TYPE_CTG_DOC
             tblName - Output goes to this table name.
                       Caller should put '#' or '##' on front, as desired
                         for SQL Server temporary table naming convention.
@@ -2819,14 +3016,19 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
         wheres = []
         idNums = []
 
+        # Point to the right set of term XML elements based on doctype
+        fieldList = CDR_TERM_FIELDS
+        if docType == TYPE_CTG_DOC:
+            fieldList = CTG_TERM_FIELDS
+
         # Fill them in only for term ids actually supplied by the user
         for i in range(maxCnt):
-            id = "trm%sId%d" % (termUse, i)
-            if self.ssVars.has_key (id):
+            docId = "trm%sId%d" % (termUse, i)
+            if self.ssVars.has_key (docId):
                 fieldAbbrev = self.ssVars["trm%sField%d" % (termUse, i)]
-                wheres.append (TERM_FIELDS[fieldAbbrev])
+                wheres.append (fieldList[fieldAbbrev])
                 tables.append ("qt%s%i" % (termUse, i))
-                idNums.append (cdr.exNormalize(self.ssVars[id])[1])
+                idNums.append (cdr.exNormalize(self.ssVars[docId])[1])
 
         # Were there any?
         termCount = len (tables)
@@ -2991,3 +3193,12 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
 
         # Return code with no errors or html means continue on
         return FuncReturn (RET_NONE)
+
+
+#------------------------------------------------------------
+# Pychecker warns about string module not used, but it is used
+# in an eval expression.  I got tired of seeing the warning and
+# so wrote this dummy function that is never called from anywhere.
+#------------------------------------------------------------
+def silencePycheckerImportStringWarning(s):
+    return string.strip(s)
