@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.60 2002-10-23 02:21:55 ameyer Exp $
+# $Id: cdr.py,v 1.61 2002-10-23 02:32:12 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.60  2002/10/23 02:21:55  ameyer
+# Added getQueryTermValueForId()
+#
 # Revision 1.59  2002/10/04 00:41:14  ameyer
 # Enhanced logwrite to accept tuple or list.
 #
@@ -544,7 +547,13 @@ def getQueryTermValueForId (path, docId, conn = None):
         rows = cursor.fetchall()
         if len(rows) == 0:
             return None
-        return rows
+
+        # Convert sequence of sequences to simple sequence
+        retRows = []
+        for row in rows:
+            retRows.append (row[0])
+        return retRows
+
     except cdrdb.Error, info:
         raise StandardError (
           "getQueryTermValueForId: database error: %s" % info[1][0])
