@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.12 2002-05-30 17:01:06 bkline Exp $
+# $Id: cdrcgi.py,v 1.13 2002-06-04 20:17:26 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.12  2002/05/30 17:01:06  bkline
+# Added extra blank line for Protocol advanced search results page.
+#
 # Revision 1.11  2002/05/24 18:03:22  bkline
 # Fixed encoding bug in Advanced Search screens.
 #
@@ -64,7 +67,7 @@ HEADER   = """\
  <BASEFONT FACE='Arial, Helvetica, sans-serif'>
  <LINK REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
  <BODY BGCOLOR='EEEEEE'>
-  <FORM ACTION='/cgi-bin/cdr/%s' METHOD='POST'>
+  <FORM ACTION='/cgi-bin/cdr/%s' METHOD='%s'>
    <TABLE WIDTH='100%%' CELLSPACING='0' CELLPADDING='0' BORDER='0'>
     <TR>
      <TH NOWRAP BGCOLOR='silver' ALIGN='left' BACKGROUND='/images/nav1.jpg'>
@@ -95,8 +98,8 @@ SUBBANNER = """\
 # Display the header for a CDR web form.
 #----------------------------------------------------------------------
 def header(title, banner, subBanner, script = '', buttons = None, bkgd = '',
-           numBreaks = 2):
-    html = HEADER % (title, script, banner)
+           numBreaks = 2, method = 'POST'):
+    html = HEADER % (title, script, method, banner)
     if buttons:
         html = html + B_CELL
         for button in buttons:
@@ -434,7 +437,7 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
   </STYLE>
  </HEAD>
  <BODY          BGCOLOR     = "#CCCCFF">
-  <FORM         METHOD      = "POST"
+  <FORM         METHOD      = "GET"
                 ACTION      = "%s/%s">
    <INPUT       TYPE        = "hidden"
                 NAME        = "%s"
