@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.2 2003-09-02 14:00:14 bkline Exp $
+# $Id: ModifyDocs.py,v 1.3 2003-09-11 22:12:24 bkline Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2003/09/02 14:00:14  bkline
+# Suppressed logging of warnings when saving unmodified CWD.
+#
 # Revision 1.1  2003/08/21 19:29:02  bkline
 # Harness for one-off global changes.
 #
@@ -60,7 +63,7 @@ class Job:
                 doc.saveChanges(self)
             except Exception, info:
                 self.log("Document %d: %s" % (id, str(info)))
-                raise
+                # raise
             cdr.unlock(self.session, "CDR%010d" % id)
 
     #------------------------------------------------------------------
