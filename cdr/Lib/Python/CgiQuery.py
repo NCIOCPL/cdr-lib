@@ -1,11 +1,14 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
 #
-# $Id: CgiQuery.py,v 1.3 2003-04-09 21:57:40 bkline Exp $
+# $Id: CgiQuery.py,v 1.4 2003-07-29 13:10:26 bkline Exp $
 #
 # Base class for CGI database query interface.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2003/04/09 21:57:40  bkline
+# Fixed encoding bug; fixed exception bug.
+#
 # Revision 1.2  2003/03/04 22:52:36  bkline
 # Added test to make sure object was not null before doing string
 # replacement.
@@ -169,7 +172,7 @@ Cache-control: no-cache, must-revalidate
                 for col in row:
                     if type(col) == type(u""):
                         col = encode(col)
-                    val = col and cgi.escape(str(col)) or "&nbsp;"
+                    val = col and str(col) or "&nbsp;"
                     html += "<td valign='top' class='%s'>%s</td>\n" % (cls,
                                                                        val)
                 html += "</tr>\n"
