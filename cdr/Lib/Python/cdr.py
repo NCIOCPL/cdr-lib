@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.74 2003-04-25 20:26:40 ameyer Exp $
+# $Id: cdr.py,v 1.75 2003-04-26 16:32:36 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.74  2003/04/25 20:26:40  ameyer
+# Added line each to addDoc, repDoc to ensure unicode->utf-8 encoding.
+#
 # Revision 1.73  2003/03/14 01:35:03  bkline
 # Suppressed version attribute for filter in filterDoc() when version is
 # empty.
@@ -610,48 +613,71 @@ def getTextContent(node):
 
 #----------------------------------------------------------------------
 # Object containing components of a CdrDoc element.
+#
+# NOTE: If the strings passed in for the constructor are encoded as
+#       anything other than latin-1, you MUST provide the name of
+#       the encoding used as the value of the `encoding' parameter!
 #----------------------------------------------------------------------
 class Doc:
-    def __init__(self, x, type = None, ctrl = None, blob = None, id = None):
+    def __init__(self, x, type = None, ctrl = None, blob = None, id = None,
+                 encoding = 'latin-1'):
         # Two flavors for the constructor: one for passing in all the pieces:
         if type:
-            self.id   = id
-            self.ctrl = ctrl or {}
-            self.type = type
-            self.xml  = x
-            self.blob = blob
+            self.id       = id
+            self.ctrl     = ctrl or {}
+            self.type     = type
+            self.xml      = x
+            self.blob     = blob
+            self.encoding = encoding
         # ... and the other for passing in a CdrDoc element to be parsed.
         else:
-            self.ctrl = {}
-            self.xml  = ''
-            self.blob = None
-            docElem   = xml.dom.minidom.parseString(x).documentElement
-            self.id   = docElem.getAttribute('Id').encode('ascii') or None
-            self.type = docElem.getAttribute('Type').encode('ascii') or None
+            if encoding.lower() != 'utf-8':
+                # Have to do this because of poor choice of parameter name
+                # 'type'.  Ouch! :-<}
+                if x.__class__ == u"".__class__:
+                    x = x.encode('utf-8')
+                else:
+                    x = unicode(x, encoding).encode('utf-8')
+            self.encoding = encoding
+            self.ctrl     = {}
+            self.xml      = ''
+            self.blob     = None
+            docElem       = xml.dom.minidom.parseString(x).documentElement
+            self.id       = docElem.getAttribute('Id').encode('ascii') or None
+            self.type     = docElem.getAttribute('Type').encode(
+                                                              'ascii') or None
             for node in docElem.childNodes:
                 if node.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
                     if node.nodeName == 'CdrDocCtl':
                         self.parseCtl(node)
                     elif node.nodeName == 'CdrDocXml':
-                        self.xml = getTextContent(node).encode('latin-1')
+                        self.xml = getTextContent(node).encode(encoding)
                     elif node.nodeName == 'CdrDocBlob':
                         self.extractBlob(node)
     def parseCtl(self, node):
         for child in node.childNodes:
             if child.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
                 self.ctrl[child.nodeName.encode('ascii')] = \
-                    getTextContent(child).encode('latin-1')
+                    getTextContent(child).encode(self.encoding)
     def extractBlob(self, node):
         encodedBlob = getTextContent(node)
         self.blob   = base64.decodestring(encodedBlob.encode('ascii'))
     def __str__(self):
+        alreadyUtf8 = self.encoding.lower() == "utf-8"
         rep = "<CdrDoc Type='%s'" % self.type
         if self.id: rep += " Id='%s'" % self.id
         rep += "><CdrDocCtl>"
         for key in self.ctrl.keys():
-            value = unicode(self.ctrl[key], 'latin-1').encode('utf-8')
+            value = self.ctrl[key]
+            if not alreadyUtf8:
+                value = unicode(value, self.encoding).encode('utf-8')
             rep += "<%s>%s</%s>" % (key, value, key)
-        xml = self.xml and unicode(self.xml, 'latin-1').encode('utf-8') or ''
+        xml = self.xml
+        if xml:
+            if not alreadyUtf8:
+                xml = unicode(self.xml, self.encoding).encode('utf-8')
+        else:
+            xml = ''
         rep += "</CdrDocCtl><CdrDocXml><![CDATA[%s]]></CdrDocXml>" % xml
         if self.blob:
             rep += ("<CdrDocBlob>%s</CdrDocBlob>"
