@@ -1,10 +1,17 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.59 2004-10-07 14:35:50 ameyer Exp $
+# $Id: cdrpub.py,v 1.60 2004-11-09 15:59:22 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.59  2004/10/07 14:35:50  ameyer
+# Significant changes extending the multithreading.
+# Fixed bug whereby messages added to a doc were lost because an attempt
+# was made to update pub_proc_doc rows that had not been created yet.
+# We now add them to a new in-memory Doc object that encapsulates all
+# information about one doc to be published.
+#
 # Revision 1.58  2004/09/14 18:05:51  ameyer
 # Introduced basic multi-threading for the filtering and publishing
 # of documents selected by SQL queries.
@@ -201,7 +208,7 @@
 #
 #----------------------------------------------------------------------
 
-import cdr, cdrdb, os, re, string, sys, xml.dom.minidom
+import cdr, cdrdb, os, re, string, sys, xml.dom.minidom, xml.sax
 import socket, cdr2cg, time, threading
 from xml.parsers.xmlproc import xmlval, xmlproc
 
@@ -554,8 +561,7 @@ class Publish:
             # when specified by user input. The linked documents will
             # be inserted into table pub_proc_doc and appended to list
             # __userDocList.
-            if self.__sysName == "Primary" and \
-                self.__subsetName == "Hotfix-Export":
+            if self.__isPrimaryJob() and self.__subsetName == "Hotfix-Export":
                 if self.__includeLinkedDocs:
                     self.__addLinkedDocsToPPD()
 
@@ -697,6 +703,7 @@ class Publish:
             else:
                 self.__updateMessage("Total of 0 docs failed.<BR>")
 
+            # XXX How do we get back in to finish?  [RMK 2004-11-08]
             if self.__publishIfWarnings == "Ask" and self.__warningCount:
                 self.__updateStatus(Publish.WAIT, "Warnings encountered")
 
@@ -705,22 +712,23 @@ class Publish:
             # filtered documents to CG if it is a cg job.
             else:
                 # Pushing job could have "Message only" checked in theory.
-                lenPd2Cg = len(self.__pd2cg)
-                if self.__no_output != "Y" or \
-                    (self.__subsetName)[0:lenPd2Cg] == self.__pd2cg:
+                if self.__no_output != "Y" or self.__isCgPushJob():
 
+                    # XXX Don't understand why Peter is trying to rename
+                    #     the output directory for a CG-push job, which
+                    #     doesn't create an output directory.
+                    #     [RMK 2004-11-08]
                     try:
                         os.rename(dest, dest_base)
                     except:
                         pass
 
-                    if self.__sysName != "Primary" or \
-                        self.__reportOnly:
+                    if not self.__isPrimaryJob() or self.__reportOnly:
                         self.__updateStatus(Publish.SUCCESS)
                     elif not self.__canPush():
                         # It is a failure for the separately started pushing
                         # job, not for the vendor job.
-                        if (self.__subsetName)[0:lenPd2Cg] == self.__pd2cg:
+                        if self.__isCgPushJob():
                             self.__updateStatus(Publish.FAILURE)
                         else:
                             self.__updateStatus(Publish.SUCCESS)
@@ -728,8 +736,8 @@ class Publish:
                     # Push docs or create a pushing job.
                     else:
 
-                        # It is a pushing job.
-                        if (self.__subsetName)[0:lenPd2Cg] == self.__pd2cg:
+                        # Is it a pushing job?
+                        if self.__isCgPushJob():
 
                             # Make sure output_dir is reset to "" for pushing
                             # jobs, no matter whether user has forgot to check
@@ -744,7 +752,7 @@ class Publish:
 
                             if not vendor_job:
                                 self.__updateStatus(Publish.FAILURE,
-                                    "No enough vendor info found.<BR>")
+                                    "Not enough vendor info found.<BR>")
                             else:
 
                                 # A long pushing job of many hours starts!
@@ -759,7 +767,7 @@ class Publish:
                             self.__updateStatus(Publish.SUCCESS)
 
                             pushSubsetName = "%s_%s" % (self.__pd2cg,
-                                                self.__subsetName)
+                                                        self.__subsetName)
                             msg = ""
                             resp = cdr.publish(self.__credentials,
                                 "Primary",
@@ -813,7 +821,7 @@ class Publish:
                 pass
             self.cacheingOn = 0;
 
-        # Send email to notify user of job status.
+        # Mark job as failed if it wasn't a live job.
         if self.__reportOnly:
             self.__updateStatus(Publish.FAILURE, """The job status is
                 set to Failure because it was running for pre-publishing
@@ -821,7 +829,12 @@ class Publish:
 
         # Update first_pub in all_docs table.
         self.__updateFirstPub()
+        
+        # Capture terminology for processing NLM export docs.
+        if self.__outputDir:
+            TermParser().getSemanticTypes(self.__conn, self.__outputDir)
 
+        # Send email to notify user of job status.
         self.__sendMail()
 
     #------------------------------------------------------------------
@@ -934,6 +947,18 @@ class Publish:
             raise StandardError("""Failure finding pending pushing jobs
                         for job %d: %s""" % (self.__jobId, info[1][0]))
         return 1
+
+    #------------------------------------------------------------------
+    # Determine whether this is a job to push documents to Cancer.gov.
+    #------------------------------------------------------------------
+    def __isCgPushJob(self):
+        return self.__subsetName.startswith(self.__pd2cg)
+        
+    #------------------------------------------------------------------
+    # Determine whether this is a primary publication job.
+    #------------------------------------------------------------------
+    def __isPrimaryJob(self):
+        return self.__sysName == "Primary"
 
     #------------------------------------------------------------------
     # Find the vendor job and destination directory based on the
@@ -2071,18 +2096,20 @@ has started</B>).<BR>""" % cgWorkLink
 
             # If we got one, publish it
             # Try to handle exceptions gracefully, then get out
-            try:
-                self.__publishDoc (doc, filters, destType, destDir, subDir)
-            except cdrdb.Error, info:
-                self.__debugLog(
-                     "Database error publishing doc %d ver %d in %s:\n  %s"
-                     % (doc.getDocId(), doc.getVersion(), threadId, info[1][0]), tb=1)
-                error = 1
-            except:
-                self.__debugLog(
-                     "Exception publishing doc %d ver %d in %s"
-                     % (doc.getDocId(), doc.getVersion(), threadId), tb=1)
-                error = 1
+            if not done:
+                try:
+                    self.__publishDoc (doc, filters, destType, destDir, subDir)
+                except cdrdb.Error, info:
+                    self.__debugLog(
+                        "Database error publishing doc %d ver %d in %s:\n  %s"
+                        % (doc.getDocId(), doc.getVersion(), threadId,
+                           info[1][0]), tb=1)
+                    error = 1
+                except:
+                    self.__debugLog(
+                        "Exception publishing doc %d ver %d in %s"
+                        % (doc.getDocId(), doc.getVersion(), threadId), tb=1)
+                    error = 1
 
             # If error occurred, signal it
             if error:
@@ -3127,6 +3154,147 @@ def findLinkedDocs(docPairList):
     except:
         raise StandardError("Failure finding linked docs.<BR>")
 
+#----------------------------------------------------------------------
+# New type for extracting term names and semantic types from the CDR
+# Term documents.  We need to collect and save this in a persistent
+# form now so that we can apply the appropriate terminology trans-
+# formation rules to the protocol documents published by the job when
+# we send those documents to NLM (see /cdr/Utilities/NlmFilter.py).
+#----------------------------------------------------------------------
+class TermParser(xml.sax.handler.ContentHandler):
+    digitPattern = re.compile(u"[^\\d]")
+    def __init__(self):
+        self.name          = u""
+        self.semanticTypes = []
+        self.inName        = False
+    def startDocument(self):
+        self.name          = u""
+        self.semanticTypes = []
+        self.inName        = False
+    def startElement(self, name, attributes):
+        if name == u'PreferredName':
+            self.inName = True
+        elif name == u'SemanticType':
+            id = TermParser.extractInt(attributes.getValue('cdr:ref'))
+            if id:
+                self.semanticTypes.append(id)
+    def endElement(self, name):
+        self.inName = False
+    def characters(self, content):
+        if self.inName:
+            self.name += content
+    def extractInt(s):
+        if not s:
+            return None
+        digits = TermParser.digitPattern.sub(u'', s)
+        if digits:
+            return int(digits)
+        return None
+    extractInt = staticmethod(extractInt)
+
+    # Find a semantic type term that didn't show up in the first query.
+    def getTermName(self, cursor, id):
+        cursor.execute("""\
+        SELECT MAX(num)
+          FROM doc_version
+         WHERE id = ?
+           AND val_status = 'V'
+           AND publishable = 'Y'""", id)
+        rows = cursor.fetchall()
+        if not rows:
+            return None
+        cursor.execute("""\
+        SELECT xml
+          FROM doc_version
+         WHERE id = ?
+           AND num = ?""", (id, rows[0][0]))
+        rows = cursor.fetchall()
+        if not rows:
+            return None
+        xml.sax.parseString(rows[0][0].encode('utf-8'), self)
+        return self.name
+
+    #------------------------------------------------------------------
+    # Collect and parse the term documents.  A dictionary is created
+    # and written in standard Python pickle format to a new file named
+    # terms.dump.bz2.  The output is compacted using bzip2 compression,
+    # and placed in the directory specified in the second parameter
+    # passed to the method (see dirName below).  The keys to the
+    # dictionary are the names of the terms found in the Term documents
+    # in the CDR (drawn from the PreferredName element).  The value
+    # for each member of the dictionary is another dictionary, whose
+    # keys are the names of the semantic types assigned to the term
+    # represented by the member.  The values of the sub-dictionary are
+    # irrelevant (i.e., the sub-dictionaries function as sets).
+    #
+    # Pass:
+    #    conn    - connection to CDR database, with select permission
+    #              on doc_version, document, and query_term tables
+    #    dirName - path to which job output is being written; directory
+    #              must exist
+    #
+    # Return:
+    #    None
+    #------------------------------------------------------------------
+    def getSemanticTypes(self, conn, dirName):
+        import cPickle, bz2
+
+        cursor = conn.cursor()
+        oldCommitFlag = conn.getAutoCommit()
+        conn.setAutoCommit()
+        cursor.execute("CREATE TABLE #t (id INTEGER, ver INTEGER)")
+        cursor.execute("""\
+ INSERT INTO #t (id, ver)
+      SELECT d.id, MAX(v.num)
+        FROM doc_version v
+        JOIN document d
+          ON d.id = v.id
+        JOIN query_term q
+          ON q.doc_id = d.id
+       WHERE q.path = '/Term/TermStatus'
+         AND q.value IN ('Reviewed-Problematic',
+                         'Reviewed-Retain',
+                         'Unreviewed')
+         AND v.val_status = 'V'
+         AND v.publishable = 'Y'
+         AND d.active_status = 'A'
+    GROUP BY d.id""")
+        totalTerms = cursor.rowcount
+        conn.setAutoCommit(oldCommitFlag)
+        cursor.execute("""\
+      SELECT v.id, v.xml
+        FROM doc_version v
+        JOIN #t t
+          ON t.id = v.id
+         AND t.ver = v.num""")
+        tempTerms = {}
+        nTerms = 0
+        row = cursor.fetchone()
+        while row:
+            id, docXml = row
+            nTerms += 1
+            name = u""
+            links = []
+            xml.sax.parseString(docXml.encode('utf-8'), self)
+            tempTerms[id] = (self.name, self.semanticTypes)
+            row = cursor.fetchone()
+        terms = {}
+        for id in tempTerms:
+            name, links = tempTerms[id]
+            if name in terms:
+                term = terms[name]
+            else:
+                term = terms[name] = {}
+            for link in links:
+                try:
+                    typeName = tempTerms[link][0]
+                except:
+                    typeName = self.getTermName(cursor, link)
+                if typeName:
+                    term[typeName] = 1
+        termDumpFile = open(os.path.join(dirName, "terms.dump.bz2"), "wb")
+        termDumpFile.write(bz2.compress(cPickle.dumps(terms)))
+        termDumpFile.close()
 
 #----------------------------------------------------------------------
 # Test driver.
