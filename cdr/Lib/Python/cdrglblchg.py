@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.23 2004-01-30 02:26:31 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.24 2004-02-04 00:52:56 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.23  2004/01/30 02:26:31  ameyer
+# Added support for picking individual documents to process or not
+# by using checkboxes in the CGI.
+#
 # Revision 1.22  2003/12/30 20:39:03  ameyer
 # Enhanced selection query to include StudyCategoryName when specified
 # as a qualifier.
@@ -1553,6 +1557,11 @@ class GlblChg:
 
         Implemented only in subclasses.
 
+        Pass:
+            filterVer - Tells whether we're processing the current
+                        working document or a publishable version, one of:
+                           cdrglblchg.FLTR_CWD
+                           cdrglblchg.FLTR_PUB
         Return:
             If there is another filter to apply then:
                 Tuple of:
@@ -2612,6 +2621,9 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
             If we haven't done it yet:
                 Add it to the dictionary
                 Do it (i.e., return the info.)
+        Note: If I were redesigning this, I _might_ create a list
+              of lists of filter id + parm lists, then done
+              all of the iteration in the calling program.
         """
         # Create a description
         if not self.description:
@@ -2680,6 +2692,15 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
                     # Done for now.  Return filter info with any required
                     #   qualifier parms (StudyCategory, InterventionType)
                     return (filterName, self.addQualifierParms(parms))
+
+        # Finally, run the filter that checks for missing
+        #   InterventionNameLink elements
+        if not self.doneChgs[filterVer].has_key ("INLCheck"):
+            # Mark this one as done
+            self.doneChgs[filterVer]["INLCheck"] = 1
+            filterName = \
+                ["name:Global Change: Check Terminology InterventionNameLink"]
+            return (filterName, parms)
 
         # If we got here, all filters have been processed
         return None
