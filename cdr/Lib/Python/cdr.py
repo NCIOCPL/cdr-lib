@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.33 2002-06-08 02:02:35 bkline Exp $
+# $Id: cdr.py,v 1.34 2002-06-18 22:19:16 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.33  2002/06/08 02:02:35  bkline
+# Added getCssFiles() (and changed some .* patterns to .*?).
+#
 # Revision 1.32  2002/05/14 12:56:55  bkline
 # Added listVersions() function.
 #
@@ -242,6 +245,31 @@ def login(userId, passWord, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Extract the session ID.
     return extract("<SessionId[^>]*>(.+)</SessionId>", resp)
+
+#----------------------------------------------------------------------
+# Determine whether a session is authorized to do something
+# Returns:
+#   True (1) = Is authorized
+#   False (0) = Is not authorized
+#----------------------------------------------------------------------
+def canDo (session, action, docType="",
+           host=DEFAULT_HOST, port=DEFAULT_PORT):
+
+    # Create the command
+    cmd = wrapCommand ("""
+ <CdrCanDo>
+   <Action>%s</Action>
+   <DocType>%s</DocType>
+ </CdrCanDo>\n
+""" % (action, docType), session)
+
+    # Submit it
+    resp = sendCommands (cmd, host, port);
+
+    # Expected results are simple enough that we don't need DOM parse
+    if resp.find ("<CdrCanDoResp>Y</CdrCanDoResp>") >= 0:
+        return 1
+    return 0
 
 #----------------------------------------------------------------------
 # Extract the text content of a DOM element.
@@ -921,7 +949,7 @@ class CssFile:
     def __init__(self, name, data):
         self.name = name
         self.data = data
-        
+
 #----------------------------------------------------------------------
 # Gets the CSS files used by the client.
 #----------------------------------------------------------------------
@@ -1664,7 +1692,7 @@ def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
             version = match.group(3) or "0"
             docsElem += "<Doc Id='%s' Version='%s'/>" % (id, version)
         docsElem += "</DocList>"
-        
+
     cmd = "<CdrPublish>%s%s%s%s%s%s</CdrPublish>" % (pubSystem,
                                                      pubSubset,
                                                      parmElem,
@@ -1701,7 +1729,7 @@ class PubStatus:
         self.email     = email
         self.docList   = docList
         self.errors    = errors
-        
+
 def pubStatus(self, jobId, getDocInfo = 0):
     return "XXX this is a stub"
 
