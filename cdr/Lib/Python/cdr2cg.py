@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.15 2003-02-14 20:04:47 pzhang Exp $
+# $Id: cdr2cg.py,v 1.16 2003-03-25 19:00:24 pzhang Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.15  2003/02/14 20:04:47  pzhang
+# Dropped DocType and added description at prolog level.
+#
 # Revision 1.14  2002/11/14 20:22:07  pzhang
 # Added version infor for CG team.
 #
@@ -90,7 +93,7 @@ PUBTYPES = {
     'Hotfix (Remove)' : 'Delete individual documents from Cancer.gov',
     'Hotfix (Export)' : 'Send individual documents to Cancer.gov'
 }
-PDQDTD = "http://mahler.nci.nih.gov/dtds/PDQ.dtd"
+PDQDTD = "d:\\cdr\licensee\\PDQ.dtd"
 
 #----------------------------------------------------------------------
 # XML wrappers.
