@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.102 2005-03-03 13:57:10 bkline Exp $
+# $Id: cdr.py,v 1.103 2005-03-03 14:03:22 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.102  2005/03/03 13:57:10  bkline
+# Moved determination of emailer host to cdr module.
+#
 # Revision 1.101  2004/11/29 19:55:23  bkline
 # Added getPublicationFilename() method to Doc class; added function
 # getVersionedBlobChangeDate().  Added optimization to compareXmlDocs().
@@ -354,6 +357,7 @@ PROD_HOST     = '%s.%s' % (PROD_NAME, DOMAIN_NAME)
 DEV_HOST      = '%s.%s' % (DEV_NAME, DOMAIN_NAME)
 EMAILER_PROD  = 'pdqupdate.cancer.gov'
 EMAILER_DEV   = 'verdi.nci.nih.gov'
+EMAILER_CGI   = '/PDQUpdate/cgi-bin'
 CVSROOT       = "verdi.nci.nih.gov:/usr/local/cvsroot"
 DEFAULT_HOST  = 'localhost'
 DEFAULT_PORT  = 2019
@@ -3561,3 +3565,9 @@ def getVersionedBlobChangeDate(credentials, docId, version, conn = None,
 #----------------------------------------------------------------------
 def emailerHost():
     return isProdHost() and EMAILER_PROD or EMAILER_DEV
+
+#----------------------------------------------------------------------
+# Returns the base URL for the current emailer CGI directory.
+#----------------------------------------------------------------------
+def emailerCgi():
+    return "http://%s%s" % (emailerHost(), EMAILER_CGI)
