@@ -1,8 +1,12 @@
 #
 # Script for command line and CGI publishing.
 #
-#$Id: publish.py,v 1.2 2001-10-05 15:08:01 Pzhang Exp $
+#$Id: publish.py,v 1.3 2001-10-05 18:50:49 Pzhang Exp $
 #$Log: not supported by cvs2svn $
+#Revision 1.2  2001/10/05 15:08:01  Pzhang
+#Added __invokePracessScript for Bob's Python Script.
+#Imported traceback to handle exceptions.
+#
 #Revision 1.1  2001/10/01 15:07:21  Pzhang
 #Initial revision
 #
@@ -38,9 +42,9 @@ NCGI = 1
 #-------------------------------------------------------------------
 class Publish:
 
-    SUCCESS = "Succeed" 
-    FAIL = "Fail" 
-    WAIT = "Wait user approval" 
+    SUCCEED = "Success" 
+    FAIL = "Failure" 
+    WAIT = "Waiting user approval" 
     RUN = "In process" 
     INIT = "Initial"
     READY = "Ready"
@@ -384,7 +388,7 @@ class Publish:
 
             # We need to check publishing status before finishing.
             status = self.__getStatus()
-            if status == Publish.SUCCESS: 
+            if status == Publish.SUCCEED: 
                 if destType == Publish.FILE:
                     shutil.copy(dest + "/new/" + file, dest)
                 else: # Copy all files from subdir "new" to destination.
@@ -631,7 +635,7 @@ class Publish:
         if NCGI: print "in __existProcess\n"
         sql = "SELECT id FROM pub_proc WHERE pub_system = "
         sql += self.strCtrlDocId + " AND pub_subset = '" + self.subsetName 
-        sql += """' AND status NOT IN ('%s', '%s', '%s')""" % (Publish.SUCCESS, 
+        sql += """' AND status NOT IN ('%s', '%s', '%s')""" % (Publish.SUCCEED, 
                 Publish.WAIT, Publish.FAIL)
         rs = self.__execSQL(sql)
 
@@ -1101,7 +1105,7 @@ class Publish:
             self.__saveDoc(pubDoc[0], dest + "/new", docId)
             if NCGI: print pubDoc[1]        
         
-        self.__updateStatus(Publish.SUCCESS, msg)
+        self.__updateStatus(Publish.SUCCEED, msg)
 
     #----------------------------------------------------------------
     # Get the document ID from ID/Version string 123456/2.5.
@@ -1143,7 +1147,7 @@ class Publish:
         # What if update failed?
         self.__cdrConn.Execute(sql)
 
-        if status == Publish.SUCCESS:
+        if status == Publish.SUCCEED:
             sql = "UPDATE pub_proc SET completed = GETDATE() "
             sql += "WHERE id = " + "%d" % self.__procId
             #self.__execSQL(sql)
@@ -1260,7 +1264,7 @@ class Publish:
                 for n in node.childNodes:
                     if n.nodeType == xml.dom.minidom.Node.TEXT_NODE:
                         scriptName += n.nodeValue
-	# Is the location of the script always in cdr.SCRIPTS?
+        # Is the location of the script always in cdr.SCRIPTS?
         scriptName = cdr.SCRIPTS + "/" + scriptName
         if not os.path.isfile(scriptName):
             if NCGI: print scriptName + " not found!"
