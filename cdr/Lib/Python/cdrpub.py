@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.35 2002-11-01 19:16:43 pzhang Exp $
+# $Id: cdrpub.py,v 1.36 2002-11-05 16:05:51 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.35  2002/11/01 19:16:43  pzhang
+# Used binary read and utf-8 instead of latin-1.
+#
 # Revision 1.34  2002/10/11 20:43:59  pzhang
 # Enhanced message display. Allowed validateDoc() call by non-primary job.
 #
@@ -447,7 +450,8 @@ class Publish:
             numFailures = self.__getFailures()
             if numFailures > 0:
                 msg = """Total of %d docs failed.
-                    <A href="%s/PubStatus.py?id=%d&type=FilterFailure">Check
+                    <A style='text-decoration: underline;'
+                    href="%s/PubStatus.py?id=%d&type=FilterFailure">Check
                     the failure details.</A><BR>""" % (numFailures,
                     self.__cdrHttp, self.__jobId)
                 self.__updateMessage(msg)
@@ -732,7 +736,8 @@ class Publish:
             message = "Creating pub_proc_cg_work at %s.<BR>" % time.ctime()
             self.__updateMessage(message, jobId)
             cgWorkLink = self.__cdrHttp + "/PubStatus.py?id=1&type=CgWork"
-            link = "<A href='%s'>Check removed docs</A><BR>" % cgWorkLink
+            link = "<A style='text-decoration: underline;' href='%s'> \
+                Check removed docs</A><BR>" % cgWorkLink
             if pubType == "Full Load" or pubType == "Export":
                 self.__createWorkPPC(vendor_job, vendor_dest, jobId)
                 pubTypeCG = pubType
