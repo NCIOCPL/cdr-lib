@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.46 2004-02-03 15:38:21 bkline Exp $
+# $Id: cdrcgi.py,v 1.47 2004-02-03 15:53:44 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.46  2004/02/03 15:38:21  bkline
+# Plugged in cgitb debugging help.
+#
 # Revision 1.45  2004/02/03 14:41:00  bkline
 # Increased timeout threshold for advanced search picklist generation
 # queries.
@@ -156,8 +159,8 @@ import cgi, cdr, cdrdb, sys, codecs, re, socket
 #----------------------------------------------------------------------
 # Get some help tracking down CGI problems.
 #----------------------------------------------------------------------
-import cgict
-cgict.enable(display = cdr.isDevHost(), logdir = cdr.DEFAULT_LOGDIR)
+import cgitb
+cgitb.enable(display = cdr.isDevHost(), logdir = cdr.DEFAULT_LOGDIR)
 
 #----------------------------------------------------------------------
 # Create some useful constants.
