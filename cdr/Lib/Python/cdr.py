@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.49 2002-09-12 00:46:14 bkline Exp $
+# $Id: cdr.py,v 1.50 2002-09-12 20:20:06 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.49  2002/09/12 00:46:14  bkline
+# Added URDATE for final PDQ to CDR conversion of documents.
+#
 # Revision 1.48  2002/09/05 16:30:05  pzhang
 # Added getPubPort().
 #
@@ -2090,3 +2093,20 @@ def logout(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # No errors to report.
     return None
+
+#----------------------------------------------------------------------
+# Object for results of an external command.
+#----------------------------------------------------------------------
+class CommandResult:
+    def __init__(self, code, output):
+        self.code   = code
+        self.output = output
+
+#----------------------------------------------------------------------
+# Run an external command.
+#----------------------------------------------------------------------
+def runCommand(command):
+    commandStream = os.popen('%s 2>&1' % command)
+    output = commandStream.read()
+    code = commandStream.close()
+    return CommandResult(code, output)
