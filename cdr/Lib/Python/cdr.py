@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.46 2002-08-16 03:13:23 ameyer Exp $
+# $Id: cdr.py,v 1.47 2002-09-02 00:37:22 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,12 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.46  2002/08/16 03:13:23  ameyer
+# Added comment parameter to addDoc and repDoc.
+# Added optional html formatting to sendMail.
+# Made a number of trivial changes to reduce the number of warning messages
+# produced by pychecker.
+#
 # Revision 1.45  2002/08/15 23:35:32  ameyer
 # Added html parameter to sendMail.
 # Made a number of trivial revisions to silence pychecker warnings.
@@ -158,6 +164,8 @@ import os, smtplib, time, cdrdb
 #----------------------------------------------------------------------
 # Set some package constants
 #----------------------------------------------------------------------
+PROD_HOST     = 'bach.nci.nih.gov'
+CVSROOT       = "mmdb2.nci.nih.gov:/d//usr/local/cvsroot"
 DEFAULT_HOST  = 'localhost'
 DEFAULT_PORT  = 2019
 LOGON_STRING  = """<CdrCommandSet><CdrCommand><CdrLogon>
@@ -170,7 +178,6 @@ BASEDIR       = "d:/cdr"
 SMTP_RELAY    = "MAILFWD.NIH.GOV"
 DEFAULT_LOGDIR  = "d:/cdr/Log"
 DEFAULT_LOGFILE = DEFAULT_LOGDIR + "/debug.log"
-
 #----------------------------------------------------------------------
 # Normalize a document id to form 'CDRnnnnnnnnnn'.
 #----------------------------------------------------------------------
