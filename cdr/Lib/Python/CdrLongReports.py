@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.5 2003-09-04 15:31:23 bkline Exp $
+# $Id: CdrLongReports.py,v 1.6 2003-09-09 22:18:23 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2003/09/04 15:31:23  bkline
+# Replaced calls to reportFailure() with job.fail().
+#
 # Revision 1.4  2003/08/21 19:25:45  bkline
 # Added Org Protocol Review report.
 #
@@ -700,13 +703,14 @@ class NonRespondentsReport:
                 CREATE TABLE #last_mailers
                 (
                     doc_id    INTEGER,
-                    mailer_id INTEGER
+                    mailer_id INTEGER,
+                    sent_date VARCHAR(32)
                 )""")
             self.conn.commit()
             job.setProgressMsg("#last_mailers table created")
             self.cursor.execute("""\
         INSERT INTO #last_mailers
-             SELECT q1.int_val, MAX(q1.doc_id)
+             SELECT q1.int_val, MAX(q1.doc_id), q2.value
                FROM query_term q1
                JOIN query_term q2
                  ON q1.doc_id = q2.doc_id
@@ -714,13 +718,20 @@ class NonRespondentsReport:
                  ON d.id = q1.int_val
                JOIN doc_type t
                  ON t.id = d.doc_type
+               JOIN query_term mailer_type
+                 ON mailer_type.doc_id = q1.doc_id
               WHERE t.name = ?
                 AND q1.path = '/Mailer/Document/@cdr:ref'
                 AND q2.path = '/Mailer/Sent'
-                AND q2.value BETWEEN ? AND ?
-           GROUP BY q1.int_val""", (self.docType, startDate, endDate),
-                           timeout = 300)
+                AND mailer_type.path = '/Mailer/Type'
+                AND mailer_type.value NOT LIKE
+                               'Protocol-%%status/participant check'
+           GROUP BY q1.int_val, q2.value
+             HAVING q2.value BETWEEN '%s' AND '%s'""" % (startDate, endDate),
+                                self.docType,
+                                timeout = 300)
             self.conn.commit()
+            #job.fail("Got to milestone 2", logfile = LOGFILE)
             job.setProgressMsg("#last_mailers table populated")
             self.cursor.execute("""\
                 CREATE TABLE #no_reply (doc_id INTEGER, mailer_id INTEGER)""")
@@ -863,6 +874,8 @@ class NonRespondentsReport:
                 border.ColorIndex = win32com.client.constants.xlAutomatic
                 recipRows = 1
                 recipName = lastRecipName = row[0]
+                if recipName.startswith("Inactive;"):
+                    recipName = recipName[len("Inactive;"):]
                 semicolon = recipName.find(";")
                 if semicolon != -1:
                     recipName = recipName[:semicolon]
