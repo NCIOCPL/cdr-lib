@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.71 2003-02-10 17:21:40 bkline Exp $
+# $Id: cdr.py,v 1.72 2003-02-24 21:18:35 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.71  2003/02/10 17:21:40  bkline
+# Added function mailerCleanup().
+#
 # Revision 1.70  2003/01/31 01:00:04  ameyer
 # Modified _sysValue to distinguish between null value and "".
 #
@@ -910,7 +913,10 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
                     filterElem += '<FilterSet Name="%s" Version="%s"/>' % \
                         (cgi.escape(filt, 1), filterVer)
                 else:
-                    filterElem += ("<Filter %s='%s'/>" % (ref, filt))
+                    filterElem += ("<Filter %s='%s' version='%s'/>" %
+                                   (ref,
+                                    filt,
+                                    filterVer))
 
     # We have a single filter identified by ID.
     else:
