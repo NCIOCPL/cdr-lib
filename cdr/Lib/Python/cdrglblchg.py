@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.13 2003-04-22 18:34:29 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.14 2003-06-17 22:02:34 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.13  2003/04/22 18:34:29  ameyer
+# If address fragment is optional, no fragment is now the default when
+# generating an address fragment picklist.
+#
 # Revision 1.12  2003/03/27 18:39:30  ameyer
 # Major rewrite of the module to encode the logic for each type of global
 # change in a script using a sequence of Stage objects.
@@ -644,7 +648,7 @@ class GlblChg:
         if self.ssVars.has_key ('restrPiTitle'):
             html += \
               "<tr><td align='right'>" +\
-              "Restricting to protocols with lead org PI: </td>\n"
+              "Restricting to protocols with org site PI: </td>\n"
             html += "<td> %s (%s)</td></tr>\n" % \
                  (self.ssVars['restrPiId'], self.ssVars['restrPiTitle'])
             haveSoFar = 1
@@ -1402,7 +1406,7 @@ class OrgStatusChg (GlblChg):
                         'not self.ssVars.has_key("restrPiId")',
             subr      = self.genInputHtml,
             parms     = ('Person',
-                'Restrict changes to protocols with Principal Investigator',
+          'Restrict changes to protocols with org site Principal Investigator',
                          'restrPi', 1),
             excpMsg   = 'Generating form for getting the "from" person'),
           Stage(
