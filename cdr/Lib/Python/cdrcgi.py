@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.13 2002-06-04 20:17:26 bkline Exp $
+# $Id: cdrcgi.py,v 1.14 2002-06-26 20:05:25 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.13  2002/06/04 20:17:26  bkline
+# Added option for choosing between POST and GET requests.
+#
 # Revision 1.12  2002/05/30 17:01:06  bkline
 # Added extra blank line for Protocol advanced search results page.
 #
@@ -680,7 +683,7 @@ def advancedSearchResultsPageTop(docType, nRows, strings):
 #----------------------------------------------------------------------
 # Construct HTML page for advanced search results.
 #----------------------------------------------------------------------
-def advancedSearchResultsPage(docType, rows, strings, filter):
+def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
     html = advancedSearchResultsPageTop(docType, len(rows), strings)
 
     for i in range(len(rows)):
@@ -690,10 +693,19 @@ def advancedSearchResultsPage(docType, rows, strings, filter):
         filt  = filter
         if len(rows[i]) > 2:
             dt = rows[i][2]
-            filt = filter[dt]
+            if filter:
+                filt = filter[dt]
             dtcol = """\
     <TD       VALIGN = "top">%s</TD>
 """ % dt
+        session = session and ("&%s=%s" % (SESSION, session)) or ""
+
+        # XXX Consider using QcReport.py for all advanced search results pages.
+        if docType == "Person":
+            href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
+        else:
+            href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId, filt, 
+                                                          session)
         html += """\
    <TR>
     <TD       NOWRAP
@@ -705,12 +717,11 @@ def advancedSearchResultsPage(docType, rows, strings, filter):
 %s
     <TD        WIDTH = "20"
               VALIGN = "top">
-     <A         HREF = "%s?DocId=%s&Filter=%s">%s</A>
+     <A         HREF = "%s">%s</A>
     </TD>
    </TR>
 """ % (i + 1, cgi.escape(unicodeToLatin1(title), 1), 
-       dtcol, '/cgi-bin/cdr/Filter.py', 
-       docId, filt, docId)
+       dtcol, href, docId)
 
         # Requested by LG, Issue #193.
         if docType == "Protocol":
