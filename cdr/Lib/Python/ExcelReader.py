@@ -144,11 +144,14 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: ExcelReader.py,v 1.8 2005-03-04 22:09:59 bkline Exp $
+# $Id: ExcelReader.py,v 1.9 2005-03-05 05:54:13 bkline Exp $
 #
 # Module for extracting cell values from Excel spreadsheets.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2005/03/04 22:09:59  bkline
+# Fixed font indexing problem.
+#
 # Revision 1.7  2005/03/03 14:42:30  bkline
 # Fixed documentation typos.
 #
@@ -915,7 +918,9 @@ class Cell:
         self.hlink = None
         if xf:
             fontIndex, formatIndex = book.xf[xf]
-            self.font = fontIndex and book.fonts[fontIndex - 1] or None
+            if fontIndex >= 4:
+                fontIndex += 1
+            self.font = book.fonts[fontIndex]
             self.fmt  = book.formats[formatIndex]
         if DEBUG:
             sys.stderr.write("%s\n" % repr(self).encode('utf-8'))
