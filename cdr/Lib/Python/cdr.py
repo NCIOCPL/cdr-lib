@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.72 2003-02-24 21:18:35 bkline Exp $
+# $Id: cdr.py,v 1.73 2003-03-14 01:35:03 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.72  2003/02/24 21:18:35  bkline
+# Added version attribute to Filter element.
+#
 # Revision 1.71  2003/02/10 17:21:40  bkline
 # Added function mailerCleanup().
 #
@@ -913,10 +916,11 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
                     filterElem += '<FilterSet Name="%s" Version="%s"/>' % \
                         (cgi.escape(filt, 1), filterVer)
                 else:
-                    filterElem += ("<Filter %s='%s' version='%s'/>" %
+                    v = filterVer and (" version='%s'" % filterVer) or ""
+                    filterElem += ("<Filter %s='%s'%s/>" %
                                    (ref,
                                     filt,
-                                    filterVer))
+                                    v))
 
     # We have a single filter identified by ID.
     else:
@@ -940,6 +944,7 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
                                                docElem, parmElem)
 
     # Submit the commands.
+    # XXX DEBUG open("d:/tmp/filt.log", "a").write("%s\n" % cmd)
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
 
     # Extract the filtered document.
