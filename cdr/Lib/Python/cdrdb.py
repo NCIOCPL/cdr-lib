@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.6 2001-08-06 15:55:30 bkline Exp $
+# $Id: cdrdb.py,v 1.7 2001-08-06 18:03:58 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2001/08/06 15:55:30  bkline
+# Fixed a collection item notation bug in Cursor.execute().
+#
 # Revision 1.5  2001/08/06 14:38:26  bkline
 # Enhanced exception error information; implemented nextset().
 #
@@ -252,14 +255,14 @@ class Cursor:
         nParams              = params.Count
         if not nParams:
             raise ProgrammingError, ("Cursor.callproc",
-                                    ("Procedure %s not cataloged" % procname,))
+                                   (u"Procedure %s not cataloged" % procname,))
 
         # Plug in the parameters
         if type(parameters) != type([]) and type(parameters) != type(()):
             parameters = (parameters,)
         if len(parameters) != nParams - 1:
             raise ProgrammingError, ("Cursor.callproc",
-                    ("expected %d parameters, received %d" % 
+                    (u"expected %d parameters, received %d" % 
                      (nParams - 1, len(parameters)),))
         for i in range(len(parameters)):
             params.Item(i + 1).Value = parameters[i]
@@ -287,7 +290,7 @@ class Cursor:
             if errorList:
                 raise Error, ("Cursor.callproc", errorList)
             raise InternalError, ("Cursor.callproc",
-                    (("internal error in '%s'" % procname),))
+                    ((u"internal error in '%s'" % procname),))
 
     def close(self):
         """
@@ -346,7 +349,7 @@ class Cursor:
                     params = (params,)
                 if len(cmdParams) != len(params):
                     raise ProgrammingError, ("Cursor.execute",
-                            ("expected %d parameters, received %d" % 
+                            (u"expected %d parameters, received %d" % 
                              (len(cmdParams), len(params)),))
                 for i in range(len(params)):
                     cmdParams.Item(i).Value = params[i]
@@ -365,7 +368,7 @@ class Cursor:
             if errorList:
                 raise Error, ("Cursor.execute", errorList)
             raise InternalError, ("Cursor.execute",
-                    (("unexpected failure for query '%s'" % query),))
+                    ((u"unexpected failure for query '%s'" % query),))
 
     def executemany(self, query, paramSets):
         """
@@ -435,7 +438,7 @@ class Cursor:
 
         if not self.__rs or not self.description: 
             raise ProgrammingError, ("Cursor.fetchmany", 
-                                    ("No result set available",))
+                                    (u"No result set available",))
         if size == None:
             size = self.arraysize
         if rememberSize:
@@ -458,7 +461,7 @@ class Cursor:
             if errorList:
                 raise Error, ("Cursor.fetchmany", errorList)
             raise InternalError, ("Cursor.fetchmany",
-                    ("unexpected failure",))
+                    (u"unexpected failure",))
 
     def nextset(self):
         """
@@ -478,7 +481,7 @@ class Cursor:
         self.rowcount        = -1
         if not self.__rs:
             raise ProgrammingError, ("Cursor.nextset",
-                    ("no record sets available",))
+                    (u"no record sets available",))
 
         try:
             self.__rs, rowsAffected = self.__rs.NextRecordset()
@@ -499,7 +502,7 @@ class Cursor:
             if errorList:
                 raise Error, ("Cursor.nextset", errorList)
             raise InternalError, ("Cursor.nextset",
-                                 ("unexpected failure",))
+                                 (u"unexpected failure",))
 
     def setinputsizes(self, sizes):
         """
@@ -544,7 +547,7 @@ class Cursor:
         if nativeType in DATETIME.nativeTypes: return DATETIME
         if nativeType in ROWID   .nativeTypes: return ROWID
         raise NotSupportedError, ("Cursor.__nativeTypeToApiType",
-                (("unrecognized native type %d" % nativeType),))
+                ((u"unrecognized native type %d" % nativeType),))
 
     def __getFieldDesc(self, field):
         name         = field.Name
@@ -588,7 +591,7 @@ class Connection:
             if errorList:
                 raise Error, ("Connection.close", errorList)
             raise InternalError, ("Connection.close",
-                    ("unexpected failure",))
+                    (u"unexpected failure",))
 
     def commit(self):
         """
@@ -599,7 +602,7 @@ class Connection:
         """
 
         raise NotSupportedError, ("Connection.commit",
-                ("commit() method not yet implemented",))
+                (u"commit() method not yet implemented",))
 
     def rollback(self): 
         """
@@ -609,7 +612,7 @@ class Connection:
         """
 
         raise NotSupportedError, ("Connection.rollback",
-                ("rollback() method not yet implemented",))
+                (u"rollback() method not yet implemented",))
 
     def cursor(self): 
         """
@@ -635,7 +638,8 @@ def connect(user = 'cdr'):
     adoConn = win32com.client.Dispatch("ADODB.Connection")
     if user == 'cdr': password = '***REMOVED***'
     elif user == 'CdrGuest': password = '***REDACTED***'
-    else: raise DatabaseError, ("connect", ("invalid login name",))
+    else: raise DatabaseError, ("connect", 
+            ((u"invalid login name %s" % user),))
 
     try:
         adoConn.Open("Provider=SQLOLEDB;\
