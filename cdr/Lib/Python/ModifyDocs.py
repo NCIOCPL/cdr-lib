@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.3 2003-09-11 22:12:24 bkline Exp $
+# $Id: ModifyDocs.py,v 1.4 2004-03-31 13:46:04 bkline Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2003/09/11 22:12:24  bkline
+# Suppressed debugging `raise' statement.
+#
 # Revision 1.2  2003/09/02 14:00:14  bkline
 # Suppressed logging of warnings when saving unmodified CWD.
 #
@@ -17,6 +20,7 @@ import cdr, cdrdb, sys, time, re, os
 
 LOGFILE = 'd:/cdr/log/ModifyDocs.log'
 ERRPATT = re.compile(r"<Err>(.*?)</Err>", re.DOTALL)
+DEBUG   = 0
 
 #----------------------------------------------------------------------
 # Class for one modification job.
@@ -63,7 +67,8 @@ class Job:
                 doc.saveChanges(self)
             except Exception, info:
                 self.log("Document %d: %s" % (id, str(info)))
-                # raise
+                if DEBUG:
+                    raise
             cdr.unlock(self.session, "CDR%010d" % id)
 
     #------------------------------------------------------------------
@@ -172,7 +177,7 @@ class Doc:
             self.saveDoc(str(self.lastp), ver = 'Y', pub = 'Y', job = job)
         if self.lastv and self.compare(self.lastv.xml, self.newLastv):
             self.lastv.xml = lastSavedXml = self.newLastv
-            self.saveDoc(str(self.lastp), ver = 'Y', pub = 'N', job = job)
+            self.saveDoc(str(self.lastv), ver = 'Y', pub = 'N', job = job)
         if lastSavedXml and self.compare(self.newCwd, lastSavedXml):
             self.cwd.xml = self.newCwd
             self.saveDoc(str(self.cwd), ver = 'N', pub = 'N', job = job)
