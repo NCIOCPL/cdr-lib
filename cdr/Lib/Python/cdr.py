@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.76 2003-07-29 13:02:03 bkline Exp $
+# $Id: cdr.py,v 1.77 2003-08-21 19:27:02 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.76  2003/07/29 13:02:03  bkline
+# Added function to retrieve lists of valid values.  Changed CVSROOT
+# to point to verdi.
+#
 # Revision 1.75  2003/04/26 16:32:36  bkline
 # Eliminated assumptions about encoding for Doc class.
 #
@@ -674,7 +678,7 @@ class Doc:
             value = self.ctrl[key]
             if not alreadyUtf8:
                 value = unicode(value, self.encoding).encode('utf-8')
-            rep += "<%s>%s</%s>" % (key, value, key)
+            rep += "<%s>%s</%s>" % (key, cgi.escape(value), key)
         xml = self.xml
         if xml:
             if not alreadyUtf8:
@@ -858,7 +862,7 @@ def getDoc(credentials, docId, checkout = 'N', version = "Current",
     # Extract the document.
     doc = extract("(<CdrDoc[>\s].*</CdrDoc>)", resp)
     if doc.startswith("<Errors") or not getObject: return doc
-    return Doc(doc)
+    return Doc(doc, encoding = 'utf-8')
 
 #----------------------------------------------------------------------
 # Mark a CDR document as deleted.
@@ -2758,3 +2762,33 @@ def mailerCleanup(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
     for elem in dom.getElementsByTagName('Err'):
         errs.append(getTextContent(elem))
     return (docs, errs, resp)
+
+#----------------------------------------------------------------------
+# Used by normalizeDoc; treats string as writable file object.
+#----------------------------------------------------------------------
+class StringSink:
+    def __init__(self, s = ""):
+        self.s = s
+    def __repr__(self):
+        return self.s
+    def write(self, s):
+        self.s += s
+
+#----------------------------------------------------------------------
+# Takes a utf-8 string for an XML document and creates a utf-8 string
+# suitable for comparing two versions of XML documents by normalizing
+# non-essential differences away.  Used by compareDocs() (below).
+#----------------------------------------------------------------------
+def normalizeDoc(utf8DocString):
+    sFile = StringSink()
+    dom = xml.dom.minidom.parseString(utf8DocString)
+    dom.writexml(sFile)
+    return sFile.s
+
+#----------------------------------------------------------------------
+# Compares two XML documents by normalizing each.  Returns non-zero
+# if documents are different; otherwise zero.  Expects each document
+# to be passed as utf8-encoded documents.
+#----------------------------------------------------------------------
+def compareXmlDocs(utf8DocString1, utf8DocString2):
+    return cmp(normalizeDoc(utf8DocString1), normalizeDoc(utf8DocString2))
