@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.8 2003-09-11 12:40:30 bkline Exp $
+# $Id: CdrLongReports.py,v 1.9 2003-12-16 16:17:38 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2003/09/11 12:40:30  bkline
+# Fixed email message for two of the report types.
+#
 # Revision 1.7  2003/09/10 12:51:16  bkline
 # Broke out logic to restrict mailer-non-respondent report to the
 # specified date range into a separate SQL query.
@@ -31,7 +34,7 @@
 #
 #----------------------------------------------------------------------
 import cdr, cdrdb, xml.dom.minidom, time, cdrcgi, cgi, sys, socket, cdrbatch
-import string, re, win32com.client
+import string, re, win32com.client, urlparse, httplib, traceback
 
 #----------------------------------------------------------------------
 # Module values.
@@ -1357,6 +1360,167 @@ can be viewed at
         cdr.logwrite("Completed report", LOGFILE)
 
 #----------------------------------------------------------------------
+# Class for finding URLs which are not alive.
+#----------------------------------------------------------------------
+class UrlCheck:
+    def __init__(self, host = 'localhost'):
+        self.conn    = cdrdb.connect('CdrGuest', dataSource = host)
+        self.cursor  = self.conn.cursor()
+        self.pattern = re.compile("([^/]+)/@cdr:xref$")
+
+    #------------------------------------------------------------------
+    # Report on a dead URL
+    #------------------------------------------------------------------
+    def report(self, row, err):
+        match = self.pattern.search(row[1])
+        elem = match and match.group(1) or ""
+        return """\
+   <tr bgcolor='white'>
+    <td>%s</td>
+    <td>%d</td>
+    <td>%s</td>
+    <td nowrap='1'>%s</td>
+    <td>%s</td>
+   </tr>
+""" % (row[3], row[0], row[2], err, elem)
+
+    #------------------------------------------------------------------
+    # Run the report.
+    #------------------------------------------------------------------
+    def run(self, job):
+        job.setProgressMsg("Report started")
+        query  = """\
+  SELECT q.doc_id, q.path, q.value, t.name
+    FROM query_term q
+    JOIN document d
+      ON d.id = q.doc_id
+    JOIN doc_type t
+      ON t.id = d.doc_type
+   WHERE value LIKE 'http%'
+     AND path LIKE '%/@cdr:xref'
+ORDER BY t.name, q.doc_id
+"""
+        self.cursor.execute(query, timeout = 1200)
+        rows = self.cursor.fetchall()
+
+        #--------------------------------------------------------------
+        # Keep track of hosts we know are not responding at all.
+        #--------------------------------------------------------------
+        deadHosts = {}
+
+        #--------------------------------------------------------------
+        # Another little optimization; don't ping same URL twice.
+        #--------------------------------------------------------------
+        deadUrls = {}
+        goodUrls = {}
+
+        #--------------------------------------------------------------
+        # Create the HTML for the report.
+        #--------------------------------------------------------------
+        html = """\
+<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
+<html>
+ <head>
+  <title>CDR Report on Inactive Hyperlinks</title>
+  <style type='text/css'>
+   h1         { font-family: serif; font-size: 14pt; color: black;
+                font-weight: bold; text-align: center; }
+   th         { font-family: Arial; font-size: 12pt; font-weight: bold; }
+   td         { font-family: Arial; font-size: 11pt; }
+  </style>
+ </head>
+ <body>
+  <h1>CDR Report on Inactive Hyperlinks</h1>
+  <table border='0' width='100%' cellspacing='1' cellpadding='2'>
+   <tr bgcolor='silver'>
+    <td><b>Doc Type</b></td>
+    <td><b>Source Doc</b></td>
+    <td><b>URL</b></td>
+    <td><b>Problem</b></td>
+    <td><b>Element</b></td>
+   </tr>
+"""
+        done = 0
+        for row in rows:
+            done    += 1
+            msg      = "checked %d of %d URLs" % (done, len(rows))
+            url      = row[2]
+            if goodUrls.has_key(url):
+                continue
+            if deadUrls.has_key(url):
+                html += self.report(row, deadUrls[url])
+                continue
+            pieces   = urlparse.urlparse(url)
+            host     = pieces[1]
+            selector = pieces[2]
+            if pieces[3]: selector += ";" + pieces[3]
+            if pieces[4]: selector += "?" + pieces[4]
+            if pieces[5]: selector += "#" + pieces[5]
+            if not host:
+                html += self.report(row, "Malformed URL")
+                continue
+            if deadHosts.has_key(host):
+                html += self.report(row, "Host not responding")
+                continue
+            if pieces[0] not in ('http','https'):
+                html += self.report(row, "Unexpected protocol")
+                continue
+            try:
+                http = httplib.HTTP(host)
+                http.putrequest('GET', selector)
+                http.endheaders()
+                reply = http.getreply()
+                if reply[0] / 100 != 2:
+                    message = "%s: %s" % (reply[0], reply[1])
+                    deadUrls[url] = message
+                    html += self.report(row, message)
+                else:
+                    goodUrls[url] = 1
+            except IOError, ioError:
+                html += self.report(row, "IOError: %s" % str(ioError))
+            except socket.error, socketError:
+                deadHosts[host] = 1
+                html += self.report(row, "Host not responding")
+            except:
+                html += self.report(row, "Unrecognized error")
+            job.setProgressMsg(msg)
+        html += """\
+  </table>
+ </body>
+</html>
+"""
+
+        #--------------------------------------------------------------
+        # Write out the report and tell the user where it is.
+        #--------------------------------------------------------------
+        name = "/UrlCheck-%d.html" % job.getJobId()
+        file = open(REPORTS_BASE + name, "wb")
+        file.write(cdrcgi.unicodeToLatin1(html))
+        file.close()
+        cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
+        url = "http://%s.nci.nih.gov/CdrReports%s" % (socket.gethostname(),
+                                                      name)
+        cdr.logwrite("url: %s" % url, LOGFILE)
+        msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (
+            url, url)
+
+        body = """\
+The URL report you requested can be viewed at
+%s.
+""" % (url)
+        sendMail(job, "Report results", body)
+        job.setProgressMsg(msg)
+        job.setStatus(cdrbatch.ST_COMPLETED)
+        cdr.logwrite("Completed report", LOGFILE)
+
+#----------------------------------------------------------------------
+# Run a report of dead URLs.
+#----------------------------------------------------------------------
+def checkUrls(job):
+    report = UrlCheck()
+    report.run(job)
+
+#----------------------------------------------------------------------
 # Run a report of protocols connected with a specific organization.
 #----------------------------------------------------------------------
 def nonRespondentsReport(job):
@@ -1423,6 +1587,8 @@ if __name__ == "__main__":
             nonRespondentsReport(job)
         elif jobName == "Organization Protocol Review":
             orgProtocolReview(job)
+        elif jobName == "URL Check":
+            checkUrls(job)
         # That's all we know how to do right now.
         else:
             job.fail("CdrLogReports: unknown job name '%s'" % jobName,
