@@ -1,11 +1,18 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrmailcommon.py,v 1.5 2002-11-06 03:06:31 ameyer Exp $
+# $Id: cdrmailcommon.py,v 1.6 2003-03-05 02:50:40 ameyer Exp $
 #
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2002/11/06 03:06:31  ameyer
+# Added join to pub_proc table on first selection to be sure we only select
+# mailers for remailing if the original mailer job had not failed.
+# Made timeout 180 seconds on the last, most difficult selection.  The
+# default 30 seconds is usually, but not always, enough.
+# Added some logging to record times for each select statement.
+#
 # Revision 1.4  2002/11/01 05:24:13  ameyer
 # Changed getRelatedId to retrieve a single scalar object - recipient no longer
 # needed here.
@@ -82,7 +89,7 @@ class RemailSelector:
 
 
     def select(self, originalMailType, maxMailers=sys.maxint,
-                     earlyDays=120, lateDays=60):
+                     earlyDays=120, lateDays=60, singleId=None):
         """
         Find documents and related ids for remailing.
         Finds doc ids, associated mailer tracking doc ids, and
@@ -113,6 +120,9 @@ class RemailSelector:
               was sent before we'll consider the lack of response to
               require a remailing.
 
+            singleId = ID of a single document to be remailed.
+              It must qualify for remailing.
+
         Returns:
             Number of documents selected.  May be zero if none need
             remailing.
@@ -120,6 +130,46 @@ class RemailSelector:
         Throws:
             Exceptions raised in cursor.execute are passed through.
         """
+        # If asking for a single ID, create a #remailer_temp table
+        #   just as if a whole batch were selected.  But only include
+        #   the one document, with it's version and tracker id.
+        # If the one document does not qualify for remailing, then
+        #   no documents will be selected
+        if singleId:
+            try:
+                self.__cursor.execute ("""
+                 SELECT TOP 1 %d AS doc,
+                        MAX(doc_version.num) AS ver,
+                        mailer.doc_id AS tracker
+                   INTO #remail_temp
+                   FROM query_term mailer
+                   JOIN query_term mailer_sent
+                     ON mailer_sent.doc_id = mailer.doc_id
+                   JOIN query_term mailer_type
+                     ON mailer_type.doc_id = mailer.doc_id
+                   JOIN query_term mailer_job
+                     ON mailer_job.doc_id = mailer.doc_id
+                   JOIN pub_proc job
+                     ON mailer_job.int_val = job.id
+                   JOIN doc_version
+                     ON doc_version.id = %d
+                  WHERE mailer.path='/Mailer/Document/@cdr:ref'
+                    AND mailer.int_val = %d
+                    AND mailer_sent.path = '/Mailer/Sent'
+                    AND mailer_type.path = '/Mailer/Type'
+                    AND mailer_type.value IN (%s)
+                    AND job.status = 'Success'
+                    AND doc_version.publishable = 'Y'
+                 GROUP BY mailer.doc_id, mailer_sent.value
+                 ORDER BY mailer_sent.value DESC""" % (singleId,
+                        singleId, singleId, originalMailType))
+            except cdrdb.Error, info:
+                raise 'db error creating temp table #remail_temp for %d: %s'\
+                      % (singleId, str(info[1][0]))
+            # Tell user how many hits there were
+            # Short circuits all the stuff we have to do for big selection
+            return self.__cursor.rowcount
+
         # Get all the base mailers that have been sent out
         #   between earlyDays and lateDays ago and store in
         #   temp table #orig_mailers
@@ -274,7 +324,12 @@ class RemailSelector:
                 "  FROM remailer_ids "
                 " WHERE job=? AND doc=?", (self.__jobId, docId))
 
-            return self.__cursor.fetchone()[0]
+            row = self.__cursor.fetchone()
+            if row:
+                return row[0]
+
+            # Don't think this can happen, but not sure about the future
+            return None
 
         except cdrdb.Error, info:
             raise 'database error getting related remailer_ids: %s' \
