@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.6 2001-06-13 22:37:17 bkline Exp $
+# $Id: cdr.py,v 1.7 2001-07-31 17:23:07 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2001/06/13 22:37:17  bkline
+# Added DOM support.  Added QueryResult and Doc classes.  Added support
+# for commands to manipulate the query_term_def table.
+#
 # Revision 1.5  2001/05/18 19:19:06  bkline
 # Added routines for link management, schema documents, and adding
 # document types.
@@ -212,7 +216,7 @@ class Doc:
 # Add a new document to the CDR Server.
 #----------------------------------------------------------------------
 def addDoc(credentials, file = None, doc = None, 
-           checkIn = 'N', val = 'N', reason = '',
+           checkIn = 'N', val = 'N', reason = '', ver = 'N',
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Load the document if necessary.
@@ -225,7 +229,9 @@ def addDoc(credentials, file = None, doc = None,
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
     val     = "<Validate>%s</Validate>" % (val)
     reason  = "<Reason>%s</Reason>" % (reason)
-    cmd     = "<CdrAddDoc>%s%s%s%s</CdrAddDoc>" % (checkIn, val, reason, doc)
+    ver     = "<Version Publishable='Y'>%s</Version>" % (ver)
+    cmd     = "<CdrAddDoc>%s%s%s%s%s</CdrAddDoc>" % (checkIn, val, ver, 
+                                                     reason, doc)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -237,7 +243,7 @@ def addDoc(credentials, file = None, doc = None,
 # Replace an existing document in the CDR Server.
 #----------------------------------------------------------------------
 def repDoc(credentials, file = None, doc = None, 
-           checkIn = 'N', val = 'N', reason = '',
+           checkIn = 'N', val = 'N', reason = '', ver = 'N',
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Load the document if necessary.
@@ -250,7 +256,9 @@ def repDoc(credentials, file = None, doc = None,
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
     val     = "<Validate>%s</Validate>" % (val)
     reason  = "<Reason>%s</Reason>" % (reason)
-    cmd     = "<CdrRepDoc>%s%s%s%s</CdrRepDoc>" % (checkIn, val, reason, doc)
+    ver     = "<Version Publishable='Y'>%s</Version>" % (ver)
+    cmd     = "<CdrRepDoc>%s%s%s%s%s</CdrRepDoc>" % (checkIn, val, ver, 
+                                                     reason, doc)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
