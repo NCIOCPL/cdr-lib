@@ -1,29 +1,33 @@
+#----------------------------------------------------------------------
 #
 # Script for command line and CGI publishing.
 #
-#$Id: publish.py,v 1.7 2002-02-14 21:25:49 mruben Exp $
-#$Log: not supported by cvs2svn $
-#Revision 1.6  2002/02/07 14:46:17  mruben
-#added no output option
+# $Id: publish.py,v 1.8 2002-02-14 21:43:26 mruben Exp $
+# $Log: not supported by cvs2svn $
+# Revision 1.7  2002/02/14 21:25:49  mruben
+# Suppressed unused docTypes variable; added no_output support [commit by RMK].
 #
-#Revision 1.5  2002/01/31 18:20:49  mruben
-#Fixed SQL for selecting publishing systems
+# Revision 1.6  2002/02/07 14:46:17  mruben
+# added no output option
 #
-#Revision 1.4  2001/12/03 23:14:15  Pzhang
-#Added code for email notification.
-#Disabled updateStatuses since pub_event is now a view.
+# Revision 1.5  2002/01/31 18:20:49  mruben
+# Fixed SQL for selecting publishing systems
 #
-#Revision 1.3  2001/10/05 18:50:49  Pzhang
-#Changed Publish.SUCCESS to SUCCEED, Fail to Failure, Wait to Waiting.
+# Revision 1.4  2001/12/03 23:14:15  Pzhang
+# Added code for email notification.
+# Disabled updateStatuses since pub_event is now a view.
 #
-#Revision 1.2  2001/10/05 15:08:01  Pzhang
-#Added __invokePracessScript for Bob's Python Script.
-#Imported traceback to handle exceptions.
+# Revision 1.3  2001/10/05 18:50:49  Pzhang
+# Changed Publish.SUCCESS to SUCCEED, Fail to Failure, Wait to Waiting.
 #
-#Revision 1.1  2001/10/01 15:07:21  Pzhang
-#Initial revision
+# Revision 1.2  2001/10/05 15:08:01  Pzhang
+# Added __invokePracessScript for Bob's Python Script.
+# Imported traceback to handle exceptions.
 #
+# Revision 1.1  2001/10/01 15:07:21  Pzhang
+# Initial revision
 #
+#----------------------------------------------------------------------
 
 from win32com.client import Dispatch
 import os, sys, shutil, re, cdr, xml.dom.minidom, copy
@@ -83,7 +87,7 @@ class Publish:
 
     # Do nothing but set local variables.
     def __init__(self, strCtrlDocId, subsetName, credential,
-                docIds, params, email = None, no_output = 'N', jobId = 0, ):
+                docIds, params, email = None, no_output = 'N', jobId = 0):
         self.strCtrlDocId = strCtrlDocId
         self.subsetName = subsetName
         self.credential = credential
@@ -1178,7 +1182,7 @@ Please do not reply to this message.
 
             if NCGI: print filterIds
             pubDoc = cdr.filterDoc(self.credential, filterIds, docId,
-                                   no_output=no_output)
+                                   no_output=self.no_output)
 
             # Detect error here!
             # updateStatus(WARNING, pubDoc[1])
