@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.14 2004-08-27 13:50:45 bkline Exp $
+# $Id: CdrLongReports.py,v 1.15 2004-08-27 14:27:31 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.14  2004/08/27 13:50:45  bkline
+# Added support for restricting glossary term search report by document
+# type; plugged in new (Python 2.3) approach to stripping specified
+# characters from the ends of a string.
+#
 # Revision 1.13  2004/08/06 22:31:02  bkline
 # Made table titles bold for Glossary Term Search report at Margaret's
 # request.
@@ -1821,9 +1826,11 @@ class GlossaryTermSearch:
         protocolQuery = """\
     SELECT d.id, d.xml, d.title
       FROM document d
-      JOIN doc_type t
-        ON t.id = d.doc_type
-     WHERE t.name = 'InScopeProtocol'
+      JOIN query_term s
+        ON s.doc_id = d.id
+     WHERE s.path = '/InScopeProtocol/ProtocolAdminInfo/CurrentProtocolStatus'
+       AND s.value IN ('Active', 'Approved-not yet active',
+                       'Temporarily closed')
        AND d.active_status = 'A'"""
         if "HPSummaries" in self.types:
             html += self.addTable(tableTitles[0], "SectionTitle",
