@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.7 2003-12-30 20:37:29 ameyer Exp $
+# $Id: cdrbatch.py,v 1.8 2004-02-24 22:43:12 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,11 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2003/12/30 20:37:29  ameyer
+# Significant modifications to mechanism for passing parameters from
+# interactive to batch programs.  Now providing for passing of sequences
+# and for proper type conversions.
+#
 # Revision 1.6  2003/10/23 13:21:24  bkline
 # Added missing placeholder for string argument conversion in logging
 # of database exception error.
@@ -347,6 +352,9 @@ class CdrBatch:
             Exception if database error, or passed job id not found.
         """
 
+        # Set job id to None or passed value
+        self.__jobId = jobId
+
         # No errors yet in new job
         self.__failure = None
 
@@ -358,9 +366,13 @@ class CdrBatch:
             # Job must not try to run itself
             self.fail("Unable to connect to database: %s" % info[1][0])
 
-        # Set job id to None or passed value
-        self.__jobId = jobId
+        # Everything autocommitted on this cursor
+        try:
+            self.__conn.setAutoCommit()
+        except cdrdb.Error:
+            self.fail ("Setting connection autocommit %s" % info[1][0])
 
+        # Gather parms if it's a new job
         if not self.__jobId:
             # If no job id passed, take parms from caller
             self.__jobName  = jobName
@@ -597,8 +609,6 @@ class CdrBatch:
                              "Database error setting parameter %s=%s: %s" %\
                               (key, val, info[1][0]))
 
-        # Commit the job and its parameters together
-        self.__conn.commit()
 
     #------------------------------------------------------------------
     # Fail a batch job
@@ -701,7 +711,6 @@ class CdrBatch:
               UPDATE batch_job
                  SET progress = ?, status_dt = GETDATE()
                WHERE id = ?""", (newMsg, self.__jobId))
-            self.__conn.commit()
         except cdrdb.Error, info:
             self.fail ("Unable to update progress message: %s" % info[1][0])
 
