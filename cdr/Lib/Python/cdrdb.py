@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.4 2001-08-06 04:33:01 bkline Exp $
+# $Id: cdrdb.py,v 1.5 2001-08-06 14:38:26 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2001/08/06 04:33:01  bkline
+# Switched to SQLOLEDB provider.
+#
 # Revision 1.2  2001/08/05 20:25:03  bkline
 # Fixed a couple of typos in the date/time formatting routines.
 #
@@ -175,6 +178,15 @@ class ProgrammingError(DatabaseError):  pass
 class NotSupportedError(DatabaseError): pass
 
 #----------------------------------------------------------------------
+# Build a tuple of error strings for a raised exception.
+#----------------------------------------------------------------------
+def buildErrorList(conn):
+    e = []
+    for err in conn.Errors:
+        e.append(err.Description)
+    return tuple(e)
+
+#----------------------------------------------------------------------
 # Cursor object, returned by Connection.cursor().
 #----------------------------------------------------------------------
 class Cursor:
@@ -209,7 +221,6 @@ class Cursor:
     def __init__(self, conn):
         self.__conn      = conn
         self.__rs        = None
-        self.__affected  = -1
         self.description = None
         self.rowcount    = -1
         self.arraysize   = 100
@@ -227,7 +238,6 @@ class Cursor:
         """
 
         self.__rs            = None
-        self.__affected      = -1
         self.description     = None
         self.rowcount        = -1
         cmd                  = win32com.client.Dispatch("ADODB.Command")
@@ -238,39 +248,43 @@ class Cursor:
         params               = cmd.Parameters
         nParams              = params.Count
         if not nParams:
-            raise InternalError, "Failure loading procedure parameter info \
-                                  for %s" % procname
+            raise ProgrammingError, ("Cursor.callproc",
+                                    ("Procedure %s not cataloged" % procname,))
 
         # Plug in the parameters
         if type(parameters) != type([]) and type(parameters) != type(()):
             parameters = (parameters,)
         if len(parameters) != nParams - 1:
-            raise ProgrammingError, "callproc expected %d parameters, \
-                received %d" % (nParams - 1, len(parameters))
+            raise ProgrammingError, ("Cursor.callproc",
+                    ("expected %d parameters, received %d" % 
+                     (nParams - 1, len(parameters)),))
         for i in range(len(parameters)):
             params.Item(i + 1).Value = parameters[i]
-        if 1:
-            rs, rowsAffected = cmd.Execute()
-            fields = rs.Fields
+        try:
+            self.__rs, rowsAffected = cmd.Execute()
+            fields = self.__rs.Fields
             if len(fields):
                 desc = []
                 for field in fields:
                     desc.append(self.__getFieldDesc(field))
                 self.description = desc
-            self.__affected  = rowsAffected
-            self.__rs        = len(fields) and rs or None
+            else:
+                self.rowcount = rowsAffected
 
+            # XXX Won't be available yet if there's a pending result set.
             for i in range(len(parameters)):
                 p = params.Item(i + 1)
                 if p.Direction == win32com.client.constants.adParamOutput or \
                    p.Direction == win32com.client.constants.adParamInputOutput:
                     parameters[i] = p.Value
-
-            # XXX Won't be available yet if there's a pending result set.
             return params.Item(0).Value
 
-        #except:
-        #    raise OperationalError, "internal error in '%s'" % procname
+        except:
+            errorList = buildErrorList(self.__conn)
+            if errorList:
+                raise Error, ("Cursor.callproc", errorList)
+            raise InternalError, ("Cursor.callproc",
+                    (("internal error in '%s'" % procname),))
 
     def close(self):
         """
@@ -280,9 +294,10 @@ class Cursor:
         attempted with the cursor. 
         """
 
-        if self.__rs: self.__rs.Close()
+        if self.__rs: 
+            if self.__rs.State == win32com.client.constants.adStateOpen:
+                self.__rs.Close()
         self.__rs        = None
-        self.__affected  = -1
         self.description = None
         self.rowcount    = -1
 
@@ -315,7 +330,6 @@ class Cursor:
         """
 
         self.__rs            = None
-        self.__affected      = -1
         self.description     = None
         self.rowcount        = -1
         cmd                  = win32com.client.Dispatch("ADODB.Command")
@@ -327,17 +341,22 @@ class Cursor:
                     params = (params,)
                 for i in range(len(params)):
                     cmd.Parameters.Item[i].Value = paramSet[i]
-            rs, self.__affected = cmd.Execute()
-            fields = rs.Fields
+            self.__rs, rowsAffected = cmd.Execute()
+            fields = self.__rs.Fields
             if len(fields):
                 desc = []
                 for field in fields:
                     desc.append(self.__getFieldDesc(field))
                 self.description = desc
-                self.__rs        = rs
+            else:
+                self.rowcount = rowsAffected
                     
         except:
-            raise OperationalError, "internal error in '%s'" % query
+            errorList = buildErrorList(self.__conn)
+            if errorList:
+                raise Error, ("Cursor.execute", errorList)
+            raise InternalError, ("Cursor.execute",
+                    (("unexpected failure for query '%s'" % query),))
 
     def executemany(self, query, paramSets):
         """
@@ -405,22 +424,32 @@ class Cursor:
         for it to retain the same value from one fetchmany() call to the next.
         """
 
-        if not self.__rs: raise ProgrammingError, "No result set available"
+        if not self.__rs or not self.description: 
+            raise ProgrammingError, ("Cursor.fetchmany", 
+                                    ("No result set available",))
         if size == None:
             size = self.arraysize
         if rememberSize:
             self.arraysize = size
         if self.__rs.EOF: return []
-        data  = self.__rs.GetRows(size)
-        rows  = []
-        nCols = len(data)
-        nRows = len(data[0])
-        for row in range(nRows):
-            vals = []
-            for col in range(nCols):
-                vals.append(data[col][row])
-            rows.append(vals)
-        return rows
+        try:
+            data  = self.__rs.GetRows(size)
+            rows  = []
+            nCols = len(data)
+            nRows = len(data[0])
+            for row in range(nRows):
+                vals = []
+                for col in range(nCols):
+                    vals.append(data[col][row])
+                rows.append(vals)
+            return rows
+
+        except:
+            errorList = buildErrorList(self.__conn)
+            if errorList:
+                raise Error, ("Cursor.fetchmany", errorList)
+            raise InternalError, ("Cursor.fetchmany",
+                    ("unexpected failure",))
 
     def nextset(self):
         """
@@ -436,7 +465,32 @@ class Cursor:
         issued yet.
         """
 
-        raise NotImplementedError, "nextset() method not yet implemented"
+        self.description     = None
+        self.rowcount        = -1
+        if not self.__rs:
+            raise ProgrammingError, ("Cursor.nextset",
+                    ("no record sets available",))
+
+        try:
+            self.__rs, rowsAffected = self.__rs.NextRecordset()
+            if not self.__rs:
+                return None
+            fields = self.__rs.Fields
+            if len(fields):
+                desc = []
+                for field in fields:
+                    desc.append(self.__getFieldDesc(field))
+                self.description = desc
+            else:
+                self.rowcount = rowsAffected
+            return 1
+
+        except:
+            errorList = buildErrorList(self.__conn)
+            if errorList:
+                raise Error, ("Cursor.nextset", errorList)
+            raise InternalError, ("Cursor.nextset",
+                                 ("unexpected failure",))
 
     def setinputsizes(self, sizes):
         """
@@ -480,7 +534,8 @@ class Cursor:
         if nativeType in NUMBER  .nativeTypes: return NUMBER
         if nativeType in DATETIME.nativeTypes: return DATETIME
         if nativeType in ROWID   .nativeTypes: return ROWID
-        raise NotSupportedError, "unrecognized native type %d" % nativeType
+        raise NotSupportedError, ("Cursor.__nativeTypeToApiType",
+                (("unrecognized native type %d" % nativeType),))
 
     def __getFieldDesc(self, field):
         name         = field.Name
@@ -517,7 +572,14 @@ class Connection:
         objects trying to use the connection.
         """
 
-        self.__adoConn.Close()
+        try:
+            self.__adoConn.Close()
+        except:
+            errorList = buildErrorList(self.__conn)
+            if errorList:
+                raise Error, ("Connection.close", errorList)
+            raise InternalError, ("Connection.close",
+                    ("unexpected failure",))
 
     def commit(self):
         """
@@ -527,7 +589,8 @@ class Connection:
         it back on.
         """
 
-        raise NotSupportedError, "commit() method not yet implemented"
+        raise NotSupportedError, ("Connection.commit",
+                ("commit() method not yet implemented",))
 
     def rollback(self): 
         """
@@ -536,7 +599,8 @@ class Connection:
         changes first will cause an implicit rollback to be performed.
         """
 
-        raise NotSupportedError, "rollback() method not yet implemented"
+        raise NotSupportedError, ("Connection.rollback",
+                ("rollback() method not yet implemented",))
 
     def cursor(self): 
         """
@@ -562,7 +626,7 @@ def connect(user = 'cdr'):
     adoConn = win32com.client.Dispatch("ADODB.Connection")
     if user == 'cdr': password = '***REMOVED***'
     elif user == 'CdrGuest': password = '***REDACTED***'
-    else: raise DatabaseError, "invalid login name"
+    else: raise DatabaseError, ("connect", ("invalid login name",))
 
     try:
         adoConn.Open("Provider=SQLOLEDB;\
@@ -571,7 +635,7 @@ def connect(user = 'cdr'):
                       User ID=%s;\
                       Password=%s" % (user, password))
     except:
-        raise DatabaseError, "unable to connect to CDR account as %s" % user
+        raise DatabaseError, ("connect", buildErrorList(adoConn))
     return Connection(adoConn)
 
 class Type:
