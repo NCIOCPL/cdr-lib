@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.38 2002-07-05 20:55:04 bkline Exp $
+# $Id: cdr.py,v 1.39 2002-07-11 14:52:26 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.38  2002/07/05 20:55:04  bkline
+# Added reindex() command.
+#
 # Revision 1.37  2002/07/02 23:49:21  ameyer
 # Added extended cdr id normalizer exNormalize().
 #
@@ -142,6 +145,7 @@ LOGOFF_STRING = "<CdrCommand><CdrLogoff/></CdrCommand></CdrCommandSet>"
 PYTHON        = "d:\\python\\python.exe"
 BASEDIR       = "d:/cdr"
 SMTP_RELAY    = "MAILFWD.NIH.GOV"
+DEFAULT_LOGFILE = "d:/cdr/Log/debug.log"
 
 #----------------------------------------------------------------------
 # Normalize a document id to form 'CDRnnnnnnnnnn'.
@@ -1765,7 +1769,7 @@ def listVersions(credentials, docId, nVersions = -1,
 # Reindex the specified document.
 #----------------------------------------------------------------------
 def reindex(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
-    
+
     # Create the command.
     docId = normalize(docId)
     cmd = "<CdrReindexDoc><DocId>%s</DocId></CdrReindexDoc>" % docId
@@ -1851,6 +1855,43 @@ class PubStatus:
 
 def pubStatus(self, jobId, getDocInfo = 0):
     return "XXX this is a stub"
+
+#----------------------------------------------------------------------
+# Write messages to a logfile.
+#----------------------------------------------------------------------
+def logwrite(msgs, logfile = DEFAULT_LOGFILE):
+    """
+    Append one or messages to a log file - closing the file when done.
+
+    Pass:
+        msgs - Single string or tuple of strings to write.  Should not
+               contain binary data.
+        logfile - Optional log file path, else uses default.
+
+    Return:
+        Void.  Does nothing at all if it can't open the logfile or
+          append to it.
+    """
+    f = None
+    try:
+        f = open (logfile, "a")
+        if type (msgs) == type (()):
+            for msg in msgs:
+                f.write (msg)
+                f.write ("\n")
+        else:
+            f.write (msg)
+            f.write ("\n")
+    except IOError:
+        pass
+
+    # Close file if opened.  This ensures that caller will see his
+    #   logged messages even if his program crashes
+    if f:
+        try:
+            f.close()
+        except IOError:
+            pass
 
 #----------------------------------------------------------------------
 # Log out from the CDR.
