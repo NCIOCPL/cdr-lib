@@ -1,26 +1,21 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrmailcommon.py,v 1.1 2002-09-19 21:40:00 ameyer Exp $
+# $Id: cdrmailcommon.py,v 1.2 2002-10-24 23:13:07 ameyer Exp $
 #
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2002/09/19 21:40:00  ameyer
+# First fersion of common mailer routines.  Not yet operational.
+#
 #----------------------------------------------------------------------
 
-import cdrdb
+import sys, cdrdb
+
 
 # Log file for debugging - module variable, not instance
-logf = None
-
-def logwrite(msg):
-    global logf
-    if logf == None:
-        logf = open ('d:/cdr/log/mailcommon.log', "w", 0)
-
-    # if (type(msg) == "" or type(msg) == u""):
-    logf.write (msg)
-    logf.write ("\n")
+LOGFILE = "d:/cdr/log/mailer.log"
 
 #----------------------------------------------------------------------
 # Class for finding documents and recipients for remailers.
@@ -58,7 +53,8 @@ class RemailSelector:
         self.__jobId = jobId
 
 
-    def select(self, originalMailType, earlyDays=120, lateDays=60):
+    def select(self, originalMailType, maxMailers=sys.maxint,
+                     earlyDays=120, lateDays=60):
         """
         Find documents and related ids for remailing.
         Finds doc ids, associated mailer tracking doc ids, and
@@ -68,6 +64,9 @@ class RemailSelector:
         Parameters:
             originalMailType = Original mailer types, e.g.,
               'Physician-Annual update'.
+
+            maxMailers = Maximum number of documents to select for
+              mailer generation.  Default is no limit.
 
             earlyDays = Number of days to look backward for mailers that
               received no response.  This is included because, for some
@@ -95,7 +94,6 @@ class RemailSelector:
             cursor = self.__conn.cursor()
             cursor.execute ("""
                 CREATE TABLE #remailTemp (
-                    job         INTEGER,
                     doc         INTEGER,
                     ver         INTEGER,
                     tracker     INTEGER,
@@ -111,37 +109,51 @@ class RemailSelector:
         #  Could be a major addition
         #
         try:
+            # Select latest version of document for which:
+            #    A mailer was sent between
+            #       Some number of days (60 is expected)
+            #       and some other number (120 is expected)
+            #       (e.g., examines all mailers sent between 2 and 4
+            #        months ago.)
+            #    The mailer is the requested type, i.e., one of the
+            #       non-remailer types.
+            #    No response to the mailer was received.
+            #    No remailer has already been sent.
+            # The selection also gathers other information, but note
+            #    that although the original recipient is picked up here,
+            #    the recipient must be recalculated for Organizations.
             qry = """
-                INSERT INTO #remailTemp (doc, tracker, recipient)
-                SELECT doc.int_val, mailer.doc_id, recip.int_val
-                  FROM query_term mailer
-                  JOIN query_term sent
-                    ON sent.doc_id  = mailer.doc_id
-                  JOIN query_term recip
-                    ON recip.doc_id = mailer.doc_id
-                  JOIN query_term doc
-                    ON doc.doc_id = mailer.doc_id
-                 WHERE mailer.path  = '/Mailer/Type'
-                   AND mailer.value = '%s'
-                   AND sent.path    = '/Mailer/Sent'
-                   AND sent.value BETWEEN (GETDATE()-%d) AND (GETDATE()-%d)
-                   AND recip.path   = '/Mailer/Recipient/@cdr:ref'
-                   AND doc.path     = '/Mailer/Document/@cdr:ref'
+                INSERT INTO #remailTemp (doc, ver, tracker, recipient)
+                SELECT TOP %d qdoc.int_val, MAX(doc_version.num),
+                       MIN(qmailer.doc_id), qrecip.int_val
+                  FROM query_term qmailer
+                  JOIN doc_version
+                    ON qmailer.doc_id = doc_version.id
+                  JOIN query_term qsent
+                    ON qsent.doc_id  = qmailer.doc_id
+                  JOIN query_term qrecip
+                    ON qrecip.doc_id = qmailer.doc_id
+                  JOIN query_term qdoc
+                    ON qdoc.doc_id = qmailer.doc_id
+                 WHERE qmailer.path  = '/Mailer/Type'
+                   AND qmailer.value = '%s'
+                   AND qsent.path    = '/Mailer/Sent'
+                   AND qsent.value BETWEEN (GETDATE()-%d) AND (GETDATE()-%d)
+                   AND qrecip.path   = '/Mailer/Recipient/@cdr:ref'
+                   AND qdoc.path     = '/Mailer/Document/@cdr:ref'
                    AND NOT EXISTS (
                       SELECT *
                         FROM query_term resp
                        WHERE resp.path = '/Mailer/Response/Received'
-                         AND resp.doc_id = mailer.doc_id)
+                         AND resp.doc_id = qmailer.doc_id)
                    AND NOT EXISTS (
                       SELECT *
                         FROM query_term remail
                        WHERE remail.path = '/Mailer/RemailerFor/@cdr:ref'
-                         AND remail.int_val = mailer.doc_id)
-                """ % (originalMailType, earlyDays, lateDays)
+                         AND remail.int_val = qmailer.doc_id)
+                GROUP BY qdoc.int_val, qrecip.int_val
+                """ % (maxMailers, originalMailType, earlyDays, lateDays)
             cursor.execute (qry, timeout=180)
-
-            logwrite ("Remailer query:\n%s" % qry)
-            logwrite ("Hit count on query = %d" % cursor.rowcount)
 
             # Tell user how many hits there were
             return cursor.rowcount
@@ -174,10 +186,8 @@ class RemailSelector:
         Copy the data from the temporary table to a place where
         the batch portion of the mailer program can get at it
         """
-        logwrite (str(jobId))
         try:
-            cursor = self.__conn.cursor()
-            cursor.execute (
+            self.__conn.cursor().execute(
               """INSERT INTO remailer_ids (job, doc, tracker, recipient)
                      SELECT %d, doc, tracker, recipient
                        FROM #remailTemp""" % jobId)
@@ -206,7 +216,7 @@ class RemailSelector:
 
         except cdrdb.Error, info:
             raise 'database error getting related remailer_ids: %s' \
-                  % (self.__jobId, str(info[1][0]))
+                  % str(info[1][0])
 
     def delete(self):
         """
@@ -214,8 +224,7 @@ class RemailSelector:
         Call when processing is finished.
         """
         try:
-            cursor = self.__conn.cursor()
-            self.__cursor.execute(
+            self.__conn.cursor().execute(
                 "DELETE FROM remailer_ids WHERE job=?", self.__jobId)
 
             # Make object unusable
