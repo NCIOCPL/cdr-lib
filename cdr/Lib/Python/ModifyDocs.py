@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.5 2004-07-27 15:46:38 bkline Exp $
+# $Id: ModifyDocs.py,v 1.6 2004-09-23 21:29:23 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2004/07/27 15:46:38  bkline
+# Added log entry to say how many documents were selected.
+#
 # Revision 1.4  2004/03/31 13:46:04  bkline
 # Fixed typo (lastp for lastv); added DEBUG flag, which if set will
 # re-throw any exceptions caught.
@@ -20,18 +23,24 @@
 # Harness for one-off global changes.
 #
 #----------------------------------------------------------------------
-import cdr, cdrdb, sys, time, re, os
+import cdr, cdrdb, cdrglblchg, sys, time, re
 
 LOGFILE = 'd:/cdr/log/ModifyDocs.log'
 ERRPATT = re.compile(r"<Err>(.*?)</Err>", re.DOTALL)
 DEBUG   = 0
 
 #----------------------------------------------------------------------
+# Module level variables (statics)
+#----------------------------------------------------------------------
+_testMode  = True   # True=Output to files only, not database
+_outputDir = None   # Files go in this directory
+
+#----------------------------------------------------------------------
 # Class for one modification job.
 #----------------------------------------------------------------------
 class Job:
-    
-    def __init__(self, uid, pwd, filter, transform, comment,
+
+    def __init__(self, uid, pwd, filter, transform, comment, testMode=True,
                  logFile = LOGFILE):
         """
         Create a new one-off job to apply a custom modification to
@@ -47,8 +56,11 @@ class Job:
                          the algorithm appropriate to this job; the
                          name of this method must be run()
             comment    - string to be stored with new versions
+            testMode   - True = write output to files, do not update database.
+                         False = Modify the database.
             logFile    - optional path for logfile
         """
+        global _testMode
 
         self.logFile   = open(logFile, 'a')
         self.uid       = uid
@@ -58,23 +70,34 @@ class Job:
         self.comment   = comment
         self.cursor    = cdrdb.connect('CdrGuest')
         self.session   = cdr.login(uid, pwd)
+        _testMode      = testMode
         error          = cdr.checkErr(self.session)
         if error:
             raise Exception("Failure logging into CDR: %s" % error)
 
     def run(self):
+        # In test mode, create output directory for files
+        global _testMode, _outputDir
+        if _testMode:
+            # Raises exception to exit program if fails
+            _outputDir = cdrglblchg.createOutputDir()
+            self.log("Running in test mode.  Output to: %s" % _outputDir)
+        else:
+            self.log("Running in real mode.  Updating the database")
+
+        # Change all docs
         ids = self.filter.getDocIds()
         self.log("%d documents selected" % len(ids))
-        for id in ids:
+        for docId in ids:
             try:
-                self.log("Processing CDR%010d" % id)
-                doc = Doc(id, self.session, self.transform, self.comment)
+                self.log("Processing CDR%010d" % docId)
+                doc = Doc(docId, self.session, self.transform, self.comment)
                 doc.saveChanges(self)
             except Exception, info:
-                self.log("Document %d: %s" % (id, str(info)))
+                self.log("Document %d: %s" % (docId, str(info)))
                 if DEBUG:
                     raise
-            cdr.unlock(self.session, "CDR%010d" % id)
+            cdr.unlock(self.session, "CDR%010d" % docId)
 
     #------------------------------------------------------------------
     # Log processing/error information with a timestamp.
@@ -83,7 +106,7 @@ class Job:
         what = "%s: %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), what)
         self.logFile.write(what)
         sys.stderr.write(what)
-    
+
 #----------------------------------------------------------------------
 # Class for a CDR document.
 #----------------------------------------------------------------------
@@ -146,7 +169,7 @@ class Doc:
                                     "for CDR%010d: %s" % (lastPub,
                                                        self.id, err))
                 self.newLastp = self.transform.run(self.lastp)
-                
+
     def saveChanges(self, job):
         """
         Saves versions for a document according to the following logic:
@@ -170,29 +193,54 @@ class Doc:
         If CWD(t) <> LS:
             Create new CWD using CWD(t)
         """
-
+        global _testMode, _outputDir
         lastSavedXml = None
+        docId        = self.cwd.id
+
+        # Only save to database in run mode
+        # Only write to output files in test mode
+
+        if _testMode:
+            # Write new/original CWDs
+            cdrglblchg.writeDocs(_outputDir, docId,
+                                 self.cwd.xml, self.newCwd, 'cwd')
         if self.lastv and self.compare(self.cwd.xml, self.lastv.xml):
-            self.cwd.xml = lastSavedXml = self.lastv.xml
-            lastSavedXml = self.cwd.xml
-            self.saveDoc(str(self.cwd), ver = 'Y', pub = 'N', job = job,
-                         logWarnings = 0)
+            if not _testMode:
+                # Save old CWD as new version
+                self.__saveDoc(str(self.cwd), ver='Y', pub='N', job=job,
+                               logWarnings=0)
+            lastSavedXml = self.lastv.xml
         if self.lastp and self.compare(self.lastp.xml, self.newLastp):
-            self.lastp.xml = lastSavedXml = self.newLastp
-            self.saveDoc(str(self.lastp), ver = 'Y', pub = 'Y', job = job)
+            if _testMode:
+                # Write new/original last pub version
+                cdrglblchg.writeDocs(_outputDir, docId,
+                                     self.lastp.xml, self.newLastp, 'pub')
+            else:
+                # Save new last pub version
+                self.lastp.xml = lastSavedXml = self.newLastp
+                self.__saveDoc(str(self.lastp), ver='Y', pub='Y', job=job)
         if self.lastv and self.compare(self.lastv.xml, self.newLastv):
-            self.lastv.xml = lastSavedXml = self.newLastv
-            self.saveDoc(str(self.lastv), ver = 'Y', pub = 'N', job = job)
+            if _testMode:
+                # Write new/original last non-pub version
+                cdrglblchg.writeDocs(_outputDir, docId,
+                                     self.lastv.xml, self.newLastv, 'lastv')
+            else:
+                # Save new last non-pub version
+                self.lastv.xml = lastSavedXml = self.newLastv
+                self.__saveDoc(str(self.lastv), ver='Y', pub='N', job=job)
         if lastSavedXml and self.compare(self.newCwd, lastSavedXml):
-            self.cwd.xml = self.newCwd
-            self.saveDoc(str(self.cwd), ver = 'N', pub = 'N', job = job)
+            if not _testMode:
+                # Save new CWD
+                self.cwd.xml = self.newCwd
+                self.__saveDoc(str(self.cwd), ver='N', pub='N', job=job)
 
     #------------------------------------------------------------------
     # Invoke the CdrRepDoc command.
     #------------------------------------------------------------------
-    def saveDoc(self, docStr, ver, pub, job, logWarnings = 1):
+    def __saveDoc(self, docStr, ver, pub, job, logWarnings = 1):
         job.log("saveDoc(%d, ver='%s' pub='%s')" % (self.id, ver, pub))
         # return 1
+
         response = cdr.repDoc(self.session, doc = docStr, ver = ver,
                               val = 'Y',
                               verPublishable = pub,
