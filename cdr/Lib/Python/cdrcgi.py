@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.24 2002-07-17 18:52:28 bkline Exp $
+# $Id: cdrcgi.py,v 1.25 2002-07-25 18:22:14 ameyer Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.24  2002/07/17 18:52:28  bkline
+# New Admin menu item for CDR filter maintenance.
+#
 # Revision 1.23  2002/07/15 20:19:21  bkline
 # New argument (textType) for sendPage() function.  Mods for Summary
 # advanced search display.
@@ -288,9 +291,11 @@ def mainMenu(session, news = None):
       <LI><A HREF='%s/Mailers.py%s'>Mailers</A></LI>
       <LI><A HREF='%s/MergeProt.py%s'>Merge Protocol</A></LI>
       <LI><A HREF='%s/GlobalChange.py%s'>Make Global Changes</A></LI>
+      <LI><A HREF='%s/getBatchStatus.py%s'>View Batch Job Status</A></LI>
       <LI><A HREF='%s/Logout.py%s'>Log Out</A></LI>
      </OL>
     """ % (BASE, session,
+           BASE, session,
            BASE, session,
            BASE, session,
            BASE, session,
