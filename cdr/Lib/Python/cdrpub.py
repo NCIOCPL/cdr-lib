@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.10 2002-04-04 15:31:38 bkline Exp $
+# $Id: cdrpub.py,v 1.11 2002-04-04 18:31:43 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2002/04/04 15:31:38  bkline
+# Cleaned up some of the obsolete log entries (see CVS logs for full history).
+#
 # Revision 1.9  2002/04/04 15:24:06  bkline
 # Rewrote module to match Mike's design spec more closely.  Split out
 # CGI support to a separate module.
@@ -67,9 +70,7 @@ class Publish:
 
         # Keep a copy of the job ID.
         self.__jobId = jobId
-        self.__debugLog("=" * 60)
         self.__debugLog("Publishing job processing commenced.")
-        self.__debugLog("=" * 60)
 
         # Connect to the CDR database.  Exception is raised on failure.
         self.__getConn()
@@ -92,7 +93,7 @@ class Publish:
              WHERE p.id     = ?
                AND p.status = ?"""
         try:
-            cursor.execute(sql, (self.__jobId, Publish.INIT))
+            cursor.execute(sql, (self.__jobId, Publish.START))
             row = cursor.fetchone()
             if not row:
                 msg = "Unable to retrieve information for job %d" % self.__jobId
@@ -543,7 +544,7 @@ class Publish:
                  WHERE d.id          = ?
                    AND d.num         = ?
                    AND d.publishable = 'Y'
-                   AND d.val_status  = 'V'""", (id, version)
+                   AND d.val_status  = 'V'""" % (id, version)
         else:
             sql = """\
                 SELECT d.id,
@@ -552,12 +553,12 @@ class Publish:
                   FROM doc_version d
                   JOIN doc_type    t
                     ON t.id          = d.doc_type
-                 WHERE d.id          = ?
+                 WHERE d.id          = %d
                    AND d.publishable = 'Y'
                    AND d.val_status  = 'V'
-                   AND d.dt         <= ?
+                   AND d.dt         <= '%s'
               GROUP BY d.id,
-                       t.name""", (id, self.__jobTime)
+                       t.name""" % (id, self.__jobTime)
         try:
             cursor = self.__conn.cursor()
             cursor.execute(sql)
