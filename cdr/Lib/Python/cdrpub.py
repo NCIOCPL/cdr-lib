@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.66 2005-01-18 19:39:44 venglisc Exp $
+# $Id: cdrpub.py,v 1.67 2005-01-24 21:20:50 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.66  2005/01/18 19:39:44  venglisc
+# Minor rewording of a status message and adding of a line break in HTML
+# output.
+#
 # Revision 1.65  2004/12/21 13:17:16  bkline
 # Backed out terminology snapshot code, which will be moved to the program
 # which does the NLM trial export.
@@ -1120,6 +1124,12 @@ has started</B>).<BR>""" % cgWorkLink
                 self.__updateStatus(Publish.SUCCESS, msg)
                 return
 
+            # Remember any hotfix jobs that need to be exported to NLM.
+            if pubTypeCG == "Hotfix":
+                cursor.execute("""\
+                   INSERT INTO ctgov_export (pub_proc)
+                        VALUES (?)""", self.__jobId)
+                
             # Get last successful cg_jobId. GateKeeper does not
             # care which subset it belongs to.
             # Returns 0 if there is no previous success.
@@ -2234,7 +2244,8 @@ has started</B>).<BR>""" % cgWorkLink
             try:
                 cdrDoc = cdr.getDoc('guest', docId,
                                     version = str(doc.getVersion()),
-                                    blob = 'Y', getObject = True)
+                                    blob = 'Y', getObject = True,
+                                    port = self.__pubPort)
                 name = cdrDoc.getPublicationFilename()
                 self.__saveDoc(cdrDoc.blob, destDir + '/' + subDir, name, "wb")
                 lastChange = cdr.getVersionedBlobChangeDate('guest', docId,
@@ -3050,8 +3061,9 @@ Please do not reply to this message.
         # Put a stop there.
         status = Publish.WAIT
         msg = "Job is waiting for user's approval at %s.<BR>" % time.ctime()
-        msg += "Change the publishing job status using the menu item <BR>" \
-               "<B>Manage Publishing Job Status</B> under the Publishing Menu. <BR>"
+        msg += ("Change the publishing job status using the menu item <BR>"
+                "<B>Manage Publishing Job Status</B> "
+                "under the Publishing Menu. <BR>")
         self.__updateStatus(status, msg)
         msg += "<BR>"
         self.__sendMail()
