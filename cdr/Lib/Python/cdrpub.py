@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.48 2003-01-28 20:37:25 pzhang Exp $
+# $Id: cdrpub.py,v 1.49 2003-01-29 21:52:09 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.48  2003/01/28 20:37:25  pzhang
+# Added comment on documents with filter failures.
+# These documents are not regarded as "removed" or "blocked".
+#
 # Revision 1.47  2003/01/24 22:03:44  pzhang
 # Added code to make sure that distinct rows are inserted
 # into pub_proc_cg_work table.
@@ -548,8 +552,9 @@ class Publish:
             if self.__publishIfWarnings == "Ask" and self.__warningCount:
                 self.__updateStatus(Publish.WAIT, "Warnings encountered")
 
-            # Rename the output directory from its working name and push
-            # filtered documents to CG, if appropriate.
+            # Rename the output directory from its working name.
+            # Create a pushing job if it is a vendor job; or push 
+            # filtered documents to CG if it is a cg job.
             else:
                 # Pushing job could have "Message only" checked in theory.
                 lenPd2Cg = len(self.__pd2cg)
@@ -572,15 +577,10 @@ class Publish:
                         else:
                             self.__updateStatus(Publish.SUCCESS)
 
-                    # Filtered documents have to be in dest before sending
-                    # them to Cancer.gov. The following piece of code is
-                    # quite confusing. Keep in mind that there are possibly
-                    # two jobs involved.
+                    # Push docs or create a pushing job.                    
                     else:
 
-                        # This separately started job is for sending the 
-                        # filtered documents, not producing the filtered 
-                        # documents again.                        
+                        # It is a pushing job.                      
                         if (self.__subsetName)[0:lenPd2Cg] == self.__pd2cg:
                             
                             # Make sure output_dir is reset to "" for pushing
@@ -593,48 +593,43 @@ class Publish:
                             vendorInfo    = self.__findVendorData()
                             vendor_job    = vendorInfo[0]
                             vendor_dest   = vendorInfo[1]
-                            vendor_subset = vendorInfo[2]
-
+                        
                             if not vendor_job:
                                 self.__updateStatus(Publish.FAILURE,
                                     "No enough vendor info found.<BR>")
                             else:
 
                                 # A long pushing job of many hours starts!
-                                cgResp = self.__pushDocsToCG(vendor_job,
-                                    vendor_dest, vendor_subset, self.__jobId)
+                                self.__pushDocsToCG(vendor_job, vendor_dest)
 
-                                # Update status and message of this pushing
-                                # job.
-                                self.__updateStatus(cgResp[1], cgResp[2])
+                                # There is no exception thrown.
+                                self.__updateStatus(Publish.SUCCESS) 
 
-                        # Two jobs involved. A second job will be created
-                        # by __pushDocsToCG().
-                        else:
-
-                            # Send a first message indicating that the vendor
-                            # data are ready and pushing these documents to
-                            # CG is in progress.
-                            self.__updateStatus(Publish.SUCCESS,
-                                """Pushing filtered documents to Cancer.gov
-                                is in progress. You will receive a second
-                                email when it is done.<BR>""")
-                            self.__sendMail()
-
-                            # Pushing part of the job starts. The pushing
-                            # job will be created successfully, or not.
-                            cgResp = self.__pushDocsToCG(self.__jobId,
-                                    dest_base, self.__subsetName)                          
-
-                            # Update statuse of the cg_job and send a second
-                            # email. Do this only when the cg_job has been 
-                            # created.
-                            if cgResp[0]:
-                                self.__updateStatus(cgResp[1], cgResp[2],
-                                    cgResp[0])
-                                self.__sendMail(cgResp[0])
+                        # It is a vendor job. Create a pushing job and let
+                        # it run in its own way.
+                        else:                           
+                            self.__updateStatus(Publish.SUCCESS) 
+                            
+                            pushSubsetName = "%s_%s" % (self.__pd2cg, 
+                                                self.__subsetName)
+                            msg = ""                      
+                            resp = cdr.publish(self.__credentials, 
+                                "Primary",
+                                pushSubsetName,
+                                email = self.__email,
+                                noOutput = 'Y',
+                                port = self.__pubPort)            
+                            if not resp[0]:
+                                msg += "<B>Failed:</B> %s\n" % resp[1]
+                                msg += """<BR>Please run job %s
+                                    separately.<BR>""" % pushSubsetName 
                             else:
-                                self.__updateMessage(cgResp[2])
+                                msg += """Pushing filtered documents to 
+                                    Cancer.gov is in progress with job
+                                    %s. You will receive a second email 
+                                    when it is done.<BR>""" % resp[0]                            
+                            
+                            self.__updateMessage(msg)
                 else:
                     self.__updateStatus(Publish.SUCCESS)
 
@@ -745,7 +740,7 @@ class Publish:
     #------------------------------------------------------------------
     def __findVendorData(self):
         if not self.__params.has_key('SubSetName'):
-            return [None, None, None]
+            return [None, None]
         else:
             subsetName = self.__params['SubSetName']
             try:
@@ -771,7 +766,7 @@ class Publish:
                     raise StandardError("""This same job has been previously
                         successfully done by job %d.""" % prevId)
 
-                return [id, dest, subsetName]
+                return [id, dest]
 
             except cdrdb.Error, info:
                 raise StandardError("""Failure finding vendor job and vendor
@@ -780,42 +775,23 @@ class Publish:
 
     #------------------------------------------------------------------
     # Push documents of a specific vendor_job to Cancer.gov using cdr2cg
-    # module. Create a new cg_job to handle this task if a cg_job has not
-    # been created. When a value of cg_job is passed in, it must be the
-    # jobId of the Push_Documents_To_Cancer.Gov SubSet.
-    # We handle different pubTypes in separate code for clarity.
-    # Return a list [cg_job, status, message].
+    # module. 
+    # We handle different pubTypes with different functions for clarity.
+    # Raise a standard error when failed.
     #------------------------------------------------------------------
-    def __pushDocsToCG(self, vendor_job, vendor_dest, vendor_subsetName,
-                       cg_job = None):
-       
-        jobId = cg_job or 0
-
-        # Create a new pushing job ID if it does not exist.
-        if not cg_job:
-            resp = cdr.publish(self.__credentials, "Primary",
-                           "%s_%s" % (self.__pd2cg, vendor_subsetName),
-                           email = self.__email,
-                           noOutput = 'Y',
-                           port = self.__pubPort)            
-            if not resp[0]:
-                msg = "<B>Failed:</B> %s\n" % resp[1]
-                msg += """<BR>Please run job %s separately or
-                          again later.<BR>""" % self.__pd2cg
-                return [None, Publish.SUCCESS, msg]
-            jobId = int(resp[0])
-
-        # Get the value of pubType for this vendor_job.
+    def __pushDocsToCG(self, vendor_job, vendor_dest):
+          
+        # Get the value of pubType for this cg_job.
         if self.__params.has_key('PubType'):
             pubType = self.__params['PubType']
             if not cdr2cg.PUBTYPES.has_key(pubType):
                 msg = """The value of parameter PubType, %s, is unsupported.
                        <BR>Please modify the control document or the source
                        code.<BR>""" % pubType
-                return [jobId, Publish.FAILURE, msg]
+                raise StandardError(msg)
         else:
-            msg = "There is no parameter PubType in the control document."
-            return [jobId, Publish.FAILURE, msg]
+            msg = "There is no parameter PubType in the control document.<BR>"
+            raise StandardError(msg)
 
         try:
             cursor = self.__conn.cursor()
@@ -823,36 +799,36 @@ class Publish:
             # If pubType is "Full Load", clean up pub_proc_cg table.
             if pubType == "Full Load":
                 msg = "Deleting pub_proc_cg at %s.<BR>" % time.ctime()
-                self.__updateMessage(msg, jobId)
+                self.__updateMessage(msg)
                 try: cursor.execute("DELETE pub_proc_cg",
                                     timeout = self.__timeOut)
                 except cdrdb.Error, info:
                     msg = "Deleting pub_proc_cg failed: %s<BR>" % info[1][0]
-                    return [jobId, Publish.FAILURE, msg]
+                    raise StandardError(msg)
 
             # Create a working table pub_proc_cg_work to hold information
             # on transactions to Cancer.gov.
             msg = "Creating pub_proc_cg_work at %s.<BR>" % time.ctime()
-            self.__updateMessage(msg, jobId)
+            self.__updateMessage(msg)
             cgWorkLink = self.__cdrHttp + "/PubStatus.py?id=1&type=CgWork"
             link = "<A style='text-decoration: underline;' href='%s'> \
                 Check pushed docs</A>(<B>inaccurate after next pushing \
                 job has started or this job succeeds</B>).<BR>" % cgWorkLink          
             if pubType == "Full Load" or pubType == "Export":
-                self.__createWorkPPC(vendor_job, vendor_dest, jobId)
+                self.__createWorkPPC(vendor_job, vendor_dest)
                 pubTypeCG = pubType
                 if self.__checkPushedDocs or self.__interactiveMode:
-                    self.__updateMessage(link, jobId)
-                    self.__waitUserApproval(jobId)
+                    self.__updateMessage(link)
+                    self.__waitUserApproval()
             elif pubType == "Hotfix (Remove)":
-                self.__createWorkPPCHR(vendor_job, jobId)
+                self.__createWorkPPCHR(vendor_job)
                 pubTypeCG = "Hotfix"
             elif pubType == "Hotfix (Export)":
-                self.__createWorkPPCHE(vendor_job, vendor_dest, jobId)
+                self.__createWorkPPCHE(vendor_job, vendor_dest)
                 pubTypeCG = "Hotfix"
                 if self.__checkPushedDocs or self.__interactiveMode:
-                    self.__updateMessage(link, jobId)
-                    self.__waitUserApproval(jobId)
+                    self.__updateMessage(link)
+                    self.__waitUserApproval()
             else:
                 raise StandardError("pubType %s not supported." % pubType)
 
@@ -868,7 +844,8 @@ class Publish:
 
             if numDocs == 0:
                 msg = "No documents to be pushed to Cancer.gov.<BR>"
-                return [jobId, Publish.SUCCESS, msg]
+                self.__updateStatus(Publish.SUCCESS, msg)
+                return
 
             # Get last successful cg_jobId. GateKeeper does not
             # care which subset it belongs to.
@@ -889,7 +866,7 @@ class Publish:
                 if response.fault:
                     msg += "%s: %s<BR>" % (response.fault.faultcode,
                                            response.fault.faultstring)
-                    return [jobId, Publish.FAILURE, msg]
+                    raise StandardError(msg)
                 # Keep sending documents in this case and contact
                 # CG for detail. This is useful in testing pushes
                 # where a mismatched lostJobId is often expected.
@@ -899,16 +876,16 @@ class Publish:
 
             # Prepare the server for a list of documents to send.
             msg += """Sending data prolog with jobId=%d, pubType=%s,
-                    docType=%s, lastJobId=%d, numDocs=%d ...<BR>
-                    """ % (jobId, pubTypeCG, docType, lastJobId, numDocs)
-            response = cdr2cg.sendDataProlog(jobId, pubTypeCG, docType,
-                                                 lastJobId, numDocs)
+                    docType=%s, lastJobId=%d, numDocs=%d ...<BR>""" % (
+                    self.__jobId, pubTypeCG, docType, lastJobId, numDocs)
+            response = cdr2cg.sendDataProlog(self.__jobId, pubTypeCG, 
+                                             docType, lastJobId, numDocs)
             if response.type != "OK":
                 msg += "%s: %s<BR>" % (response.type, response.message)
-                return [jobId, Publish.FAILURE, msg]
-
+                raise StandardError(msg)
+               
             msg += "Pushing documents starts at %s.<BR>" % time.ctime()
-            self.__updateMessage(msg, jobId)
+            self.__updateMessage(msg)
             msg = ""
 
             # Send all new and updated documents.            
@@ -931,22 +908,22 @@ class Publish:
                 xml = XmlDeclLine.sub("", xml)
                 xml = DocTypeLine.sub("", xml)
 
-                response = cdr2cg.sendDocument(jobId, docNum,
+                response = cdr2cg.sendDocument(self.__jobId, docNum,
                             "Export", docType, id, version, xml)
                 if response.type != "OK":
                     msg += "sending document %d failed. %s: %s<BR>" % \
                             (id, response.type, response.message)
-                    return [jobId, Publish.FAILURE, msg]
+                    raise StandardError(msg)
                 docNum  = docNum + 1
                 if docNum % 1000 == 0:
                     msg += "Pushed %d documents at %s.<BR>" % (docNum, 
                                                                time.ctime())
-                    self.__updateMessage(msg, jobId)
+                    self.__updateMessage(msg)
                     msg = ""
                 addCount += 1
                 row = cursor.fetchone()
             msg += "%d documents pushed to Cancer.gov.<BR>" % addCount
-            self.__updateMessage(msg, jobId)
+            self.__updateMessage(msg)
             msg = ""
 
             # Remove all the removed documents.
@@ -962,21 +939,21 @@ class Publish:
                 docType   = row[2]
                 if docType == "InScopeProtocol":
                     docType = "Protocol"
-                response = cdr2cg.sendDocument(jobId, docNum, "Remove",
+                response = cdr2cg.sendDocument(self.__jobId, docNum, "Remove",
                                                docType, id, version)
                 if response.type != "OK":
                     msg += "deleting document %d failed. %s: %s<BR>" % (id,
                             response.type, response.message)
-                    return [jobId, Publish.FAILURE, msg]
+                    raise StandardError(msg)
                 docNum  = docNum + 1
                 if docNum % 1000 == 0:
                     msg += "Pushed %d documents at %s.<BR>" % (docNum, 
                             time.ctime())
-                    self.__updateMessage(msg, jobId)
+                    self.__updateMessage(msg)
                     msg = ""
             msg += "%d documents removed from Cancer.gov.<BR>" % len(rows)           
             msg += "Pushing done at %s.<BR>" % time.ctime()
-            self.__updateMessage(msg, jobId)
+            self.__updateMessage(msg)
             msg = ""
 
             # Before we claim success, we will have to update
@@ -993,19 +970,17 @@ class Publish:
                 raise StandardError("pubType %s not supported." % pubType)
 
             msg += "Updating PPC/PPD tables done at %s.<BR>" % time.ctime()
-            self.__updateMessage(msg, jobId)
+            self.__updateMessage(msg)
             msg = ""
 
         except cdrdb.Error, info:
             msg = "__pushDocsToCG() failed: %s<BR>" % info[1][0]
-            return [jobId, Publish.FAILURE, msg]
+            raise StandardError(msg)
         except StandardError, arg:            
-            return [jobId, Publish.FAILURE, arg[0]]
+            raise StandardError(arg[0])
         except:
             msg = "Unexpected failure in __pushDocsToCG.<BR>"
-            return [jobId, Publish.FAILURE, msg]
-
-        return [jobId, Publish.SUCCESS, msg]
+            raise StandardError(msg)
 
     #------------------------------------------------------------------
     # Create rows in the working pub_proc_cg_work table before updating
@@ -1015,8 +990,9 @@ class Publish:
     # new, and removed, although we don't distiguish the first two in the 
     # table.
     #------------------------------------------------------------------
-    def __createWorkPPC(self, vendor_job, vendor_dest, cg_job):
+    def __createWorkPPC(self, vendor_job, vendor_dest):
 
+        cg_job = self.__jobId
         cursor = self.__conn.cursor()
         cursor2 = self.__conn.cursor()
 
@@ -1031,7 +1007,7 @@ class Publish:
             raise StandardError(
                 "Deleting pub_proc_cg_work failed: %s<BR>" % info[1][0])
         msg = "Finished deleting pub_proc_cg_work at %s.<BR>" % time.ctime()
-        self.__updateMessage(msg, cg_job)
+        self.__updateMessage(msg)
 
         # Insert updated documents into pub_proc_cg_work. Updated documents
         # are those in both pub_proc_cg and pub_proc_doc belonging to this
@@ -1091,7 +1067,7 @@ class Publish:
             raise StandardError(
                 "Unexpected failure in setting U to pub_proc_cg_work.")
         msg = "Finished insertion for updating at %s.<BR>" % time.ctime()
-        self.__updateMessage(msg, cg_job)
+        self.__updateMessage(msg)
 
         # Insert new documents into pub_proc_cg_work. New documents are
         # those in pub_proc_doc belonging to vendor_job, but not in
@@ -1145,7 +1121,7 @@ class Publish:
             raise StandardError(
                 "Unexpected failure in setting A to pub_proc_cg_work.")
         msg = "Finished insertion for adding at %s.<BR>" % time.ctime()
-        self.__updateMessage(msg, cg_job)
+        self.__updateMessage(msg)
 
         # Insert removed documents into pub_proc_cg_work.
         # Removed documents are those in pub_proc_cg, but not in
@@ -1190,7 +1166,7 @@ class Publish:
             raise StandardError(
                 "Setting D to pub_proc_cg_work failed: %s<BR>" % info[1][0])          
         msg = "Finished insertion for deleting at %s.<BR>" % time.ctime()
-        self.__updateMessage(msg, cg_job)
+        self.__updateMessage(msg)
 
     #------------------------------------------------------------------
     # Return a string of doc type IDs to be used in query.
@@ -1221,8 +1197,9 @@ class Publish:
     #------------------------------------------------------------------
     # Different version of __createWorkPPC for Hotfix (Remove)
     #------------------------------------------------------------------
-    def __createWorkPPCHR(self, vendor_job, cg_job):
+    def __createWorkPPCHR(self, vendor_job):
 
+        cg_job = self.__jobId
         cursor = self.__conn.cursor()
 
         # Wipe out all rows in pub_proc_cg_work. Only one job can be run
@@ -1236,7 +1213,7 @@ class Publish:
             raise StandardError(
                 "Deleting pub_proc_cg_work failed: %s<BR>" % info[1][0])
         msg = "Finished deleting pub_proc_cg_work at %s.<BR>" % time.ctime()
-        self.__updateMessage(msg, cg_job)
+        self.__updateMessage(msg)
            
         # Insert removed documents into pub_proc_cg_work.
         # Removed documents are those in vendor_job. We will later
@@ -1258,13 +1235,14 @@ class Publish:
             raise StandardError(
                 "Setting D to pub_proc_cg_work failed: %s<BR>" % info[1][0])
         msg = "Finished inserting D to PPCW at %s.<BR>" % time.ctime()
-        self.__updateMessage(msg, cg_job)
+        self.__updateMessage(msg)
 
     #------------------------------------------------------------------
     # Different version of __createWorkPPC for Hotfix (Export)
     #------------------------------------------------------------------
-    def __createWorkPPCHE(self, vendor_job, vendor_dest, cg_job):
-
+    def __createWorkPPCHE(self, vendor_job, vendor_dest):
+    
+        cg_job = self.__jobId
         cursor = self.__conn.cursor()
         cursor2 = self.__conn.cursor()
 
@@ -1336,7 +1314,7 @@ class Publish:
             raise StandardError(
                 "Unexpected failure in setting U to pub_proc_cg_work.")
         msg = "Finished insertion for updating at %s.<BR>" % time.ctime()
-        self.__updateMessage(msg, cg_job)
+        self.__updateMessage(msg)
 
         # Insert new documents into pub_proc_cg_work. New documents are
         # those in pub_proc_doc belonging to vendor_job, but not in
@@ -1383,7 +1361,7 @@ class Publish:
             raise StandardError(
                 "Unexpected failure in setting A to pub_proc_cg_work.")       
         msg = "Finished insertion for adding at %s.<BR>" % time.ctime()
-        self.__updateMessage(msg, cg_job)
+        self.__updateMessage(msg)
 
     #------------------------------------------------------------------
     # Update pub_proc_cg and pub_proc_doc from pub_proc_cg_work.
@@ -2055,12 +2033,11 @@ class Publish:
     # XXX Add code to notify list of standard users for publishing
     # job notification.
     #------------------------------------------------------------------
-    def __sendMail(self, newJobId = None):
+    def __sendMail(self):
 
-        jobId = newJobId or self.__jobId
         try:
             if self.__email and self.__email != "Do not notify":
-                self.__debugLog("Sending mail to %s." % self.__email, jobId)
+                self.__debugLog("Sending mail to %s." % self.__email)
                 sender    = self.__cdrEmail
                 subject   = "CDR Publishing Job Status"
                 receivers = string.replace(self.__email, ";", ",")
@@ -2071,12 +2048,12 @@ Job %d has completed or changed status.  You can view a status report for this j
     %s/PubStatus.py?id=%d
 
 Please do not reply to this message.
-""" % (jobId, self.__cdrHttp, jobId)
+""" % (self.__jobId, self.__cdrHttp, self.__jobId)
                 cdr.sendMail(sender, receivers, subject, message)
         except:
             msg = "failure sending email to %s: %s" % \
                 (self.__email, cdr.exceptionInfo())
-            self.__debugLog(msg, jobId)
+            self.__debugLog(msg)
             raise StandardError(msg)
 
     #----------------------------------------------------------------
@@ -2373,11 +2350,10 @@ Please do not reply to this message.
     #----------------------------------------------------------------------
     # Set job status (with optional message) in pub_proc table.
     #----------------------------------------------------------------------
-    def __updateStatus(self, status, message = None, newJobId = None):           
-        id = newJobId or self.__jobId
-
-        self.__debugLog("Updating job status to %s." % status, id)
-        if message: self.__debugLog(message, id)
+    def __updateStatus(self, status, message = None):           
+        
+        self.__debugLog("Updating job status to %s." % status)
+        if message: self.__debugLog(message)
 
         date = "NULL"
         if status in (Publish.SUCCESS, Publish.FAILURE):
@@ -2388,7 +2364,7 @@ Please do not reply to this message.
                 SELECT messages
                   FROM pub_proc
                  WHERE id = %d
-                           """ % id
+                           """ % self.__jobId
                           )
             row     = cursor.fetchone()
             message = (row and row[0] or '') + (message or '')
@@ -2398,24 +2374,24 @@ Please do not reply to this message.
                    SET status    = ?,
                        messages  = ?,
                        completed = %s
-                 WHERE id        = ?""" % date, (status, message, id))
+                 WHERE id = ?""" % date, (status, message, self.__jobId))
         except cdrdb.Error, info:
-            msg = 'Failure setting status for job %d: %s' % (id, info[1][0])
-            self.__debugLog(msg, id)
+            msg = 'Failure updating status: %s' % info[1][0]
+            self.__debugLog(msg)
             raise StandardError(msg)
 
     #----------------------------------------------------------------------
     # Update message in pub_proc table.
     #----------------------------------------------------------------------
-    def __updateMessage(self, message, newJobId = None):
-        id = newJobId or self.__jobId
+    def __updateMessage(self, message):
+       
         try:
             cursor = self.__conn.cursor()
             cursor.execute("""
                 SELECT messages
                   FROM pub_proc
                  WHERE id = %d
-                           """ % id
+                           """ % self.__jobId
                           )
             row     = cursor.fetchone()
             message = (row and row[0] or '') + message
@@ -2423,10 +2399,10 @@ Please do not reply to this message.
             cursor.execute("""
                 UPDATE pub_proc
                    SET messages  = ?
-                 WHERE id        = ?""", (message, id))
+                 WHERE id        = ?""", (message, self.__jobId))
         except cdrdb.Error, info:
-            msg = 'Failure setting status for job %d: %s' % (id, info[1][0])
-            self.__debugLog(msg, id)
+            msg = 'Failure updating message: %s' % info[1][0]
+            self.__debugLog(msg)
             raise StandardError(msg)
 
     #----------------------------------------------------------------------
@@ -2474,18 +2450,15 @@ Please do not reply to this message.
     #----------------------------------------------------------------------
     # Wait for user's approval to proceed.
     #----------------------------------------------------------------------
-    def __waitUserApproval(self, newJobId = None):
-
-        # Depend on which part this is called from.
-        id     = newJobId or self.__jobId
+    def __waitUserApproval(self):
 
         # Put a stop there.
         status = Publish.WAIT
         msg = "Job is waiting for user's approval at %s.<BR>" % time.ctime()
         msg += "Change the publishing job status using Manage Publishing " \
                "Job Status link under Publishing. <BR>"
-        self.__updateStatus(status, msg, id)
-        self.__sendMail(id)
+        self.__updateStatus(status, msg)
+        self.__sendMail()
 
         # Wait until user does something.
         while 1:
@@ -2495,18 +2468,19 @@ Please do not reply to this message.
                     SELECT status
                       FROM pub_proc
                      WHERE id = %d
-                               """ % id
+                               """ % self.__jobId,
+                               timeout = self.__timeOut
                               )
                 row = cursor.fetchone()
                 if row and row[0]:
                     status = row[0]
                 else:
-                    msg = 'No status for job %d' % id
+                    msg = 'No status for job %d' % self.__jobId
                     raise StandardError(msg)
 
             except cdrdb.Error, info:
                 msg = 'Failure getting status for job %d: %s' % (
-                            id, info[1][0])
+                            self.__jobId, info[1][0])
                 raise StandardError(msg)
 
             # Wait another 10 seconds.
@@ -2515,22 +2489,22 @@ Please do not reply to this message.
                 time.sleep(10)
             elif status == Publish.RUN:
                 self.__updateMessage(
-                    "Job is resumed by user at %s.<BR>" % now, id)
+                    "Job is resumed by user at %s.<BR>" % now)
                 return
             elif status == Publish.FAILURE:
-                raise StandardError(
-                    "Job %d is killed by user at %s.<BR>" % (id, now))
+                raise StandardError("Job %d is killed by user at %s.<BR>" \
+                    % (self.__jobId, now))
             else:
-                msg = "Unexpected status: %s for job %d.<BR>" % (status, id)
+                msg = "Unexpected status: %s for job %d.<BR>" \
+                    % (status, self.__jobId)
                 raise StandardError(msg)
 
     #----------------------------------------------------------------------
     # Log debugging message to d:/cdr/log/publish.log
     #----------------------------------------------------------------------
-    def __debugLog(self, line, newJobId = None):
-        id = newJobId or self.__jobId
+    def __debugLog(self, line):        
         if LOG is not None:
-            msg = "Job %d: %s\n" % (id, line)
+            msg = "Job %d: %s\n" % (self.__jobId, line)
             if LOG == "":
                 sys.stderr.write(msg)
             else:
