@@ -1,8 +1,17 @@
-# $Id: cdrglblchg.py,v 1.18 2003-09-16 19:41:44 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.19 2003-11-05 01:45:44 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.18  2003/09/16 19:41:44  ameyer
+# Reorganized the code to take the assignment of filter names and
+# parameters out of GlobalChangeBatch.py and to put it instead in the
+# various subclasses of the GlblChg class.  This was needed to make it
+# possible to dynamically invoke a sequence of filters, each with
+# different parameters, for global terminology changes.  It increases
+# the power and generality of the system and makes the XSLT filters
+# simpler.  New subclass level methods for getFilterInfo() do the work.
+#
 # Revision 1.17  2003/08/29 03:33:52  ameyer
 # Interim version with many changes for terminology.
 # May be more to come.
@@ -76,7 +85,7 @@
 #
 #------------------------------------------------------------
 
-import xml.dom.minidom, string, time, cdr, cdrdb, cdrbatch, cdrcgi
+import xml.dom.minidom, sys, string, time, cdr, cdrdb, cdrbatch, cdrcgi
 
 #------------------------------------------------------------
 # Constants
@@ -116,27 +125,39 @@ TERM_MSGS = { \
     TERMTYP:"Associated"}
 
 TERM_PROMPTS = ( \
-    "Only if they include ALL of these terms",
-    "And at least ONE of these terms",
-    "And NOT ANY of these terms",
-    "Delete these terms from the documents",
-    "Add these terms to the documents",
-    "InterventionType (required if add/del NameLink)")
+"<span class='termblock'>Only if they include ALL of these terms</span>",
+"<span class='termblock'>And at least ONE of these terms</span>",
+"<span class='termblock'>And NOT ANY of these terms</span>",
+"<span class='termblock'>Delete these terms from the documents</span>",
+"<span class='termblock'>Add these terms to the documents</span>",
+"""<span class='termblock'>Qualifying terms</span><br>
+ &nbsp; &nbsp; Specify <em>StudyCategory</em> if changing InterventionType or
+ NameLink<br>
+ &nbsp; &nbsp; Also specify <em>InterventionType</em> if changing InterventionNameLink<br>""")
 
-# Field name abbreviation constants
-TERM_FLD_DIAG = "EligibilityCriteria/Diagnosis"
+# Field name option display constants
+TERM_FLD_DIAG = "Eligibility/Diagnosis"
 TERM_FLD_EXC  = "ExclusionCriteria"
 TERM_FLD_INTV = "InterventionType"
 TERM_FLD_INTN = "InterventionNameLink"
 TERM_FLD_GENE = "Gene"
 TERM_FLD_COND = "Condition"
+TERM_FLD_SCAT = "StudyCategory"
+
+# Some hardwired naming for qualifier info (ugh)
+TERM_SCAT_FLD = "trmTypField0"
+TERM_SCAT_VAL = "trmTypVal0"
+TERM_SCAT_ID  = "trmTypId0"
+TERM_INTV_FLD = "trmTypField1"
+TERM_INTV_VAL = "trmTypVal1"
+TERM_INTV_ID  = "trmTypId1"
 
 # Terminology field names, in the order they should appear in the option list
-TERM_FIELD_ORDER = [\
+TERM_FIELD_ORDER = (\
     TERM_FLD_DIAG, TERM_FLD_EXC, TERM_FLD_INTV,
-    TERM_FLD_INTN, TERM_FLD_GENE, TERM_FLD_COND]
+    TERM_FLD_INTN, TERM_FLD_GENE, TERM_FLD_COND)
 
-# Map of field name abbreviations to full XML paths to these fields
+# Map of field display names to full XML paths to these fields
 TERM_FIELDS = {\
  TERM_FLD_DIAG: "/InScopeProtocol/Eligibility/Diagnosis/@cdr:ref",
  TERM_FLD_EXC:  "/InScopeProtocol/Eligibility/ExclusionCriteria/@cdr:ref",
@@ -146,6 +167,15 @@ TERM_FIELDS = {\
                 "/InterventionNameLink/@cdr:ref",
  TERM_FLD_GENE: "/InScopeProtocol/ProtocolDetail/Gene/@cdr:ref",
  TERM_FLD_COND: "/InScopeProtocol/ProtocolDetail/Condition/@cdr:ref"}
+
+# Map of field display names to actual field names
+TERM_ELEMENT = {
+ TERM_FLD_DIAG: "Diagnosis",
+ TERM_FLD_EXC:  TERM_FLD_EXC,
+ TERM_FLD_INTV: TERM_FLD_INTV,
+ TERM_FLD_INTN: TERM_FLD_INTN,
+ TERM_FLD_GENE: TERM_FLD_GENE,
+ TERM_FLD_COND: TERM_FLD_COND}
 
 # Term status values session variable key
 TERM_STATVAL = "trmStatusName"
@@ -161,6 +191,13 @@ TERM_MAX_CRITERIA = 5
 
 # Max allowed add or delete terms
 TERM_MAX_CHANGES = 2
+
+# Max qualifiers we may require
+TERM_MAX_QUALS = 2
+
+# Kinds of filtering
+FLTR_CWD = 0    # Filtering current working document
+FLTR_PUB = 1    # Filtering last publishable version
 
 # Logfile
 LF = cdr.DEFAULT_LOGDIR + "/GlobalChange.log"
@@ -275,6 +312,8 @@ def _execUpdate (qry, args=None, cursor=None):
         cursor.execute (qry, args, timeout=300)
         rowCnt = cursor.rowcount
 
+        cdr.logwrite ("Excuting:\n%s\n  Row count=%d" % (qry, rowCnt), LF)
+
         # Only free cursor if it's created here
         if not callerCursor:
             cursor.close()
@@ -284,6 +323,37 @@ def _execUpdate (qry, args=None, cursor=None):
         raise cdrbatch.BatchException (\
             "Database error executing update for change %s<br>In query:<br>%s"\
             % (info[1][0], qry))
+
+#------------------------------------------------------------
+# Get a list of study categories in an HTML selection string
+#------------------------------------------------------------
+def getStudyCategories (varName):
+    """
+    Create an HTML option list of legal StudyCategoryName values.
+
+    Pass:
+        varName - Name of variable to put in HTML select form.
+
+    Return:
+        String of HTML for inclusion in the input form.
+    """
+    # Get valid names
+    vals = cdr.getVVList (('CdrGuest', 'never.0n-$undaY'),
+                        docType='InScopeProtocol',
+                        vvName='StudyCategoryName')
+
+    # Create html hard wired for the form
+    html = "<select name=%s>\n" % varName
+
+    # Insure there is no default value
+    html += "  <option></option>\n"
+
+    # Add in the real ones
+    for val in vals:
+        html += "  <option>%s</option>\n" % val
+    html += "</select>\n"
+
+    return html
 
 #------------------------------------------------------------
 # Function return object contains information returned by a
@@ -477,10 +547,10 @@ class GlblChg:
         # If there aren't any
         if not rows:
             return FuncReturn(RET_NONE)
-        cdr.logwrite ("Got some rows", LF)
 
         # Remember the count
         self.ssVars['chgCount'] = str(len(rows))
+        cdr.logwrite ("Got %d rows" % len(rows), LF)
 
         # Session for host query
         session = self.ssVars[cdrcgi.SESSION]
@@ -535,6 +605,9 @@ class GlblChg:
         docType   = parms[1]
         titleName = parms[2]
 
+        cdr.logwrite("Verifying docId=%s, docType=%s, titleName=%s" %\
+                     (docId, docType, titleName), LF)
+
         # There are lots of possible errors, create a default error return
         result = FuncReturn (RET_ERROR)
 
@@ -565,17 +638,21 @@ class GlblChg:
             return result
 
         if not row:
-            result.setErrMsg ("Could not find doc with id=%d" % id)
+            msg = "Could not find doc with id=%d" % id
+            cdr.logwrite (msg, LF)
+            result.setErrMsg (msg)
             return result
 
         title = row[0]
         type  = row[1]
         if type != docType:
-            result.setErrMsg (\
-                   "Document %d is of type %s, not %s" % (id, type, docType))
+            msg = "Document %d is of type %s, not %s" % (id, type, docType)
+            cdr.logwrite (msg, LF)
+            result.setErrMsg (msg)
             return result
 
         # Success, set session variable
+        cdr.logwrite ("Verified title='%s'" % title, LF)
         self.ssVars[titleName] = title
 
         # Caller doesn't need to do anything, no return value
@@ -629,7 +706,7 @@ class GlblChg:
         html = self.showSoFarHtml()
         if not rows:
             # Message is no hits, only button to push is Cancel
-            html += "<h2>No hits</h2>"
+            html += '<h3>No hits beginning with "%s"</h3>' % searchString
             result.setPageButtons ((('cancel', 'Done'),))
 
         else:
@@ -830,7 +907,7 @@ class GlblChg:
             stvals = self.ssVars[TERM_STATVAL]
 
             # May be one or more of these
-            if type(stvals) == type([]):
+            if type(stvals) == type([]) or type(stvals)==type(()):
                 for st in stvals:
                     html += pattern % st
             else:
@@ -842,12 +919,18 @@ class GlblChg:
                 # Only compose a row if we have all info for it
                 keyId  = "trm%sId%d" % (trmUse, i)
                 keyVal = "trm%sVal%d" % (trmUse, i)
+                cdr.logwrite ("Showing %s=%s" % (keyId, keyVal), LF)
                 if self.ssVars.has_key(keyId) and self.ssVars.has_key(keyVal):
                     keyField = "trm%sField%d" % (trmUse, i)
                     html += \
                  "<tr><td align='right'>%s %s: </td><td> %s (%s)</td></tr>\n"%\
                      (TERM_MSGS[trmUse], self.ssVars[keyField],
                       self.ssVars[keyVal], self.ssVars[keyId])
+                else:
+                    if not self.ssVars.has_key(keyId):
+                        cdr.logwrite (" -- No Key")
+                    if not self.ssVars.has_key(keyVal):
+                        cdr.logwrite (" -- No Val")
 
         return html
 
@@ -1040,7 +1123,8 @@ class GlblChg:
         html = self.showSoFarHtml() + """
 <h2>Select InScopeProtocols for terminology change</h2>
 
-<h3>Choose one or more protocol status values</h3>
+<span class='termblock'>Choose one or more protocol status values</span>
+<br /><br />
 <select name="%s" size="6" multiple="multiple">
 """ % TERM_STATVAL
 
@@ -1071,22 +1155,22 @@ class GlblChg:
         # Input search criteria and change criteria
         for i in range (len(TERM_PROMPTS)):
 
-            html += "<hr />\n<h3>%s</h3>\n" % TERM_PROMPTS[i]
+            html += "<hr />\n%s\n" % TERM_PROMPTS[i]
 
             if i < TERM_SEARCH_USES:
                 rowCount = TERM_MAX_CRITERIA
             elif i < TERM_MODIFY_USES:
                 rowCount = TERM_MAX_CHANGES
             else:
-                rowCount = 1
+                rowCount = TERM_MAX_QUALS
 
             # Table headers
             html += """
 <table cellpadding="2" cellspacing="2" border="0">
  <tr>
-   <th>Element</th>
-   <th>String Value</th>
-   <th>Or Term DocID</th>
+   <td><strong>Element</strong></td>
+   <td><strong>String Value</strong></td>
+   <td><strong>Or Term DocID</strong></td>
  </tr>
  <tr>
 """
@@ -1099,13 +1183,20 @@ class GlblChg:
                 html += "  <td><select name='%s' size='0'>\n" % name
 
                 # Selection list for element name
-                if name == 'trmTypField0':
-                    # InterventionType qualifier is a special case
-                    # Kludge it in
-                    html += "   <option name='%s'%s size='0'>%s</option>\n" %\
-                            (name, " selected='selected'", TERM_FLD_INTV)
+                if name == TERM_SCAT_FLD:
+                    # StudyCategory is special case, hard wire it in
+                    html += "   <option selected='selected'>%s</option>\n" %\
+                                TERM_FLD_SCAT
                     # Copy value back into the form for editing
-                    # Don't duplicate in hidden vars. Delete in session
+                    if self.ssVars.has_key (name) and \
+                                self.ssVars[name] == TERM_FLD_SCAT:
+                        # Don't duplicate in hidden vars. Delete in session
+                        del (self.ssVars[name])
+
+                elif name == TERM_INTV_FLD:
+                    # InterventionType - same treatment
+                    html += "   <option selected='selected'>%s</option>\n" %\
+                                TERM_FLD_INTV
                     if self.ssVars.has_key (name) and \
                                 self.ssVars[name] == TERM_FLD_INTV:
                         del (self.ssVars[name])
@@ -1119,8 +1210,8 @@ class GlblChg:
                             alreadySelected=" selected='selected'"
                             del (self.ssVars[name])
                         html += \
-                             "   <option name='%s'%s size='0'>%s</option>\n"%\
-                              (name, alreadySelected, field)
+                             "   <option %s size='0'>%s</option>\n"%\
+                              (alreadySelected, field)
                 html += "  </select></td>"
 
                 # Place for user to enter string value of term
@@ -1130,18 +1221,30 @@ class GlblChg:
                     alreadySelected = self.ssVars[name]
                     del (self.ssVars[name])
                     firstTime = 0
-                html += """
+
+                # Again, study category is a special case
+                #   String values come from a valid values table, they aren't
+                #   titles of term documents XXXX
+                if name == TERM_SCAT_VAL:
+                    html += "<td>" + getStudyCategories(name) + "</td>"
+                else:
+                    html += """
   <td><input type="text" name="%s" size="50" maxlength="300" value="%s" /></td>"""%\
                     (name, alreadySelected)
 
                 # Place for user to enter document ID of term
                 name = "trm%sId%d" % (TERM_USES[i], row)
-                alreadySelected=""
-                if self.ssVars.has_key (name):
-                    alreadySelected = self.ssVars[name]
-                    del (self.ssVars[name])
-                    firstTime = 0
-                html += """
+
+                # Is it possible that this is the last StudyCategory kludge?
+                if name == TERM_SCAT_ID:
+                    html += "<td>&nbsp;</td>\n"
+                else:
+                    alreadySelected=""
+                    if self.ssVars.has_key (name):
+                        alreadySelected = self.ssVars[name]
+                        del (self.ssVars[name])
+                        firstTime = 0
+                    html += """
   <td><input type="text" name="%s" size="10" maxlength="10" value="%s" /></td>\n"""%\
                     (name, alreadySelected)
 
@@ -1159,7 +1262,8 @@ class GlblChg:
   <li>one protocol status</li>
   <li>one required term (ALL) or one additional term (ANY)</li>
   <li>one Add or Delete term</li>
-  <li>an InterventionType if an InterventionNameLink is added or deleted</li>
+  <li>qualifying StudyCategory if changing InterventionType or NameLink</li>
+  <li>qualifying InterventionType if changing InterventionNameLink</li>
 </ul>
 </font></h4>\n""" + html
 
@@ -1326,23 +1430,30 @@ class GlblChg:
         """ Select documents - implemented only in subclasses """
         pass
 
-    def getFilterInfo (self, passNumber):
+    def chkFiltered (self, filterVer):
+        """
+        Increment the count of filter passes of a given type.
+            FLTR_CWD
+            FLTR_PUB
+        Return the count prior to the increment.
+
+        Used by getFilterInfo to determine whether filtering has
+        been done or not.
+        """
+        self.filtered[filterVer] += 1
+        return self.filtered[filterVer] - 1
+
+    def getFilterInfo (self, filterVer):
         """
         Determine the correct filter, description, and filter parameters
-        for the global change.
+        for the global change.  If there is more than one filter to
+        apply, it is the subclass' responsibility to keep track of what
+        it has already returned and return the next filter, or None if
+        there are no more.
 
         self.description is set here for convenience.
 
         Implemented only in subclasses.
-
-        Pass:
-            passNumber - Ordinal number of the pass through the document
-                         0 = first filter to apply
-                         1 = second filter to apply
-                         etc.
-
-                         TermChg.getFilterInfo() is the only one of the
-                         global changes that currently uses multiple passes.
 
         Return:
             If there is another filter to apply then:
@@ -1355,7 +1466,23 @@ class GlblChg:
             Else
                 None
         """
-        pass
+        # Fatal error if this hasn't been overridden
+        cdr.logwrite (\
+            "FATAL ERROR: No override for getFilterInfo(%s)\nABORTING!" % \
+            filterVer, LF)
+        sys.exit(1)
+
+    def dumpSsVars (self):
+        """
+        Write the contents of the ssVars (session variables) array
+        to the log file for debugging.
+        """
+        cdr.logwrite ("All current session variables:")
+        svars = self.ssVars.keys()
+        svars.sort()
+        for var in svars:
+            cdr.logwrite ("   '%s'='%s'" % (var, self.ssVars[var]), LF)
+
 
 #------------------------------------------------------------
 # Person specific global change object
@@ -1534,7 +1661,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
             return _execQry (qry, (self.ssVars['fromId'],
                                    self.ssVars['restrId']))
 
-    def getFilterInfo (self, passNumber):
+    def getFilterInfo (self, filterVer):
         """
         See class GlblChg.getFilterInfo for description.
         """
@@ -1545,9 +1672,9 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
                                 self.ssVars['toId'],
                                 time.ctime (time.time()))
         # Only one pass
-        if passNumber == 0:
-            filterName  = ['name:Global Change: Person Link']
-            parms = []
+        if not self.chkFiltered (filterVer):
+            filterName    = ['name:Global Change: Person Link']
+            parms         = []
             parms.append (['changeFrom', self.ssVars['fromId']])
             parms.append (['changeTo', self.ssVars['toId']])
 
@@ -1718,7 +1845,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
         # Call a common routine to get the rows corresponding to the query
         return _execQry (qry)
 
-    def getFilterInfo (self, passNumber):
+    def getFilterInfo (self, filterVer):
         """
         See class GlblChg.getFilterInfo for description.
         """
@@ -1728,9 +1855,9 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
                                 self.ssVars['toId'],
                                 time.ctime (time.time()))
         # Only one pass
-        if passNumber == 0:
-            filterName  = ['name:Global Change: Organization Link']
-            parms = []
+        if not self.chkFiltered (filterVer):
+            filterName    = ['name:Global Change: Organization Link']
+            parms         = []
             parms.append (['changeFrom', self.ssVars['fromId']])
             parms.append (['changeTo', self.ssVars['toId']])
 
@@ -1955,7 +2082,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
         return _execQry (qry)
 
 
-    def getFilterInfo (self, passNumber):
+    def getFilterInfo (self, filterVer):
         """
         See class GlblChg.getFilterInfo for description.
         """
@@ -1965,9 +2092,11 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
                                self.ssVars['toStatusName'],
                                 time.ctime (time.time()))
         # Only one pass
-        if passNumber == 0:
-            filterName  = ['name:Global Change: Org Status']
-            parms = []
+        cdr.logwrite ("about to call chkFiltered(%d)" % filterVer, LF)
+        if not self.chkFiltered (filterVer):
+            cdr.logwrite ("will return filter parms", LF)
+            filterName    = ['name:Global Change: Org Status']
+            parms         = []
             parms.append (['orgId', self.ssVars['fromId']])
             parms.append (['oldStatus', self.ssVars['fromStatusName']])
             parms.append (['newStatus', self.ssVars['toStatusName']])
@@ -2118,7 +2247,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
         return _execQry (qry)
 
 
-    def getFilterInfo (self, passNumber):
+    def getFilterInfo (self, filterVer):
         """
         See class GlblChg.getFilterInfo for description.
         """
@@ -2128,9 +2257,9 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
                                 time.ctime (time.time()))
 
         # Only one pass
-        if passNumber == 0:
-            filterName  = ['name:Global Change: Insert Participating Org']
-            parms = []
+        if not self.chkFiltered (filterVer):
+            filterName    = ['name:Global Change: Insert Participating Org']
+            parms         = []
             parms.append (['leadOrgID', self.ssVars['restrId']])
             parms.append (['newOrgSiteID', self.ssVars['insertOrgId']])
             parms.append (['newPersonID', self.ssVars['insertPersId']])
@@ -2152,14 +2281,17 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
 #------------------------------------------------------------
 class TermChg (GlblChg):
 
-    # Name of filter for changing terminology in a doc
-    # chgFilter = ['name:Global Change: Terminology change']
-
     # For testing Python logic
     chgFilter = ['name:Passthrough Filter']
 
     def __init__(self):
         GlblChg.__init__(self)
+
+        # Need a dictionary of all changes done
+        # Simple self.filtered boolean isn't enough
+        self.doneChgs = []
+        self.doneChgs.append({})
+        self.doneChgs.append({})
 
         # Stages for organization status changes
         self.stages = (\
@@ -2191,7 +2323,9 @@ class TermChg (GlblChg):
         TTBL_OPT  = "#gcTermOpt"
         TTBL_NOT  = "#gcTermNot"
         TTBL_DEL  = "#gcTermDel"
-        TTBL_RES1 = "#gcTermRes1" # Temp results of merging above
+        TTBL_STAT = "#gcTermStat"
+        TTBL_RES0 = "#gcTermRes0" # Temp results of merging above
+        TTBL_RES1 = "#gcTermRes1" #   "     "     "    "      "
         TTBL_RES2 = "#gcTermRes2" #   "     "     "    "      "
         TTBL_RES3 = "#gcTermRes3" #   "     "     "    "      "
 
@@ -2211,14 +2345,22 @@ class TermChg (GlblChg):
         #   have to do any more searching
         done = 0
 
+        # Create a temporary table of docs with the status values we want
+        statCnt = self.makeTempStatTable (cursor, TTBL_STAT,
+                                          self.ssVars[TERM_STATVAL])
+        # If none, we're done
+        if statCnt == 0:
+            done = 1
+
         # Create a temporary table of docs having all required terms.
-        reqCnt = 0
-        if self.countSelTypes (TERMREQ, TERM_MAX_CRITERIA) > 0:
-            reqCnt = self.makeTempSelTable (cursor, TTBL_REQ, TERMREQ,
-                                            TERM_MAX_CRITERIA, "AND")
-            # If no docs with required terms, we're done
-            if reqCnt == 0:
-                done = 1
+        if not done:
+            reqCnt = 0
+            if self.countSelTypes (TERMREQ, TERM_MAX_CRITERIA) > 0:
+                reqCnt = self.makeTempSelTable (cursor, TTBL_REQ, TERMREQ,
+                                                TERM_MAX_CRITERIA, "AND")
+                # If no docs with required terms, we're done
+                if reqCnt == 0:
+                    done = 1
 
         # Create a temporary table of docs having any optional terms.
         if not done:
@@ -2239,17 +2381,32 @@ class TermChg (GlblChg):
 
             # Else something in both, get the intersection of the two tables
             else:
-                resCnt1 = _execUpdate (\
+                resCnt0 = _execUpdate (\
                  """SELECT doc_id INTO %s FROM %s
                      WHERE doc_id IN (SELECT doc_id FROM %s)"""% \
-                  (TTBL_RES1, TTBL_REQ, TTBL_OPT), args=None, cursor=cursor)
+                  (TTBL_RES0, TTBL_REQ, TTBL_OPT), args=None, cursor=cursor)
 
                 # Might not be any
-                if resCnt1 == 0:
+                if resCnt0 == 0:
                     done = 1
 
                 # The intersection is now our temp results table
-                resultTbl = TTBL_RES1
+                resultTbl = TTBL_RES0
+
+        # We have some protocols with our status and some with our terms
+        # Find intersection, if any
+        if not done:
+            resCnt1 = _execUpdate (\
+             """SELECT doc_id INTO %s FROM %s
+                 WHERE doc_id IN (SELECT doc_id FROM %s)"""% \
+              (TTBL_RES1, TTBL_STAT, resultTbl), args=None, cursor=cursor)
+
+            # Might not be any
+            if resCnt1 == 0:
+                done = 1
+
+            # The intersection is now our temp results table
+            resultTbl = TTBL_RES1
 
         # Check for terms that must NOT be in the documents
         if not done:
@@ -2313,8 +2470,8 @@ class TermChg (GlblChg):
         if not done:
             rows = _execQry ("""
                 SELECT distinct id, title FROM document
-                 WHERE id IN (SELECT doc_id FROM %s)""" % resultTbl,
-                    args=None, cursor=cursor)
+                 WHERE id IN (SELECT doc_id FROM %s)
+                 ORDER BY title""" % resultTbl, args=None, cursor=cursor)
 
         # Release the cursor
         try:
@@ -2328,65 +2485,98 @@ class TermChg (GlblChg):
             return rows
         return None
 
-    def getFilterInfo (self, passNumber):
+    def getFilterInfo (self, filterVer):
         """
         See class GlblChg.getFilterInfo for description.
-        """
-        # If we haven't already done it, find out how many passes we need
-        if not self.__dict__.has_key ("addCount"):
-            self.addCount = self.countSelTypes (TERMADD, TERM_MAX_CHANGES)
-            self.delCount = self.countSelTypes (TERMDEL, TERM_MAX_CHANGES)
 
+        This is the one that has to do some real work.
+        Concept is to keep a dictionary of changes we've already done.
+        For each possible change:
+            If we haven't done it yet:
+                Add it to the dictionary
+                Do it (i.e., return the info.)
+        """
+        # Create a description
         if not self.description:
             # Can't easily describe this because lots of changes could
             #   be made by one change.
-            self.description = "global terminology change"
-            if self.addCount:
-                self.description += " adding:"
-                for termNum in range (self.addCount):
-                    self.description += " %s=%s" % \
-                        (self.ssVars['termAddField%d' % termNum],
-                         self.ssVars['termAddID%d' % termNum])
-                for termNum in self.delCount:
-                    self.description += " %s=%s" % \
-                        (self.ssVars['termDelField%d' % termNum],
-                         self.ssVars['termDelID%d' % termNum])
+            self.description = "Global terminology change "
+            for termNum in range (TERM_MAX_CHANGES):
+                if self.ssVars.has_key ("trmAddId%d" % termNum):
+                    self.description += "adding %s=%s" % \
+                        (self.ssVars['trmAddField%d' % termNum],
+                         self.ssVars['trmAddId%d' % termNum])
+            for termNum in range (TERM_MAX_CHANGES):
+                if self.ssVars.has_key ("trmDelId%d" % termNum):
+                    self.description += "deleting %s=%s" % \
+                        (self.ssVars['trmDelField%d' % termNum],
+                         self.ssVars['trmDelId%d' % termNum])
 
+            # Add date
             self.description += " on %s" % time.ctime(time.time())
 
         # Initial values of data to return
         filterName  = None
         parms       = []
 
-        # Do all adds first
-        if passNumber < self.addCount:
-            # There's no way to pass a list of filters with different
-            #   parameters for each, so we make a list of one with its
-            #   parameters, then do the next on the next pass, etc.
-            filterName  = ["name:Global Change: Add term"]
-            parms.append (['addElement',
-                           self.ssVars ('termAddField%d' % passNumber)])
-            parms.append (['addTermID',
-                           self.ssVars ('termAddId%d' % passNumber)])
+        # Search for terms to add
+        for termNum in range (TERM_MAX_CHANGES):
+            addId = "trmAddId%d" % termNum
+            if self.ssVars.has_key (addId):
+                keyId = "add" + addId
+                if not self.doneChgs[filterVer].has_key (keyId):
+                    # Mark this one as done
+                    self.doneChgs[filterVer][keyId] = 1
 
-        else:
-            # Set passNumber to zero origin for delete counter
-            passNumber -= self.addCount
+                    # Setup the filter info for adding
+                    filterName  = \
+                     ["name:Global Change: Add Terminology Link to Protocol"]
+                    trmOption= self.ssVars['trmAddField%d' % termNum]
+                    trmField = TERM_ELEMENT[trmOption]
+                    trmId    = cdr.exNormalize(self.ssVars[addId])[0]
+                    parms.append (['addElement', trmField])
+                    parms.append (['addTermID', trmId])
 
-            # Do all deletes
-            if passNumber < self.delCount:
-                filterName  = ["name:Global Change: Delete term"]
-                parms.append (['addElement',
-                               self.ssVars ('termDelField%d' % passNumber)])
-                parms.append (['addTermID',
-                               self.ssVars ('termDelId%d' % passNumber)])
+                    cdr.logwrite ("Filter=%s" % filterName, LF)
+                    cdr.logwrite (str(parms), LF)
+                    # We're done for now.  Return filter info
+                    return (filterName, parms)
 
-            # Else we're done
-            else:
-                return None
+        # If no adds, or done them all, try deletes
+        # Initial logic is the same, but filter setup is different
+        for termNum in range (TERM_MAX_CHANGES):
+            delId = "trmDelId%d" % termNum
+            if self.ssVars.has_key (delId):
+                keyId = "del" + delId
+                if not self.doneChgs[filterVer].has_key (keyId):
+                    # Mark this one as done
+                    self.doneChgs[filterVer][keyId] = 1
 
-        # Return tuple of all of that
-        return (filterName, parms)
+                    # Setup the filter info for deleting
+                    filterName  = \
+                  ["name:Global Change: Delete Terminology Link from Protocol"]
+                    trmOption= self.ssVars['trmDelField%d' % termNum]
+                    trmField = TERM_ELEMENT[trmOption]
+                    trmId    = cdr.exNormalize(self.ssVars[delId])[0]
+                    parms.append (['deleteElement', trmField])
+                    parms.append (['deleteTermID', trmId])
+
+                    cdr.logwrite ("Filter=%s" % filterName, LF)
+                    cdr.logwrite (str(parms), LF)
+                    # We're done for now.  Return filter info
+                    return (filterName, parms)
+
+        # Add qualifier parameters if present
+        if self.ssVars.has_key (TERM_SCAT_ID):
+            parms.append (['studyCategory',
+                 cdr.exNormalize(self.ssVars[TERM_SCAT_ID])[0]])
+        if self.ssVars.has_key (TERM_INTV_ID):
+            parms.append (['interventionType',
+                 cdr.exNormalize(self.ssVars[TERM_INTV_ID])[0]])
+
+        # If we got here, all filters have been processed
+        return None
+
 
     def countSelTypes (self, termUse, maxCnt):
         """
@@ -2406,9 +2596,51 @@ class TermChg (GlblChg):
                 count += 1
         return count
 
+    def makeTempStatTable (self, cursor, tblName, status):
+        """
+        Create a temporary table of doc ids of protocols having any
+        of the requested current status values.
+
+        Pass:
+            cursor  - Database cursor, needed because caller may need
+                      multiple tables to be visible to each other.  Using
+                      a single cursor for multiple actions can achieve that.
+            tblName - Output goes to this table name.
+                      Caller should put '#' or '##' on front, as desired
+                        for SQL Server temporary table naming convention.
+            status  - Sequence of one or more status values.
+        """
+        # Base query
+        qry = \
+"""SELECT DISTINCT d.id as doc_id INTO %s FROM document d
+     JOIN query_term q ON d.id = q.doc_id
+    WHERE q.path = '/InScopeProtocol/ProtocolAdminInfo/CurrentProtocolStatus'
+      AND (""" % tblName
+
+        # Debug
+        cdr.logwrite ("Type status=%s, str(status)=%s" % (type(status),
+                      str(status)), LF)
+
+        # Add all requested status values - may be only one
+        if type(status)==type("") or type(status)==type(u""):
+            qry += "q.value='%s'" % status
+
+        # Or may be multiples
+        else:
+            stcounter = 0
+            for stat in status:
+                qry += "q.value='%s'" % stat
+                if stcounter < len(status) - 1:
+                    qry += " OR "
+                stcounter += 1
+        qry += ")"
+
+        # Search the database, returning count of rows created
+        return _execUpdate (qry, args=None, cursor=cursor)
+
     def makeTempSelTable (self, cursor, tblName, termUse, maxCnt, opCode):
         """
-        Create a temporary table of search results for a particular
+        Create a temporary table of doc ids of protcols with a particular
         type of usage - required, optional, or negated.
 
         Pass:
@@ -2455,26 +2687,31 @@ class TermChg (GlblChg):
         qry = "SELECT DISTINCT %s.doc_id INTO %s FROM query_term %s\n" % \
               (tables[0], tblName, tables[0])
 
-        # Self join to any remaining query_terms
+        # Boolean AND requires self join to any remaining query_terms
         i = 1
-        while i<termCount:
+        while i<termCount and opCode == 'AND':
             qry += " JOIN query_term %s ON %s.doc_id = %s.doc_id\n" % \
                     (tables[i], tables[0], tables[i])
             i += 1
 
         # Add qualifcations to make path and value for terms match
-        qry += "\nWHERE\n"
+        qry += "WHERE "
         for i in range(termCount):
             # Add AND or OR if we're between two independent clauses
-            if i > 0 and i < maxCnt-1:
+            if i > 0 and i < termCount:
                 qry += " %s " % opCode
 
-            # Term id must be found in particular XML element
-            qry += "(%s.path = '%s' AND %s.int_val = %d)" % \
-                    (tables[i], wheres[i], tables[i], idNums[i])
+            # If we're joining query_term rows, name the tables differently
+            # Else always use the same name (e.g., "qtOpt0")
+            if opCode == 'AND':
+                tableIdx = i
+            else:
+                tableIdx = 0
 
-        # For debugging
-        cdr.logwrite ("\nterm change temp table query=\n" + qry, LF)
+            # Term id must be found in particular XML element
+            qry += "\n (%s.path = '%s'\n AND %s.int_val = %d)" % \
+                    (tables[tableIdx], wheres[i], tables[tableIdx], idNums[i])
+            qry += "\n"
 
         # Search the database, returning count of rows created
         return _execUpdate (qry, args=None, cursor=cursor)
@@ -2494,13 +2731,20 @@ class TermChg (GlblChg):
 
         # If user adds or deletes an InterventionNameLink, he must
         #   identify the associated InterventionType
+        # If changing Intervention, Gene or Condition, must identify
+        #   a StudyCategory
         for i in range(TERM_MAX_CHANGES):
             for use in (TERMADD, TERMDEL):
                 keyId = "trm%sId%d" % (use, i)
                 if self.ssVars.has_key(keyId):
                     keyField = "trm%sField%d" % (use, i)
-                    if self.ssVars[keyField] == TERM_FLD_INTN:
-                        if not self.haveTermCriterion (TERMTYP):
+                    fieldName = self.ssVars[keyField]
+                    if fieldName == TERM_FLD_INTN:
+                        if not self.ssVars.has_key(TERM_SCAT_ID):
+                            return 0
+                    if fieldName in (TERM_FLD_INTV, TERM_FLD_INTN,
+                                     TERM_FLD_GENE, TERM_FLD_COND):
+                        if not self.ssVars.has_key(TERM_INTV_ID):
                             return 0
 
         # User must have entered at least one search criterion, a term
@@ -2563,11 +2807,8 @@ class TermChg (GlblChg):
                 keyVal = "trm%sVal%d" % (termUse, termRow)
 
                 # If the ID exists, validate it
-                cdr.logwrite ("Looking: keyVal=%s keyId=%s"%(keyVal,keyId),LF)
                 if self.ssVars.has_key (keyId):
                     termId = self.ssVars[keyId]
-                    cdr.logwrite ("Verifying keyVal=%s keyId=%s" % \
-                                  (keyVal, keyId), LF)
                     result = self.verifyId ((termId, docType, keyVal))
 
                     # If verify failed, result will be an error msg
@@ -2578,14 +2819,16 @@ class TermChg (GlblChg):
 
                 # Else no ID, if there's a value string, disambiguate it
                 # Constructs picklist and returns it to user
-                elif self.ssVars.has_key (keyVal):
-                    cdr.logwrite ("About to get picklist")
+                # Yet another StudyCategory kludge
+                elif self.ssVars.has_key (keyVal) and keyVal != TERM_SCAT_VAL:
+                    cdr.logwrite ("About to get picklist", LF)
                     return self.getPickList ((docType, self.ssVars[keyVal],
                                               "Select term string", keyId))
 
         # If we got this far without returning, all IDs are okay
         # Signal it in the session context so we don't do this again
         self.ssVars["termsVerified"] = 1
+        cdr.logwrite ("Finished verification", LF)
 
         # Return code with no errors or html means continue on
         return FuncReturn (RET_NONE)
