@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.10 2001-09-27 19:15:45 bkline Exp $
+# $Id: cdr.py,v 1.11 2001-10-04 14:34:49 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2001/09/27 19:15:45  bkline
+# Added constants for PYTHON and SCRIPTS.
+#
 # Revision 1.9  2001/09/17 16:08:39  bkline
 # Fixed bug in filterDoc (added missing "</Parm>" tag.
 #
@@ -309,6 +312,24 @@ def getDoc(credentials, docId, checkout = 'N', version = "Current",
     doc = extract("(<CdrDoc[>\s].*</CdrDoc>)", resp)
     if doc.startswith("<Errors") or not getObject: return doc
     return Doc(doc)
+
+#----------------------------------------------------------------------
+# Mark a CDR document as deleted.
+#----------------------------------------------------------------------
+def delDoc(credentials, docId, val = 'N', reason = '',
+           host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command.
+    docId   = "<DocId>%s</DocId>" % docId
+    val     = "<Validate>%s</Validate>" % val
+    reason  = reason and ("<Reason>%s</Reason>" % reason) or ''
+    cmd     = "<CdrDelDoc>%s%s%s</CdrDelDoc>" % (docId, val, reason)
+
+    # Submit the commands.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+
+    # Extract the document ID.
+    return extract("<DocId.*>(CDR\d+)</DocId>", resp)
 
 #----------------------------------------------------------------------
 # Retrieve a specified document from the CDR Server using a filter.
