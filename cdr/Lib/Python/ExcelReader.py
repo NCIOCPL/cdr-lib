@@ -144,11 +144,18 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: ExcelReader.py,v 1.9 2005-03-05 05:54:13 bkline Exp $
+# $Id: ExcelReader.py,v 1.10 2005-03-10 20:33:30 bkline Exp $
 #
 # Module for extracting cell values from Excel spreadsheets.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2005/03/05 05:54:13  bkline
+# "The font with index 4 is omitted in all BIFF versions.  This means the
+# first four fonts have zero-based indexes, and the fifth font and all
+# following fonts are referenced with one-based indexes." - OpenOffice
+# documentation for Excel BIFF formats.  Fixed code to conform to this
+# specification.
+#
 # Revision 1.8  2005/03/04 22:09:59  bkline
 # Fixed font indexing problem.
 #
@@ -919,7 +926,7 @@ class Cell:
         if xf:
             fontIndex, formatIndex = book.xf[xf]
             if fontIndex >= 4:
-                fontIndex += 1
+                fontIndex -= 1
             self.font = book.fonts[fontIndex]
             self.fmt  = book.formats[formatIndex]
         if DEBUG:
