@@ -1,10 +1,18 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.56 2004-07-02 01:03:27 ameyer Exp $
+# $Id: cdrpub.py,v 1.57 2004-08-25 02:43:14 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.56  2004/07/02 01:03:27  ameyer
+# Changes to set server publishing cacheing on/off at the appropriate
+# times.
+# Also removed a bunch of pychecker warnings, largely be renaming
+# variables that shadowed builtin names.
+# Also modified a screen message to conform to newer version in the
+# production directory that had never made it into CVS.
+#
 # Revision 1.55  2003/09/11 12:33:46  bkline
 # Made it possible to override the location of the vendor DTD (for testing).
 #
@@ -185,7 +193,7 @@
 #----------------------------------------------------------------------
 
 import cdr, cdrdb, os, re, string, sys, xml.dom.minidom
-import socket, cdr2cg, time
+import socket, cdr2cg, time, threading
 from xml.parsers.xmlproc import xmlval, xmlproc
 
 #-----------------------------------------------------------------------
@@ -195,6 +203,13 @@ from xml.parsers.xmlproc import xmlval, xmlproc
 # the pathname of the logfile to which to write debugging output.
 #-----------------------------------------------------------------------
 LOG = "d:/cdr/log/publish.log"
+
+# Number of publishing threads to use
+# Later, we may find a better way to get this into the program
+PUB_THREADS = 5
+
+# Publish this many docs of one doctype between reports
+LOG_MODULUS = 1000
 
 #-----------------------------------------------------------------------
 # class: Publish
@@ -231,11 +246,27 @@ class Publish:
     __cdrEmail = "cdr@%s.nci.nih.gov" % socket.gethostname()
     __pd2cg    = "Push_Documents_To_Cancer.Gov"
     __cdrHttp  = "http://%s.nci.nih.gov/cgi-bin/cdr" % socket.gethostname()
-    __interactiveMode = 0
-    __checkPushedDocs  = 0
+    __interactiveMode   = 0
+    __checkPushedDocs   = 0
     __includeLinkedDocs = 0
     __reportOnly        = 0
     __validateDocs      = 0
+    __logDocModulus     = LOG_MODULUS
+
+    # List of docs to be published, tuples of docId, version, doctype str
+    __docs = ()
+
+    # Next doc to be published.  Threads synchronize to use this
+    __nextDoc = 0
+
+    # Thread locking objects.
+    # All threads share this one instance of a Publish object.
+    __lockNextDoc = threading.Lock()
+    __lockError   = threading.Lock()
+    __lockLog     = threading.Lock()
+
+    # Publish this many docs in parallel
+    __numThreads  = PUB_THREADS
 
     #---------------------------------------------------------------
     # Hash __dateFirstPub is specifically designed to solve the issue
@@ -537,15 +568,18 @@ class Publish:
                         # due to complexity of specifying the multiple
                         # subdirs when calling cdr.publish(). This may
                         # change in release XX.
+                        # XXX - Not multi-threading these
+                        # XXX - Might want to to have everything done the
+                        #       same way, if not for performance.
                         self.__publishDoc(doc, filters, destType, dest)
                         numDocs += 1
-                        if numDocs % 1000 == 0:
+                        if numDocs % self.__logDocModulus == 0:
                             self.__updateMessage(
                                 "Filtered/validated %d docs at %s.<BR>" % (
                                             numDocs, time.ctime()))
                             numFailures = self.__getFailures()
-                            self.__updateMessage("""%d docs failed so
-                                far.<BR>""" % numFailures)
+                            self.__updateMessage("%d docs failed so far.<BR>"
+                                                  % numFailures)
 
                         self.__alreadyPublished[doc[0]] = 1
                         userListedDocsRemaining -= 1
@@ -569,19 +603,13 @@ class Publish:
 
                     for specChild in spec.childNodes:
                         if specChild.nodeName == "SubsetSelection":
-                            docs = self.__selectQueryDocs(specChild)
-                            for doc in docs:
-                                self.__publishDoc(doc, specFilters[i],
-                                      destType, dest,
-                                      Publish.STORE_ROW_IN_PUB_PROC_DOC_TABLE,
-                                      specSubdirs[i])
-                                numDocs += 1
-                                if numDocs % 1000 == 0:
-                                    numFailures = self.__getFailures()
-                                    self.__updateMessage("""Filtered/validated
-                                        %d docs at %s, and %d docs failed so
-                                        far.<BR>""" % (numDocs, time.ctime(),
-                                                       numFailures))
+                            self.__docs = self.__selectQueryDocs(specChild)
+                            self.__launchPubThreads(self, specFilters[i],
+                                                    destType, dest,
+                                                    specSubdirs[i])
+
+                            # Add all the docs to pub_proc_doc table
+                            self.__addPubProcDocRows(self, subDir)
                     i += 1
 
             self.__updateMessage("""Finish filtering/validating all %d docs
@@ -748,7 +776,7 @@ class Publish:
         # Log message
         msg = "publish: " % msg
         try:
-            cdr.logwrite (msg, LOG, tback=1)
+            self.debugLog(msg, LOG, tb=1)
         except:
             pass
 
@@ -859,15 +887,15 @@ class Publish:
                     raise StandardError(
                         "Corresponding vendor job does not exist.<BR>")
 
-                id   = row[0]
-                dest = row[1]
+                docId = row[0]
+                dest  = row[1]
 
                 prevId = self.__getLastJobId(subsetName)
-                if prevId > id:
+                if prevId > docId:
                     raise StandardError("""This same job has been previously
                         successfully done by job %d.""" % prevId)
 
-                return [id, dest]
+                return [docId, dest]
 
             except cdrdb.Error, info:
                 raise StandardError("""Failure finding vendor job and vendor
@@ -1855,6 +1883,141 @@ has started</B>).<BR>""" % cgWorkLink
             raise StandardError(msg)
 
     #------------------------------------------------------------------
+    # Launch some number of publishing threads.
+    #
+    # Waits until all threads are done, then returns.
+    #
+    # Attempts to detect if an error occurred in a thread, and raises
+    # it on up the stack (hopefully) causing the program to exit and
+    # abort all running threads.
+    #
+    #   filters     list of filter sets, each set with its own parm list
+    #   destType    FILE, DOCTYPE, or DOC
+    #   destDir     directory in which to write output
+    #   subDir      subdirectory to store a subset of vendor docs
+    #------------------------------------------------------------------
+    def __launchPubThreads(self, filters, destType, destDir, subDir):
+
+        # List of threading.Thread objects
+        thrds = []
+
+        for i in range(self.__numThreads):
+
+            # Create a thread, passing all our arguments
+            # Note use of threadId.  Thread object is not exposed to the
+            #   thread and hasn't been created yet, so I can't use Thread.name
+            thrd = threading.Thread(target=self.__publishDocList,
+                                    kwargs={'threadId': "Thread-%d" % i,
+                                            'filters': filters,
+                                            'destType': destType,
+                                            'destDir': destDir,
+                                            'subDir': subDir})
+            # Save object for later use
+            thrds.append(thrd)
+
+            # Launch it
+            thrd.start()
+
+        # Wait for error or end of all threads
+        done = 0
+        while not done:
+            done = 1
+            for i in range(self.__numThreads):
+                if thrds[i].isAlive():
+                    # At least one thread is alive
+                    done = 0
+                else:
+                    # In my tests, exceptions raised in a thread
+                    #   weren't caught outside the thread where I
+                    #   hoped to catch them.
+                    # So I catch them in the thread, set self.__error
+                    #   = thread id, log the error, and exit the thread.
+                    # Now I check if this happened and raise the
+                    #   exception in main - where I can stop the whole
+                    #   program and not just the one thread.
+                    if self.__error == i:
+                        # Abort
+                        msg = "Aborting on error in thread %d, see logfile" % i
+                        self.__debugLog(msg, LOG)
+                        raise StandardError(msg)
+
+            # Wait awhile before checking again
+            time.sleep(2)
+
+
+    #------------------------------------------------------------------
+    # Publish all of the documents in the list of docs, in a thread.
+    #
+    # This method may be called multiple times to run multiple threads
+    # of publishing execution.
+    #
+    # Arguments are mostly the same as for __publishDoc() except that
+    # there is no "doc" arg.  We get document id/version information
+    # from self.__docs, synchronizing multiple threads on a lock object
+    # to avoid two threads working on the same doc.
+    #
+    #   threadId    identifier string for logging
+    #   filters     list of filter sets, each set with its own parm list
+    #   destType    FILE, DOCTYPE, or DOC
+    #   destDir     directory in which to write output
+    #   subDir      subdirectory to store a subset of vendor docs
+    #------------------------------------------------------------------
+    def  __publishDocList(self, threadId, filters, destType, destDir,
+                          subDir=''):
+
+        # Flags indicating completion and error status
+        done  = 0
+        error = 0
+
+        while not done:
+            # Get another document id to publish
+            self.__lockNextDoc.acquire(1)
+            if len(self.__docs) >= self.__nextDoc + 1:
+                doc = self.__docs[self.__nextDoc]
+                self.__nextDoc += 1
+
+                # Is it time to log progress?
+                # This holds up other threads, but only happens
+                #   once every logDocModulus documents
+                if self.__nextDoc % self.__logDocModulus == 0:
+                    try:
+                        numFailures = self.__getFailures()
+                        self.__updateMessage("""Filtered/validated
+                            %d docs at %s, and %d docs failed so
+                            far.<BR>""" % (self.__nextDoc, time.ctime(),
+                                           numFailures))
+                    except:
+                        pass
+            else:
+                done = 1
+            self.__lockNextDoc.release()
+
+            # If we got one, publish it
+            # Try to handle exceptions gracefully, then get out
+            try:
+                self.__publishDoc (doc, filters, destType, destDir, subDir)
+            except cdrdb.Error, info:
+                self.debugLog(
+                     "Database error publishing doc %d ver %d in %s:\n  %s"
+                     % (doc[0], doc[1], threadId, info[1][0]), tb=1)
+                error = 1
+            except:
+                self.debugLog(
+                     "Exception publishing doc %d ver %d in %s"
+                     % (doc[0], doc[1], threadId, info[1][0]), tb=1)
+                error = 1
+
+            # If error occurred, signal it and exit
+            if error:
+                self.__threadError = threadId
+                done = 1
+
+        # Done with thread
+        sys.exit()
+
+
+
+    #------------------------------------------------------------------
     # Publish one document.
     #
     #   doc         tuple containing doc ID, doc version, and doc type
@@ -1866,8 +2029,7 @@ has started</B>).<BR>""" % cgWorkLink
     #               table
     #   subDir      subdirectory to store a subset of vendor docs
     #------------------------------------------------------------------
-    def __publishDoc(self, doc, filters, destType, destDir,
-                     recordDoc = 0, subDir = ''):
+    def __publishDoc(self, doc, filters, destType, destDir, subDir = ''):
 
         self.__debugLog("Publishing CDR%010d." % doc[0])
 
@@ -1926,14 +2088,13 @@ has started</B>).<BR>""" % cgWorkLink
                 destDir = destDir + "/" + subDir
                 if destType == Publish.FILE:
                     self.__saveDoc(filteredDoc, destDir, self.__fileName, "a")
-                elif destType == Publish.DOCTYPE:
-                    self.__saveDoc(filteredDoc, destDir, doc[2], "a")
+                # Removed because not threadsafe and never used
+                # elif destType == Publish.DOCTYPE:
+                #     self.__saveDoc(filteredDoc, destDir, doc[2], "a")
                 else:
                     self.__saveDoc(filteredDoc, destDir, "CDR%d.xml" % doc[0])
             except:
                 errors = "Failure writing document CDR%010d" % doc[0]
-        if recordDoc:
-            self.__addPubProcDocRow(doc, subDir)
 
         # Handle errors and warnings.
         self.__checkProblems(doc, errors, warnings)
@@ -1945,6 +2106,17 @@ has started</B>).<BR>""" % cgWorkLink
     # and keep going.
     #------------------------------------------------------------------
     def __checkProblems(self, doc, errors, warnings):
+
+        # If no errors or warnings, no synchronization needed
+        if not (errors or warnings):
+            return
+
+        # If not None, we have an abort situation
+        msg = None
+
+        # Synchronize critical section
+        self.__lockErrors.acquire(1)
+
         if errors:
             self.__addDocMessages(doc, errors, Publish.SET_FAILURE_FLAG)
             self.__errorCount += 1
@@ -1955,14 +2127,19 @@ has started</B>).<BR>""" % cgWorkLink
                                 % doc[0]
                     else:
                         msg = "Aborting: too many errors encountered"
-                    raise StandardError(msg)
         if warnings:
             self.__addDocMessages(doc, warnings)
             self.__warningCount += 1
             if self.__publishIfWarnings == "No":
                 msg = "Aborting on warning(s) detected in CDR%010d.<BR>" \
                     % doc[0]
-                raise StandardError(msg)
+
+        # End of critical section
+        self.__lockError.release()
+
+        # Did with get an abort message?
+        if msg:
+            raise StandardError(msg)
 
     #------------------------------------------------------------------
     # Record warning or error messages for the job.
@@ -2022,30 +2199,36 @@ has started</B>).<BR>""" % cgWorkLink
             raise StandardError(msg)
 
     #------------------------------------------------------------------
-    # Record the publication of the specified document.
+    # Record the publication of all of the documents.
     #------------------------------------------------------------------
-    def __addPubProcDocRow(self, doc, subDir):
-        try:
-            cursor = self.__conn.cursor()
-            cursor.execute("""\
-                INSERT INTO pub_proc_doc
-                (
-                            pub_proc,
-                            doc_id,
-                            doc_version,
-                            subdir
-                )
-                     VALUES
-                (
-                            ?,
-                            ?,
-                            ?,
-                            ?
-                )""", (self.__jobId, doc[0], doc[1], subDir))
-        except cdrdb.Error, info:
-            msg = 'Failure adding row for document %d: %s' % \
-                  (self.__jobId, info[1][0])
-            raise StandardError(msg)
+    def __addPubProcDocRows(self, subDir):
+
+        # All selected docs
+        # This could be optimized if we decide to write an optimized
+        #   cdrdb.executemany().  I have left it alone to avoid the
+        #   rewrite for something that may never come to pass.
+        for doc in (self.__docs):
+            try:
+                cursor = self.__conn.cursor()
+                cursor.execute("""\
+                    INSERT INTO pub_proc_doc
+                    (
+                                pub_proc,
+                                doc_id,
+                                doc_version,
+                                subdir
+                    )
+                         VALUES
+                    (
+                                ?,
+                                ?,
+                                ?,
+                                ?
+                    )""", (self.__jobId, doc[0], doc[1], subDir))
+            except cdrdb.Error, info:
+                msg = 'Failure adding row for document %d: %s' % \
+                      (self.__jobId, info[1][0])
+                raise StandardError(msg)
 
     #------------------------------------------------------------------
     # Build a set of documents which match the queries for a subset
@@ -2558,6 +2741,7 @@ Please do not reply to this message.
     def __updateMessage(self, message):
 
         try:
+            # Relies on DBMS for synchronization
             cursor = self.__conn.cursor()
             cursor.execute("""
                 SELECT messages
@@ -2599,6 +2783,7 @@ Please do not reply to this message.
     def __getFailures(self):
         jbId = self.__jobId
         try:
+            # Synchronization at database level should be sufficient.
             cursor = self.__conn.cursor()
             cursor.execute("""
                 SELECT count(*)
@@ -2674,13 +2859,22 @@ Please do not reply to this message.
     #----------------------------------------------------------------------
     # Log debugging message to d:/cdr/log/publish.log
     #----------------------------------------------------------------------
-    def __debugLog(self, line):
+    def __debugLog(self, line, tb=0):
+
+        # Synchronize to avoid messages clobbering each other
+        self.__lockLog.acquire(1)
+
+        # Output, with optional traceback
         if LOG is not None:
             msg = "Job %d: %s\n" % (self.__jobId, line)
             if LOG == "":
                 sys.stderr.write(msg)
             else:
-                open(LOG, "a").write(msg)
+                # open(LOG, "a").write(msg)
+                cdr.logwrite(msg, LOG, tback=tb)
+
+        # End critical section
+        self.__lockLog.release()
 
 #-----------------------------------------------------------------------
 # class: ErrObject
