@@ -1,8 +1,13 @@
-# $Id: cdrglblchg.py,v 1.15 2003-08-01 01:10:18 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.16 2003-08-12 19:53:38 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.15  2003/08/01 01:10:18  ameyer
+# Interim save of modifications for global terminology change.
+# More to do but these changes are safe for production even though
+# they don't do the global terminology change yet.
+#
 # Revision 1.14  2003/06/17 22:02:34  ameyer
 # Modified screen labels to clearly indicate that user entered Principal
 # Investigator is the PI for the site, not for the lead org.
@@ -104,13 +109,19 @@ TERM_PROMPTS = ( \
     "Delete these terms from the documents",
     "Add these terms to the documents")
 
-TERM_FIELDS = (\
-    "EligibilityCriteria/Diagnosis",
-    "ExclusionCriteria",
-    "InterventionType",
-    "InterventionNameLink",
-    "Gene",
-    "Condition")
+TERM_FIELDS = {\
+ "EligibilityCriteria/Diagnosis":
+  "/InScopeProtocol/Eligibility/Diagnosis/@cdr:ref",
+ "ExclusionCriteria":
+  "/InScopeProtocol/Eligibility/ExclusionCriteria/@cdr:ref",
+ "InterventionType":
+  "/InScopeProtocol/ProtocolDetail/StudyCategory/Intervention/InterventionType/@cdr:ref",
+ "InterventionNameLink":
+  "/InScopeProtocol/ProtocolDetail/StudyCategory/Intervention/InterventionNameLink/@cdr:ref",
+ "Gene":
+  "/InScopeProtocol/ProtocolDetail/Gene/@cdr:ref",
+ "Condition":
+  "/InScopeProtocol/ProtocolDetail/Gene/@cdr:ref"}
 
 # Term status values session variable key
 TERM_STATVAL = "trmStatusName"
@@ -119,10 +130,10 @@ TERM_STATVAL = "trmStatusName"
 TERM_SEARCH_USES = 3
 
 # Max allowed terminology criteria of one type
-MAX_TERM_CRITERIA = 5
+TERM_MAX_CRITERIA = 5
 
 # Max allowed add or delete terms
-MAX_TERM_CHANGES = 2
+TERM_MAX_CHANGES = 2
 
 # Logfile
 LF = cdr.DEFAULT_LOGDIR + "/GlobalChange.log"
@@ -191,7 +202,7 @@ def _execQry (qry, args=None):
     try:
         conn   = cdrdb.connect ('CdrGuest')
         cursor = conn.cursor()
-        cursor.execute (qry, args)
+        cursor.execute (qry, args, timeout=300)
         rows   = cursor.fetchall()
         cursor.close()
         return rows
@@ -379,17 +390,24 @@ class GlblChg:
         """
         # Select docs
         cdr.logwrite ("Selecting docs for willChange report", LF)
-        rows = self.selDocs()
+        try:
+            rows = self.selDocs()
+        except cdrbatch.BatchException, be:
+            msg = "Error selecting docs: %s" % str(be)
+            cdr.logwrite (msg, LF, tback=1)
+            return FuncReturn (RET_ERROR, msg)
 
         # If there aren't any
         if not rows:
             return FuncReturn(RET_NONE)
+        cdr.logwrite ("Got some rows", LF)
 
         # Remember the count
         self.ssVars['chgCount'] = str(len(rows))
 
         # Session for host query
         session = self.ssVars[cdrcgi.SESSION]
+        cdr.logwrite ("Got session", LF)
 
         # Find out if there's a publishable version of each
         newRows = [['<b>DocID</b>', '<b>P</b>', '<b>Title</b>']]
@@ -407,12 +425,16 @@ class GlblChg:
             newRows.append ([row[0], pVer, row[1]])
 
         # Create the table
+        cdr.logwrite ("Ready to create table", LF)
         html = cdr.tabularize (newRows, " border='1'")
+        cdr.logwrite ("Table created", LF)
 
         # Hand it all back
         result = FuncReturn (RET_HTML)
         result.setPageHtml (html)
+        cdr.logwrite ("Established result page", LF)
         result.setPageTitle ("The following documents will change")
+        cdr.logwrite ("Ready to return will change report", LF)
         return result
 
 
@@ -739,7 +761,7 @@ class GlblChg:
 
         # Search for every type of saved term criterion
         for trmUse in TERM_USES:
-            for i in range (MAX_TERM_CRITERIA):
+            for i in range (TERM_MAX_CRITERIA):
                 # Only compose a row if we have a term id for it
                 keyId = "trm%sId%d" % (trmUse, i)
                 if self.ssVars.has_key (keyId):
@@ -975,9 +997,9 @@ class GlblChg:
             html += "<hr />\n<h3>%s</h3>\n" % TERM_PROMPTS[i]
 
             if i < TERM_SEARCH_USES:
-                rowCount = MAX_TERM_CRITERIA
+                rowCount = TERM_MAX_CRITERIA
             else:
-                rowCount = MAX_TERM_CHANGES
+                rowCount = TERM_MAX_CHANGES
 
             # Table headers
             html += """
@@ -1936,6 +1958,21 @@ class TermChg (GlblChg):
           # Returns to standard processing here
         )
 
+    def selDocs (self):
+        """
+        See PersonChg.selDocs()
+        """
+        # This is much more complicated to construct than the others
+        #   because the number of terms of each type is variable
+        # Here's the only invariant part
+        qry ="SELECT DISTINCT doc.id, doc.title FROM document doc "
+
+
+  # JOIN query_term protstat
+    # ON protstat.doc_id = doc.id
+ # WHERE (
+
+
 
     def haveEnoughTermInfo (self):
         """
@@ -1973,7 +2010,7 @@ class TermChg (GlblChg):
             0 = false = User has not.
         """
         # This looks for more than it has to, but so what
-        for i in range (MAX_TERM_CRITERIA):
+        for i in range (TERM_MAX_CRITERIA):
             # Look for ID or string value
             if self.ssVars.has_key ("trm%sId%d" % (criterion, i)):
                 return 1
@@ -2004,7 +2041,7 @@ class TermChg (GlblChg):
 
         # For each docId and/or value
         for termUse in TERM_USES:
-            for termRow in range (MAX_TERM_CRITERIA):
+            for termRow in range (TERM_MAX_CRITERIA):
                 keyId  = "trm%sId%d" % (termUse, termRow)
                 keyVal = "trm%sVal%d" % (termUse, termRow)
 
