@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.42 2002-12-05 14:38:51 pzhang Exp $
+# $Id: cdrpub.py,v 1.43 2002-12-20 23:27:55 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.42  2002/12/05 14:38:51  pzhang
+# Added timeOut for update PPCW.
+#
 # Revision 1.41  2002/12/03 21:10:54  pzhang
 # Added a fewer words to Check PushedDocs link.
 #
@@ -1282,12 +1285,12 @@ class Publish:
         except:
             raise StandardError("Deleting from pub_proc_cg_work failed.")
 
-        # Insert rows in PPD for removed documents.
+        # Insert rows in PPD for removed documents of cg_job.
         try:
             cursor.execute ("""
                 INSERT INTO pub_proc_doc (doc_id, doc_version, pub_proc,
                                           removed)
-                     SELECT ppcw.id, ppcw.num, ppcw.vendor_job, 'Y'
+                     SELECT ppcw.id, ppcw.num, ppcw.cg_job, 'Y'
                        FROM pub_proc_cg_work ppcw
                       WHERE ppcw.xml IS NULL
                             """, timeout = self.__timeOut)
@@ -1295,9 +1298,11 @@ class Publish:
             raise StandardError("Inserting D into pub_proc_doc failed.")
 
         # Update a document, if its id is in both PPC and PPD.
+        # Insert rows in PPD for updated documents of cg_job.
         try:
             cursor.execute ("""
-                SELECT ppcw.id, ppcw.xml, ppcw.vendor_job
+                SELECT ppcw.id, ppcw.xml, ppcw.vendor_job,
+                       ppcw.num, ppcw.cg_job
                   FROM pub_proc_cg_work ppcw
                  WHERE EXISTS ( SELECT *
                                   FROM pub_proc_cg ppc
@@ -1312,11 +1317,27 @@ class Publish:
                          WHERE id  = ?
                                """, (row[1], row[2], row[0])
                               )
-        except:
-            raise StandardError("Updating xml, job from PPCW to PPC failed.")
 
-        # Add new documents into PPC finally.
-        try:
+                cursor.execute ("""
+                   INSERT INTO pub_proc_doc (doc_id, doc_version, pub_proc)                                          
+                        VALUES (row[0]. row[3], row[4])                       
+                                """, timeout = self.__timeOut)
+        except:
+            raise StandardError("Updating xml, job from PPCW to PPC/D failed.")
+
+        # Add new documents into PPD first and PPC finally.
+        try:            
+            cursor.execute ("""
+                INSERT INTO pub_proc_doc (doc_id, doc_version, pub_proc)
+                     SELECT ppcw.id, ppcw.num, ppcw.cg_job
+                       FROM pub_proc_cg_work ppcw
+                      WHERE NOT ppcw.xml IS NULL
+                        AND NOT EXISTS ( SELECT *
+                                           FROM pub_proc_cg ppc
+                                          WHERE ppc.id = ppcw.id
+                                        )
+                            """, timeout = self.__timeOut)
+
             cursor.execute ("""
                 INSERT INTO pub_proc_cg (id, pub_proc, xml)
                      SELECT ppcw.id, ppcw.vendor_job, ppcw.xml
@@ -1328,7 +1349,7 @@ class Publish:
                                         )
                             """, timeout = self.__timeOut)
         except:
-            raise StandardError("Inserting into pub_proc_cg failed.")
+            raise StandardError("Inserting into PPC/D failed.")
 
         self.__conn.commit()
         self.__conn.setAutoCommit(1)
@@ -1353,18 +1374,17 @@ class Publish:
         except:
             raise StandardError("Deleting from pub_proc_cg_work failed.")
 
-        # Alter rows in PPD for removed documents.
+        # Insert rows in PPD for removed documents of cg_job.
         try:
             cursor.execute ("""
-                     UPDATE pub_proc_doc
-                        SET removed = 'Y'
-                      WHERE pub_proc IN (
-                        SELECT ppcw.vendor_job
-                          FROM pub_proc_cg_work ppcw
-                                        )
+                INSERT INTO pub_proc_doc (doc_id, doc_version, pub_proc,
+                                          removed)
+                     SELECT ppcw.id, ppcw.num, ppcw.cg_job, 'Y'
+                       FROM pub_proc_cg_work ppcw
+                      WHERE ppcw.xml IS NULL
                             """, timeout = self.__timeOut)
         except:
-            raise StandardError("Updating D in pub_proc_doc failed.")
+            raise StandardError("Inserting D into pub_proc_doc failed.") 
 
         self.__conn.commit()
         self.__conn.setAutoCommit(1)
@@ -1380,7 +1400,8 @@ class Publish:
         # Update a document, if its id is in both PPC and PPD.
         try:
             cursor.execute ("""
-                SELECT ppcw.id, ppcw.xml, ppcw.vendor_job
+                SELECT ppcw.id, ppcw.xml, ppcw.vendor_job,
+                       ppcw.num, ppcw.cg_job
                   FROM pub_proc_cg_work ppcw
                  WHERE EXISTS ( SELECT *
                                   FROM pub_proc_cg ppc
@@ -1395,11 +1416,27 @@ class Publish:
                          WHERE id  = ?
                                """, (row[1], row[2], row[0])
                               )
+
+                cursor.execute ("""
+                   INSERT INTO pub_proc_doc (doc_id, doc_version, pub_proc)                                          
+                        VALUES (row[0]. row[3], row[4])                       
+                                """, timeout = self.__timeOut)
         except:
             raise StandardError("Updating xml, job from PPCW to PPC failed.")
 
-        # Add new documents into PPC finally.
+        # Add new documents into PPD first and PPC finally.
         try:
+            cursor.execute ("""
+                INSERT INTO pub_proc_doc (doc_id, doc_version, pub_proc)
+                     SELECT ppcw.id, ppcw.num, ppcw.cg_job
+                       FROM pub_proc_cg_work ppcw
+                      WHERE NOT ppcw.xml IS NULL
+                        AND NOT EXISTS ( SELECT *
+                                           FROM pub_proc_cg ppc
+                                          WHERE ppc.id = ppcw.id
+                                        )
+                            """, timeout = self.__timeOut)
+            
             cursor.execute ("""
                 INSERT INTO pub_proc_cg (id, pub_proc, xml)
                      SELECT ppcw.id, ppcw.vendor_job, ppcw.xml
@@ -1410,8 +1447,10 @@ class Publish:
                                           WHERE ppc.id = ppcw.id
                                         )
                             """, timeout = self.__timeOut  )
+
+      
         except:
-            raise StandardError("Inserting into PPC from PPCW failed.")
+            raise StandardError("Inserting into PPD/C from PPCW failed.")
 
         self.__conn.commit()
         self.__conn.setAutoCommit(1)
