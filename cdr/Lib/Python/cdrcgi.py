@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.6 2002-02-14 19:33:21 bkline Exp $
+# $Id: cdrcgi.py,v 1.7 2002-02-21 15:21:08 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2002/02/14 19:33:21  bkline
+# Adjusted code for advanced search pulldown lists to match schema changes.
+#
 # Revision 1.5  2001/12/01 17:55:45  bkline
 # Added support for advanced search.
 #
@@ -35,6 +38,7 @@ DOCID    = "DocId"
 FILTER   = "Filter"
 FORMBG   = '/images/back.jpg'
 BASE     = '/cgi-bin/cdr'
+MAINMENU = 'Admin Menu'
 WEBSERVER= 'mmdb2.nci.nih.gov'
 HEADER   = """\
 <!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
@@ -237,6 +241,17 @@ def mainMenu(session, news = None):
            BASE, session)
 
     sendPage(hdr + extra + menu + "</FORM></BODY></HTML>")
+
+#----------------------------------------------------------------------
+# Navigate to menu location.
+#----------------------------------------------------------------------
+def navigateTo(where, session):
+    print "Location:http://%s%s/%s?%s=%s\n" % (WEBSERVER,
+                                               BASE,
+                                               where,
+                                               SESSION,
+                                               session)
+    sys.exit(0)
 
 #----------------------------------------------------------------------
 # Determine whether query contains unescaped wildcards.
