@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.4 2002-06-13 19:20:16 bkline Exp $
+# $Id: cdr2cg.py,v 1.5 2002-07-23 15:02:25 pzhang Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2002/06/13 19:20:16  bkline
+# Made some logging conditional.
+#
 # Revision 1.3  2002/05/14 12:56:05  bkline
 # Added PUBTYPES dictionary.  Added code to retry request a few times if
 # the SOAP server drops the connection unexpectedly.
@@ -49,6 +52,7 @@ PUBTYPES = {
     'Hotfix (Remove)' : 'Delete individual documents from Cancer.gov',
     'Hotfix (Export)' : 'Send individual documents to Cancer.gov'
 }
+PDQDTD = "http://mmdb2.nci.nih.gov/dtds/PDQ.dtd"
 
 #----------------------------------------------------------------------
 # XML wrappers.
