@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.86 2004-04-02 17:06:54 bkline Exp $
+# $Id: cdr.py,v 1.87 2004-05-06 18:40:47 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.86  2004/04/02 17:06:54  bkline
+# Added (and used) new function _addRepDocActiveStatus().
+#
 # Revision 1.85  2004/03/31 13:29:04  bkline
 # Made _addRepDocComment() function more robust in the face of unusual
 # conditions.
@@ -295,6 +298,7 @@ DEV_HOST      = '%s.%s' % (DEV_NAME, DOMAIN_NAME)
 CVSROOT       = "verdi.nci.nih.gov:/usr/local/cvsroot"
 DEFAULT_HOST  = 'localhost'
 DEFAULT_PORT  = 2019
+BATCHPUB_PORT = 2020
 URDATE        = '2002-06-22'
 LOGON_STRING  = """<CdrCommandSet><CdrCommand><CdrLogon>
                    <UserName>%s</UserName><Password>%s</Password>
@@ -308,17 +312,39 @@ DEFAULT_LOGDIR  = "d:/cdr/Log"
 DEFAULT_LOGFILE = DEFAULT_LOGDIR + "/debug.log"
 
 #----------------------------------------------------------------------
-# Set DEFAULT_PORT for publishing to 2020 if 2019 is not open.
+# Find a port to the CdrServer, searching port numbers in the following
+#
+# Set TCP/IP port for publishing to value of CDRPUBPORT, if present,
+# else DEFAULT_PORT, else BATCHPUB_PORT
 #----------------------------------------------------------------------
 def getPubPort():
-    try:
-        # Connect to the CDR Server.
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((DEFAULT_HOST, DEFAULT_PORT))
-        sock.close()
-        return DEFAULT_PORT
-    except:
-        return 2020
+    """
+    Find a TCP/IP port to the CdrServer, searching port numbers in
+    the following order:
+        Value of environment variable "CDRPUBPORT".
+            Typically used for testing/debugging software.
+        DEFAULT_PORT (2019 at this time).
+            The CDR is normally running on this port.
+        BATCHPUB_PORT (2020 at this time).
+            Typically used when 2019 is turned off to prevent users
+            from running interactively during a publication job.
+    Raises an error if there is no CdrServer listening on that port.
+    """
+    ports2check = (os.getenv("CDRPUBPORT"), DEFAULT_PORT, BATCHPUB_PORT)
+    for port in ports2check:
+        if port:
+            try:
+                # See if there's a CdrServer listening on this port
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.connect((DEFAULT_HOST, port))
+                sock.close()
+                return port
+            except:
+                # No listener, keep trying
+                pass
+
+    # If we got here, we've tried all possibilities
+    raise StandardError("No CdrServer found for publishing")
 
 #----------------------------------------------------------------------
 # Normalize a document id to form 'CDRnnnnnnnnnn'.
@@ -631,7 +657,7 @@ def getQueryTermValueForId (path, docId, conn = None):
               "getQueryTermValueForId: can't connect to DB: %s" % info[1][0])
 
     # Normalize id to integer
-    id = exNormalize(docId)[1]
+    did = exNormalize(docId)[1]
 
     # Search table
     try:
@@ -639,7 +665,7 @@ def getQueryTermValueForId (path, docId, conn = None):
         cursor = conn.cursor()
         cursor.execute (
           "SELECT value FROM query_term WHERE path = '%s' AND doc_id = %d" %
-          (path, id))
+          (path, did))
         rows = cursor.fetchall()
         if len(rows) == 0:
             return None
@@ -761,7 +787,7 @@ def _addRepDocComment(doc, comment):
     # Sanity check.
     if not doc:
         raise StandardError("_addRepDocComment(): missing doc argument")
-    
+
     # Search for and delete existing DocComment
     delPat = re.compile (r"\n*<DocComment.*</DocComment>\n*", re.DOTALL)
     newDoc = delPat.sub ('', doc).replace('<DocComment/>', '')
@@ -808,7 +834,7 @@ def _addRepDocActiveStatus(doc, newStatus):
     # Sanity check.
     if not doc:
         raise StandardError("_addRepDocActiveStatus(): missing doc argument")
-    
+
     # Search for and delete existing DocComment
     delPat = re.compile (r"\n*<DocActiveStatus.*</DocActiveStatus>\n*",
                          re.DOTALL)
@@ -871,7 +897,7 @@ def addDoc(credentials, file = None, doc = None, comment = '',
     # Change the active_status if requested; raises exception on failure.
     if activeStatus:
         doc = _addRepDocActiveStatus(doc, activeStatus)
-        
+
     # Create the command.
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
     val     = "<Validate>%s</Validate>" % (val)
@@ -931,7 +957,7 @@ def repDoc(credentials, file = None, doc = None, comment = '',
     # Change the active_status if requested; raises exception on failure.
     if activeStatus:
         doc = _addRepDocActiveStatus(doc, activeStatus)
-        
+
     # Create the command.
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
     val     = "<Validate>%s</Validate>" % (val)
@@ -964,10 +990,10 @@ def getDoc(credentials, docId, checkout = 'N', version = "Current",
            host = DEFAULT_HOST, port = DEFAULT_PORT, getObject = 0):
 
     # Create the command.
-    id  = normalize(docId)
+    did = normalize(docId)
     lck = "<Lock>%s</Lock>" % (checkout)
     ver = "<DocVersion>%s</DocVersion>" % (version)
-    cmd = "<CdrGetDoc><DocId>%s</DocId>%s%s</CdrGetDoc>" % (id, lck, ver)
+    cmd = "<CdrGetDoc><DocId>%s</DocId>%s%s</CdrGetDoc>" % (did, lck, ver)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -2752,9 +2778,9 @@ def getFilters(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
     filters      = []
     elems        = responseElem.specificElement.getElementsByTagName('Filter')
     for elem in elems:
-        id       = elem.getAttribute('DocId')
+        docId    = elem.getAttribute('DocId')
         name     = getTextContent(elem)
-        filters.append(IdAndName(id, name))
+        filters.append(IdAndName(docId, name))
     return filters
 
 #----------------------------------------------------------------------
