@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.21 2002-07-05 18:10:52 bkline Exp $
+# $Id: cdrcgi.py,v 1.22 2002-07-11 17:20:10 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.21  2002/07/05 18:10:52  bkline
+# Modified previous fix to use more efficient approach.
+#
 # Revision 1.20  2002/07/05 18:04:05  bkline
 # Fixed bug in advanced search page.
 #
@@ -335,7 +338,7 @@ class SearchField:
 # Generate picklist for miscellaneous document types.
 #----------------------------------------------------------------------
 def miscTypesList(conn, fName):
-    path = '/MiscellaneousDocument/MiscellaneousMetadata' \
+    path = '/MiscellaneousDocument/MiscellaneousDocumentMetadata' \
            '/MiscellaneousDocumentType'
     try:
         cursor = conn.cursor()
