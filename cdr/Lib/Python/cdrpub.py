@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.12 2002-04-09 13:12:32 bkline Exp $
+# $Id: cdrpub.py,v 1.13 2002-08-01 15:52:26 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.12  2002/04/09 13:12:32  bkline
+# Plugged in support for XQL queries.
+#
 # Revision 1.11  2002/04/04 18:31:43  bkline
 # Fixed status value in query for pub_proc row; fixed query placeholder typo.
 #
@@ -18,6 +21,8 @@
 #----------------------------------------------------------------------
 
 import cdr, cdrdb, os, re, string, sys, xml.dom.minidom
+import socket, cdr2cg
+from xml.parsers.xmlproc import xmlval, xmlproc
 
 #-----------------------------------------------------------------------
 # Value for controlling debugging output.  None means no debugging
@@ -55,7 +60,7 @@ class Publish:
     DOC        = 6
 
     # class private variables
-    __cdrEmail = "cdr@mmdb2.nci.nih.gov"
+    __cdrEmail = "cdr@%s.nci.nih.gov" % socket.gethostname()
 
     #---------------------------------------------------------------
     # Load the job settings from the database.  User-specified
@@ -615,10 +620,10 @@ class Publish:
                 message   = """\
 Job %d has completed.  You can view a status report for this job at:
 
-    http://mmdb2.nci.nih.gov/cgi-bin/cdr/PubStatus.py?id=%d
+    http://%s.nci.nih.gov/cgi-bin/cdr/PubStatus.py?id=%d
 
 Please do not reply to this message.
-""" % (self.__jobId, self.__jobId)
+""" % (self.__jobId, socket.gethostname(), self.__jobId)
                 cdr.sendMail(sender, receivers, subject, message)
         except:
             msg = "failure sending email to %s: %s" % \
@@ -935,6 +940,81 @@ Please do not reply to this message.
                 sys.stderr.write(msg)
             else:
                 open(LOG, "a").write(msg)
+
+#-----------------------------------------------------------------------
+# class: ErrObject
+#    This class encapsulates the DTD validating errors. 
+#-----------------------------------------------------------------------
+class ErrObject:
+    def __init__(self, Warnings=None, Errors=None):        
+        self.Warnings  = Warnings or []
+        self.Errors    = Errors or []
+
+#-----------------------------------------------------------------------
+# class: ErrHandler
+#    This class encapsulates the error handler for XML parser.
+#-----------------------------------------------------------------------
+class ErrHandler:
+    def __init__(self, loc):        self.locator = loc        
+    def set_locator(self, loc):     self.fulminator = loc
+    def get_locator(self):          return self.locator
+    def set_sysid(self, sysid):     self.__sysid = sysid
+    def set_errobj(self, errObj):   self.__errObj = errObj
+    def warning(self, msg):         self.__output("W:", msg)
+    def error(self, msg):           self.__output("E:", msg)
+    def fatal(self, msg):           self.__output("F:", msg)   
+    def __output(self, prefix, msg):
+        where = self.locator.get_current_sysid()
+        if where == 'Unknown': where = self.__sysid
+        xmlString = self.locator.get_raw_construct()
+        if prefix == "W:":          
+            self.__errObj.Warnings.append("%s:%d:%d: %s (%s)\n" % (where,
+                                         self.locator.get_line(),
+                                         self.locator.get_column(),
+                                         msg,
+                                         xmlString))
+        else:           
+            self.__errObj.Errors.append("%s:%d:%d: %s (%s)\n" % (where,
+                                         self.locator.get_line(),
+                                         self.locator.get_column(),
+                                         msg,
+                                         xmlString))
+
+#----------------------------------------------------------------------
+# Set a parser instance to validate filtered documents.
+#----------------------------------------------------------------------
+__parser     = xmlval.XMLValidator()
+__app        = xmlproc.Application()
+__errHandler = ErrHandler(__parser)
+__parser.set_application(__app)
+__parser.set_error_handler(__errHandler)
+      
+#----------------------------------------------------------------------
+# Validate a given document against its DTD.
+#----------------------------------------------------------------------
+def validateDoc(filteredDoc, docId = 0):
+
+    errObj      = ErrObject()
+    docTypeExpr = re.compile(r"<!DOCTYPE\s+(.*?)\s+.*?>", re.DOTALL)   
+    docType     = """<!DOCTYPE %s SYSTEM "%s">
+                  """ 
+
+    match = docTypeExpr.search(filteredDoc)
+    if match:
+        topElement = match.group(1)
+        docType    = docType % (topElement, cdr2cg.PDQDTD)
+        doc        = docTypeExpr.sub(docType, filteredDoc)
+    else:
+        errObj.Errors.append(
+            "%d.xml:0:0:DOCTYPE declaration is missing." % docId)  
+        return errObj      
+
+    __errHandler.set_sysid("%d.xml" % docId)    
+    __errHandler.set_errobj(errObj)
+    __parser.feed(doc)
+    __parser.reset()
+  
+    return errObj
 
 #----------------------------------------------------------------------
 # Test driver.
