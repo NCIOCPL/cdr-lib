@@ -24,9 +24,12 @@ r"""
 
 #----------------------------------------------------------------------
 #
-# $Id: UnicodeToLatex.py,v 1.4 2003-06-02 19:36:44 bkline Exp $
+# $Id: UnicodeToLatex.py,v 1.5 2004-02-03 18:30:08 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2003/06/02 19:36:44  bkline
+# Plugged in mappings for directional quote characters.
+#
 # Revision 1.3  2002/11/08 21:47:59  bkline
 # Added alternating double quote support.
 #
@@ -363,7 +366,9 @@ codeMap = {
     0x2199: r"""$\swarrow$""",
     0x21A6: r"""$\mapsto$""",
     0x21A9: r"""$\hookleftarrow$""",
-    0x21AA: r"""$\hookrightarrow$"""
+    0x21AA: r"""$\hookrightarrow$""",
+    ox2264: r"""$\leq$""",
+    ox2265: r"""$\geq$""",
 }
 
 pattern = re.compile(u'([][\\\\#"$%&^_`{}~<>|\u0080-\uFFFD])')
