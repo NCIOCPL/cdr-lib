@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.91 2004-07-08 19:03:44 bkline Exp $
+# $Id: cdr.py,v 1.92 2004-08-11 17:54:07 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.91  2004/07/08 19:03:44  bkline
+# Made logwrite() a little more bulletproof by ignoring all exceptions,
+# not just the ones we expect.
+#
 # Revision 1.90  2004/06/30 20:44:56  ameyer
 # Added new cacheInit() function.
 #
@@ -3096,3 +3100,22 @@ def getEmail(session):
     if not rows:
         return None
     return rows[0][0]
+
+#----------------------------------------------------------------------
+# Add a row to the external_map table.
+#----------------------------------------------------------------------
+def addExternalMapping(credentials, usage, value, id = None,
+                       host = DEFAULT_HOST, port = DEFAULT_PORT):
+    if type(usage) == type(u""):
+        usage = usage.encode('utf-8')
+    if type(value) == type(u""):
+        value = value.encode("utf-8")
+    id = id and ("<CdrId>%s</CdrId>" % normalize(id)) or ""
+    cmd = ("<CdrAddExternalMapping><Usage>" + usage + "</Usage><Value>" +
+           value + "</Value>" + id + "</CdrAddExternalMapping>")
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+
+    # This is how we should have been handling failures all along. :-<}
+    errors = getErrors(resp, errorsExpected = False, asSequence = True)
+    if errors:
+        raise Exception(errors)
