@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.36 2003-11-04 16:56:22 bkline Exp $
+# $Id: cdrcgi.py,v 1.37 2003-12-16 16:16:07 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.36  2003/11/04 16:56:22  bkline
+# Added CTGov to main admin menu.
+#
 # Revision 1.35  2003/09/12 12:36:38  bkline
 # Modified the function which constructs an advanced search query,
 # adding support for finding documents based on values in linked
@@ -328,55 +331,37 @@ def logout(session):
 #----------------------------------------------------------------------
 def mainMenu(session, news = None):
 
-    session = "?%s=%s" % (SESSION, session)
-    title   = "CDR Administration"
-    section = "Main Menu"
-    buttons = []
-    hdr     = header(title, title, section, "", buttons)
+    userPair = cdr.idSessionUser(session, session)
+    session  = "?%s=%s" % (SESSION, session)
+    title    = "CDR Administration"
+    section  = "Main Menu"
+    buttons  = []
+    hdr      = header(title, title, section, "", buttons)
 
-    extra = news and ("<H2>%s</H2>\n" % news) or ""
-    menu = """\
-     <OL>
-      <LI><A HREF='%s/EditGroups.py%s'>Manage Groups</A></LI>
-      <LI><A HREF='%s/EditUsers.py%s'>Manage Users</A></LI>
-      <LI><A HREF='%s/EditActions.py%s'>Manage Actions</A></LI>
-      <LI><A HREF='%s/EditDoctypes.py%s'>Manage Document Types</A></LI>
-      <LI><A HREF='%s/EditCSSs.py%s'>Manage CSS Stylesheets</A></LI>
-      <LI><A HREF='%s/EditQueryTermDefs.py%s'>Manage Query Term Definitions</A></LI>
-      <LI><A HREF='%s/EditLinkControl.py%s'>Manage Linking Tables</A></LI>
-      <LI><A HREF='%s/EditFilters.py%s'>Manage Filters</A></LI>
-      <LI><A HREF='%s/EditFilterSets.py%s'>Manage Filter Sets</A></LI>
-      <LI><A HREF='%s/Publishing.py%s'>Publishing</A></LI>
-      <LI><A HREF='%s/Reports.py%s'>Reports</A></LI>
-      <LI><A HREF='%s/Mailers.py%s'>Mailers</A></LI>
-      <LI><A HREF='%s/MergeProt.py%s'>Merge Protocol</A></LI>
-      <LI><A HREF='%s/GlobalChange.py%s'>Make Global Changes</A></LI>
-      <LI><A HREF='%s/getBatchStatus.py%s'>View Batch Job Status</A></LI>
-      <LI><A HREF='%s/MessageLoggedInUsers.py%s'>
-            Send Email to Users Currently Logged in to the CDR</A></LI>
-      <LI><A HREF='%s/CTGov.py%s'>ClinicalTrials.Gov Protocols</A></LI>
-      <LI><A HREF='%s/Logout.py%s'>Log Out</A></LI>
-     </OL>
-    """ % (BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session,
-           BASE, session)
-
-    sendPage(hdr + extra + menu + "</FORM></BODY></HTML>")
+    extra    = news and ("<H2>%s</H2>\n" % news) or ""
+    menu     = """\
+    <ol>
+"""
+    if userPair[0].lower() == 'venglisc':
+        menu += """\
+     <li>
+      <a href='%s/EditFilters.py%s'>Manage Filters (Just for you, Volker!)</a>
+     </li>
+""" % (BASE, session)
+    for item in (
+        ('BoardManagers.py', 'CIPS Board Managers'             ),
+        ('CiatCipsStaff.py', 'CIAT/CIPS Staff'                 ),
+        ('DevSA.py',         'Developers/System Administrators'),
+        ('Logout.py',        'Log Out'                         )
+        ):
+        menu += """\
+     <li><a href='%s/%s%s'>%s</a></li>
+""" % (BASE, item[0], session, item[1])
+    sendPage(hdr + extra + menu + """\
+    </ol>
+  </form>
+ </body>
+</html>""")
 
 #----------------------------------------------------------------------
 # Navigate to menu location.
