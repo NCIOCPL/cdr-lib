@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.100 2004-11-17 02:11:10 ameyer Exp $
+# $Id: cdr.py,v 1.101 2004-11-29 19:55:23 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,11 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.100  2004/11/17 02:11:10  ameyer
+# Added blob functionality to addDoc and repDoc using the common subroutine,
+# _addDocBlob().
+# Also beefed up the addDoc and (by reference) the repDoc documentation.
+#
 # Revision 1.99  2004/11/05 05:54:35  ameyer
 # Modified getDoc() to retrieve xml and/or blob, with default to xml only.
 # Currently returning blob as base64.  Will probably change this later.
@@ -920,6 +925,31 @@ class Doc:
             rep += makeDocBlob(self.blob, wrapper="CdrDocBlob")
         rep += "</CdrDoc>"
         return rep
+
+    # Construct name for publishing the document.  Zero padding is
+    # different for media documents, based on Alan's Multimedia Publishing
+    # Analysis document.
+    def getPublicationFilename(self):
+        if not self.id:
+            raise Exception('missing document ID')
+        if not self.type:
+            raise Exception('missing document type')
+        id = exNormalize(self.id)[1]
+        if self.type != 'Media':
+            return "CDR%d.xml" % id
+        dom = xml.dom.minidom.parseString(self.xml)
+        for node in dom.documentElement.childNodes:
+            if node.nodeName == "PhysicalMedia":
+                for child in node.childNodes:
+                    if child.nodeName == "ImageData":
+                        for grandchild in child.childNodes:
+                            if grandchild.nodeName == "ImageEncoding":
+                                encoding = getTextContent(grandchild)
+                                if encoding == 'JPEG':
+                                    return "CDR%010d.jpg" % id
+                                elif encoding == 'GIF':
+                                    return "CDR%010d.gif" % id
+        raise Exception("Media type not yet supported")
 
 #----------------------------------------------------------------------
 # Internal subroutine to add or replace DocComment element in CdrDocCtl.
@@ -3355,6 +3385,7 @@ def getCDATA(utf8string):
 # to be passed as utf8-encoded documents.
 #----------------------------------------------------------------------
 def compareXmlDocs(utf8DocString1, utf8DocString2):
+    if utf8DocString1 is utf8DocString2: return 0
     return cmp(normalizeDoc(utf8DocString1), normalizeDoc(utf8DocString2))
 
 #----------------------------------------------------------------------
@@ -3479,3 +3510,41 @@ def getDocStatus(credentials, docId, host = DEFAULT_HOST):
 #----------------------------------------------------------------------
 def unblockDoc(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
     setDocStatus(credentials, docId, "A", host, port)
+
+#----------------------------------------------------------------------
+# Determine the last date a versioned blob changed.
+#----------------------------------------------------------------------
+def getVersionedBlobChangeDate(credentials, docId, version, conn = None,
+                               host = DEFAULT_HOST):
+    if not conn:
+        conn = cdrdb.connect('CdrGuest', dataSource = host)
+    cursor = conn.cursor()
+    cursor.execute("""\
+        SELECT blob_id
+          FROM version_blob_usage
+         WHERE doc_id = ?
+           AND doc_version = ?""", (docId, version))
+    rows = cursor.fetchall()
+    if not rows:
+        raise Exception(['no blob found for document %s version %s' %
+                         (docId, version)])
+    blobId = rows[0][0]
+    cursor.execute("""\
+        SELECT v.num, v.dt
+          FROM doc_version v
+          JOIN version_blob_usage u
+            ON u.doc_id = v.id
+           AND u.doc_version = v.num
+         WHERE u.blob_id = ?
+           AND u.doc_id = ?
+           AND u.doc_version <= ?
+      ORDER BY v.num DESC""", (blobId, docId, version))
+    rows = cursor.fetchall()
+    if not rows:
+        raise Exception(['failure fetching rows for blob %s' % blobId])
+    lastVersion, lastDate = rows[0]
+    for prevVersion, prevDate in rows[1:]:
+        if prevVersion != lastVersion - 1:
+            break
+        lastVersion, lastDate = prevVersion, prevDate
+    return lastDate
