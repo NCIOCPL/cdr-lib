@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.57 2004-08-25 02:43:14 ameyer Exp $
+# $Id: cdrpub.py,v 1.58 2004-09-14 18:05:51 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.57  2004/08/25 02:43:14  ameyer
+# Significant changes to a number of parts of the program to implement
+# multi-threading.
+# Also did a small number of code cleanups on existing code.
+#
 # Revision 1.56  2004/07/02 01:03:27  ameyer
 # Changes to set server publishing cacheing on/off at the appropriate
 # times.
@@ -259,6 +264,9 @@ class Publish:
     # Next doc to be published.  Threads synchronize to use this
     __nextDoc = 0
 
+    # Total published documents, updated after each subset is published
+    __totalPubDocs = 0
+
     # Thread locking objects.
     # All threads share this one instance of a Publish object.
     __lockNextDoc = threading.Lock()
@@ -267,6 +275,10 @@ class Publish:
 
     # Publish this many docs in parallel
     __numThreads  = PUB_THREADS
+
+    # An error in any thread updates this
+    # Other threads will see it and exit
+    __threadError = None
 
     #---------------------------------------------------------------
     # Hash __dateFirstPub is specifically designed to solve the issue
@@ -603,13 +615,20 @@ class Publish:
 
                     for specChild in spec.childNodes:
                         if specChild.nodeName == "SubsetSelection":
+                            # Fetch all doc id/ver/doctype tuples
                             self.__docs = self.__selectQueryDocs(specChild)
-                            self.__launchPubThreads(self, specFilters[i],
+
+                            # Reset counter for this subset
+                            self.__nextDoc = 0
+
+                            # Launch a bunch of threads
+                            self.__launchPubThreads(specFilters[i],
                                                     destType, dest,
                                                     specSubdirs[i])
 
+                            # Back from running all threads
                             # Add all the docs to pub_proc_doc table
-                            self.__addPubProcDocRows(self, subDir)
+                            self.__addPubProcDocRows(specSubdirs[i])
                     i += 1
 
             self.__updateMessage("""Finish filtering/validating all %d docs
@@ -774,9 +793,9 @@ class Publish:
             Void.
         """
         # Log message
-        msg = "publish: " % msg
+        msg = "publish: %s" % msg
         try:
-            self.debugLog(msg, LOG, tb=1)
+            self.__debugLog(msg, LOG, tb=1)
         except:
             pass
 
@@ -1038,7 +1057,7 @@ has started</B>).<BR>""" % cgWorkLink
                             """, timeout = self.__timeOut)
             row = cursor.fetchone()
             while row:
-                id      = row[0]
+                docId   = row[0]
                 version = row[1]
                 docType = row[2]
                 if docType == "InScopeProtocol":
@@ -1048,10 +1067,10 @@ has started</B>).<BR>""" % cgWorkLink
                 xml = DocTypeLine.sub("", xml)
 
                 response = cdr2cg.sendDocument(self.__jobId, docNum,
-                            "Export", docType, id, version, xml)
+                            "Export", docType, docId, version, xml)
                 if response.type != "OK":
                     msg += "sending document %d failed. %s: %s<BR>" % \
-                            (id, response.type, response.message)
+                            (docId, response.type, response.message)
                     raise StandardError(msg)
                 docNum  = docNum + 1
                 if docNum % 1000 == 0:
@@ -1073,15 +1092,15 @@ has started</B>).<BR>""" % cgWorkLink
                             """)
             rows = cursor.fetchall()
             for row in rows:
-                id        = row[0]
+                docId     = row[0]
                 version   = row[1]
                 docType   = row[2]
                 if docType == "InScopeProtocol":
                     docType = "Protocol"
                 response = cdr2cg.sendDocument(self.__jobId, docNum, "Remove",
-                                               docType, id, version)
+                                               docType, docId, version)
                 if response.type != "OK":
-                    msg += "deleting document %d failed. %s: %s<BR>" % (id,
+                    msg += "deleting document %d failed. %s: %s<BR>" % (docId,
                             response.type, response.message)
                     raise StandardError(msg)
                 docNum  = docNum + 1
@@ -1179,16 +1198,16 @@ has started</B>).<BR>""" % cgWorkLink
 
             # Fetch each doc
             while row:
-                id     = row[0]
-                if idsInserted.has_key(id):
+                docId  = row[0]
+                if idsInserted.has_key(docId):
                     row = cursor.fetchone()
                     continue
-                idsInserted[id] = 1
+                idsInserted[docId] = 1
                 dType  = row[1]
                 xml    = row[2]
                 subdir = row[3]
                 ver    = row[4]
-                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
+                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
                 fileTxt= open(path, "rb").read()
                 fileTxt= unicode(fileTxt, 'utf-8')
 
@@ -1199,7 +1218,7 @@ has started</B>).<BR>""" % cgWorkLink
                         INSERT INTO pub_proc_cg_work (id, vendor_job,
                                         cg_job, doc_type, xml, num)
                              VALUES (?, ?, ?, ?, ?, ?)
-                                    """, (id, vendor_job, cg_job, dType,
+                                    """, (docId, vendor_job, cg_job, dType,
                                           fileTxt, ver),
                                          timeout = self.__timeOut
                                    )
@@ -1236,11 +1255,11 @@ has started</B>).<BR>""" % cgWorkLink
                            )
             row = cursor.fetchone()
             while row:
-                id     = row[0]
+                docId  = row[0]
                 dType  = row[1]
                 subdir = row[2]
                 ver    = row[3]
-                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
+                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
                 xml    = open(path, "rb").read()
                 xml    = unicode(xml, 'utf-8')
                 try:
@@ -1249,12 +1268,12 @@ has started</B>).<BR>""" % cgWorkLink
                                                   doc_type, xml, num)
                          VALUES (?, ?, ?, ?, ?, ?)
                                     """,
-                                    (id, vendor_job, cg_job, dType, xml, ver),
+                                    (docId, vendor_job, cg_job, dType,xml,ver),
                                     timeout = self.__timeOut
                                    )
                 except:
                     raise StandardError(
-                        "Inserting CDR%d to PPCW failed." % id)
+                        "Inserting CDR%d to PPCW failed." % docId)
 
                 row = cursor.fetchone()
 
@@ -1429,16 +1448,16 @@ has started</B>).<BR>""" % cgWorkLink
             row = cursor.fetchone()
             idsInserted = {}
             while row:
-                id     = row[0]
-                if idsInserted.has_key(id):
+                docId  = row[0]
+                if idsInserted.has_key(docId):
                     row = cursor.fetchone()
                     continue
-                idsInserted[id] = 1
+                idsInserted[docId] = 1
                 dType  = row[1]
                 xml    = row[2]
                 subdir = row[3]
                 ver    = row[4]
-                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
+                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
                 fileTxt   = open(path, "rb").read()
                 fileTxt   = unicode(fileTxt, 'utf-8')
 
@@ -1447,7 +1466,7 @@ has started</B>).<BR>""" % cgWorkLink
                         INSERT INTO pub_proc_cg_work (id, vendor_job,
                                         cg_job, doc_type, xml, num)
                              VALUES (?, ?, ?, ?, ?, ?)
-                                    """, (id, vendor_job, cg_job, dType,
+                                    """, (docId, vendor_job, cg_job, dType,
                                           fileTxt, ver)
                                    )
 
@@ -1483,11 +1502,11 @@ has started</B>).<BR>""" % cgWorkLink
                            )
             row = cursor.fetchone()
             while row:
-                id     = row[0]
+                docId  = row[0]
                 dType  = row[1]
                 subdir = row[2]
                 ver    = row[3]
-                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
+                path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
                 xml    = open(path, "rb").read()
                 xml    = unicode(xml, 'utf-8')
                 cursor2.execute("""
@@ -1495,7 +1514,7 @@ has started</B>).<BR>""" % cgWorkLink
                                                   doc_type, xml, num)
                          VALUES (?, ?, ?, ?, ?, ?)
                                 """,
-                                (id, vendor_job, cg_job, dType, xml, ver),
+                                (docId, vendor_job, cg_job, dType, xml, ver),
                                 timeout = self.__timeOut
                                )
                 row = cursor.fetchone()
@@ -1853,14 +1872,14 @@ has started</B>).<BR>""" % cgWorkLink
         # not in PPD yet, it should succeed with all insertions.
         try:
             cursor = self.__conn.cursor()
-            for id in hash.keys():
+            for docId in hash.keys():
 
                 # Update the PPD table.
                 cursor.execute ("""
                     INSERT INTO pub_proc_doc
                                 (pub_proc, doc_id, doc_version)
                          VALUES  (?, ?, ?)
-                                """, (self.__jobId, id, hash[id])
+                                """, (self.__jobId, docId, hash[docId])
                                )
 
                 # Update the __useDocList.
@@ -1869,11 +1888,11 @@ has started</B>).<BR>""" % cgWorkLink
                            FROM doc_type t, document d
                           WHERE d.doc_type = t.id
                             AND d.id = ?
-                                """, id
+                                """, docId
                                )
                 row = cursor.fetchone()
                 if row and row[0]:
-                    self.__userDocList.append((id, hash[id], row[0]))
+                    self.__userDocList.append((docId, hash[docId], row[0]))
                 else:
                     msg = "Failed in adding docs to __userDocList.<BR>"
                     raise StandardError(msg)
@@ -1917,6 +1936,7 @@ has started</B>).<BR>""" % cgWorkLink
 
             # Launch it
             thrd.start()
+            self.__debugLog("Started thread")
 
         # Wait for error or end of all threads
         done = 0
@@ -1930,15 +1950,17 @@ has started</B>).<BR>""" % cgWorkLink
                     # In my tests, exceptions raised in a thread
                     #   weren't caught outside the thread where I
                     #   hoped to catch them.
-                    # So I catch them in the thread, set self.__error
+                    # So I catch them in the thread, set self.__threadError
                     #   = thread id, log the error, and exit the thread.
-                    # Now I check if this happened and raise the
-                    #   exception in main - where I can stop the whole
-                    #   program and not just the one thread.
-                    if self.__error == i:
+                    # Here in the parent I check for this and raise the
+                    #   exception in main - aborting if any thread failed.
+                    # NOTE: Each thread must also check this and abort,
+                    #   aborting the parent does _not_ kill the children.
+                    if self.__threadError == i:
                         # Abort
-                        msg = "Aborting on error in thread %d, see logfile" % i
-                        self.__debugLog(msg, LOG)
+                        msg = "Aborting on error in thread %d, see logfile" %\
+                              self.__threadError
+                        self.__debugLog(msg)
                         raise StandardError(msg)
 
             # Wait awhile before checking again
@@ -1962,7 +1984,7 @@ has started</B>).<BR>""" % cgWorkLink
     #   destDir     directory in which to write output
     #   subDir      subdirectory to store a subset of vendor docs
     #------------------------------------------------------------------
-    def  __publishDocList(self, threadId, filters, destType, destDir,
+    def __publishDocList(self, threadId, filters, destType, destDir,
                           subDir=''):
 
         # Flags indicating completion and error status
@@ -1974,18 +1996,19 @@ has started</B>).<BR>""" % cgWorkLink
             self.__lockNextDoc.acquire(1)
             if len(self.__docs) >= self.__nextDoc + 1:
                 doc = self.__docs[self.__nextDoc]
-                self.__nextDoc += 1
+                self.__nextDoc      += 1
+                self.__totalPubDocs += 1
 
                 # Is it time to log progress?
                 # This holds up other threads, but only happens
                 #   once every logDocModulus documents
-                if self.__nextDoc % self.__logDocModulus == 0:
+                if self.__totalPubDocs % self.__logDocModulus == 0:
                     try:
                         numFailures = self.__getFailures()
                         self.__updateMessage("""Filtered/validated
                             %d docs at %s, and %d docs failed so
-                            far.<BR>""" % (self.__nextDoc, time.ctime(),
-                                           numFailures))
+                            far.<BR>""" % (self.__totalPubDocs,
+                                           time.ctime(), numFailures))
                     except:
                         pass
             else:
@@ -1997,24 +2020,29 @@ has started</B>).<BR>""" % cgWorkLink
             try:
                 self.__publishDoc (doc, filters, destType, destDir, subDir)
             except cdrdb.Error, info:
-                self.debugLog(
+                self.__debugLog(
                      "Database error publishing doc %d ver %d in %s:\n  %s"
                      % (doc[0], doc[1], threadId, info[1][0]), tb=1)
                 error = 1
             except:
-                self.debugLog(
+                self.__debugLog(
                      "Exception publishing doc %d ver %d in %s"
-                     % (doc[0], doc[1], threadId, info[1][0]), tb=1)
+                     % (doc[0], doc[1], threadId), tb=1)
                 error = 1
 
-            # If error occurred, signal it and exit
+            # If error occurred, signal it
             if error:
                 self.__threadError = threadId
+
+            # Error in this or any other thread causes thread exit
+            # Otherwise an error in one thread won't stop others
+            if self.__threadError:
+                self.__debugLog("Exiting thread %s due to error in thread %s" %
+                               (threadId, self.__threadError))
                 done = 1
 
         # Done with thread
         sys.exit()
-
 
 
     #------------------------------------------------------------------
@@ -2084,7 +2112,8 @@ has started</B>).<BR>""" % cgWorkLink
         # Save the output as instructed.
         if self.__no_output != 'Y' and filteredDoc:
             try:
-                subDir = invalDoc or subDir
+                if invalDoc:
+                    subDir = invalDoc
                 destDir = destDir + "/" + subDir
                 if destType == Publish.FILE:
                     self.__saveDoc(filteredDoc, destDir, self.__fileName, "a")
@@ -2115,31 +2144,36 @@ has started</B>).<BR>""" % cgWorkLink
         msg = None
 
         # Synchronize critical section
-        self.__lockErrors.acquire(1)
+        self.__lockError.acquire(1)
 
-        if errors:
-            self.__addDocMessages(doc, errors, Publish.SET_FAILURE_FLAG)
-            self.__errorCount += 1
-            if self.__errorsBeforeAborting != -1:
-                if self.__errorCount > self.__errorsBeforeAborting:
-                    if self.__errorsBeforeAborting:
-                        msg = "Aborting on error detected in CDR%010d.<BR>" \
-                                % doc[0]
-                    else:
-                        msg = "Aborting: too many errors encountered"
-        if warnings:
-            self.__addDocMessages(doc, warnings)
-            self.__warningCount += 1
-            if self.__publishIfWarnings == "No":
-                msg = "Aborting on warning(s) detected in CDR%010d.<BR>" \
-                    % doc[0]
+        # Wrap everything in try bloc to ensure lock release
+        try:
+            if errors:
+                self.__addDocMessages(doc, errors, Publish.SET_FAILURE_FLAG)
+                self.__errorCount += 1
+                if self.__errorsBeforeAborting != -1:
+                    if self.__errorCount > self.__errorsBeforeAborting:
+                        if self.__errorsBeforeAborting:
+                          msg = "Aborting on error detected in CDR%010d.<BR>" \
+                                    % doc[0]
+                        else:
+                          msg = "Aborting: too many errors encountered"
+            if warnings:
+                self.__addDocMessages(doc, warnings)
+                self.__warningCount += 1
+                if self.__publishIfWarnings == "No":
+                    msg = "Aborting on warning(s) detected in CDR%010d.<BR>" \
+                        % doc[0]
 
-        # End of critical section
-        self.__lockError.release()
+            # Did we get an abort message?
+            if msg:
+                self.__debugLog("checkProblems raises StandardError, msg=%s" \
+                                 % msg)
+                raise StandardError(msg)
 
-        # Did with get an abort message?
-        if msg:
-            raise StandardError(msg)
+        # Ensure release of lock
+        finally:
+            self.__lockError.release()
 
     #------------------------------------------------------------------
     # Record warning or error messages for the job.
@@ -2252,38 +2286,31 @@ has started</B>).<BR>""" % cgWorkLink
                     sql = self.__repParams(cdr.getTextContent(child))
                     cursor.execute(sql, timeout = self.__timeOut)
 
-                    # XXX Dependency on result set column names is fragile
-                    # and non-portable, relying on (among other things)
-                    # DBMS treatment of case of object names.  Consider
-                    # replacing this with a convention which uses the
-                    # column count and order in the result set.
-                    idCol = -1
-                    verCol = -1
+                    # Sanity checks for the query.
                     if not cursor.description:
-                        raise StandardError("Result set not returned for "
-                                            "SQL query: %s" % sql)
-                    i = 0
-                    for field in cursor.description:
-                        if i == 0: # field[0] == "id":
-                            idCol = i
-                        elif i == 1: # field[0] == "version":
-                            verCol = i
-                        i += 1
-                    if idCol == -1:
-                        raise StandardError("SQL query does not return an "
-                                            "'id' column: %s" % sql)
+                        raise StandardError(u"Result set not returned for "
+                                            u"SQL query: %s" % sql)
+                    if len(cursor.description) < 1:
+                        raise StandardError(u"SQL query must return at least "
+                                            u"one column (containing a "
+                                            u"document ID): %s" % sql)
+
+                    # See if we have a version column.
+                    haveVersion = len(cursor.description) > 1
+
                     row = cursor.fetchone()
                     while row:
-                        oneId = row[idCol]
+                        oneId = row[0]
                         if oneId in self.__alreadyPublished: continue
-                        ver = verCol != -1 and row[verCol] or None
+                        ver = haveVersion and row[1] or None
 
                         try:
                             doc = self.__findPublishableVersion(oneId, ver)
                         except StandardError, arg:
 
                             # Can't record this in the pub_proc_doc table,
-                            # because we don't really have a versioned document.
+                            # because we don't really have a versioned
+                            # document.
                             self.__errorCount += 1
                             threshold = self.__errorsBeforeAborting
                             if threshold != -1:
@@ -2866,8 +2893,9 @@ Please do not reply to this message.
 
         # Output, with optional traceback
         if LOG is not None:
-            msg = "Job %d: %s\n" % (self.__jobId, line)
+            msg = "Job %d: %s" % (self.__jobId, line)
             if LOG == "":
+                msg = "%s\n" % msg
                 sys.stderr.write(msg)
             else:
                 # open(LOG, "a").write(msg)
@@ -2918,16 +2946,23 @@ class ErrHandler:
 #----------------------------------------------------------------------
 # Set a parser instance to validate filtered documents.
 #----------------------------------------------------------------------
-__parser     = xmlval.XMLValidator()
-__app        = xmlproc.Application()
-__errHandler = ErrHandler(__parser)
-__parser.set_application(__app)
-__parser.set_error_handler(__errHandler)
+# __parser     = xmlval.XMLValidator()
+# __app        = xmlproc.Application()
+# __errHandler = ErrHandler(__parser)
+# __parser.set_application(__app)
+# __parser.set_error_handler(__errHandler)
 
 #----------------------------------------------------------------------
 # Validate a given document against its DTD.
 #----------------------------------------------------------------------
 def validateDoc(filteredDoc, docId = 0, dtd = cdr2cg.PDQDTD):
+
+    # These used to be global.  Now local to ensure expat thread safety
+    __parser     = xmlval.XMLValidator()
+    __app        = xmlproc.Application()
+    __errHandler = ErrHandler(__parser)
+    __parser.set_application(__app)
+    __parser.set_error_handler(__errHandler)
 
     errObj      = ErrObject()
     docTypeExpr = re.compile(r"<!DOCTYPE\s+(.*?)\s+.*?>", re.DOTALL)
