@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.5 2003-09-17 02:53:22 ameyer Exp $
+# $Id: cdrbatch.py,v 1.6 2003-10-23 13:21:24 bkline Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,9 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2003/09/17 02:53:22  ameyer
+# Added support for stringification of non-string args passed to batch jobs.
+#
 # Revision 1.4  2003/05/08 20:40:15  bkline
 # Added ability to queue a batch job on a different server.
 #
@@ -627,7 +630,7 @@ class CdrBatch:
                WHERE id = ?""", (newMsg, self.__jobId))
             self.__conn.commit()
         except cdrdb.Error, info:
-            self.fail ("Unable to update progress message" % info[1][0])
+            self.fail ("Unable to update progress message: %s" % info[1][0])
 
 
     #------------------------------------------------------------------
