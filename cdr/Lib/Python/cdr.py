@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.37 2002-07-02 23:49:21 ameyer Exp $
+# $Id: cdr.py,v 1.38 2002-07-05 20:55:04 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.37  2002/07/02 23:49:21  ameyer
+# Added extended cdr id normalizer exNormalize().
+#
 # Revision 1.36  2002/07/01 21:39:59  bkline
 # Corrected filter to Filter in getDoctypes().
 #
@@ -1757,6 +1760,23 @@ def listVersions(credentials, docId, nVersions = -1,
             comment = commentMatch and commentMatch.group(1) or None
             versions.append((num, comment))
     return versions
+
+#----------------------------------------------------------------------
+# Reindex the specified document.
+#----------------------------------------------------------------------
+def reindex(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
+    
+    # Create the command.
+    docId = normalize(docId)
+    cmd = "<CdrReindexDoc><DocId>%s</DocId></CdrReindexDoc>" % docId
+
+    # Submit the commands.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+
+    # Check for errors.
+    if resp.find("<Errors") != -1:
+        return extract(r"(<Errors[\s>].*</Errors>)", resp)
+    return None
 
 #----------------------------------------------------------------------
 # Create a new publishing job.
