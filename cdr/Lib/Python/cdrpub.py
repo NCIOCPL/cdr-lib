@@ -2,8 +2,13 @@
 #
 # Script for command line and CGI publishing.
 #
-# $Id: cdrpub.py,v 1.5 2002-02-22 19:01:14 pzhang Exp $
+# $Id: cdrpub.py,v 1.6 2002-02-28 23:23:46 pzhang Exp $
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2002/02/22 19:01:14  pzhang
+# Updated getSubsets to return flags for Params and UserSelect.
+# Updated isPublishable to return version number or -1.
+# Updated getAction to return the action name or ""
+#
 # Revision 1.4  2002/02/22 16:41:31  pzhang
 # Fixed a bug in getParameters returning None instead of [].
 #
@@ -448,29 +453,30 @@ class Publish:
                         localParams, dest, options)
 
             # We need to check publishing status before finishing.
-            status = self.__getStatus()
-            if status == Publish.SUCCEED:
-                if destType == Publish.FILE:
-                    shutil.copy(dest + "/new/" + file, dest)
-                else: # Copy all files from subdir "new" to destination.
-                    for file in os.listdir(dest + "/new"):
+            if self.no_output != "Y":
+                status = self.__getStatus()
+                if status == Publish.SUCCEED:
+                    if destType == Publish.FILE:
                         shutil.copy(dest + "/new/" + file, dest)
-                # Rename the destination dir to .SUCCEED
-                os.rename(dest, dest_base + ".SUCCEED")
+                    else: # Copy all files from subdir "new" to destination.
+                        for file in os.listdir(dest + "/new"):
+                            shutil.copy(dest + "/new/" + file, dest)
+                    # Rename the destination dir to .SUCCEED
+                    os.rename(dest, dest_base + ".SUCCEED")
 
-                # Update Publishing_Events and
-                #    Published_Documents tables
-                #     from Publishing_Process and
-                #    Publishing_Process_Documents tables,
-                #    respectively.
-                self.__updateStatuses()
+                    # Update Publishing_Events and
+                    #    Published_Documents tables
+                    #     from Publishing_Process and
+                    #    Publishing_Process_Documents tables,
+                    #    respectively.
+                    self.__updateStatuses()
 
-            elif status == Publish.FAIL:
-                # Rename the destination dir to .FAIL
-                os.rename(dest, dest_base + ".FAIL")
-            elif status == Publish.WAIT:
-                # Rename the destination dir to .WAIT
-                os.rename(dest, dest_base + ".WAIT")
+                elif status == Publish.FAIL:
+                    # Rename the destination dir to .FAIL
+                    os.rename(dest, dest_base + ".FAIL")
+                elif status == Publish.WAIT:
+                    # Rename the destination dir to .WAIT
+                    os.rename(dest, dest_base + ".WAIT")
 
             # Send email to notify user of job status.
             self.__sendMail()
