@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.30 2002-04-09 21:02:23 bkline Exp $
+# $Id: cdr.py,v 1.31 2002-04-16 21:10:24 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.30  2002/04/09 21:02:23  bkline
+# Fixed typo in addDoc and repDoc (missing : after else).
+#
 # Revision 1.29  2002/04/09 20:19:53  bkline
 # Modified addDoc() and repDoc to optionally return a tuple with the
 # document ID string and any warnings.
@@ -1560,7 +1563,7 @@ def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
             match = expr.search(doc)
             if not match:
                 return (None, "<Errors><Err>Malformed docList member '%s'"\
-                              "</Err></Errors>")
+                              "</Err></Errors>" % doc)
             id = normalize(match.group(1))
             version = match.group(3) or "0"
             docsElem += "<Doc Id='%s' Version='%s'/>" % (id, version)
