@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.32 2002-05-14 12:56:55 bkline Exp $
+# $Id: cdr.py,v 1.33 2002-06-08 02:02:35 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.32  2002/05/14 12:56:55  bkline
+# Added listVersions() function.
+#
 # Revision 1.31  2002/04/16 21:10:24  bkline
 # Added missing %s argument in publish().
 #
@@ -823,8 +826,8 @@ def getActions(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Parse the response.
     actions = {}
-    for a in re.findall("<Action>\s*<Name>(.*)</Name>\s*"
-                        "<NeedDoctype>(.*)</NeedDoctype>\s*</Action>", resp):
+    for a in re.findall("<Action>\s*<Name>(.*?)</Name>\s*"
+                        "<NeedDoctype>(.*?)</NeedDoctype>\s*</Action>", resp):
         actions[a[0]] = a[1]
     return actions
 
@@ -845,7 +848,9 @@ def getUsers(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
         return err
 
     # Parse the response.
-    return re.findall("<UserName>(.*)</UserName>", resp)
+    users = re.findall("<UserName>(.*?)</UserName>", resp)
+    users.sort()
+    return users
 
 #----------------------------------------------------------------------
 # Gets the list of CDR authorization groups.
@@ -864,7 +869,9 @@ def getGroups(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
         return err
 
     # Parse the response.
-    return re.findall("<GrpName>(.*)</GrpName>", resp)
+    groups = re.findall("<GrpName>(.*?)</GrpName>", resp)
+    groups.sort()
+    return groups
 
 #----------------------------------------------------------------------
 # Deletes a CDR group.
@@ -902,7 +909,54 @@ def getDoctypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
         return err
 
     # Parse the response.
-    return re.findall("<DocType>(.*?)</DocType>", resp)
+    types = re.findall("<DocType>(.*?)</DocType>", resp)
+    if 'filter' not in types: types.append('filter')
+    types.sort()
+    return types
+
+#----------------------------------------------------------------------
+# Type used by getCssFiles() below.
+#----------------------------------------------------------------------
+class CssFile:
+    def __init__(self, name, data):
+        self.name = name
+        self.data = data
+        
+#----------------------------------------------------------------------
+# Gets the CSS files used by the client.
+#----------------------------------------------------------------------
+def getCssFiles(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command.
+    cmd = "<CdrGetCssFiles/>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # Parse the response.
+    nameExpr = re.compile("<Name>(.*)</Name>", re.DOTALL)
+    dataExpr = re.compile("<Data>(.*)</Data>", re.DOTALL)
+    files = []
+    start = resp.find("<File>")
+    if start == -1:
+        return "Unable to find CSS files"
+    while start != -1:
+        end = resp.find("</File>", start)
+        if end == -1:
+            return "Missing end tag for CSS file"
+        subString = resp[start:end]
+        nameElem = nameExpr.search(subString)
+        dataElem = dataExpr.search(subString)
+        if not nameElem: return "Missing Name element"
+        if not dataElem: return "Missing Data element"
+        files.append(CssFile(nameElem.group(1), dataElem.group(1)))
+        start = resp.find("<File>", end)
+    return files
 
 #----------------------------------------------------------------------
 # Gets the list of CDR schema documents.
@@ -950,16 +1004,17 @@ def getGroup(credentials, gName, host = DEFAULT_HOST, port = DEFAULT_PORT):
         return err
 
     # Parse the response.
-    name     = re.findall("<GrpName>(.*)</GrpName>", resp)[0]
+    name     = re.findall("<GrpName>(.*?)</GrpName>", resp)[0]
     group    = Group(name)
     authExpr = re.compile("<Auth>(.*?)</Auth>", re.DOTALL)
-    cmtExpr  = re.compile("<Comment>(.*)</Comment>", re.DOTALL)
+    cmtExpr  = re.compile("<Comment>(.*?)</Comment>", re.DOTALL)
     comment  = cmtExpr.findall(resp)
     for user in re.findall("<UserName>(.*?)</UserName>", resp):
         group.users.append(user)
+    group.users.sort()
     for auth in authExpr.findall(resp):
-        action  = re.findall("<Action>(.*)</Action>", auth)
-        docType = re.findall("<DocType>(.*)</DocType>", auth)
+        action  = re.findall("<Action>(.*?)</Action>", auth)
+        docType = re.findall("<DocType>(.*?)</DocType>", auth)
         #group.actions.append((action[0], docType and docType[0] or None))
         action  = action[0]
         docType = docType and docType[0] or None
@@ -1058,15 +1113,15 @@ def getUser(credentials, uName, host = DEFAULT_HOST, port = DEFAULT_PORT):
         return err
 
     # Parse the response.
-    name     = re.findall("<UserName>(.*)</UserName>", resp)[0]
-    password = re.findall("<Password>(.*)</Password>", resp)[0]
+    name     = re.findall("<UserName>(.*?)</UserName>", resp)[0]
+    password = re.findall("<Password>(.*?)</Password>", resp)[0]
     user     = User(name, password)
-    fullname = re.findall("<FullName>(.*)</FullName>", resp)
-    office   = re.findall("<Office>(.*)</Office>", resp)
-    email    = re.findall("<Email>(.*)</Email>", resp)
-    phone    = re.findall("<Phone>(.*)</Phone>", resp)
+    fullname = re.findall("<FullName>(.*?)</FullName>", resp)
+    office   = re.findall("<Office>(.*?)</Office>", resp)
+    email    = re.findall("<Email>(.*?)</Email>", resp)
+    phone    = re.findall("<Phone>(.*?)</Phone>", resp)
     groups   = re.findall("<GrpName>(.*?)</GrpName>", resp)
-    cmtExpr  = re.compile("<Comment>(.*)</Comment>", re.DOTALL)
+    cmtExpr  = re.compile("<Comment>(.*?)</Comment>", re.DOTALL)
     comment  = cmtExpr.findall(resp)
     user.groups = groups
     if fullname: user.fullname = fullname[0]
@@ -1278,7 +1333,9 @@ def getLinkTypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
         return err
 
     # Parse the response
-    return re.findall("<Name>(.*)</Name>", resp)
+    types = re.findall("<Name>(.*?)</Name>", resp)
+    types.sort()
+    return types
 
 #----------------------------------------------------------------------
 # Retrieves information from the CDR for a link type.
