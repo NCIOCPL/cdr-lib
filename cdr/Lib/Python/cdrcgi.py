@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.22 2002-07-11 17:20:10 bkline Exp $
+# $Id: cdrcgi.py,v 1.23 2002-07-15 20:19:21 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.22  2002/07/11 17:20:10  bkline
+# Fixed problems with miscellaneous document advanced search.
+#
 # Revision 1.21  2002/07/05 18:10:52  bkline
 # Modified previous fix to use more efficient approach.
 #
@@ -174,11 +177,11 @@ def getRequest(fields):
 #----------------------------------------------------------------------
 # Send an HTML page back to the client.
 #----------------------------------------------------------------------
-def sendPage(page):
+def sendPage(page, textType = 'html'):
     print """\
-Content-type: text/html
+Content-type: text/%s
 
-""" + page
+%s""" % (textType, page)
     sys.exit(0)
 
 #----------------------------------------------------------------------
@@ -730,6 +733,9 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
         # XXX Consider using QcReport.py for all advanced search results pages.
         if docType == "Person" or docType == "Organization":
             href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
+        elif docType == "Summary":
+            href = "%s/QcReport.py?DocId=%s&ReportType=nm%s" % (BASE, docId,
+                                                                session)
         else:
             href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId, filt,
                                                           session)
