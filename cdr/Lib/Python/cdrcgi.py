@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.15 2002-06-27 20:22:54 ameyer Exp $
+# $Id: cdrcgi.py,v 1.16 2002-06-28 03:17:39 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.15  2002/06/27 20:22:54  ameyer
+# Added tabularize.
+#
 # Revision 1.14  2002/06/26 20:05:25  bkline
 # Modified advanced Person search forms to use QcReport.py for doc display.
 #
@@ -49,7 +52,7 @@
 #----------------------------------------------------------------------
 # Import external modules needed.
 #----------------------------------------------------------------------
-import cgi, cdr, cdrdb, sys, codecs, re
+import cgi, cdr, cdrdb, sys, codecs, re, socket
 
 #----------------------------------------------------------------------
 # Create some useful constants.
@@ -63,7 +66,7 @@ FILTER   = "Filter"
 FORMBG   = '/images/back.jpg'
 BASE     = '/cgi-bin/cdr'
 MAINMENU = 'Admin Menu'
-WEBSERVER= 'mmdb2.nci.nih.gov'
+WEBSERVER= socket.gethostbyaddr(socket.gethostname())[0] #'mmdb2.nci.nih.gov'
 HEADER   = """\
 <!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
 <HTML>
