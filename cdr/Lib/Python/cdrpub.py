@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.21 2002-08-15 17:39:16 pzhang Exp $
+# $Id: cdrpub.py,v 1.22 2002-08-16 20:19:30 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.21  2002/08/15 17:39:16  pzhang
+# Added checking failure details link
+#
 # Revision 1.20  2002/08/13 23:07:50  pzhang
 # Added more filtering time messages.
 # Added getLastCgJob to match CG's definition of lastJob.
@@ -93,6 +96,7 @@ class Publish:
     __cdrEmail = "cdr@%s.nci.nih.gov" % socket.gethostname()
     __pd2cg    = "Push_Documents_To_Cancer.Gov"
     __cdrHttp  = "http://%s.nci.nih.gov/cgi-bin/cdr" % socket.gethostname()
+    __ignoreUserDocList = 0
 
     #---------------------------------------------------------------
     # Load the job settings from the database.  User-specified
@@ -280,6 +284,20 @@ class Publish:
                     # user-listed documents remaining to be published.
                     if not userListedDocsRemaining:
                         continue
+                   
+                    # Hotfix-Export requirement and implementation have
+                    # changed. User-selected docs will not be processed as 
+                    # it was supposed to be. This trick is used only for
+                    # Hotfix-Export where all linked documents including
+                    # user-selected will be processed in their own typed SS. 
+                    # Refer to the control document for this tricky 
+                    # implementation.
+                    if self.__sysName == "Primary" and \
+                        self.__subsetName == "Hotfix-Export":                        
+                        self.__addLinkedDocsToPPD()
+                        self.__ignoreUserDocList = 1
+                        userListedDocsRemaining = 0
+                        continue
 
                     # Find out if this subset specification allows user 
                     # doc lists.
@@ -313,13 +331,14 @@ class Publish:
                         if not userListedDocsRemaining: break
 
             # Make sure all the user-listed documents are accounted for.
-            for doc in self.__userDocList:
-                if doc[0] not in self.__alreadyPublished:
-                    self.__checkProblems(doc, 
-                                         "User-specified document CDR%010d "
-                                         "has document type %s which is "
-                                         "not allowed for this publication "
-                                         "type" % (doc[0], doc[2]), "")
+            if not self.__ignoreUserDocList:
+                for doc in self.__userDocList:
+                    if doc[0] not in self.__alreadyPublished:         
+                        self.__checkProblems(doc, 
+                                    "User-specified document CDR%010d "
+                                    "has document type %s which is "
+                                    "not allowed for this publication "
+                                    "type" % (doc[0], doc[2]), "")
 
             # Now walk through the specifications again executing queries.
             self.__debugLog("Processing document-selection queries.")
@@ -1123,7 +1142,39 @@ class Publish:
         except cdrdb.Error, info:
             msg = """Failure executing query to find last successful
                      cg_job.<BR>"""
-            raise StandardError(msg)          
+            raise StandardError(msg)   
+     
+    #------------------------------------------------------------------
+    # Update pub_proc_doc table with all linked documents.  
+    #------------------------------------------------------------------
+    def __addLinkedDocsToPPD(self):
+        
+        # Build the input hash.
+        docPairList = {}      
+        for doc in self.__userDocList:
+            docPairList[doc[0]] = doc[1]
+      
+        # Find all the linked documents.
+        resp = findLinkedDocs(docPairList)
+        msg  = resp[0]
+        hash = resp[1]
+        self.__updateMessage(msg)
+
+        # Insert all pairs into PPD. Because these linked documents are 
+        # not in PPD yet, it should succeed with all insertions.     
+        try:
+            cursor = self.__conn.cursor()
+            for id in hash.keys():
+                cursor.execute ("""                
+                    INSERT INTO pub_proc_doc
+                            (pub_proc, doc_id, doc_version)                 
+                    VALUES  (?, ?, ?) 
+                                """, (self.__jobId, id, hash[id])
+                               )
+        except cdrdb.Error, info:
+            msg = 'Failure adding linked docs to PPD for job %d: %s' % (
+                    self.__jobId, info[1][0])
+            raise StandardError(msg)
 
     #------------------------------------------------------------------
     # Publish one document.
@@ -1189,7 +1240,7 @@ class Publish:
                     self.__saveDoc(filteredDoc, destDir, "CDR%d.xml" % doc[0])
             except:
                 errors = "Failure writing document CDR%010d" % doc[0]
-        if recordDoc:
+        if recordDoc and not self.__ignoreUserDocList:
             self.__addPubProcDocRow(doc, subDir)
 
         # Handle errors and warnings.
@@ -1324,9 +1375,9 @@ class Publish:
                                             "SQL query: %s" % sql)
                     i = 0
                     for field in cursor.description:
-                        if field[0] == "id":
+                        if i == 0: # field[0] == "id":
                             idCol = i
-                        elif field[0] == "version":
+                        elif i == 1: # field[0] == "version":
                             verCol = i
                         i += 1
                     if idCol == -1:
@@ -1399,8 +1450,10 @@ class Publish:
                   FROM doc_version d
                   JOIN doc_type    t
                     ON t.id          = d.doc_type
-                 WHERE d.id          = ?
-                   AND d.num         = ?
+                  JOIN document    d2
+                    ON d2.id         = d.id
+                 WHERE d.id          = %d
+                   AND d.num         = %d
                    AND d.publishable = 'Y'
                    AND d.val_status  = 'V'""" % (id, version)
         else:
@@ -1411,6 +1464,8 @@ class Publish:
                   FROM doc_version d
                   JOIN doc_type    t
                     ON t.id          = d.doc_type
+                  JOIN document    d2
+                    ON d2.id         = d.id
                  WHERE d.id          = %d
                    AND d.publishable = 'Y'
                    AND d.val_status  = 'V'
@@ -1924,6 +1979,81 @@ def validateDoc(filteredDoc, docId = 0):
     __parser.reset()
   
     return errObj
+
+#----------------------------------------------------------------------
+# Find all the linked documents for a given hash of docId/docVer pairs.
+# Return a message and a hash of docId/docVer pairs excluding the input.
+# Make this public in case that other programs can easily call it.
+#----------------------------------------------------------------------
+def findLinkedDocs(docPairList):
+
+    try:
+        msg = "Starting building link_net hash at %s.<BR>" % time.ctime()
+        conn = cdrdb.connect('CdrGuest')
+        cursor = conn.cursor()
+        cursor.execute("""
+                SELECT DISTINCT ln.source_doc,
+                                ln.target_doc,
+                                MAX(v.num)                    
+                           FROM link_net ln
+                           JOIN doc_version v
+                             ON v.id = ln.target_doc
+                           JOIN document d
+                             ON d.id = v.id
+                           JOIN doc_type t
+                             ON t.id = v.doc_type
+                          WHERE t.name <> 'Citation'
+                            AND v.val_status = 'V'
+                            AND v.publishable = 'Y'
+                       GROUP BY ln.target_doc,
+                                ln.source_doc
+                       """)
+
+        # Build a hash in memory that reflects link_net.
+        row = cursor.fetchone()
+        links = {}
+        nRows = 0
+        while row:
+            if not links.has_key(row[0]):
+                links[row[0]] = []
+            links[row[0]].append(row[1:])
+            row = cursor.fetchone()
+            nRows += 1
+        msg += "Finishing link_net hash for %d linking docs at %s.<BR>" % (
+                        len(links), time.ctime())
+
+        # Seed the hash with documents passed in.
+        linkedDocHash = {}
+        for key in docPairList.keys():
+            linkedDocHash[key] = docPairList[key]
+ 
+        # Find all linked docs recursively.
+        done = 0
+        passNum = 0
+        while not done:
+            done = 1 
+            passNum += 1
+            docIds = linkedDocHash.keys()
+            for id in docIds:
+                if links.has_key(id):
+                    for targetPair in links[id]:
+                        if not linkedDocHash.has_key(targetPair[0]):
+                            linkedDocHash[targetPair[0]] = targetPair[1]
+                            done = 0
+
+        # Delete all input hash.
+        for key in docPairList.keys():
+            del linkedDocHash[key]
+
+        msg += "Found all %d linked documents in %d passes at %s.<BR>" % (
+                        len(linkedDocHash), passNum, time.ctime())
+
+        # Return what we have got.
+        return [msg, linkedDocHash]
+                                           
+    except:
+        raise StandardError("Failure finding linked docs.<BR>")        
+
     
 #----------------------------------------------------------------------
 # Test driver.
