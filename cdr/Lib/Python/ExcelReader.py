@@ -15,36 +15,39 @@
                     rowNumber = cell.row
                     colNumber = cell.col
                     url = cell.hlink
+                    ....
                     
-        The loops above walk through all of the defined cells in the sheets, 
-        by iterating through the rows sequence of each Sheet object, and the 
-        cells sequence of each Row object.  As illustrated above, the Cell 
-        objects know their actual positions (row and column) in the sheet.  
-        Positions are zero-based: the upper-left cell for each sheet is at 
-        row 0, column 0.  Cell objects have val members, which refer to the 
-        raw data contained in the cell, which may be a string (8-bit or 
-        Unicode), integer, or floating-point value.  The formatted string 
-        returned by the builtin str() function takes care of properly 
-        representing numbers which are intended to convey dates and/or times.  
-        The url member of a Cell object will be None or a Unicode string, 
-        depending on whether a hyperlink URL has been associated with the 
-        cell.
+        The loops above walk through all of the defined cells in the
+        sheets, by iterating through the 'rows' sequence of each Sheet
+        object, and the 'cells' sequence of each Row object.  As
+        illustrated above, the Cell objects know their actual positions
+        (row and column) in the sheet.  Positions are zero-based: the
+        upper-left cell for each sheet is at row 0, column 0.  Cell
+        objects have val members, which refer to the raw data contained
+        in the cell, which may be a string (8-bit or Unicode), integer,
+        or floating-point value.  The formatted string returned by the
+        builtin str() function takes care of properly representing
+        numbers which are intended to convey dates and/or times, and 
+        converts the string to utf-8 encoding.  The url member of a 
+        Cell object will be None or a Unicode string, depending on 
+        whether a hyperlink URL has been associated with the cell.
 
-        An alternate to iterating through the cells on a sheet starts at the 
-        top row of the sheet, regardless of whether there are any defined 
-        cells in that row, and visits all the rows up to and including the 
-        last row in the sheet which contains at least one defined cell.  If 
-        there are no defined cells in a sheet, this approach to iterating
-        through the sheet will visit no rows.  For each row visited, this 
-        iteration approach approach starts with the first column in the row, 
-        regardless of whether the cell at that position is defined, and 
-        visits all the cells in the row up to and including the last cell 
-        which is defined.  If no cells are defined for a given row, this 
-        approach to iterating through the row will visit no cells.  The 
-        syntax for this alternate iteration method omits the use of the rows 
-        member of the Sheet object and the cells member of the Row object, 
-        and instead iterates directly on the Sheet and Row objects themselves, 
-        as illustrated here:
+        An alternate approach for iterating through the cells on a sheet
+        starts at the top row of the sheet, regardless of whether there
+        are any defined cells in that row, and visits all the rows up to
+        and including the last row in the sheet which contains at least
+        one defined cell.  If there are no defined cells in a sheet,
+        this approach to iterating through the sheet will visit no rows.
+        For each row visited, this iteration approach starts with the
+        first column in the row, regardless of whether the cell at that
+        position is defined, and visits all the cells in the row up to
+        and including the last cell which is defined.  If no cells are
+        defined for a given row, this approach to iterating through the
+        row will visit no cells.  The syntax for this alternate
+        iteration method omits the use of the 'rows' member of the Sheet
+        object and the 'cells' member of the Row object, and instead
+        iterates directly on the Sheet and Row objects themselves, as
+        illustrated here:
 
             import ExcelReader
             book = ExcelReader.Workbook('bar.xls')
@@ -53,8 +56,8 @@
                     for cell in row:
                         ...
 
-        It is also possible to select a worksheet either by its name or by 
-        its position in the sequence of worksheets:
+        It is also possible to select a worksheet either by its name or
+        by its position in the sequence of worksheets:
 
             sheet = book["Glossary Term Phrases"]
 
@@ -62,13 +65,32 @@
 
             sheet = book[0]
 
+        Similarly, you can select a single row directly:
+
+            # Get row 2 of the worksheet.
+            row = sheet[1]
+
+            # Get the second of the non-empty rows on the sheet.
+            row = sheet.rows[1]
+
+        Same with cells:
+
+            # Get the cell at column 1:
+            cell = row[0]
+
+            # Get the first defined cell on the row.
+            cell = row.cells[0]
+
         Finally, note that it is possible to generate an XML document
         encoded in a UTF-8 string from a workbook, using the toXml()
-        method of the Workbook object:
+        method of the Workbook object, so that later on you can get
+        to the data on a machine which does does not have this module,
+        but which does have the standard XML parsing tools:
 
             open("foo.xml", "w").write(book.toXml())
 
-        By default, this method produces a hierarchy that looks like this:
+        By default, this method produces a hierarchy that looks like
+        this:
 
             Book
                 Sheet [with name attribute]
@@ -96,19 +118,22 @@
 
         * This module requires Python 2.2 or later.
         * The module only handles BIFF8 files (Excel 97 and later)
-        * The module only handles values and hyperlinks (no charts, etc.)
-        * The module provides no support for modifying or writing workbooks.
+        * The module only handles values and hyperlinks (no charts,
+          etc.)
+        * The module provides no support for modifying or writing
+          workbooks.
         * No support is provided for evaluation of formulas; however,
           Excel caches the result of the formulas, unless this feature
           has been turned off (which rarely happens), and the module
-          stores these cached values as the values of cell with
+          stores these cached values as the values of cells with
           formulas.  The interface does not distinguish between values 
           which are stored directly in cells, and those which were
           found as the cached results of formulas.
 
     To Do
 
-        * Add handling for CONTINUE records
+        * Add support for BOOLEAN records
+        * Add handling for DIMENSIONS records
 
     See Also
 
@@ -117,16 +142,21 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: ExcelReader.py,v 1.1 2004-10-10 19:09:50 bkline Exp $
+# $Id: ExcelReader.py,v 1.2 2004-10-11 00:14:52 bkline Exp $
 #
 # Module for extracting cell values from Excel spreadsheets.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2004/10/10 19:09:50  bkline
+# Support for reading Excel workbooks.
+#
 #----------------------------------------------------------------------
 
 import OleStorage, struct, sys
 
 __all__ = ['Workbook']
+
+DEBUG = False
 
 class Workbook:
 
@@ -136,15 +166,17 @@ class Workbook:
 
     def __init__(self, fileName):
 
+        """Loads a workbook from the named disk file."""
+
         # Initial values for workbook's members.
         self.formats    = self.__builtinFormats()
         self.biffVer    = 'BIFF8'
         self.flag1904   = False
         self.xf         = []
         self.fonts      = []
+        self.sst        = []
         self.sheets     = []
         self.__sheets   = {}
-        self.sst        = ""
         self.buf        = self.__loadWorkbookStream(fileName)
 
         # Load the workbook's global block.
@@ -155,6 +187,15 @@ class Workbook:
             sheet.load(self)
         
     def toXml(self, flat = False):
+
+        """Generates an XML representation of the workbook, using
+        UTF-8 encoding.  Not exceptionally fast for very large files,
+        but handy nevertheless for making it possible to get to the
+        data on another machine where this module is not available,
+        but the standard XML parsing tool are.  Pass in flat = True
+        to roll out the Row (Col, Col, Col) into a flat (Cell, Cell,
+        Cell)."""
+
         import xml.sax.saxutils
         structure = flat and "cells" or "rows"
         x = u"<?xml version='1.0' encoding='utf-8'?>\n<Book>"
@@ -164,7 +205,14 @@ class Workbook:
                 if structure == "rows":
                     x += u"<Row number='%d'>" % row.number
                 for cell in row.cells:
-                    val = str(cell)
+                    if DEBUG:
+                        sys.stderr.write((u"%s\n" %
+                                    repr(cell)).encode('utf-8'))
+                    try:
+                        val = cell.format()
+                    except:
+                        sys.stderr.write(OleStorage.showBytes(cell.val))
+                        raise
                     val = xml.sax.saxutils.escape(val)
                     hlink = u""
                     if cell.hlink and cell.hlink.url:
@@ -228,48 +276,74 @@ class Workbook:
                 self.fonts.append(font)
 
             # FLAG1904 record
-            elif record.id == 0x0022: # CHECK!!!
+            elif record.id == 0x0022:
                 self.flag1904 = (struct.unpack("<h", record.data)[0] and True
                                                                       or False)
 
-            # SST record
+            # SST record (CONTINUE records make this ugly)
             elif record.id == 0x00FC:
-                (n, m) = struct.unpack("<2l", record.data[:8])
-                self.sst = self.__scanSst(record.data[8:])
+                (dummy, count) = struct.unpack("<2l", record.data[:8])
+                if DEBUG: sys.stderr.write("SST count=%d\n" % count)
+                i, pos, buf = 0, 0, record.data[8:]
+                while i < count:
+                    if pos >= len(buf):
+                        offset += record.size + 4
+                        record = Record(self.buf, offset)
+                        if record.id != 0x003C:
+                            raise Exception(u"Expected CONTINUE record")
+                        if DEBUG: sys.stderr.write("CONTINUE record\n")
+                        pos, buf = 0, record.data
+                    s = UnicodeString(buf[pos:])
 
-            # Temporary code for showing unrecognized records.
-            #elif record.id:
-            #    b = OleStorage.showBytes(record.data[:16])
-            #    sys.stderr.write("type=%04X size=%d b=%s\n" % 
-            #                     (record.id, record.size, b))
+                    # Check for nasty split in middle of string. :-<}
+                    if s.length > len(s.value):
+                        if DEBUG:
+                            msg = (u"s.length = %d len(s.value) = %d "
+                                   u"s.value = %s\n" % (s.length, 
+                                                        len(s.value),
+                                                        s.value))
+                            sys.stderr.write(msg.encode('latin-1', 'replace'))
+                        remaining = s.length - len(s.value)
+                        offset += record.size + 4
+                        record = Record(self.buf, offset)
+                        if record.id != 0x003C:
+                            raise Exception(u"Expected CONTINUE record")
+                        if DEBUG:
+                            sys.stderr.write("CONTINUE: %s\n" %
+                                    OleStorage.showBytes(record.data[:16]))
+                        buf = struct.pack("<h", remaining) + record.data
+                        s2 = UnicodeString(buf)
+                        if s2.length != remaining:
+                            raise Exception(u"string continuation expected "
+                                            u"%d characters, got %d" %
+                                            (remaining, s2.length))
+                        self.sst.append(s.value + s2.value)
+                        pos = s2.nbytes
+                    else:
+                        self.sst.append(s.value)
+                        pos += s.nbytes
+                    if DEBUG:
+                        try:
+                            msg = u"sst[%d] = %s\n" % (i, self.sst[i])
+                            sys.stderr.write(msg.encode('latin-1', 'replace'))
+                        except:
+                            sys.stderr.write("type(self.sst[i]=%s\n"
+                                    % type(self.sst[i]))
+                            sys.stderr.write(OleStorage.showBytes(self.sst[i])
+                                    + "\n")
+                            raise
+                    i += 1
+                    
+            # Conditional code for showing unrecognized records.
+            elif DEBUG and record.id:
+                b = OleStorage.showBytes(record.data[:16])
+                sys.stderr.write("type=%04X size=%d b=%s\n" % 
+                                 (record.id, record.size, b))
 
             # Move to the next record
             offset += record.size + 4
             record = Record(self.buf, offset)
 
-    def __scanSst(self, buf):
-        sst = []
-        pos = 0
-        while pos < len(buf):
-            length, flags = struct.unpack("<hb", buf[pos:pos+3])
-            utf16, farEast, rtf = flags & 1, flags & 4, flags & 8
-            extra = 0
-            pos += 3
-            if rtf:
-                extra += struct.unpack("<h", buf[pos:pos+2])[0] * 4
-                pos += 2
-            if farEast:
-                extra += struct.unpack("<l", buf[pos:pos+4])[0]
-                pos += 4
-            if utf16:
-                sst.append(unicode(buf[pos:pos+length*2], "utf-16-le"))
-                pos += length * 2
-            else:
-                sst.append(buf[pos:pos+length])
-                pos += length
-            pos += extra
-        return sst
-    
     def __getitem__(self, which):
         sheet = self.__sheets.get(which)
         if sheet: return sheet
@@ -341,22 +415,22 @@ class ExcelTime:
 
     def format(self):
         if not self.year and not self.day and not self.month:
-            return "%02d:%02d:%02d.%03d" % (self.hour,
-                                            self.minutes,
-                                            self.seconds,
-                                            self.millis)
+            return u"%02d:%02d:%02d.%03d" % (self.hour,
+                                             self.minutes,
+                                             self.seconds,
+                                             self.millis)
         elif (not self.hour and not self.minutes and not self.seconds and
               not self.millis):
-            return "%04d-%02d-%02d" % (self.year,
-                                       self.month + 1,
-                                       self.day)
-        return "%04d-%02d-%02d %02d:%02d:%02d.%03d" % (self.year,
-                                                       self.month + 1,
-                                                       self.day,
-                                                       self.hour,
-                                                       self.minutes,
-                                                       self.seconds,
-                                                       self.millis)
+            return u"%04d-%02d-%02d" % (self.year,
+                                        self.month + 1,
+                                        self.day)
+        return u"%04d-%02d-%02d %02d:%02d:%02d.%03d" % (self.year,
+                                                        self.month + 1,
+                                                        self.day,
+                                                        self.hour,
+                                                        self.minutes,
+                                                        self.seconds,
+                                                        self.millis)
         
 class ExcelTimeFromNumber(ExcelTime):
     def __init__(self, t, flag1904 = False):
@@ -484,7 +558,13 @@ class Worksheet:
             # LABELSST record
             elif record.id == 0x00FD:
                 (row, col, xf, idx) = struct.unpack("<3hl", record.data)
-                s = book.sst and book.sst[idx] or "HAVEN'T SEEN SST YET"
+                if not book.sst:
+                    s = u"*** MISSING SHARED STRING TABLE ***"
+                else:
+                    try:
+                        s = book.sst[idx]
+                    except:
+                        s = u"*** SST INDEX VALUE %d OUT OF RANGE" % idx
                 self.cells[(row,col)] = Cell(row, col, book, 
                                                       xf, s)
                 s = OleStorage.showUnicode(s)
@@ -517,11 +597,12 @@ class Worksheet:
             # HLINK record
             elif record.id == 0x01B8:
                 hlink = Hyperlink(record.data)
-                sys.stderr.write("HLINK: %s\n" % hlink.url)
+                if DEBUG:
+                    sys.stderr.write("HLINK: %s\n" % hlink.url)
                 self.__links.append(hlink)
 
             # Show unhandled records.
-            elif record.id:
+            elif DEBUG and record.id:
                 b = OleStorage.showBytes(record.data[:16])
                 sys.stderr.write("type=%04X size=%d b=%s\n" % 
                                 (record.id, record.size, b))
@@ -533,7 +614,6 @@ class Worksheet:
         # Connect the hyperlinks with URLs to the cells.
         for link in self.__links:
             if link.url:
-                sys.stderr.write("%s\n" % link.url)
                 r = link.firstRow
                 while r <= link.lastRow:
                     c = link.firstCol
@@ -582,15 +662,12 @@ class Hyperlink:
         self.url = None
         offset = 32
         self.absolute = (flags & 0x02) and True or False
-        sys.stderr.write("flags: %08X\n" % flags)
         if (flags & 0x14) == 0x14:
             length = struct.unpack("<L", buf[offset:offset+4])[0]
             offset += 4
             self.description = unicode(buf[offset:offset+length*2],
                                        "utf-16-le")[:-1]
             offset += length * 2
-            sys.stderr.write("desc (length %d): %s\n" % (length,
-                                                         self.description))
         if flags & 0x80:
             length = struct.unpack("<L", buf[offset:offset+4])[0]
             offset += 4
@@ -599,7 +676,6 @@ class Hyperlink:
             offset += length * 2
         if flags & 0x03:
             guid = buf[offset:offset+16]
-            sys.stderr.write("guid: %s\n" % OleStorage.showBytes(guid))
             if (guid == "\xE0\xC9\xEA\x79\xF9\xBA\xCE\x11"
                         "\x8C\x82\x00\xAA\x00\x4B\xA9\x0B"):
                 offset += 16
@@ -620,7 +696,7 @@ class UnicodeString:
         self.utf16 = (flags & 1) and True or False
         self.farEast = (flags & 4) and True or False
         self.rtf = (flags & 8) and True or False
-        self.nbytes = self.length + pos
+        self.nbytes = pos
         if self.rtf:
             self.nbytes += struct.unpack("<h", buf[pos:pos+2])[0] * 4
             pos += 2
@@ -630,8 +706,10 @@ class UnicodeString:
         if self.utf16:
             self.value = unicode(buf[pos:pos+self.length*2], "utf-16-le")
             pos += self.length * 2
+            self.nbytes += self.length * 2
         else:
-            self.value = buf[pos:pos+self.length]
+            self.value = unicode(buf[pos:pos+self.length], "latin-1")
+            self.nbytes += self.length
 
 class Cell:
 
@@ -642,20 +720,19 @@ class Cell:
         self.val   = val
         self.book  = book
         self.hlink = None
-    def __str__(self): return self.__toString()
+    def __str__(self): return self.format().encode("utf-8")
     def __repr__(self):
         return u"[Cell: row=%d col=%d value=%s]" % (self.row, self.col,
-                                                    self.toString())
-    def __toString(self):
-        format = self.book.formats[self.book.xf[self.xf][1]]
-        if format.type == 'datetime' and type(self.val) in (type(9),
-                                                            type(9.9)):
-            #sys.stderr.write("format.pattern=%s\n" % format.pattern)
+                                                    self.format())
+    def format(self):
+        fmt = self.book.formats[self.book.xf[self.xf][1]]
+        if fmt.type == 'datetime' and type(self.val) in (type(9), type(9.9)):
             return ExcelTimeFromNumber(self.val).format()
+        # Strip superfluous decimal portion.
         elif type(self.val) == type(9.9) and not self.val % 1:
-            return "%d" % self.val
+            return u"%d" % self.val
         else:
-            return "%s" % self.val
+            return u"%s" % self.val
 
 class Font:
     def __init__(self, buf):
@@ -700,6 +777,8 @@ class Format:
             self.type = 'integer'
         elif pattern.find('#') != -1 or pattern.find('9') != -1:
             self.type = 'number'
+        elif pattern.find('0') != -1:
+            self.type = 'number'
         else:
             self.type = 'datetime'
 
@@ -730,6 +809,8 @@ class Row:
             return cell
 
 if __name__ == "__main__":
-    book = Workbook(sys.argv[1])
-    doc  = book.toXml(len(sys.argv) > 2 and sys.argv[2] or "rows")
+    #DEBUG  = True
+    book   = Workbook(sys.argv[1])
+    flag   = len(sys.argv) > 2 and sys.argv[2] != "rows"
+    doc    = book.toXml(flag)
     sys.stdout.write(doc)
