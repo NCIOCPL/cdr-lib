@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.39 2002-07-11 14:52:26 ameyer Exp $
+# $Id: cdr.py,v 1.40 2002-07-11 21:04:31 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.39  2002/07/11 14:52:26  ameyer
+# Added logwrite function.
+#
 # Revision 1.38  2002/07/05 20:55:04  bkline
 # Added reindex() command.
 #
@@ -131,7 +134,7 @@
 # Import required packages.
 #----------------------------------------------------------------------
 import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
-import smtplib
+import smtplib, time
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -1875,12 +1878,13 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE):
     f = None
     try:
         f = open (logfile, "a")
+        f.write ("----------- %s -----------\n" % time.ctime())
         if type (msgs) == type (()):
             for msg in msgs:
                 f.write (msg)
                 f.write ("\n")
         else:
-            f.write (msg)
+            f.write (msgs)
             f.write ("\n")
     except IOError:
         pass
