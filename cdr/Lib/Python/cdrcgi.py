@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.17 2002-06-28 20:13:57 bkline Exp $
+# $Id: cdrcgi.py,v 1.18 2002-07-02 13:47:16 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.17  2002/06/28 20:13:57  bkline
+# Plugged in QcReport.py for Organization advanced search.
+#
 # Revision 1.16  2002/06/28 03:17:39  bkline
 # Tweaked WEBSERVER using gethostbyaddr.
 #
@@ -70,6 +73,7 @@ FORMBG   = '/images/back.jpg'
 BASE     = '/cgi-bin/cdr'
 MAINMENU = 'Admin Menu'
 WEBSERVER= socket.gethostbyaddr(socket.gethostname())[0] #'mmdb2.nci.nih.gov'
+DAY_ONE  = '2002-06-24'
 HEADER   = """\
 <!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
 <HTML>
@@ -773,6 +777,24 @@ def tabularize (rows, tblAttrs=None):
     html += "</table>"
 
     return html
+
+
+#----------------------------------------------------------------------
+# Get the full user name for a given session.
+#----------------------------------------------------------------------
+def getFullUserName(session, conn):
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""\
+                SELECT fullname
+                  FROM usr
+                  JOIN session
+                    ON session.usr = usr.id
+                 WHERE session.name = ?""", session)
+        name = cursor.fetchone()[0]
+    except:
+        cdrcgi.bail("Unable to find current user name")
+    return name
 
 
 #----------------------------------------------------------------------
