@@ -1,8 +1,11 @@
-# $Id: cdrglblchg.py,v 1.19 2003-11-05 01:45:44 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.20 2003-11-14 02:17:21 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.19  2003/11/05 01:45:44  ameyer
+# Extensive changes for handling global terminology changes.
+#
 # Revision 1.18  2003/09/16 19:41:44  ameyer
 # Reorganized the code to take the assignment of filter names and
 # parameters out of GlobalChangeBatch.py and to put it instead in the
@@ -327,12 +330,13 @@ def _execUpdate (qry, args=None, cursor=None):
 #------------------------------------------------------------
 # Get a list of study categories in an HTML selection string
 #------------------------------------------------------------
-def getStudyCategories (varName):
+def getStudyCategories (varName, defaultVal=None):
     """
     Create an HTML option list of legal StudyCategoryName values.
 
     Pass:
-        varName - Name of variable to put in HTML select form.
+        varName    - Name of variable to put in HTML select form.
+        defaultVal - Optional selected value.
 
     Return:
         String of HTML for inclusion in the input form.
@@ -350,7 +354,10 @@ def getStudyCategories (varName):
 
     # Add in the real ones
     for val in vals:
-        html += "  <option>%s</option>\n" % val
+        if val == defaultVal:
+            html += "  <option selected='selected'>%s</option>\n" % val
+        else:
+            html += "  <option>%s</option>\n" % val
     html += "</select>\n"
 
     return html
@@ -463,6 +470,10 @@ class GlblChg:
         # Holds variables for this session, assigned in factory method
         self.ssVars = {}
         self.stages = ()
+
+        # Holds count of passes through getFilterInfo()
+        # Re-initialized for each doc in GlobalChangeBatch.py
+        self.filtered = [0,0]
 
         # This should be overridden by subclasses
         self.description = None
@@ -919,18 +930,12 @@ class GlblChg:
                 # Only compose a row if we have all info for it
                 keyId  = "trm%sId%d" % (trmUse, i)
                 keyVal = "trm%sVal%d" % (trmUse, i)
-                cdr.logwrite ("Showing %s=%s" % (keyId, keyVal), LF)
                 if self.ssVars.has_key(keyId) and self.ssVars.has_key(keyVal):
                     keyField = "trm%sField%d" % (trmUse, i)
                     html += \
                  "<tr><td align='right'>%s %s: </td><td> %s (%s)</td></tr>\n"%\
                      (TERM_MSGS[trmUse], self.ssVars[keyField],
                       self.ssVars[keyVal], self.ssVars[keyId])
-                else:
-                    if not self.ssVars.has_key(keyId):
-                        cdr.logwrite (" -- No Key")
-                    if not self.ssVars.has_key(keyVal):
-                        cdr.logwrite (" -- No Val")
 
         return html
 
@@ -1015,7 +1020,7 @@ class GlblChg:
         varPrefix = parms[1]
         optional  = parms[2]
         cdr.logwrite ("Getting frag ID for docId=%s, varPrefix=%s, optional=%d"\
-      % (docId, varPrefix, optional), LF)
+                      % (docId, varPrefix, optional), LF)
 
         # We're getting a 'fromId' and 'fromTitle', or whatever
         idType    = varPrefix + 'Id'
@@ -1226,7 +1231,10 @@ class GlblChg:
                 #   String values come from a valid values table, they aren't
                 #   titles of term documents XXXX
                 if name == TERM_SCAT_VAL:
-                    html += "<td>" + getStudyCategories(name) + "</td>"
+                    cdr.logwrite ("SCAT alreadySelected=%s" % alreadySelected,
+                                   LF)
+                    html += "<td>" + getStudyCategories(name, alreadySelected)\
+                                   + "</td>"
                 else:
                     html += """
   <td><input type="text" name="%s" size="50" maxlength="300" value="%s" /></td>"""%\
@@ -1477,7 +1485,7 @@ class GlblChg:
         Write the contents of the ssVars (session variables) array
         to the log file for debugging.
         """
-        cdr.logwrite ("All current session variables:")
+        cdr.logwrite ("All current session variables:", LF)
         svars = self.ssVars.keys()
         svars.sort()
         for var in svars:
@@ -2500,15 +2508,15 @@ class TermChg (GlblChg):
         if not self.description:
             # Can't easily describe this because lots of changes could
             #   be made by one change.
-            self.description = "Global terminology change "
+            self.description = "Global terminology change"
             for termNum in range (TERM_MAX_CHANGES):
                 if self.ssVars.has_key ("trmAddId%d" % termNum):
-                    self.description += "adding %s=%s" % \
+                    self.description += " adding %s=%s" % \
                         (self.ssVars['trmAddField%d' % termNum],
                          self.ssVars['trmAddId%d' % termNum])
             for termNum in range (TERM_MAX_CHANGES):
                 if self.ssVars.has_key ("trmDelId%d" % termNum):
-                    self.description += "deleting %s=%s" % \
+                    self.description += " deleting %s=%s" % \
                         (self.ssVars['trmDelField%d' % termNum],
                          self.ssVars['trmDelId%d' % termNum])
 
@@ -2537,10 +2545,9 @@ class TermChg (GlblChg):
                     parms.append (['addElement', trmField])
                     parms.append (['addTermID', trmId])
 
-                    cdr.logwrite ("Filter=%s" % filterName, LF)
-                    cdr.logwrite (str(parms), LF)
-                    # We're done for now.  Return filter info
-                    return (filterName, parms)
+                    # Done for now.  Return filter info with any required
+                    #   qualifier parms (StudyCategory, InterventionType)
+                    return (filterName, self.addQualifierParms(parms))
 
         # If no adds, or done them all, try deletes
         # Initial logic is the same, but filter setup is different
@@ -2561,22 +2568,31 @@ class TermChg (GlblChg):
                     parms.append (['deleteElement', trmField])
                     parms.append (['deleteTermID', trmId])
 
-                    cdr.logwrite ("Filter=%s" % filterName, LF)
-                    cdr.logwrite (str(parms), LF)
-                    # We're done for now.  Return filter info
-                    return (filterName, parms)
-
-        # Add qualifier parameters if present
-        if self.ssVars.has_key (TERM_SCAT_ID):
-            parms.append (['studyCategory',
-                 cdr.exNormalize(self.ssVars[TERM_SCAT_ID])[0]])
-        if self.ssVars.has_key (TERM_INTV_ID):
-            parms.append (['interventionType',
-                 cdr.exNormalize(self.ssVars[TERM_INTV_ID])[0]])
+                    # Done for now.  Return filter info with any required
+                    #   qualifier parms (StudyCategory, InterventionType)
+                    return (filterName, self.addQualifierParms(parms))
 
         # If we got here, all filters have been processed
         return None
 
+    def addQualifierParms (self, parms):
+        """
+        Add StudyCategory and/or InterventionType to filter parameter list.
+        Subroutine of getFilterInfo().
+
+        Pass
+            Filter parameter list.
+        Return
+            Filter parameter list, possibly with more parameters added.
+        """
+        # Only add qualifier parameters if they're present
+        if self.ssVars.has_key (TERM_SCAT_VAL):
+            parms.append (['studyCategory', self.ssVars[TERM_SCAT_VAL]])
+        if self.ssVars.has_key (TERM_INTV_ID):
+            parms.append (['interventionType',
+                 cdr.exNormalize(self.ssVars[TERM_INTV_ID])[0]])
+
+        return parms
 
     def countSelTypes (self, termUse, maxCnt):
         """
@@ -2727,6 +2743,7 @@ class TermChg (GlblChg):
         """
         # We need at least one status value
         if not self.ssVars.has_key (TERM_STATVAL):
+            cdr.logwrite ("No status selected", LF)
             return 0
 
         # If user adds or deletes an InterventionNameLink, he must
@@ -2740,11 +2757,14 @@ class TermChg (GlblChg):
                     keyField = "trm%sField%d" % (use, i)
                     fieldName = self.ssVars[keyField]
                     if fieldName == TERM_FLD_INTN:
-                        if not self.ssVars.has_key(TERM_SCAT_ID):
+                        if not self.ssVars.has_key(TERM_SCAT_VAL):
+                            cdr.logwrite ("No StudyCategory selected", LF)
                             return 0
                     if fieldName in (TERM_FLD_INTV, TERM_FLD_INTN,
                                      TERM_FLD_GENE, TERM_FLD_COND):
-                        if not self.ssVars.has_key(TERM_INTV_ID):
+                        if not self.ssVars.has_key(TERM_INTV_VAL) and \
+                           not self.ssVars.has_key(TERM_INTV_ID):
+                            cdr.logwrite ("No InterventionType selected", LF)
                             return 0
 
         # User must have entered at least one search criterion, a term
@@ -2755,6 +2775,8 @@ class TermChg (GlblChg):
             if self.haveTermCriterion (TERMADD) or \
                         self.haveTermCriterion (TERMDEL):
                 return 1
+            cdr.logwrite ("No add/delete terms entered", LF)
+        cdr.logwrite ("No search criteria entered", LF)
         return 0
 
     def haveTermCriterion (self, criterion):
