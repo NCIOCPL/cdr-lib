@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.61 2004-11-29 19:56:38 bkline Exp $
+# $Id: cdrpub.py,v 1.62 2004-12-16 20:50:24 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.61  2004/11/29 19:56:38  bkline
+# Added support for publishing images; fixed a bug in code to set
+# the failure flag in the pub_proc_doc table.
+#
 # Revision 1.60  2004/11/09 15:59:22  bkline
 # Added code to collect terminology semantic types; fixed threading bug
 # (added test for whether we were done before trying to publish a
@@ -848,9 +852,10 @@ class Publish:
             # If any images were published, write out a manifest file.
             if self.__mediaManifest:
                 import csv
-                filename = os.path.join(self.__outputDir, "media.catalog")
+                filename = os.path.join(self.__outputDir, "media_catalog.txt")
                 manifestFile = file(filename, "wb")
                 csvWriter = csv.writer(manifestFile)
+                self.__mediaManifest.sort(lambda a,b: cmp(a[1], b[1]))
                 csvWriter.writerows(self.__mediaManifest)
                 manifestFile.close()
 
@@ -2846,7 +2851,13 @@ Please do not reply to this message.
     #----------------------------------------------------------------
     def __saveDoc(self, document, dir, fileName, mode = "w"):
         if not os.path.isdir(dir):
-            os.makedirs(dir)
+            # Ignore failures, which are almost certainly artificially
+            # caused by multiple threads trying to create the same
+            # directory at the same time.
+            try:
+                os.makedirs(dir)
+            except:
+                pass
         fileObj = open(dir + "/" + fileName, mode)
         fileObj.write(document)
         fileObj.close()
