@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrmailcommon.py,v 1.6 2003-03-05 02:50:40 ameyer Exp $
+# $Id: cdrmailcommon.py,v 1.7 2003-05-14 13:26:06 bkline Exp $
 #
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2003/03/05 02:50:40  ameyer
+# Added code to handle selection of remailer for single, named document.
+#
 # Revision 1.5  2002/11/06 03:06:31  ameyer
 # Added join to pub_proc table on first selection to be sure we only select
 # mailers for remailing if the original mailer job had not failed.
@@ -153,6 +156,8 @@ class RemailSelector:
                      ON mailer_job.int_val = job.id
                    JOIN doc_version
                      ON doc_version.id = %d
+                   JOIN document
+                     ON document.id = doc_version.id
                   WHERE mailer.path='/Mailer/Document/@cdr:ref'
                     AND mailer.int_val = %d
                     AND mailer_sent.path = '/Mailer/Sent'
@@ -160,6 +165,7 @@ class RemailSelector:
                     AND mailer_type.value IN (%s)
                     AND job.status = 'Success'
                     AND doc_version.publishable = 'Y'
+                    AND document.active_status = 'A'
                  GROUP BY mailer.doc_id, mailer_sent.value
                  ORDER BY mailer_sent.value DESC""" % (singleId,
                         singleId, singleId, originalMailType))
@@ -259,6 +265,7 @@ class RemailSelector:
                      ON #orig_mailers.doc_id = query_term.doc_id
                   WHERE query_term.path = '/Mailer/Document/@cdr:ref'
                     AND doc_version.publishable = 'Y'
+                    AND document.active_status = 'A'
                     AND #orig_mailers.doc_id NOT IN (
                         SELECT doc_id
                           FROM #got_response
