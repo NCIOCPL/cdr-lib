@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.54 2002-09-15 16:58:53 bkline Exp $
+# $Id: cdr.py,v 1.55 2002-09-18 18:28:43 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.54  2002/09/15 16:58:53  bkline
+# Replaced mmdb2 with mahler for CVS server name macro.
+#
 # Revision 1.53  2002/09/13 02:36:03  ameyer
 # Fixed bug in valDoc, wrong attribute spelling.
 #
@@ -180,7 +183,7 @@
 # Import required packages.
 #----------------------------------------------------------------------
 import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
-import os, smtplib, time, cdrdb, tempfile
+import os, smtplib, time, cdrdb, tempfile, traceback
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -2016,14 +2019,17 @@ def pubStatus(self, jobId, getDocInfo = 0):
 #----------------------------------------------------------------------
 # Write messages to a logfile.
 #----------------------------------------------------------------------
-def logwrite(msgs, logfile = DEFAULT_LOGFILE):
+def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback = 0):
     """
     Append one or messages to a log file - closing the file when done.
+    Can also record traceback information.
 
     Pass:
         msgs - Single string or tuple of strings to write.  Should not
                contain binary data.
         logfile - Optional log file path, else uses default.
+        traceback - True = log the latest traceback object.
+                    False = do not.
 
     Return:
         Void.  Does nothing at all if it can't open the logfile or
@@ -2032,7 +2038,11 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE):
     f = None
     try:
         f = open (logfile, "a")
+
+        # Write process id and timestamp
         f.write ("!<%d> %s: " % (os.getpid(), time.ctime()))
+
+        # tuple of messages or single message
         if type (msgs) == type (()):
             for msg in msgs:
                 f.write (msg)
@@ -2040,6 +2050,12 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE):
         else:
             f.write (msgs)
             f.write ("\n")
+
+        # If traceback is requested, include the last one
+        if tback:
+            tb = sys.exc_info()[2]
+            traceback.print_tb (tb, 999, f)
+
     except IOError:
         pass
 
@@ -2050,6 +2066,7 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE):
             f.close()
         except IOError:
             pass
+
 
 #----------------------------------------------------------------------
 # Create an HTML table from a passed data
