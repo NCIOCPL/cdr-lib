@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.8 2004-02-24 22:43:12 ameyer Exp $
+# $Id: cdrbatch.py,v 1.9 2004-02-24 22:57:26 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,10 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2004/02/24 22:43:12  ameyer
+# Modified BatchJob object to set autocommit on saved cursor.
+# Removed a couple of commit statements that were otherwise needed.
+#
 # Revision 1.7  2003/12/30 20:37:29  ameyer
 # Significant modifications to mechanism for passing parameters from
 # interactive to batch programs.  Now providing for passing of sequences
@@ -474,9 +478,12 @@ class CdrBatch:
            WHERE id=%d""" % self.__jobId
         try:
             self.__cursor.execute (qry)
-            row = self.__cursor.fetchone()
-            if not row:
+            rows = self.__cursor.fetchall()
+            if not rows:
                 self.fail ("loadJob could not find row for batch job id: %d"\
+                           % self.__jobId)
+            if len(rows) > 1:
+                self.fail ("loadJob found %d batch_jobs with id: %d"\
                            % self.__jobId)
         except cdrdb.Error, info:
             self.fail ("Database error loading job %d: %s" %\
@@ -484,7 +491,8 @@ class CdrBatch:
 
         # Load all data into instance
         (self.__jobName, self.__command, self.__processId, self.__started,
-         self.__lastDt, self.__status, self.__email, self.__progressMsg) = row
+         self.__lastDt, self.__status, self.__email, self.__progressMsg) = \
+                rows[0]
 
         # Get job parameters
         self.__args = {}
