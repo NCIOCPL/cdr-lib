@@ -1,7 +1,10 @@
 #----------------------------------------------------------------------
-# $Id: cdrcgi.py,v 1.1 2001-03-26 05:06:28 bkline Exp $
+#
+# $Id: cdrcgi.py,v 1.2 2001-03-27 21:15:27 bkline Exp $
 #
 # Common routines for creating CDR web forms.
+#
+# $Log: not supported by cvs2svn $
 #----------------------------------------------------------------------
 
 #----------------------------------------------------------------------
@@ -17,6 +20,8 @@ PASSWORD = "Password"
 SESSION  = "Session"
 REQUEST  = "Request"
 DOCID    = "DocId"
+FILTER   = "Filter"
+FORMBG   = '/images/back.jpg'
 HEADER   = """<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
 <HTML>
  <HEAD>
@@ -24,7 +29,7 @@ HEADER   = """<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
  </HEAD>
  <BASEFONT FACE='Arial, Helvetica, sans-serif'>
  <LINK REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
- <BODY BACKGROUND='/images/back.jpg' BGCOLOR='#2F5E5E'>
+ <BODY BACKGROUND='%s' BGCOLOR='lightgrey'>
   <FORM ACTION='/cgi-bin/cdr/%s' METHOD='POST'>
    <TABLE WIDTH='100%%' CELLSPACING='0' CELLPADDING='0' BORDER='0'>
     <TR>
@@ -57,8 +62,8 @@ SUBBANNER = """\
 #----------------------------------------------------------------------
 # Display the header for a CDR web form.
 #----------------------------------------------------------------------
-def header(title, banner, subBanner, script = '', buttons = None):
-    html = HEADER % (title, script, banner)
+def header(title, banner, subBanner, script = '', buttons = None, bkgd = ''):
+    html = HEADER % (title, FORMBG, script, banner)
     if buttons:
         html = html + B_CELL
         for button in buttons:
