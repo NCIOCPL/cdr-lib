@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.12 2004-07-28 20:56:37 venglisc Exp $
+# $Id: CdrLongReports.py,v 1.13 2004-08-06 22:31:02 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.12  2004/07/28 20:56:37  venglisc
+# Modified to use different filter set for OrgProtocolReview report.
+# Requested under Bug 1264.
+#
 # Revision 1.11  2004/04/26 20:55:12  bkline
 # Added report on glossary term phrases.
 #
@@ -1710,7 +1714,7 @@ class GlossaryTermSearch:
         html = u"""\
   <br />
   <br />
-  %s
+  <b>%s</b>
   <br />
   <br />
   <table border = '1' cellpadding = '2' cellspacing = '0'>
