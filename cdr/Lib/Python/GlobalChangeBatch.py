@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.8 2002-11-13 02:38:32 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.9 2002-11-27 01:36:52 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,9 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2002/11/13 02:38:32  ameyer
+# Added support for multiple emails.
+#
 # Revision 1.7  2002/09/24 19:31:16  ameyer
 # Fixed bugs in handling of data returned by cdr.lastVersions().
 #
@@ -159,9 +162,11 @@ chg.sessionVars[cdrcgi.SESSION] = session
 #----------------------------------------------------------------------
 # Get from/to change parameters
 if chgType == cdrglblchg.STATUS_CHG:
-    fromId  = jobObj.getParm ('fromId')
-    fromVal = jobObj.getParm ('fromStatusName')
-    toVal   = jobObj.getParm ('toStatusName')
+    fromId    = jobObj.getParm ('fromId')
+    fromVal   = jobObj.getParm ('fromStatusName')
+    toVal     = jobObj.getParm ('toStatusName')
+    leadOrgId = jobObj.getParm ('restrId')
+    personId  = jobObj.getParm ('restrPiId')
 else:
     fromVal = jobObj.getParm ('fromId')
     toVal   = jobObj.getParm ('toId')
@@ -239,6 +244,11 @@ for idTitle in originalDocs:
             parms = [['orgId', fromId],
                      ['oldStatus', fromVal],
                      ['newStatus', toVal]]
+            # Optional parms on status change
+            if leadOrgId:
+                parms.append (['leadOrgId', leadOrgId])
+            if personId:
+                parms.append (['personId', personId])
         else:
             parms = [['changeFrom', fromVal],
                      ['changeTo', toVal]]
