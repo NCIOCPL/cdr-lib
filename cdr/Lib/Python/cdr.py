@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.50 2002-09-12 20:20:06 bkline Exp $
+# $Id: cdr.py,v 1.51 2002-09-12 20:47:49 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.50  2002/09/12 20:20:06  bkline
+# Added runCommand function and accompanying CommandResult class.
+#
 # Revision 1.49  2002/09/12 00:46:14  bkline
 # Added URDATE for final PDQ to CDR conversion of documents.
 #
@@ -2110,3 +2113,24 @@ def runCommand(command):
     output = commandStream.read()
     code = commandStream.close()
     return CommandResult(code, output)
+
+#----------------------------------------------------------------------
+# Create a temporary working area.
+#----------------------------------------------------------------------
+def makeTempDir(basename = "tmp", chdir = 1):
+    if os.environ.has_key("TMP"):
+        tempfile.tempdir = os.environ["TMP"]
+    where = tempfile.mktemp(basename)
+    abspath = os.path.abspath(where)
+    try: 
+        os.mkdir(abspath)
+    except: 
+        raise StandardError("makeTempDir", 
+                            "Cannot create directory %s" % abspath)
+    if chdir:
+        try: 
+            os.chdir(abspath)
+        except:
+            raise StandardError("makeTempDir",
+                                "Cannot chdir to %s" % abspath)
+    return abspath
