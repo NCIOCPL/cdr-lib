@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.2 2002-09-19 18:02:21 ameyer Exp $
+# $Id: cdrbatch.py,v 1.3 2003-03-27 15:20:19 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,10 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2002/09/19 18:02:21  ameyer
+# Fixed some bugs revealed by pychecker.
+# Add unicode->utf-8 conversion for parameters retrieved from the database.
+#
 # Revision 1.1  2002/08/02 03:43:34  ameyer
 # common routines for batch jobs.  Inherit from here.
 #
@@ -223,6 +227,48 @@ def getJobStatus (idStr=None, name=None, ageStr=None, status=None):
     except cdrdb.Error, info:
         raise BatchException ("Unable to get job status: %s = %s" % \
                               (info[0], info[1][0]))
+
+#------------------------------------------------------------------
+# Is there an instance of a job active?
+#------------------------------------------------------------------
+def activeCount (jobName):
+    """
+    Check to see if any jobs with a certain name are in any kind of
+    active state - i.e., not permanently ended.
+    Only looks at the last 24 hours so that, if something crashes
+    and leaves a status of in-process in the table, it will
+    eventually (in 24 hours) clear itself from this query.
+
+    Pass:
+        jobName - Name of job in batch_job table.
+
+    Return:
+        Number of active batch jobs.
+        0 = nothing currently active.
+    """
+
+    # Are there any jobs not in one of the active statuses?
+    qry = """
+        SELECT count(*) FROM batch_job
+         WHERE status IN ('%s', '%s', '%s')
+           AND started >= DATEADD(DAY, -1, GETDATE())
+           AND name = '%s'""" % (ST_QUEUED, ST_INITIATING, ST_IN_PROCESS,
+                                 jobName)
+
+    try:
+        # Execute query
+        conn = cdrdb.connect ("CdrGuest")
+        cursor = conn.cursor()
+        cursor.execute (qry)
+        row = cursor.fetchone()
+        cursor.close()
+
+        # Must always get one row back with count in it
+        return row[0]
+
+    except cdrdb.Error, info:
+        raise BatchException ("Unable to get batch job activity info: %s = %s"\
+                               % (info[0], info[1][0]))
 
 #------------------------------------------------------------------
 # Normalize input that may have come from a CGI form
