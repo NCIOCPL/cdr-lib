@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.5 2002-07-23 15:02:25 pzhang Exp $
+# $Id: cdr2cg.py,v 1.6 2002-07-25 20:56:01 pzhang Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2002/07/23 15:02:25  pzhang
+# Added PDQDTD string for PDQ.dtd location.
+#
 # Revision 1.4  2002/06/13 19:20:16  bkline
 # Made some logging conditional.
 #
@@ -92,7 +95,7 @@ dataPrologTemplate = """\
    </message>
   </Request>"""
 
-docTemplate = """\
+docTemplateHead= """\
   <Request xmlns="http://gatekeeper.cancer.gov">
    <source>CDR</source>
    <requestID>%d</requestID>
@@ -100,8 +103,9 @@ docTemplate = """\
     <PubData>
      <docNum>%d</docNum>
      <transactionType>%s</transactionType>
-     <CDRDoc Type="%s" ID="CDR%010d">
-%s
+     <CDRDoc Type="%s" ID="CDR%010d">"""
+
+docTemplateTail = """\
      </CDRDoc>
     </PubData>
    </message>
@@ -258,7 +262,7 @@ def extractBodyElement(xmlString):
 
 def logString(type, str):
     if debuglevel:
-        open("cdr2cg.log", "a").write("==== %s %s ====\n%s\n" % 
+        open("d:/cdr/log/cdr2cg.log", "a").write("==== %s %s ====\n%s\n" % 
             (time.ctime(), type, re.sub("\r", "", str)))
 
 def sendRequest(body):
@@ -323,14 +327,15 @@ def sendDataProlog(jobId, pubType, docType, lastJobId, docCount):
                                                   docCount))
     return Response(xmlString)
 
-def sendDocument(jobId, docNum, transType, docType, docId, doc = ""):
-    #sys.stderr.write("sendDocument: %d\n" % docNum)
-    xmlString = sendRequest(docTemplate % (jobId,
-                                           docNum,
-                                           transType,
-                                           docType,
-                                           docId,
-                                           doc))
+def sendDocument(jobId, docNum, transType, docType, docId, doc = ""): 
+    
+    # The mixed UTF-8 and ASCII string is disallowed by python.
+    req = docTemplateHead % (jobId, docNum, transType, docType, docId)    
+    req = req.encode('utf-8') + doc   
+    req += docTemplateTail.encode('utf-8') 
+   
+    xmlString = sendRequest(req)
+   
     return Response(xmlString)
 
 def removeDocuments(jobId, docType, docIdList, lastJobId):
