@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.4 2003-08-21 19:25:45 bkline Exp $
+# $Id: CdrLongReports.py,v 1.5 2003-09-04 15:31:23 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2003/08/21 19:25:45  bkline
+# Added Org Protocol Review report.
+#
 # Revision 1.3  2003/07/29 13:08:45  bkline
 # Added NonRespondents report.
 #
@@ -101,8 +104,9 @@ def protsWithoutPhones(job):
     GROUP BY d.id""")
         rows = cursor.fetchall()
     except:
-        reportFailure(emailList,
-                      "Database failure extracting active protocols")
+        job.fail("Database failure extracting active protocols",
+                 logfile = LOGFILE)
+                      
     class ReportItem:
         def __init__(self, protDocId, protVer, protId, #siteType,
                      siteName, siteId):
@@ -518,8 +522,8 @@ def ospReport(job):
                ORDER BY t.doc_id""", timeout = 360)
         rows = cursor.fetchall()
     except:
-        reportFailure(emailList,
-                      "Database failure getting list of protocols.")
+        job.fail("Database failure getting list of protocols.",
+                 logfile = LOGFILE)
     xl = win32com.client.Dispatch("Excel.Application")
     xl.Visible = 0
     wb = xl.Workbooks.Add()
@@ -665,11 +669,8 @@ class NonRespondentsReport:
         #--------------------------------------------------------------
         # Set up a database connection and cursor.
         #--------------------------------------------------------------
-        try:
-            self.conn = cdrdb.connect('CdrGuest', dataSource = host)
-            self.cursor = self.conn.cursor()
-        except cdrdb.Error, info:
-            reportFailure('Database connection failure: %s' % info[1][0])
+        self.conn = cdrdb.connect('CdrGuest', dataSource = host)
+        self.cursor = self.conn.cursor()
             
     def createSpreadsheet(self, job):
 
@@ -776,8 +777,8 @@ class NonRespondentsReport:
             rows = self.cursor.fetchall()
             job.setProgressMsg("%d report rows fetched" % len(rows))
         except Exception, info:
-            reportFailure("Database failure fetching report information: %s" %
-                          str(info))
+            job.fail("Database failure fetching report information: %s" %
+                     str(info), logfile = LOGFILE)
         if self.docType == "InScopeProtocol":
             self.docType = "Protocol Summary"
 
@@ -837,7 +838,7 @@ class NonRespondentsReport:
         lastRecipName = ""
         lastBaseDocId = None
         if not rows:
-            reportFailure("No data found for report")
+            job.fail("No data found for report", logfile = LOGFILE)
         for row in rows:
             cells = sheet.Cells.Range("%d:%d" % (rowNum, rowNum))
             cells.Font.Name = 'Times New Roman'
@@ -937,12 +938,9 @@ def nonRespondentsReport(job):
 #----------------------------------------------------------------------
 class OrgProtocolReview:
     def __init__(self, id, host = 'localhost'):
-        try:
-            self.id     = id
-            self.conn   = cdrdb.connect('CdrGuest', dataSource = host)
-            self.cursor = self.conn.cursor()
-        except cdrdb.Error, info:
-            reportFailure('Database connection failure: %s' % info[1][0])
+        self.id     = id
+        self.conn   = cdrdb.connect('CdrGuest', dataSource = host)
+        self.cursor = self.conn.cursor()
 
     #------------------------------------------------------------------
     # Shorten role names (at Sheri's request 2003-07-01).
@@ -998,7 +996,7 @@ class OrgProtocolReview:
         cdr.logwrite("Filtering organization document", LOGFILE)
         response = cdr.filterDoc('guest', filters, self.id) #, host = 'mahler')
         if type(response) in (type(''), type(u'')):
-            job.fail(response)
+            job.fail(response, logfile = LOGFILE)
         html = unicode(response[0], 'utf-8')
 
         #--------------------------------------------------------------
@@ -1220,7 +1218,8 @@ SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
                 #                       % (done, len(rows))))
 
         except cdrdb.Error, info:
-            job.fail('Failure fetching protocols: %s' % info[1][0])
+            job.fail('Failure fetching protocols: %s' % info[1][0],
+                     logfile = LOGFILE)
 
         #--------------------------------------------------------------
         # Build the table.
