@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.1 2003-08-21 19:29:02 bkline Exp $
+# $Id: ModifyDocs.py,v 1.2 2003-09-02 14:00:14 bkline Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2003/08/21 19:29:02  bkline
+# Harness for one-off global changes.
+#
 #----------------------------------------------------------------------
 import cdr, cdrdb, sys, time, re, os
 
@@ -159,7 +162,8 @@ class Doc:
         if self.lastv and self.compare(self.cwd.xml, self.lastv.xml):
             self.cwd.xml = lastSavedXml = self.lastv.xml
             lastSavedXml = self.cwd.xml
-            self.saveDoc(str(self.cwd), ver = 'Y', pub = 'N', job = job)
+            self.saveDoc(str(self.cwd), ver = 'Y', pub = 'N', job = job,
+                         logWarnings = 0)
         if self.lastp and self.compare(self.lastp.xml, self.newLastp):
             self.lastp.xml = lastSavedXml = self.newLastp
             self.saveDoc(str(self.lastp), ver = 'Y', pub = 'Y', job = job)
@@ -173,7 +177,7 @@ class Doc:
     #------------------------------------------------------------------
     # Invoke the CdrRepDoc command.
     #------------------------------------------------------------------
-    def saveDoc(self, docStr, ver, pub, job):
+    def saveDoc(self, docStr, ver, pub, job, logWarnings = 1):
         job.log("saveDoc(%d, ver='%s' pub='%s')" % (self.id, ver, pub))
         # return 1
         response = cdr.repDoc(self.session, doc = docStr, ver = ver,
@@ -184,7 +188,7 @@ class Doc:
         if not response[0]:
             raise Exception("Failure saving changes for CDR%010d: %s" %
                             (self.id, response[1]))
-        if response[1]:
+        if logWarnings and response[1]:
             warnings = ERRPATT.findall(response[1])
             if warnings:
                 for warning in warnings:
