@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.8 2002-09-13 16:51:40 pzhang Exp $
+# $Id: cdr2cg.py,v 1.9 2002-09-30 19:29:53 pzhang Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2002/09/13 16:51:40  pzhang
+# Changed PDQDTD to point to MAHLER.
+#
 # Revision 1.7  2002/08/22 12:40:25  bkline
 # Added publish preview.
 #
@@ -403,13 +406,15 @@ if __name__ == "__main__":
     lastJobId = 3
     if len(sys.argv) > 1: jobId = int(sys.argv[1])
     if len(sys.argv) > 2: lastJobId = int(sys.argv[2])
+    if len(sys.argv) > 3: docType = sys.argv[3]
+    if len(sys.argv) > 4: docId = int(sys.argv[4])
     sys.stderr.write("job ID %d\n" % jobId)
     sys.stderr.write("last job ID %d\n" % lastJobId)
     debuglevel = 1
 
     # See if the GateKeeper is awake.
     sys.stderr.write("initiating request ...\n")
-    response = initiateRequest("Export", "GlossaryTerm", lastJobId)
+    response = initiateRequest("Export", docType, lastJobId)
     if response.type != "OK":
         print "%s: %s" % (response.type, response.message)
         if response.fault:
@@ -417,28 +422,24 @@ if __name__ == "__main__":
                               response.fault.faultstring)
         elif response.details:
             print "Last job ID from server: %d" % response.details.lastJobId
-        sys.exit(1)
+        # sys.exit(1)
 
     # Prepare the server for a batch of documents.
     sys.stderr.write("sending data prolog ...\n")
-    response = sendDataProlog(jobId, "Export", "GlossaryTerm",
-                              response.details.lastJobId, 2)
+    response = sendDataProlog(jobId, "Export", docType,
+                              response.details.lastJobId, 1)
     if response.type != "OK":
         print "%s: %s" % (response.type, response.message)
-        sys.exit(1)
+        # sys.exit(1)
 
     # Send the first document.
     sys.stderr.write("sending first document ...\n")
-    response = sendDocument(jobId, 1, "Export", "GlossaryTerm", 76608,
-                            open("76608.xml").read())
+    response = sendDocument(jobId, 1, "Export", docType, docId,
+                            open("CDR%d.xml" % docId).read())
     if response.type != "OK":
         print "%s: %s" % (response.type, response.message)
         sys.exit(1)
-
-    # Send the second document.
-    sys.stderr.write("sending second document ...\n")
-    response = sendDocument(jobId, 2, "Export", "GlossaryTerm", 77330,
-                            open("77330.xml").read())
+   
     if response.type != "OK":
         print "%s: %s" % (response.type, response.message)
         sys.exit(1)
