@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.27 2002-04-02 14:30:13 bkline Exp $
+# $Id: cdr.py,v 1.28 2002-04-02 20:03:17 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.27  2002/04/02 14:30:13  bkline
+# Added publish command.
+#
 # Revision 1.26  2002/03/19 00:33:06  bkline
 # Added validateOnly parameter to valDoc().
 #
@@ -1495,13 +1498,13 @@ def unlock(credentials, docId, abandon = 'Y', force = 'Y', reason = '',
 # Create a new publishing job.
 #----------------------------------------------------------------------
 def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
-           email = '', noOutput = 'N',
+           email = '', noOutput = 'N', docTime = None,
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Create the command.
-    pubSystem = "<PubSystem>%s</PubSystem>" % pubSystem
-    pubSubset = "<PubSubset>%s</PubSubset>" % pubSubset
-    email     = email and "<Email>%s</Email>" % email
+    pubSystem = "<PubSystem>%s</PubSystem>" % pubSystem or ""
+    pubSubset = "<PubSubset>%s</PubSubset>" % pubSubset or ""
+    email     = email and "<Email>%s</Email>" % email   or ""
     noOutput  = noOutput and "<NoOutput>%s</NoOutput>" % noOutput
     parmElem  = ''
     docsElem  = ''
@@ -1514,6 +1517,7 @@ def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
     if docList:
         expr = re.compile(r"CDR(\d+)(/(\d+))?")
         docsElem += "<DocList>"
+        if docTime: docsElem += "<DocTime>%s</DocTime>" % docTime
         for doc in docList:
             match = expr.search(doc)
             if not match:
@@ -1542,6 +1546,27 @@ def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
     if resp.find("<Errors") != -1:
         errors = extract(r"(<Errors[\s>].*</Errors>)", resp)
     return (jobId, errors)
+
+class PubStatus:
+    def __init__(self, id, pubSystem, pubSubset, parms, userName, outputDir,
+                 started, completed, status, messages, email, docList,
+                 errors):
+        self.id        = id
+        self.pubSystem = pubSystem
+        self.pubSubset = pubSubset
+        self.parms     = parms
+        self.userName  = userName
+        self.outputDir = outputDir
+        self.started   = started
+        self.completed = completed
+        self.status    = status
+        self.messages  = messages
+        self.email     = email
+        self.docList   = docList
+        self.errors    = errors
+        
+def pubStatus(self, jobId, getDocInfo = 0):
+    return "XXX this is a stub"
 
 #----------------------------------------------------------------------
 # Log out from the CDR.
