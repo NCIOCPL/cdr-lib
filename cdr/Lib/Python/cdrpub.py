@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.55 2003-09-11 12:33:46 bkline Exp $
+# $Id: cdrpub.py,v 1.56 2004-07-02 01:03:27 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.55  2003/09/11 12:33:46  bkline
+# Made it possible to override the location of the vendor DTD (for testing).
+#
 # Revision 1.54  2003/07/10 22:27:45  ameyer
 # Added whitespace normalization to the comparison of newly published
 # docs against stored cancer.gov docs.
@@ -220,6 +223,9 @@ class Publish:
     DOCTYPE    = 5
     DOC        = 6
 
+    # Server cacheing to speedup publishing
+    CACHETYPE = "pub"
+
     # class private variables.
     __timeOut  = 3000
     __cdrEmail = "cdr@%s.nci.nih.gov" % socket.gethostname()
@@ -262,6 +268,9 @@ class Publish:
         self.__errorsBeforeAborting = 0
         self.__warningCount         = 0
         self.__publishIfWarnings    = "No"
+
+        # Cacheing not yet turned on
+        self.__cacheingOn = 0
 
         # Keep a copy of the job ID.
         self.__jobId = jobId
@@ -458,6 +467,17 @@ class Publish:
                 self.__subsetName == "Hotfix-Export":
                 if self.__includeLinkedDocs:
                     self.__addLinkedDocsToPPD()
+
+            # Turn on cacheing.
+            # This is an optimization that, at the time of writing
+            # caches Term document upcoding and denormalization.
+            # Other cacheing optimizations might also be used in
+            # the future if experience shows a need and opportunity.
+            # Must turn cacheing off before end, even if exception raised.
+            cdr.cacheInit(self.__credentials,
+                          cacheOn=1, cacheType=Publish.CACHETYPE,
+                          port=self.__pubPort);
+            self.__cacheingOn = 1;
 
             # Two passes through the subset specification are required.
             # The first pass publishes documents specified by the user, and
@@ -666,23 +686,32 @@ class Publish:
             # Since we catch all exceptions below, we would catch this one
             #   in the general Except clause and report an
             #   "Unexpected failure", which we don't want to do.
+            # Turn off cacheing before we leave
+            if (self.__cacheingOn):
+                try:
+                    cdr.cacheInit(self.__credentials,
+                                  cacheOn=0, cacheType=Publish.CACHETYPE,
+                                  port=self.__pubPort);
+                except:
+                    pass
             sys.exit(0)
 
         except StandardError, arg:
-            self.__updateStatus(Publish.FAILURE, arg[0])
-            if self.__no_output != "Y":
-                try:
-                    os.rename(dest, dest_base + ".FAILURE")
-                except:
-                    pass
+            self.__cleanupFailure(dest, dest_base, str(arg))
+
         except:
-            self.__updateStatus(Publish.FAILURE, "Unexpected failure")
-            cdr.logwrite ("Unhandled exception in publish:", LOG, tback=1)
-            if self.__no_output != "Y":
-                try:
-                    os.rename(dest, dest_base + ".FAILURE")
-                except:
-                    pass
+            self.__cleanupFailure(dest, dest_base,
+                                  "Unexpected failure, unhandled exception. ")
+
+        # Turn cacheing off
+        if (self.__cacheingOn):
+            try:
+                cdr.cacheInit(self.__credentials,
+                              cacheOn=0, cacheType=Publish.CACHETYPE,
+                              port=self.__pubPort);
+            except:
+                pass
+            self.cacheingOn = 0;
 
         # Send email to notify user of job status.
         if self.__reportOnly:
@@ -694,6 +723,50 @@ class Publish:
         self.__updateFirstPub()
 
         self.__sendMail()
+
+    #------------------------------------------------------------------
+    # Clean up in case of failed publishing job
+    #------------------------------------------------------------------
+    def __cleanupFailure(self, dest, dest_base, msg):
+        """
+        If an exception is caught, it is necessary to do some cleanup
+        before exiting.  This subroutine can be called to perform that
+        cleanup so we don't have to repeat the same code under each
+        possible exception.
+
+        Any exception raided during cleanup is ignored.  We keep
+        trying the rest of cleanup before returning.
+
+        Pass:
+            dest      - Output filename
+            dest_base - Base (directory) of output filename
+            msg       - Message to log.
+
+        Return:
+            Void.
+        """
+        # Log message
+        msg = "publish: " % msg
+        try:
+            cdr.logwrite (msg, LOG, tback=1)
+        except:
+            pass
+
+        # Set status
+        try:
+            self.__updateStatus(Publish.FAILURE, msg)
+        except:
+            pass
+
+        # Rename output directory to indicate failure
+        if self.__no_output != "Y":
+            try:
+                os.rename(dest, dest_base + ".FAILURE")
+            except:
+                pass
+
+        return None
+
 
     #------------------------------------------------------------------
     # Update first_pub to vendor_job started when appropriate.
@@ -839,9 +912,11 @@ class Publish:
             msg = "Creating pub_proc_cg_work at %s.<BR>" % time.ctime()
             self.__updateMessage(msg)
             cgWorkLink = self.__cdrHttp + "/PubStatus.py?id=1&type=CgWork"
-            link = "<A style='text-decoration: underline;' href='%s'> \
-                Check pushed docs</A>(<B>inaccurate after next pushing \
-                job has started or this job succeeds</B>).<BR>" % cgWorkLink
+            link = \
+"""<A style='text-decoration: underline;' href='%s'>
+Check pushed docs</A> (<B>accurate only until a new publishing job
+has started</B>).<BR>""" % cgWorkLink
+
             if pubType == "Full Load" or pubType == "Export":
                 self.__createWorkPPC(vendor_job, vendor_dest)
                 pubTypeCG = pubType
@@ -1081,23 +1156,23 @@ class Publish:
                     row = cursor.fetchone()
                     continue
                 idsInserted[id] = 1
-                type   = row[1]
+                dType  = row[1]
                 xml    = row[2]
                 subdir = row[3]
                 ver    = row[4]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
-                file   = open(path, "rb").read()
-                file   = unicode(file, 'utf-8')
+                fileTxt= open(path, "rb").read()
+                fileTxt= unicode(fileTxt, 'utf-8')
 
                 # Whitespace-normalized compare to stored file
-                if spNorm.sub(u" ", xml) != spNorm.sub(u" ", file):
+                if spNorm.sub(u" ", xml) != spNorm.sub(u" ", fileTxt):
                     # New xml is different, save it for cancer.gov
                     cursor2.execute("""
                         INSERT INTO pub_proc_cg_work (id, vendor_job,
                                         cg_job, doc_type, xml, num)
                              VALUES (?, ?, ?, ?, ?, ?)
-                                    """, (id, vendor_job, cg_job, type,
-                                          file, ver),
+                                    """, (id, vendor_job, cg_job, dType,
+                                          fileTxt, ver),
                                          timeout = self.__timeOut
                                    )
 
@@ -1134,7 +1209,7 @@ class Publish:
             row = cursor.fetchone()
             while row:
                 id     = row[0]
-                type   = row[1]
+                dType  = row[1]
                 subdir = row[2]
                 ver    = row[3]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
@@ -1146,7 +1221,7 @@ class Publish:
                                                   doc_type, xml, num)
                          VALUES (?, ?, ?, ?, ?, ?)
                                     """,
-                                    (id, vendor_job, cg_job, type, xml, ver),
+                                    (id, vendor_job, cg_job, dType, xml, ver),
                                     timeout = self.__timeOut
                                    )
                 except:
@@ -1331,21 +1406,21 @@ class Publish:
                     row = cursor.fetchone()
                     continue
                 idsInserted[id] = 1
-                type   = row[1]
+                dType  = row[1]
                 xml    = row[2]
                 subdir = row[3]
                 ver    = row[4]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
-                file   = open(path, "rb").read()
-                file   = unicode(file, 'utf-8')
+                fileTxt   = open(path, "rb").read()
+                fileTxt   = unicode(fileTxt, 'utf-8')
 
-                if xml != file:
+                if xml != fileTxt:
                     cursor2.execute("""
                         INSERT INTO pub_proc_cg_work (id, vendor_job,
                                         cg_job, doc_type, xml, num)
                              VALUES (?, ?, ?, ?, ?, ?)
-                                    """, (id, vendor_job, cg_job, type,
-                                          file, ver)
+                                    """, (id, vendor_job, cg_job, dType,
+                                          fileTxt, ver)
                                    )
 
                 row = cursor.fetchone()
@@ -1381,7 +1456,7 @@ class Publish:
             row = cursor.fetchone()
             while row:
                 id     = row[0]
-                type   = row[1]
+                dType  = row[1]
                 subdir = row[2]
                 ver    = row[3]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
@@ -1392,7 +1467,7 @@ class Publish:
                                                   doc_type, xml, num)
                          VALUES (?, ?, ?, ?, ?, ?)
                                 """,
-                                (id, vendor_job, cg_job, type, xml, ver),
+                                (id, vendor_job, cg_job, dType, xml, ver),
                                 timeout = self.__timeOut
                                )
                 row = cursor.fetchone()
@@ -2016,12 +2091,12 @@ class Publish:
                                             "'id' column: %s" % sql)
                     row = cursor.fetchone()
                     while row:
-                        id = row[idCol]
-                        if id in self.__alreadyPublished: continue
+                        oneId = row[idCol]
+                        if oneId in self.__alreadyPublished: continue
                         ver = verCol != -1 and row[verCol] or None
 
                         try:
-                            doc = self.__findPublishableVersion(id, ver)
+                            doc = self.__findPublishableVersion(oneId, ver)
                         except StandardError, arg:
 
                             # Can't record this in the pub_proc_doc table,
@@ -2033,7 +2108,7 @@ class Publish:
                                     raise
                             self.__addJobMessages(arg[0])
                         docs.append(doc)
-                        self.__alreadyPublished[id] = 1
+                        self.__alreadyPublished[oneId] = 1
                         row = cursor.fetchone()
 
                 except cdrdb.Error, info:
@@ -2048,13 +2123,13 @@ class Publish:
                 if type(resp) in (type(""), type(u"")):
                     raise StandardError("XQL failure: %s" % resp)
                 for queryResult in resp:
-                    id     = queryResult.docId
-                    type   = queryResult.docType
-                    digits = re.sub('[^\d]', '', id)
-                    id     = int(digits)
-                    if id in self.__alreadyPublished: continue
+                    oneId  = queryResult.docId
+                    # dType = queryResult.docType # Currently unused
+                    digits = re.sub('[^\d]', '', oneId)
+                    oneId     = int(digits)
+                    if oneId in self.__alreadyPublished: continue
                     try:
-                        doc = self.__findPublishableVersion(id)
+                        doc = self.__findPublishableVersion(oneId)
                     except StandardError, arg:
                         self.__errorCount += 1
                         threshold = self.__errorsBeforeAborting
@@ -2063,7 +2138,7 @@ class Publish:
                                 raise
                         self.__addJobMessages(arg[0])
                     docs.append(doc)
-                    self.__alreadyPublished[id] = 1
+                    self.__alreadyPublished[oneId] = 1
 
         self.__debugLog("SubsetSpecification queries selected %d documents."
                         % len(docs))
@@ -2522,7 +2597,7 @@ Please do not reply to this message.
     # Get the number of failed documents in pub_proc_doc table.
     #----------------------------------------------------------------------
     def __getFailures(self):
-        id = self.__jobId
+        jbId = self.__jobId
         try:
             cursor = self.__conn.cursor()
             cursor.execute("""
@@ -2530,7 +2605,7 @@ Please do not reply to this message.
                   FROM pub_proc_doc
                  WHERE (failure = 'Y' OR messages IS NOT NULL)
                    AND pub_proc = %d
-                           """ % id
+                           """ % jbId
                           )
             row = cursor.fetchone()
             if row and row[0]:
@@ -2539,7 +2614,7 @@ Please do not reply to this message.
                 return 0
 
         except cdrdb.Error, info:
-            msg = 'Failure getting failed docs for job %d: %s' % (id,
+            msg = 'Failure getting failed docs for job %d: %s' % (jbId,
                                                             info[1][0])
             self.__debugLog(msg)
             raise StandardError(msg)
@@ -2736,9 +2811,9 @@ def findLinkedDocs(docPairList):
             done = 1
             passNum += 1
             docIds = linkedDocHash.keys()
-            for id in docIds:
-                if links.has_key(id):
-                    for targetPair in links[id]:
+            for docId in docIds:
+                if links.has_key(docId):
+                    for targetPair in links[docId]:
                         if not linkedDocHash.has_key(targetPair[0]):
                             linkedDocHash[targetPair[0]] = targetPair[1]
                             done = 0
