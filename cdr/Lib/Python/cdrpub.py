@@ -1,10 +1,20 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.49 2003-01-29 21:52:09 pzhang Exp $
+# $Id: cdrpub.py,v 1.50 2003-02-14 20:10:13 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.49  2003/01/29 21:52:09  pzhang
+# Fixed the bug in creating the pushing job. The new logic is:
+#     1) Vendor job will create a pushing job and then finish
+#        itself without waiting for the pushing job.
+#     2) Pushing job will be picked up by CdrPublishing service
+#        as a separate new job after it was created by the vendor
+#        job.
+# Dropped all newJobId parameters in functions due to the new
+#     logic above.
+#
 # Revision 1.48  2003/01/28 20:37:25  pzhang
 # Added comment on documents with filter failures.
 # These documents are not regarded as "removed" or "blocked".
@@ -817,18 +827,24 @@ class Publish:
             if pubType == "Full Load" or pubType == "Export":
                 self.__createWorkPPC(vendor_job, vendor_dest)
                 pubTypeCG = pubType
-                if self.__checkPushedDocs or self.__interactiveMode:
-                    self.__updateMessage(link)
-                    self.__waitUserApproval()
+                self.__updateMessage(link)
+                
+                # Stop to enter job description.
+                self.__waitUserApproval()
             elif pubType == "Hotfix (Remove)":
                 self.__createWorkPPCHR(vendor_job)
                 pubTypeCG = "Hotfix"
+                self.__updateMessage(link)
+
+                # Stop to enter job description.
+                self.__waitUserApproval()
             elif pubType == "Hotfix (Export)":
                 self.__createWorkPPCHE(vendor_job, vendor_dest)
-                pubTypeCG = "Hotfix"
-                if self.__checkPushedDocs or self.__interactiveMode:
-                    self.__updateMessage(link)
-                    self.__waitUserApproval()
+                pubTypeCG = "Hotfix"                
+                self.__updateMessage(link)
+
+                # Stop to enter job description.
+                self.__waitUserApproval()
             else:
                 raise StandardError("pubType %s not supported." % pubType)
 
@@ -853,14 +869,16 @@ class Publish:
             # Raise an exception when failed.
             lastJobId = self.__getLastCgJob()
 
-            # Will drop this later in enhancement.
-            docType = "Deprecated"
+            # Get the required job description.
+            cgJobDesc = self.__getCgJobDesc()
+            if not cgJobDesc:
+                self.__updateMessage(msg)
+                raise StandardError("<BR>Missing required job description.")  
 
             # See if the GateKeeper is awake.
             msg = "Initiating request with pubType=%s, \
-                   docType=%s, lastJobId=%d ...<BR>" % (pubTypeCG,
-                                                        docType, lastJobId)
-            response = cdr2cg.initiateRequest(pubTypeCG, docType, lastJobId)
+                   lastJobId=%d ...<BR>" % (pubTypeCG, lastJobId)
+            response = cdr2cg.initiateRequest(cgJobDesc, pubTypeCG, lastJobId)
             if response.type != "OK":
                 msg += "%s: %s<BR>" % (response.type, response.message)
                 if response.fault:
@@ -876,10 +894,10 @@ class Publish:
 
             # Prepare the server for a list of documents to send.
             msg += """Sending data prolog with jobId=%d, pubType=%s,
-                    docType=%s, lastJobId=%d, numDocs=%d ...<BR>""" % (
-                    self.__jobId, pubTypeCG, docType, lastJobId, numDocs)
-            response = cdr2cg.sendDataProlog(self.__jobId, pubTypeCG, 
-                                             docType, lastJobId, numDocs)
+                    lastJobId=%d, numDocs=%d ...<BR>""" % (self.__jobId, 
+                    pubTypeCG, lastJobId, numDocs)                     
+            response = cdr2cg.sendDataProlog(cgJobDesc, self.__jobId, 
+                                             pubTypeCG, lastJobId, numDocs)
             if response.type != "OK":
                 msg += "%s: %s<BR>" % (response.type, response.message)
                 raise StandardError(msg)
@@ -1621,6 +1639,42 @@ class Publish:
             raise StandardError(msg)
 
         return jobId
+
+    #------------------------------------------------------------------
+    # Return a string describing what this job is for.
+    #------------------------------------------------------------------
+    def __getCgJobDesc(self):
+
+        msgExpr = re.compile("<CgJobDesc>(.*?)</CgJobDesc>", re.DOTALL)
+        CgJobDesc = ""
+
+        try:
+            cursor = self.__conn.cursor()
+            cursor.execute("""
+                    SELECT messages
+                      FROM pub_proc
+                     WHERE id = %d                      
+                           """ % self.__jobId
+                          )
+            row = cursor.fetchone()
+            msg = row[0]
+            match = msgExpr.search(msg)
+            if match:
+                CgJobDesc = match.group(1)  
+                savedJobDesc = "<B>JobDesc:</B> %s<BR>" % CgJobDesc              
+                message = msgExpr.sub(savedJobDesc, msg)
+                cursor.execute("""
+                    UPDATE pub_proc
+                       SET messages = ?                    
+                     WHERE id = ?                     
+                               """, (message, self.__jobId)
+                          )              
+            return CgJobDesc
+
+        except cdrdb.Error, info:
+            msg = """Failure in __getCgJobDesc for %d: %s""" % (
+                self.__jobId, info[1][0])
+            raise StandardError(msg)
 
     #------------------------------------------------------------------
     # Return the last cg_job for any successful pushing jobs.
