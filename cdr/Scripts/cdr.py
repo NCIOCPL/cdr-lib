@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.9 2001-09-17 16:08:39 bkline Exp $
+# $Id: cdr.py,v 1.10 2001-09-27 19:15:45 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2001/09/17 16:08:39  bkline
+# Fixed bug in filterDoc (added missing "</Parm>" tag.
+#
 # Revision 1.8  2001/08/08 18:23:49  mruben
 # improved interface to CdrFilter
 #
@@ -48,6 +51,8 @@ LOGON_STRING  = """<CdrCommandSet><CdrCommand><CdrLogon>
                    <UserName>%s</UserName><Password>%s</Password>
                    </CdrLogon></CdrCommand>"""
 LOGOFF_STRING = "<CdrCommand><CdrLogoff/></CdrCommand></CdrCommandSet>"
+PYTHON        = "d:\\python\\python.exe"
+SCRIPTS       = "d:/cdr/src/script"
 
 #----------------------------------------------------------------------
 # Normalize a document id to form 'CDRnnnnnnnnnn'.
