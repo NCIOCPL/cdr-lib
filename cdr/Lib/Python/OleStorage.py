@@ -9,7 +9,7 @@ Summary:
     it provides a virtual file system inside a single file, with the
     storages performing the role of directories, and streams inside
     the storages analogous to individual files in a file system.  The
-   storages can be nested, providing the equivalent of subdirectories.
+    storages can be nested, providing the equivalent of subdirectories.
 
     Handles endian issues portably, regardless of the byte ordering
     in the file or for the native operating system.
@@ -27,11 +27,15 @@ Example usage:
 
 #----------------------------------------------------------------------
 #
-# $Id: OleStorage.py,v 1.2 2004-10-12 12:57:11 bkline Exp $
+# $Id: OleStorage.py,v 1.3 2004-10-20 12:58:11 bkline Exp $
 #
 # Module for reading OLE2 structured storage files.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2004/10/12 12:57:11  bkline
+# Added alternate method of invoking the OleStorage constructor, passing
+# an in-memory buffer instead of the pathname of a disk file.
+#
 # Revision 1.1  2004/10/10 19:09:50  bkline
 # Support for reading Excel workbooks.
 #
