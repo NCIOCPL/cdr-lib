@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.5 2001-05-18 19:19:06 bkline Exp $
+# $Id: cdr.py,v 1.6 2001-06-13 22:37:17 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2001/05/18 19:19:06  bkline
+# Added routines for link management, schema documents, and adding
+# document types.
+#
 # Revision 1.4  2001/05/03 20:17:11  bkline
 # Stub versions of link command wrappers added.
 #
@@ -23,7 +27,7 @@
 #----------------------------------------------------------------------
 # Import required packages.
 #----------------------------------------------------------------------
-import socket, string, struct, sys, re, cgi
+import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -96,6 +100,7 @@ def checkErr(resp):
         err = expr.search(resp)
         err = err and err.group(1) or "Unknown failure"
         return err
+    return None
 
 #----------------------------------------------------------------------
 # Extract error elements from XML.
@@ -142,6 +147,67 @@ def logout(session, host= DEFAULT_HOST, port = DEFAULT_PORT):
 
     sendCommands(wrapCommand("<CdrLogoff/>", session), host, port)
 
+#----------------------------------------------------------------------
+# Extract the text content of a DOM element.
+#----------------------------------------------------------------------
+def getTextContent(node):
+    text = ''
+    for n in node.childNodes:
+        if n.nodeType == xml.dom.minidom.Node.TEXT_NODE:
+            text = text + n.nodeValue
+    return text
+
+#----------------------------------------------------------------------
+# Object containing components of a CdrDoc element.
+#----------------------------------------------------------------------
+class Doc:
+    def __init__(self, x, type = None, ctrl = None, blob = None, id = None):
+        # Two flavors for the constructor: one for passing in all the pieces:
+        if type:
+            self.id   = id
+            self.ctrl = ctrl or {}
+            self.type = type
+            self.xml  = x
+            self.blob = blob
+        # ... and the other for passing in a CdrDoc element to be parsed.
+        else:
+            self.ctrl = {}
+            self.xml  = ''
+            self.blob = None
+            docElem   = xml.dom.minidom.parseString(x).documentElement
+            self.id   = docElem.getAttribute('Id').encode('ascii') or None
+            self.type = docElem.getAttribute('Type').encode('ascii') or None
+            for node in docElem.childNodes:
+                if node.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
+                    if node.nodeName == 'CdrDocCtl':
+                        self.parseCtl(node)
+                    elif node.nodeName == 'CdrDocXml':
+                        self.xml = getTextContent(node).encode('latin-1')
+                    elif node.nodeName == 'CdrDocBlob':
+                        self.extractBlob(node)
+    def parseCtl(self, node):
+        for child in node.childNodes:
+            if child.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
+                self.ctrl[child.nodeName.encode('ascii')] = \
+                    getTextContent(child).encode('latin-1')
+    def extractBlob(self, node):
+        encodedBlob = getTextContent(node)
+        self.blob   = base64.decodestring(encodedBlob.encode('ascii'))
+    def __str__(self):
+        rep = "<CdrDoc Type='%s'" % self.type
+        if self.id: rep += " Id='%s'" % self.id
+        rep += "><CdrDocCtl>"
+        for key in self.ctrl.keys():
+            value = unicode(self.ctrl[key], 'latin-1').encode('utf-8')
+            rep += "<%s>%s</%s>" % (key, value, key)
+        xml = self.xml and unicode(self.xml, 'latin-1').encode('utf-8') or ''
+        rep += "</CdrDocCtl><CdrDocXml><![CDATA[%s]]></CdrDocXml>" % xml
+        if self.blob:
+            rep += ("<CdrDocBlob>%s</CdrDocBlob>" 
+                    % base64.encodestring(self.blob))
+        rep += "</CdrDoc>"
+        return rep
+        
 #----------------------------------------------------------------------
 # Add a new document to the CDR Server.
 #----------------------------------------------------------------------
@@ -196,7 +262,7 @@ def repDoc(credentials, file = None, doc = None,
 # Retrieve a specified document from the CDR Server.
 #----------------------------------------------------------------------
 def getDoc(credentials, docId, checkout = 'N', version = "Current",
-           host = DEFAULT_HOST, port = DEFAULT_PORT):
+           host = DEFAULT_HOST, port = DEFAULT_PORT, getObject = 0):
 
     # Create the command.
     id  = normalize(docId)
@@ -208,7 +274,9 @@ def getDoc(credentials, docId, checkout = 'N', version = "Current",
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
 
     # Extract the document.
-    return extract("(<CdrDoc[>\s].*</CdrDoc>)", resp)
+    doc = extract("(<CdrDoc[>\s].*</CdrDoc>)", resp)
+    if doc.startswith("<Errors") or not getObject: return doc
+    return Doc(doc)
 
 #----------------------------------------------------------------------
 # Retrieve a specified document from the CDR Server using a filter.
@@ -254,6 +322,17 @@ def report(credentials, name, parms, host = DEFAULT_HOST, port = DEFAULT_PORT):
     return extract("(<ReportBody[>\s].*</ReportBody>)", resp)
 
 #----------------------------------------------------------------------
+# Class to contain one hit from query result set.
+#----------------------------------------------------------------------
+class QueryResult:
+    def __init__(this, docId, docType, docTitle):
+        this.docId      = docId
+        this.docType    = docType
+        this.docTitle   = docTitle
+    def __repr__(this):
+        return "%s (%s) %s\n" % (this.docId, this.docType, this.docTitle)
+
+#----------------------------------------------------------------------
 # Process a CDR query.  Returns a tuple with two members, the first of
 # which is a list of tuples containing id, doctype and title for each
 # document in the search result, and the second of which is an <Errors>
@@ -268,10 +347,12 @@ def search(credentials, query, host = DEFAULT_HOST, port = DEFAULT_PORT):
     # Submit the search.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
 
+    # Check for problems.
+    err = checkErr(resp)
+    if err: return err
+
     # Extract the results.
     results = extract("<QueryResults>(.*)</QueryResults>", resp)
-    if string.find(results, "<Err") != -1:
-        return (None, results)
     qrElemsPattern  = re.compile("<QueryResult>(.*?)</QueryResult>", re.DOTALL)
     docIdPattern    = re.compile("<DocId>(.*)</DocId>", re.DOTALL)
     docTypePattern  = re.compile("<DocType>(.*)</DocType>", re.DOTALL)
@@ -281,8 +362,8 @@ def search(credentials, query, host = DEFAULT_HOST, port = DEFAULT_PORT):
         docId    = docIdPattern.search(qr).group(1)
         docType  = docTypePattern.search(qr).group(1)
         docTitle = docTitlePattern.search(qr).group(1)
-        ret.append((docId, docType, docTitle))
-    return (ret, None)
+        ret.append(QueryResult(docId, docType, docTitle))
+    return ret
 
 #----------------------------------------------------------------------
 # Class to contain CDR document type information.
@@ -1088,6 +1169,82 @@ def getLinkProps(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
             if cmt: pr.comment = cmt[0]
             ret.append(pr)
     return ret
+
+#----------------------------------------------------------------------
+# Returns a list of available query term rules.
+#----------------------------------------------------------------------
+def listQueryTermRules(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrListQueryTermRules/>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, session), host, port)
+
+    # Check for problems.
+    err = checkErr(resp)
+    if err: return err
+
+    # Extract the rules.
+    return re.findall("<Rule>(.*?)</Rule>", resp)
+
+#----------------------------------------------------------------------
+# Returns a list of CDR query term definitions.
+#----------------------------------------------------------------------
+def listQueryTermDefs(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrListQueryTermDefs/>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, session), host, port)
+
+    # Extract the definitions.
+    defExpr      = re.compile("<Definition>(.*?)</Definition>", re.DOTALL)
+    pathExpr     = re.compile("<Path>(.*)</Path>")
+    ruleExpr     = re.compile("<Rule>(.*)</Rule>")
+    err          = checkErr(resp)
+    if err: 
+        return err
+    definitions  = defExpr.findall(resp)
+    rc           = []
+    if definitions:
+        for definition in definitions:
+            path = pathExpr.search(definition).group(1)
+            rule = ruleExpr.search(definition)
+            rule = rule and rule.group(1) or None
+            rc.append((path, rule))
+    return rc
+
+#----------------------------------------------------------------------
+# Adds a new query term definition.
+#----------------------------------------------------------------------
+def addQueryTermDef(session, path, rule = None, host = DEFAULT_HOST,
+                                                port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrAddQueryTermDef><Path>%s</Path>" % path
+    if rule: cmd += "<Rule>%s</Rule>" % rule
+    cmd += "</CdrAddQueryTermDef>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    return checkErr(resp)
+
+#----------------------------------------------------------------------
+# Deletes an existing query term definition.
+#----------------------------------------------------------------------
+def delQueryTermDef(session, path, rule = None, host = DEFAULT_HOST,
+                                                port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrDelQueryTermDef><Path>%s</Path>" % path
+    if rule: cmd += "<Rule>%s</Rule>" % rule
+    cmd += "</CdrDelQueryTermDef>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    return checkErr(resp)
 
 #----------------------------------------------------------------------
 # Log out from the CDR.
