@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.57 2002-09-19 18:04:24 ameyer Exp $
+# $Id: cdr.py,v 1.58 2002-10-01 21:29:21 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.57  2002/09/19 18:04:24  ameyer
+# Added check/convert for unicode comments in _addDocComment.
+# Changed print_tb to print_exc to get more info in traceback log.
+#
 # Revision 1.56  2002/09/18 18:56:48  ameyer
 # Fixed misspelling in comment.
 #
@@ -1971,16 +1975,17 @@ def reindex(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # Create a new publishing job.
 #----------------------------------------------------------------------
 def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
-           email = '', noOutput = 'N', docTime = None,
+           email = '', noOutput = 'N', allowNonPub = 'N', docTime = None,
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Create the command.
-    pubSystem = "<PubSystem>%s</PubSystem>" % pubSystem or ""
-    pubSubset = "<PubSubset>%s</PubSubset>" % pubSubset or ""
-    email     = email and "<Email>%s</Email>" % email   or ""
-    noOutput  = noOutput and "<NoOutput>%s</NoOutput>" % noOutput
-    parmElem  = ''
-    docsElem  = ''
+    pubSystem   = "<PubSystem>%s</PubSystem>" % pubSystem or ""
+    pubSubset   = "<PubSubset>%s</PubSubset>" % pubSubset or ""
+    email       = email and "<Email>%s</Email>" % email   or ""
+    noOutput    = noOutput and "<NoOutput>%s</NoOutput>" % noOutput
+    allowNonPub = allowNonPub and "<AllowNonPub>%s</AllowNonPub>" % allowNonPub
+    parmElem    = ''
+    docsElem    = ''
     if parms:
         parmElem = "<Parms>"
         for parm in parms:
@@ -2001,12 +2006,13 @@ def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
             docsElem += "<Doc Id='%s' Version='%s'/>" % (id, version)
         docsElem += "</DocList>"
 
-    cmd = "<CdrPublish>%s%s%s%s%s%s</CdrPublish>" % (pubSystem,
-                                                     pubSubset,
-                                                     parmElem,
-                                                     docsElem,
-                                                     email,
-                                                     noOutput)
+    cmd = "<CdrPublish>%s%s%s%s%s%s%s</CdrPublish>" % (pubSystem,
+                                                       pubSubset,
+                                                       parmElem,
+                                                       docsElem,
+                                                       email,
+                                                       noOutput,
+                                                       allowNonPub)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -2079,7 +2085,6 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback = 0):
         # If traceback is requested, include the last one
         if tback:
             try:
-                tb = sys.exc_info()[2]
                 traceback.print_exc (999, f)
             except:
                 pass
