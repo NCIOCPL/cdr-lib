@@ -24,9 +24,12 @@ r"""
 
 #----------------------------------------------------------------------
 #
-# $Id: UnicodeToLatex.py,v 1.2 2001-10-20 18:46:59 bkline Exp $
+# $Id: UnicodeToLatex.py,v 1.3 2002-11-08 21:47:59 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2001/10/20 18:46:59  bkline
+# Filled in a few holes; used dot-less i for accented glyphs.
+#
 # Revision 1.1  2001/10/20 04:19:03  bkline
 # Initial revision
 #
@@ -34,6 +37,7 @@ r"""
 
 import re
 codeMap = {
+    0x0022: r"""\tQ{}""",
     0x0023: r"""\#""",
     0x0024: r"""\$""",
     0x0025: r"""$\%$""",
@@ -355,7 +359,7 @@ codeMap = {
     0x21AA: r"""$\hookrightarrow$"""
 }
 
-pattern = re.compile(u'([][\\\\#$%&^_`{}~<>|\u0080-\uFFFD])')
+pattern = re.compile(u'([][\\\\#"$%&^_`{}~<>|\u0080-\uFFFD])')
 
 def getPreamble():
     return """\
