@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.15 2002-01-31 21:39:26 bkline Exp $
+# $Id: cdr.py,v 1.16 2002-02-06 13:38:20 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.15  2002/01/31 21:39:26  bkline
+# Exposed ability to pass a filter directly in memory as XML doc string.
+#
 # Revision 1.14  2002/01/22 22:30:59  bkline
 # Added depth argument to getTree() function.
 #
@@ -69,7 +72,7 @@ LOGON_STRING  = """<CdrCommandSet><CdrCommand><CdrLogon>
                    </CdrLogon></CdrCommand>"""
 LOGOFF_STRING = "<CdrCommand><CdrLogoff/></CdrCommand></CdrCommandSet>"
 PYTHON        = "d:\\python\\python.exe"
-SCRIPTS       = "d:/cdr/src/script"
+SCRIPTS       = "d:/cdr/Scripts"
 SMTP_RELAY    = "MAILFWD.NIH.GOV"
 
 #----------------------------------------------------------------------
