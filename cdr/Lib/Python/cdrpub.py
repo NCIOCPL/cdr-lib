@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.41 2002-12-03 21:10:54 pzhang Exp $
+# $Id: cdrpub.py,v 1.42 2002-12-05 14:38:51 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.41  2002/12/03 21:10:54  pzhang
+# Added a fewer words to Check PushedDocs link.
+#
 # Revision 1.40  2002/11/20 16:38:20  pzhang
 # Fixed a bug in missing updating pub_proc from PPCW to PPC.
 # Added more try blocks to detect why Setting A to PPCW failed.
@@ -989,7 +992,8 @@ class Publish:
                                         cg_job, doc_type, xml, num)
                              VALUES (?, ?, ?, ?, ?, ?)
                                    """, (id, vendor_job, cg_job, type, 
-                                         file, ver)
+                                         file, ver),  
+                                        timeout = self.__timeOut
                                   )
         except:
             raise StandardError("Setting U to pub_proc_cg_work failed.")
