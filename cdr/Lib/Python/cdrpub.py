@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.24 2002-08-20 22:07:31 pzhang Exp $
+# $Id: cdrpub.py,v 1.25 2002-08-30 19:40:46 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.24  2002/08/20 22:07:31  pzhang
+# Added many control parameters.
+#
 # Revision 1.23  2002/08/16 21:36:36  pzhang
 # Added __waitUserApproval function.
 #
@@ -104,8 +107,7 @@ class Publish:
     __cdrHttp  = "http://%s.nci.nih.gov/cgi-bin/cdr" % socket.gethostname()
     __ignoreUserDocList = 0
     __interactiveMode = 0
-    __checkRemovedDocs  = 1
-    __vendorDocsOnly    = 0
+    __checkRemovedDocs  = 1    
     __includeLinkedDocs = 1
     __reportOnly        = 0
     __validateDocs      = 1
@@ -219,9 +221,6 @@ class Publish:
             self.__updateStatus(Publish.FAILURE, msg)
             raise StandardError(msg)
    
-        if self.__params.has_key("PushToCancerGov") and \
-            self.__params["PushToCancerGov"] != "Yes":
-            self.__vendorDocsOnly = 1
         if self.__params.has_key("IncludeLinkedDocs") and \
             self.__params["IncludeLinkedDocs"] != "Yes":
             self.__includeLinkedDocs = 0
@@ -422,7 +421,7 @@ class Publish:
                         pass
 
                     if self.__sysName != "Primary" or \
-                        self.__vendorDocsOnly:
+                        self.__reportOnly:
                         self.__updateStatus(Publish.SUCCESS)
 
                     # Filtered documents have to be in dest before sending 
@@ -1245,6 +1244,7 @@ class Publish:
         # Keep track of problems encountered during filtering.
         warnings = ""
         errors   = ""
+        invalDoc = ""
 
         # Apply each filter set to the document.
         filteredDoc = None
@@ -1272,14 +1272,17 @@ class Publish:
         if self.__sysName == "Primary" and \
             self.__validateDocs and filteredDoc:
             errObj = validateDoc(filteredDoc, docId = doc[0])
-            if len(errObj.Errors):
-                errors = "Validating failed with errors."
-            if len(errObj.Warnings):
-                warnings = "Validating failed with warnings."
+            for error in errObj.Errors:
+                errors += "%s<BR>" % error
+                invalDoc = "InvalidDocs"
+            for warning in errObj.Warnings:
+                warnings += "%s<BR>" % warning
+                invalDoc = "InvalidDocs"
                 
         # Save the output as instructed.
-        if self.__no_output != 'Y' and filteredDoc:
+        if self.__no_output != 'Y' and filteredDoc and not self.__reportOnly:
             try:
+                subDir = invalDoc or subDir
                 destDir = destDir + "/" + subDir
                 if destType == Publish.FILE:
                     self.__saveDoc(filteredDoc, destDir, self.__fileName, "a")
@@ -1554,7 +1557,7 @@ class Publish:
                 subject   = "CDR Publishing Job Status"
                 receivers = string.split(self.__email, ",")
                 message   = """\
-Job %d has completed.  You can view a status report for this job at:
+Job %d has completed or changed status.  You can view a status report for this job at:
 
     %s/PubStatus.py?id=%d
 
