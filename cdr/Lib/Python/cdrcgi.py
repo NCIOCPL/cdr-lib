@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.39 2003-12-17 01:20:14 bkline Exp $
+# $Id: cdrcgi.py,v 1.40 2003-12-30 16:50:32 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.39  2003/12/17 01:20:14  bkline
+# Fixed bug in CTGovProtocol advanced search report.
+#
 # Revision 1.38  2003/12/17 01:09:05  bkline
 # Added advanced search support for CTGovProtocol documents.
 #
@@ -453,9 +456,7 @@ def pubStatusList(conn, fName):
 # Generate picklist for countries.
 #----------------------------------------------------------------------
 def countryList(conn, fName):
-    try:
-        cursor = conn.cursor()
-        query  = """\
+    query  = """\
   SELECT d.id, d.title
     FROM document d
     JOIN doc_type t
@@ -463,32 +464,14 @@ def countryList(conn, fName):
    WHERE t.name = 'Country'
 ORDER BY d.title
 """
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        cursor.close()
-        cursor = None
-    except cdrdb.Error, info:
-        bail('Failure retrieving country list from CDR: %s' % info[1][0])
-    html = """\
-      <SELECT NAME='%s'>
-       <OPTION VALUE='' SELECTED>&nbsp;</OPTION>
-""" % fName
-    for row in rows:
-        html += """\
-       <OPTION VALUE='CDR%010d'>%s &nbsp;</OPTION>
-""" % (row[0], row[1])
-    html += """\
-      </SELECT>
-"""
-    return html
+    pattern = "<option value='CDR%010d'>%s &nbsp;</option>"
+    return generateHtmlPicklist(conn, fName, query, pattern)
 
 #----------------------------------------------------------------------
 # Generate picklist for states.
 #----------------------------------------------------------------------
 def stateList(conn, fName):
-    try:
-        cursor = conn.cursor()
-        query  = """\
+    query  = """\
 SELECT DISTINCT s.id,
                 s.title,
                 c.title
@@ -499,25 +482,40 @@ SELECT DISTINCT s.id,
              ON clink.int_val = c.id
           WHERE clink.path = '/PoliticalSubUnit/Country/@cdr:ref'
        ORDER BY s.title, c.title"""
+    pattern = "<option value='CDR%010d'>%s [%s]&nbsp;</option>"
+    return generateHtmlPicklist(conn, fName, query, pattern)
+
+#----------------------------------------------------------------------
+# Generic HTML picklist generator.
+#
+# Note: this only works if the query generates exactly as many
+# columns for each row as are needed by the % conversion placeholders
+# in the pattern argument, and in the correct order.
+#
+# For example invocations, see stateList and countryList above.
+#----------------------------------------------------------------------
+def generateHtmlPicklist(conn, fieldName, query, pattern):
+    try:
+        cursor = conn.cursor()
         cursor.execute(query)
         rows = cursor.fetchall()
         cursor.close()
         cursor = None
     except cdrdb.Error, info:
-        bail('Failure retrieving state list from CDR: %s' % info[1][0])
+        bail('Failure retrieving %s list from CDR: %s' % (fieldName,
+                                                          info[1][0]))
     html = """\
-      <SELECT NAME='%s'>
-       <OPTION VALUE='' SELECTED>&nbsp;</OPTION>
-""" % fName
+      <select name='%s'>
+       <option value='' selected>&nbsp;</option>
+""" % fieldName
     for row in rows:
-        html += """\
-       <OPTION VALUE='CDR%010d'>%s [%s]&nbsp;</OPTION>
-""" % (row[0], row[1], row[2])
+        option = pattern % tuple(row)
+        html += "%s\n" % option
     html += """\
-      </SELECT>
+      </select>
 """
     return html
-
+    
 #----------------------------------------------------------------------
 # Generate the top portion of an advanced search form.
 #----------------------------------------------------------------------
