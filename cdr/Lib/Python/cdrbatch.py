@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.9 2004-02-24 22:57:26 ameyer Exp $
+# $Id: cdrbatch.py,v 1.10 2004-02-25 02:25:46 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,10 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2004/02/24 22:57:26  ameyer
+# Modified fetchone() call to fetchall() to insure that cursor has
+# been cleared.  Will write error if not.
+#
 # Revision 1.8  2004/02/24 22:43:12  ameyer
 # Modified BatchJob object to set autocommit on saved cursor.
 # Removed a couple of commit statements that were otherwise needed.
@@ -161,7 +165,6 @@ def sendSignal (conn, jobId, newStatus, whoami):
              SET status = '%s', status_dt = GETDATE()
            WHERE id = %d""" % (newStatus, jobId)
         conn.cursor().execute (qry)
-        conn.commit()
 
     except cdrdb.Error, info:
         msg = "Unable to update job status" % info[1][0]
@@ -490,9 +493,9 @@ class CdrBatch:
                        (self.__jobId, info[1][0]))
 
         # Load all data into instance
+        row = rows[0]
         (self.__jobName, self.__command, self.__processId, self.__started,
-         self.__lastDt, self.__status, self.__email, self.__progressMsg) = \
-                rows[0]
+         self.__lastDt, self.__status, self.__email, self.__progressMsg) = row
 
         # Get job parameters
         self.__args = {}
