@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.14 2003-06-17 22:02:34 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.15 2003-08-01 01:10:18 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.14  2003/06/17 22:02:34  ameyer
+# Modified screen labels to clearly indicate that user entered Principal
+# Investigator is the PI for the site, not for the lead org.
+#
 # Revision 1.13  2003/04/22 18:34:29  ameyer
 # If address fragment is optional, no fragment is now the default when
 # generating an address fragment picklist.
@@ -67,6 +71,7 @@ import xml.dom.minidom, string, cdr, cdrdb, cdrbatch, cdrcgi
 PERSON_CHG  = "Person"
 ORG_CHG     = "Organization"
 STATUS_CHG  = "OrgProtStatus"
+TERM_CHG    = "Term"
 INS_ORG_CHG = "InsertOrg"
 
 # What a function might return
@@ -76,6 +81,48 @@ RET_NONE   = 2          # Function didn't return anything
 
 # Max number of elements in a pick list
 MAX_PICK_LIST_SIZE = 100
+
+# Terminology change constants used in forming and display variables
+TERMREQ = "Req"
+TERMOPT = "Opt"
+TERMNOT = "Not"
+TERMADD = "Add"
+TERMDEL = "Del"
+
+TERM_USES = (TERMREQ, TERMOPT, TERMNOT, TERMDEL, TERMADD)
+TERM_MSGS = { \
+    TERMREQ:"Required",
+    TERMOPT:"Any of",
+    TERMNOT:"Not",
+    TERMDEL:"Delete",
+    TERMADD:"Add"}
+
+TERM_PROMPTS = ( \
+    "Only if they include ALL of these terms",
+    "And at least ONE of these terms",
+    "And NOT ANY of these terms",
+    "Delete these terms from the documents",
+    "Add these terms to the documents")
+
+TERM_FIELDS = (\
+    "EligibilityCriteria/Diagnosis",
+    "ExclusionCriteria",
+    "InterventionType",
+    "InterventionNameLink",
+    "Gene",
+    "Condition")
+
+# Term status values session variable key
+TERM_STATVAL = "trmStatusName"
+
+# Num term prompts/msgs/uses for searching, rest are for modifying
+TERM_SEARCH_USES = 3
+
+# Max allowed terminology criteria of one type
+MAX_TERM_CRITERIA = 5
+
+# Max allowed add or delete terms
+MAX_TERM_CHANGES = 2
 
 # Logfile
 LF = cdr.DEFAULT_LOGDIR + "/GlobalChange.log"
@@ -105,6 +152,9 @@ def createChg (ssVars):
     if chgType == STATUS_CHG:
         chg = OrgStatusChg()
         ssVars['docType'] = 'Organization'
+    if chgType == TERM_CHG:
+        chg = TermChg()
+        ssVars['docType'] = 'Term'
     if chgType == INS_ORG_CHG:
         chg = InsertOrgChg()
         ssVars['docType'] = 'Organization'
@@ -216,7 +266,7 @@ class Stage:
         Expression is a string containing any boolean expression for eval().
         Default = None - do it unconditionally.
         Example:
-          # Only do this if we don't have an id already
+          # Only do this if we don't have a fragment id already
           "string.find (self.ssVars['fromId'], '#') == -1"
       subr
         Reference to subroutine to execute.
@@ -303,11 +353,11 @@ class GlblChg:
             result = stage.subr (parms)
         except StandardError, e:
             msg = "execStage StandardError: %s: %s" % (stage.excpMsg, str(e))
-            cdr.logwrite (msg, LF)
+            cdr.logwrite (msg, LF, tback=1)
             return FuncReturn (RET_ERROR, msg)
         except:
             msg = "execStage Exception: %s: Unknown error" % stage.excpMsg
-            cdr.logwrite (msg, LF)
+            cdr.logwrite (msg, LF, tback=1)
             return FuncReturn (RET_ERROR, msg)
 
         # Caller will decide what to do with results
@@ -528,50 +578,32 @@ class GlblChg:
         defaultVal = parms[3]
         optional   = parms[4]
 
+        # Default value goes first in list
+        putFirst = defaultVal
+
+        # If no default value and list is optional, use blank as default
+        if not defaultVal and optional:
+            putFirst = ""
+
         # Get the valid value list from the schema
-        dt = cdr.getDoctype (('CdrGuest', 'never.0n-$undaY'),'InScopeProtocol')
-        if type(dt)==type("") or type(dt)==type(u""):
-            cdr.logwrite ("Error getting valid values: %s" % dt, LF)
-            return FuncReturn (RET_ERROR,"Error getting valid values: %s" % dt)
+        vals = cdr.getVVList (('CdrGuest', 'never.0n-$undaY'),
+                            docType=docType, vvName=vvType,
+                            putFirst=putFirst)
 
-        # Find the valid value list in the returned squence
-        vals = []
-        for vvList in dt.vvLists:
-            if vvList[0] == vvType:
-                vals = vvList[1]
-                break
-
-        # Should never happen
-        if vals == []:
-            return FuncReturn (RET_ERROR, "No valid value list found " + \
-                               "for %s in doctype %s" % (vvType, docType))
-
-        # Create a new list, in proper order
-        orderedVals = []
-
-        # If there is a default, put it first
-        if defaultVal:
-            orderedVals.append (defaultVal)
-
-        # If no default and list is optional, make empty value the default
-        elif optional:
-            orderedVals.append("")
-
-        # Add the rest, all except the default, which we've already added
-        for val in vals:
-            if val != defaultVal:
-                orderedVals.append (val)
+        if type(vals)==type("") or type(vals)==type(u""):
+            cdr.logwrite ("Error getting valid values: %s" % vals, LF)
+            return FuncReturn (RET_ERROR,"Error getting valid values: %s"%vals)
 
         # Finally, if we had a default value but none is an option
         #   put it at the end
         if defaultVal and optional:
-            orderedVals.append("")
+            vals.append("")
 
         # Construct an html picklist
         html = "<select name='%s'>\n" % vvVarName
 
         # Add all the values in the created order
-        for val in orderedVals:
+        for val in vals:
             html += " <option value='%s'>%s</option>\n" % (val, val)
         html += "</select>\n"
 
@@ -658,10 +690,65 @@ class GlblChg:
             html += "<td> %s</td></tr>\n" % self.ssVars['chgCount']
             haveSoFar = 1
 
+        termHtml = self.showTermsSoFar()
+        if len (termHtml) > 0:
+            html += termHtml
+            haveSoFar = 1
+
         if haveSoFar:
             html += "</table></font><hr>\n"
         else:
             html = "<hr>\n"
+
+        return html
+
+
+    def showTermsSoFar (self):
+        """
+        Subroutine of showSoFarHtml() to generate rows in the the caller's
+        html table for each term particpating in a terminology change.
+
+        Assumptions:
+            Program has already resolved all term values to form IDs.
+
+        Pass:
+            Void (other than self).
+        Return:
+            String of html containing table rows and columns for
+              insertion in an already existing table.
+            "" if there are no terms to show.
+        """
+        html = ""
+
+        # If we're not the right type of change, there's nothing to do
+        if self.ssVars["chgType"] != TERM_CHG:
+            return html
+
+        # Selected status values
+        if self.ssVars.has_key (TERM_STATVAL):
+            pattern = \
+              "<tr><td align='right'>Protocol status: </td><td> %s</td></tr>\n"
+            stvals = self.ssVars[TERM_STATVAL]
+
+            # May be one or more of these
+            if type(stvals) == type([]):
+                for st in stvals:
+                    html += pattern % st
+            else:
+                html += pattern % stvals
+
+        # Search for every type of saved term criterion
+        for trmUse in TERM_USES:
+            for i in range (MAX_TERM_CRITERIA):
+                # Only compose a row if we have a term id for it
+                keyId = "trm%sId%d" % (trmUse, i)
+                if self.ssVars.has_key (keyId):
+                    keyField = "trm%sField%d" % (trmUse, i)
+                    keyVal   = "trm%sVal%d" % (trmUse, i)
+                    html += \
+                 "<tr><td align='right'>%s %s: </td><td> %s (%s)</td></tr>\n"%\
+                     (TERM_MSGS[trmUse], self.ssVars[keyField],
+                      self.ssVars[keyVal], self.ssVars[keyId])
 
         return html
 
@@ -827,6 +914,144 @@ class GlblChg:
         result.setPageHtml (html)
         return result
 
+
+    def genTermInputHtml (self, parms):
+        """
+        Create a screen to get all terminology search and change
+        criteria.
+
+        This is more advanced than other input screens in that it
+        gets everything we need on one screen.
+
+        Pass:
+            No parms required.  Uses self.ssVars.
+
+        Returns:
+            HTML string.
+        """
+        # Silence pychecker warning about unused parms
+        if parms != []:
+           return FuncReturn (RET_ERROR,
+                "Too many parms to getFromToStatus")
+
+        # Assume we haven't been here before
+        firstTime = 1
+
+        # Header information
+        html = self.showSoFarHtml() + """
+<h2>Select InScopeProtocols for terminology change</h2>
+
+<h3>Choose one or more protocol status values</h3>
+<select name="%s" size="6" multiple="multiple">
+""" % TERM_STATVAL
+
+        # Protocol status selections - an array of selected items, if any
+        selectedStatus = None
+        if self.ssVars.has_key (TERM_STATVAL):
+            selectedStatus = self.ssVars[TERM_STATVAL]
+            del (self.ssVars[TERM_STATVAL])
+            firstTime = 0
+
+        # Possible status values come from protocol schema valid values list
+        session = self.ssVars[cdrcgi.SESSION]
+        for status in cdr.getVVList (session, 'InScopeProtocol', "StatusName"):
+
+            # Protocol status with any previous selections
+            alreadySelected=""
+            if selectedStatus:
+                # Status may be scalar or array of multiple selections
+                if type(selectedStatus) == type([]):
+                    if status in selectedStatus:
+                        alreadySelected=" selected='selected'"
+                else:
+                    if status == selectedStatus:
+                        alreadySelected=" selected='selected'"
+            html += "  <option%s>%s</option>\n" % (alreadySelected, status)
+        html += "</select>\n"
+
+        # Input search criteria and change criteria
+        for i in range (len(TERM_PROMPTS)):
+
+            html += "<hr />\n<h3>%s</h3>\n" % TERM_PROMPTS[i]
+
+            if i < TERM_SEARCH_USES:
+                rowCount = MAX_TERM_CRITERIA
+            else:
+                rowCount = MAX_TERM_CHANGES
+
+            # Table headers
+            html += """
+<table cellpadding="2" cellspacing="2" border="0">
+ <tr>
+   <th>Element</th>
+   <th>String Value</th>
+   <th>Or Term DocID</th>
+ </tr>
+ <tr>
+"""
+            for row in range (rowCount):
+                # Row of element, term string value, term docId
+                html += " <tr>\n"
+
+                # Name of the XML element containing the term
+                name = "trm%sField%d" % (TERM_USES[i], row)
+                html += "  <td><select name='%s' size='0'>\n" % name
+                for field in TERM_FIELDS:
+                    alreadySelected=""
+                    if self.ssVars.has_key (name) and \
+                                self.ssVars.has_key[name] == field:
+                        # Copy value back into the form for editing
+                        # Don't duplicate it in hidden vars. Delete in session
+                        alreadySelected=" selected='selected'"
+                        del (self.ssVars[name])
+                    html += "   <option name='%s'%s size='0'>%s</option>\n" %\
+                        (name, alreadySelected, field)
+                html += "  </select></td>"
+
+                # Place for user to enter string value of term
+                name = "trm%sVal%d" % (TERM_USES[i], row)
+                alreadySelected=""
+                if self.ssVars.has_key (name):
+                    alreadySelected = self.ssVars[name]
+                    del (self.ssVars[name])
+                    firstTime = 0
+                html += """
+  <td><input type="text" name="%s" size="50" maxlength="300" value="%s" /></td>"""%\
+                    (name, alreadySelected)
+
+                # Place for user to enter document ID of term
+                name = "trm%sId%d" % (TERM_USES[i], row)
+                alreadySelected=""
+                if self.ssVars.has_key (name):
+                    alreadySelected = self.ssVars.has_key[name]
+                    del (self.ssVars[name])
+                    firstTime = 0
+                html += """
+  <td><input type="text" name="%s" size="10" maxlength="10" value="%s" /></td>\n"""%\
+                    (name, alreadySelected)
+
+                # End of this input row
+                html += " </tr>\n"
+
+            # End of table
+            html += "</table>\n"
+
+        # Prepend error message if needed
+        if not firstTime:
+            html = """
+<h4><font color='red'>Must select at least:
+<ul>
+  <li>one protocol status</li>
+  <li>one required term (ALL) or one additional term (ANY)</li>
+  <li>one Add or Delete term</li>
+</ul>
+</font></h4>\n""" + html
+
+        # Return info to stage executor
+        result = FuncReturn (RET_HTML)
+        result.setPageHtml (html)
+        result.setPageTitle ("CDR Global Change")
+        return result
 
     def getFromToStatus (self, parms):
         """
@@ -1681,3 +1906,127 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
 
         # Call a common routine to get the rows corresponding to the query
         return _execQry (qry)
+
+
+#------------------------------------------------------------
+# Modify terminology in a protocol
+#------------------------------------------------------------
+class TermChg (GlblChg):
+
+    # Name of filter for changing terminology in a doc
+    chgFilter = ['name:Global Change: Terminology change']
+
+    def __init__(self):
+        GlblChg.__init__(self)
+
+        # Stages for organization status changes
+        self.stages = (\
+          Stage (
+            # Generate the form to get info
+            condition = 'not self.haveEnoughTermInfo()',
+            subr      = self.genTermInputHtml,
+            parms     = [],
+            excpMsg   = 'Generating form for getting Terminology'),
+          Stage (
+            # Convert strings to ids, and verify ids
+            condition = 'not self.ssVars.has_key ("termsVerified")',
+            subr      = self.verifyTermIds,
+            parms     = [],
+            excpMsg   = 'Generating form for getting Terminology'),
+          # Returns to standard processing here
+        )
+
+
+    def haveEnoughTermInfo (self):
+        """
+        Check if the user has entered enough criteria to do a
+        terminology change.
+
+        Return:
+            1 = true  = Yes, he has.
+            0 = false = More data entry required.
+        """
+        # We need at least one status value
+        if not self.ssVars.has_key (TERM_STATVAL):
+            return 0
+
+        # User must have entered at least one search criterion, a term
+        #   that must be in the documents to change, and at least one
+        #   change criterion, a term that is to be added or deleted.
+        if self.haveTermCriterion (TERMREQ) or \
+                    self.haveTermCriterion (TERMOPT):
+            if self.haveTermCriterion (TERMADD) or \
+                        self.haveTermCriterion (TERMDEL):
+                return 1
+        return 0
+
+    def haveTermCriterion (self, criterion):
+        """
+        Check whether the session fields contain a variable of the
+        requested criterion type.
+
+        Pass:
+            criterion - TERMREQ, TERMOPT, etc.
+
+        Return:
+            1 = true  = User has entered this term criterion.
+            0 = false = User has not.
+        """
+        # This looks for more than it has to, but so what
+        for i in range (MAX_TERM_CRITERIA):
+            # Look for ID or string value
+            if self.ssVars.has_key ("trm%sId%d" % (criterion, i)):
+                return 1
+            if self.ssVars.has_key ("trm%sVal%d" % (criterion, i)):
+                return 1
+
+        return 0
+
+    def verifyTermIds (self, parms):
+        """
+        Uses the Stage.subr interface.
+
+        Check every term/id pair.  If one is not valid, get user to fix it
+        and resubmit.  Each error or disambiguation causes a return to the
+        user.  Only when they are all valid do we go on to the next stage.
+
+        Pass:
+            No parms needed.
+        """
+        # No bugs, no args, no pychecker warning
+        if parms != []:
+           return FuncReturn (RET_ERROR,
+                "Too many parms to getFromToStatus")
+
+        # This is always "Term", but no reason not to know that in just one
+        #   place
+        docType = self.ssVars["docType"]
+
+        # For each docId and/or value
+        for termUse in TERM_USES:
+            for termRow in range (MAX_TERM_CRITERIA):
+                keyId  = "trm%sId%d" % (termUse, termRow)
+                keyVal = "trm%sVal%d" % (termUse, termRow)
+
+                # If the ID exists, validate it
+                if self.ssVars.has_key (keyId):
+                    termId = self.ssVars[keyId]
+                    result = self.verifyId ((termId, docType, keyVal))
+
+                    # If verify failed, result will be an error msg
+                    # Bounce back to stage interpreter to give this to user
+                    if result.getRetType == RET_ERROR:
+                        return result
+
+                # Else no ID, if there's a value string, disambiguate it
+                # Constructs picklist and returns it to user
+                elif self.ssVars.has_key (keyVal):
+                    return self.getPickList ((docType, self.ssVars[keyVal],
+                                              "Select term string", keyId))
+
+        # If we got this far without returning, all IDs are okay
+        # Signal it in the session context so we don't do this again
+        self.ssVars["termsVerified"] = 1
+
+        # Return code with no errors or html means continue on
+        return FuncReturn (RET_NONE)
