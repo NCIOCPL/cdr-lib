@@ -142,11 +142,14 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: ExcelReader.py,v 1.4 2004-10-12 11:36:29 bkline Exp $
+# $Id: ExcelReader.py,v 1.5 2004-11-04 13:13:58 bkline Exp $
 #
 # Module for extracting cell values from Excel spreadsheets.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2004/10/12 11:36:29  bkline
+# Fixed name of fileBuf argument to OleStorage constructor.
+#
 # Revision 1.3  2004/10/12 01:27:09  bkline
 # Sped up the XML document generation by almost two orders of magnitude,
 # by using the string join operator on a list of strings for the pieces
@@ -830,7 +833,7 @@ class Row:
         
     def __getitem__(self, index):
         
-        """"
+        """
         Returns the cell corresponding to the specified column,
         if one is defined at that position; otherwise returns
         None.
