@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.22 2003-12-30 20:39:03 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.23 2004-01-30 02:26:31 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.22  2003/12/30 20:39:03  ameyer
+# Enhanced selection query to include StudyCategoryName when specified
+# as a qualifier.
+#
 # Revision 1.21  2003/11/18 17:14:04  ameyer
 # Fixed ordering of terminology items in the showSoFar status report.
 # Fixed missing StudyCategory in showSoFar status report.
@@ -370,6 +374,49 @@ def getStudyCategories (varName, defaultVal=None):
     return html
 
 #------------------------------------------------------------
+# Get a list of docId + title pairs from a list of docIds
+#------------------------------------------------------------
+def getIdTitles (docIdList):
+    """
+    Create a list of tuples of docId + title for documents.
+
+    Used by GlobalChangeBatch.
+
+    Pass:
+        docIdList - Sequence of document id strings, e.g.,
+                    ("12345", "43276", "798812")
+
+    Return:
+        Pairs of integer id + string title, e.g.,
+            (
+             (12345, "Title of this document"),
+             (43276, "Title of another document"),
+             (...)
+            )
+    Raises:
+        BatchException from _execQry may occur if database error.
+        BatchException if doc not found - should never happen.
+    """
+    idTitleList = []
+    for idStr in docIdList:
+        idNum  = int(idStr)
+        titles = _execQry ("SELECT title FROM document WHERE id=%d" % idNum)
+
+        # Should never happen
+        if not titles or len(titles) == 0:
+            raise cdrbatch.BatchException (\
+                "Title not found for doc ID: %d: shouldn't happen" % idNum)
+
+        # Also should never happen
+        if len(titles) > 1:
+            raise cdrbatch.BatchException (\
+                "Multiple titles found for doc ID: %d: can't happen" % idNum)
+
+        idTitleList.append ((idNum, titles[0][0]))
+
+    return idTitleList
+
+#------------------------------------------------------------
 # Function return object contains information returned by a
 # function called to execute a stage of processing.
 #------------------------------------------------------------
@@ -574,10 +621,42 @@ class GlblChg:
         session = self.ssVars[cdrcgi.SESSION]
         cdr.logwrite ("Got session", LF)
 
+        # Setup some html and javascript for managing the list of docs
+        # Select All, Clear All buttons
+        selButtons = """
+<center>
+<input type='button' value='Select All' onclick='javascript:setChecks(1)' />
+&nbsp;
+<input type='button' value='Clear All' onclick='javascript:setChecks(0)' />
+</center>
+ """
+        # This is what the buttons invoke, passing 1 to set, 0 to clear
+        javaScript = """
+<script type='text/javascript' language='javascript'>
+ function setChecks(val) {
+   frm = document.glblChgForm;
+   len = frm.elements.length;
+   var i;
+   for (i=0; i<len; i++) {
+     if (frm.elements[i].name=='glblDocId') {
+         frm.elements[i].checked=val;
+     }
+   }
+ }
+</script>
+"""
+        # This is the actual checkbox html. Doc id will be inserted in loop
+        clickBox = r"""
+<input type='checkbox' name='glblDocId' value='%d' checked='1' />
+"""
+
+        # Table header for docs that will change
+        newRows = [['<b>Chg</b>','<b>DocID</b>', '<b>P</b>', '<b>Title</b>']]
+
         # Find out if there's a publishable version of each
-        newRows = [['<b>DocID</b>', '<b>P</b>', '<b>Title</b>']]
         for row in rows:
-            docIdStr = cdr.exNormalize (row[0])[0]
+            (docIdStr, docIdNum, fragDummy) = cdr.exNormalize (row[0])
+            chkBox   = clickBox % docIdNum
             vers = cdr.lastVersions (session, docIdStr)
             if type(vers) == type("") or type(vers) == type(u""):
                 pVer = vers
@@ -587,11 +666,11 @@ class GlblChg:
                     pVer = 'N'
                 else:
                     pVer = 'Y'
-            newRows.append ([row[0], pVer, row[1]])
+            newRows.append ([chkBox, row[0], pVer, row[1]])
 
         # Create the table
         cdr.logwrite ("Ready to create table", LF)
-        html = cdr.tabularize (newRows, " border='1'")
+        html = javaScript + selButtons + cdr.tabularize (newRows, " border='1'")
         cdr.logwrite ("Table created", LF)
 
         # Hand it all back
