@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.45 2003-01-13 17:56:48 pzhang Exp $
+# $Id: cdrpub.py,v 1.46 2003-01-23 20:37:33 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.45  2003/01/13 17:56:48  pzhang
+# Fixed code for Hotfix-Export based on code review.
+#
 # Revision 1.44  2003/01/08 22:36:15  pzhang
 # Revised the code in the following areas:
 #  1) Fixed SQL in __updateFromPPCW() with Bob's queries.
@@ -189,6 +192,21 @@ class Publish:
     __validateDocs      = 0
 
     #---------------------------------------------------------------
+    # Hash __dateFirstPub is specifically designed to solve the issue
+    # that DateFirstPublished element in vendor documents must be 
+    # present at the first time when the document is published. We 
+    # don't want to embed the DATE information in the document tuple 
+    # lists such as __userDocList, where it may not always be useful. 
+    # We make this hash global and access it whenever we need it.
+    #
+    # The hash key is the document ID, and the value is an empty string
+    # or a Date that is from first_pub column of document table or 
+    # vendor_job start time for newly published documents, with XML 
+    # Date format YYYYY-MM-DD. 
+    #---------------------------------------------------------------
+    __dateFirstPub = {}    
+
+    #---------------------------------------------------------------
     # Load the job settings from the database.  User-specified
     # documents will already have been recorded in the pub_proc_doc
     # table, but other documents can be added through SQL or XQL
@@ -298,6 +316,39 @@ class Publish:
                 row = cursor.fetchone()
         except cdrdb.Error, info:
             msg = 'Failure retrieving parameters for job %d: %s' % \
+                  (self.__jobId, info[1][0])
+            self.__updateStatus(Publish.FAILURE, msg)
+            raise StandardError(msg)
+
+
+        # Initialize the hash __dateFirstPub. The hash key is the document
+        # ID, and the value is a Date that is an empty string if
+        # ('Y' <> first_pub_knowable), or first_pub or vendor_job start
+        # time for newly published documents, with XML Date format 
+        # YYYYY-MM-DD. It took about 10 secs to build the hash for 65,000
+        # documents.       
+        try:
+            cursor.execute("""\
+                SELECT d.id, d.first_pub_knowable, d.first_pub                     
+                  FROM document d, doc_type t
+                 WHERE d.doc_type = t.id
+                   AND NOT t.name IN ('Mailer', 'Citation')
+                           """
+                          )
+            row = cursor.fetchone()
+            while row:
+                knowable = ('Y' == row[1])
+                date = row[2] or ''                
+                if knowable and not date:
+                    date = self.__jobTime
+                if len(date) > 10 and date[10] == ' ':
+                    date = date[:10]
+                self.__dateFirstPub[row[0]] = date
+               
+                row = cursor.fetchone()  
+
+        except cdrdb.Error, info:
+            msg = 'Failure building hash __dateFirstPub for job %d: %s' % \
                   (self.__jobId, info[1][0])
             self.__updateStatus(Publish.FAILURE, msg)
             raise StandardError(msg)
@@ -614,37 +665,40 @@ class Publish:
         self.__sendMail()
 
     #------------------------------------------------------------------
-    # Update first_pub when appropriate.
+    # Update first_pub to vendor_job started when appropriate.
     #------------------------------------------------------------------
     def __updateFirstPub(self):
         try:
             conn = cdrdb.connect("cdr")
+            conn.setAutoCommit(1)
             cursor = conn.cursor()
             cursor.execute("""\
-                    SELECT ppd.doc_id, ppj.completed
-                      FROM pub_proc_doc ppd, primary_pub_job ppj, all_docs d
-                     WHERE ppd.doc_id = d.id
-                       AND ppd.pub_proc = ppj.id
-                       AND ppj.id = %d
+                    UPDATE document
+                       SET first_pub = pp.started
+                      FROM pub_proc pp,
+                           pub_proc_doc ppd,
+                           document d
+                     WHERE d.id = ppd.doc_id
+                       AND ppd.pub_proc = pp.id                  
+                       AND pp.id = %d
+                       AND pp.status = '%s'
+                       AND ppd.removed != 'Y'
+                       AND (
+                            ppd.failure IS NULL
+                           OR 
+                            ppd.failure <> 'Y'
+                           )                            
                        AND d.first_pub IS NULL
                        AND d.first_pub_knowable = 'Y'
-                  ORDER BY ppd.doc_id
-                           """ % self.__jobId, timeout = self.__timeOut
+                           """ % (self.__jobId, Publish.SUCCESS), 
+                           timeout = self.__timeOut
                            )
-            rows = cursor.fetchall()
-            for row in rows:
-                cursor.execute("""\
-                    UPDATE all_docs
-                       SET first_pub = '%s'
-                     WHERE id = %d
-                               """ % (row[1], row[0])
-                              )
-                conn.commit()
+            rowsAffected = cursor.rowcount            
             self.__updateMessage(
-                "<BR>Updated first_pub for %d documents.<BR>" % len(rows))
+                "<BR>Updated first_pub for %d documents.<BR>" % rowsAffected)
         except cdrdb.Error, info:
-            self.__updateStatus(Publish.FAILURE, """Failure updating first_pub
-                        for job %d: %s""" % (self.__jobId, info[1][0]))
+            self.__updateMessage("Failure updating first_pub for job %d: %s" \
+                % (self.__jobId, info[1][0]))
 
     #------------------------------------------------------------------
     # Allow only one pushing job to run.
@@ -1669,18 +1723,27 @@ class Publish:
         # Apply each filter set to the document.
         filteredDoc = None
         for filterSet in filters:
+            
+            # Substitute parameter value of DateFirstPub.
+            paramList = []
+            for pair in filterSet[1]:                
+                if pair[0] == 'DateFirstPub':
+                    date = self.__dateFirstPub[doc[0]]
+                    paramList.append((pair[0], date))
+                else:
+                    paramList.append((pair[0], pair[1]))
 
             # First filter set is run against document from database.
             if not filteredDoc:
                 result = cdr.filterDoc(self.__credentials, filterSet[0],
                                        docId = doc[0], docVer = doc[1],
-                                       parm = filterSet[1],
+                                       parm = paramList,
                                        port = self.__pubPort)
 
             # Subsequent filter sets are applied to previous results.
             else:
                 result = cdr.filterDoc(self.__credentials, filterSet[0],
-                                       doc = filteredDoc, parm = filterSet[1],
+                                       doc = filteredDoc, parm = paramList,
                                        port = self.__pubPort)
             if type(result) not in (type([]), type(())):
                 errors = result or "Unspecified failure filtering document"
