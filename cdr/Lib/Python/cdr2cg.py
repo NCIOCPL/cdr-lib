@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.3 2002-05-14 12:56:05 bkline Exp $
+# $Id: cdr2cg.py,v 1.4 2002-06-13 19:20:16 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2002/05/14 12:56:05  bkline
+# Added PUBTYPES dictionary.  Added code to retry request a few times if
+# the SOAP server drops the connection unexpectedly.
+#
 # Revision 1.2  2002/05/09 14:06:08  bkline
 # Added removeDocuments() convenience function.
 #
@@ -249,25 +253,27 @@ def extractBodyElement(xmlString):
     return body
 
 def logString(type, str):
-    open("cdr2cg.log", "a").write("==== %s %s ====\n%s\n" % 
-        (time.ctime(), type, re.sub("\r", "", str)))
+    if debuglevel:
+        open("cdr2cg.log", "a").write("==== %s %s ====\n%s\n" % 
+            (time.ctime(), type, re.sub("\r", "", str)))
 
 def sendRequest(body):
 
     # Defensive programming.
     tries = 3
+    response = None
     while tries:
         try:
 
             # Set up the connection and the request.
             conn    = httplib.HTTPConnection(host, port)
             request = requestWrapper % (soapNamespace, body)
-            if debuglevel:
-                logString("REQUEST", request)
+            logString("REQUEST", request)
 
             # Submit the request and get the headers for the response.
             conn.request("POST", "/GateKeeper.asmx", request, headers)
             response = conn.getresponse()
+            #sys.stderr.write("got response from socket %s\n" % repr(conn.sock))
 
             # Skip past any "Continue" responses.
             while response.status == 100:
@@ -286,6 +292,9 @@ def sendRequest(body):
             tries -= 1
 
     # Check for failure.
+    if not response:
+        raise StandardError("tried to connect 300 times!!!")
+    
     if response.status != 200:
         logString("HTTP ERROR", response.read())
         raise StandardError("HTTP error: %d (%s)" % (response.status,
@@ -293,8 +302,7 @@ def sendRequest(body):
 
     # Get the response payload and return it.
     data = response.read()
-    if debuglevel:
-        logString("RESPONSE", data)
+    logString("RESPONSE", data)
     return data
 
 def initiateRequest(pubType, docType, lastJobId):
@@ -312,6 +320,7 @@ def sendDataProlog(jobId, pubType, docType, lastJobId, docCount):
     return Response(xmlString)
 
 def sendDocument(jobId, docNum, transType, docType, docId, doc = ""):
+    #sys.stderr.write("sendDocument: %d\n" % docNum)
     xmlString = sendRequest(docTemplate % (jobId,
                                            docNum,
                                            transType,
