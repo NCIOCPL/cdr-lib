@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.23 2004-05-28 00:26:50 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.24 2004-09-21 20:31:54 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,12 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.23  2004/05/28 00:26:50  ameyer
+# If a save of a publishable version returns errors, I now go on to try to
+# save the changed CWD anyway.  Fixes a problem where an ancient, invalid,
+# publishable version got saved as a non-publishable version and the latest
+# CWD was pushed down in the version stack.
+#
 # Revision 1.22  2004/02/26 22:05:40  ameyer
 # Modified document id list handling to assume an actual list passed via
 # the database rather than a list parsable string.  Overcomes database
@@ -125,6 +131,9 @@ LF = cdr.DEFAULT_LOGDIR + "/GlobalChange.log"
 # Quit processing if this many surprise exceptions are raised
 MAX_EXCEPTIONS = 5
 
+# Global message
+G_progressMsg = "No docs processed yet"
+
 #----------------------------------------------------------------------
 # Utility function to log an error for a specific document
 #----------------------------------------------------------------------
@@ -141,13 +150,22 @@ def logDocErr (docId, where, msg):
         Error message suitable for display.
     """
     # If the error message is in XML, extract error portion from it
-    msg = cdr.getErrors (msg)
+    msg = cdr.getErrors (msg, False)
 
     # Put it together for log file
     cdr.logwrite (("Error on doc %d %s:" % (docId, where), msg), LF)
 
     # Different format for HTML report to user
     return ("Error %s:<br>%s" % (where, msg))
+
+#----------------------------------------------------------------------
+# Utility function to log progress to the batch reporter.
+#----------------------------------------------------------------------
+def logDocProgress (jobObj, goodCount, failCount, totalCount):
+    global G_progressMsg
+    G_progressMsg = "Completed %d of %d changes, %d ok, %d failed" % \
+                  (goodCount + failCount, totalCount, goodCount, failCount)
+    jobObj.setProgressMsg (G_progressMsg)
 
 #----------------------------------------------------------------------
 # Utility function to filter a document
@@ -213,9 +231,8 @@ def runFilters (docId, docVerType, docVer):
             break;
 
         # Log all filter info for debugging
-        cdr.logwrite ("Type docId=%s" % str(type(docId)), LF)
-        cdr.logwrite ("filter=%s\n  parms=%s\n  docId=%d pass=%d" % \
-           (fltrInfo[0], fltrInfo[1], docId, passNumber), LF)
+        cdr.logwrite ("filter=%s\n  parms=%s\n  save=%s\n  docId=%d pass=%d" %\
+           (fltrInfo[0], fltrInfo[1], fltrInfo[2], docId, passNumber), LF)
 
         # First pass uses docNum and optional docVer
         # Next pass(es) use filteredDoc
@@ -235,9 +252,22 @@ def runFilters (docId, docVerType, docVer):
             errs        = filtResp
             break
 
-        # Else success
-        # Get document and messages
-        filteredDoc = filtResp[0]
+        # Success. Save output to use as input to next round, or final result
+        # But some filters just do checks, only save results if
+        #   third return item indicates that this should be saved, i.e.,
+        #   filter was not used for validation only
+        # If not saving, then filteredDoc=result of previous filter, or None
+        #   if this was the first pass
+        if fltrInfo[2]:
+            # Save output
+            filteredDoc = filtResp[0]
+
+            # In next iteration (if any) we filter the results of
+            #   the last filtering rather than the repository doc
+            docNum = None
+            docVer = None
+
+        # If messages, save them too (or only if this was a check)
         if filtResp[1]:
             # Transform XSLT message output format to simple html
             filtMsgs = re.sub (r"<message>", "", filtResp[1])
@@ -248,15 +278,15 @@ def runFilters (docId, docVerType, docVer):
             else:
                 errs = filtMsgs
 
-        # In next iteration (if any) we filter the results of
-        #   the last filtering rather than the repository doc
-        docNum = None
-        docVer = None
-
     # Did we fail to find any filters at all?
     if passNumber == 0:
         errs = logDocErr (docId, "Filtering",
                           "No filters found via getFilterInfo()");
+
+    # Did we fail to produce any output?
+    if not filteredDoc:
+        errs = logDocErr (docId, "Filtering",
+                          "No output produced by filtering");
 
     cdr.logwrite ("Finished filtering %s" % docVerName, LF)
 
@@ -361,6 +391,13 @@ except cdrbatch.BatchException, be:
     cdr.logwrite ("Exception in getIdTitles", LF)
     jobObj.fail ("GCBatch: Unable to select docs: %s" % str(be), logfile=LF)
 
+# Are we running in test mode only, i.e., output to files not database?
+testOnly = jobObj.getParm ('testOnly')
+if testOnly:
+    # Create an output directory
+    outputDir = cdrglblchg.createOutputDir()
+    cdr.logwrite ("Running in testOnly mode\n  Output to %s" % outputDir, LF)
+
 # Initialize counts
 totalCount = len (originalDocs)
 goodCount  = 0
@@ -372,8 +409,6 @@ cdr.logwrite ("Done selecting doc titles for final processing", LF)
 cdr.logwrite ("Processing %d docs" % totalCount, LF)
 
 # Process each one
-progressMsg = "No docs processed yet"
-
 for idTitle in originalDocs:
     try:
 
@@ -422,6 +457,8 @@ for idTitle in originalDocs:
 
         if not failed:
 
+            cdr.logwrite ("Doctype='%s'" % oldCwdDocObj.type, LF)
+
             # Get version info
             cdr.logwrite ("Checking lastVersions", LF)
             result = cdr.lastVersions (session, docIdStr)
@@ -443,6 +480,11 @@ for idTitle in originalDocs:
                 else:
                     # Else any messages are warnings to be shown
                     cwdMsgs = errs
+
+                    # If in test mode, write out the old, new and diff files
+                    if testOnly:
+                        cdrglblchg.writeDocs (outputDir, docId,
+                                              oldCwdXml, chgCwdXml, "cwd")
 
         if not failed:
 
@@ -468,19 +510,31 @@ for idTitle in originalDocs:
 
                 else:
                     # Last published version is different from the CWD
-                    # Fetch and filter it
+                    # If we're running in test mode, fetch it for output
+                    if testOnly:
+                        oldPubVerDocObj = cdr.getDoc (session, docId=docId,
+                                        checkout='N', version=lastPubVerNum,
+                                        getObject=1)
+                        oldPubVerXml = oldPubVerDocObj.xml
+                    # Fetch changed/filtered form
                     (chgPubVerXml, errs) = runFilters (docId,
                                                        cdrglblchg.FLTR_PUB,
                                                        lastPubVerNum)
 
-                # No doc means errors only
-                if not chgCwdXml:
-                    failed = errs
-                else:
-                    # Else any messages are warnings to be shown
-                    pubMsgs = errs
+                    # No doc means errors only
+                    if not chgPubVerXml:
+                        failed = errs
+                    else:
+                        # Else any messages are warnings to be shown
+                        pubMsgs = errs
 
-        if not failed:
+                        # If in test mode, write out the old, new and diff files
+                        if testOnly:
+                            cdrglblchg.writeDocs (outputDir, docId,
+                                                  oldPubVerXml, chgPubVerXml,
+                                                  "pub")
+
+        if not failed and not testOnly:
             # For debug
             # willDo = ""
             # if isChanged:
@@ -510,10 +564,10 @@ for idTitle in originalDocs:
                        "Finished saving copy of working doc before change", LF)
 
         # If new publishable version was created, store it.
-        if not failed:
+        if not failed and not testOnly:
             if chgPubVerXml:
                 cdr.logwrite ("About to create Doc object for version", LF)
-                chgPubVerDocObj = cdr.Doc(id=docIdStr, type='InScopeProtocol',
+                chgPubVerDocObj = cdr.Doc(id=docIdStr, type=oldCwdDocObj.type,
                                           x=chgPubVerXml, encoding='utf-8')
                 cdr.logwrite ("About to replace published version in CDR", LF)
                 (repId, repErrs) = cdr.repDoc(session,doc=str(chgPubVerDocObj),
@@ -554,9 +608,13 @@ for idTitle in originalDocs:
             cdr.logwrite ("Finished saving CWD after change", LF)
 
         # If we did not complete all the way to check-in, have to unlock doc
+        # This always happens in testOnly mode
         if checkedOut:
             cdr.unlock (session, docId)
-            cdr.logwrite ("Unlocking doc %d after failure" % docId, LF)
+            if testOnly:
+                cdr.logwrite ("Unlocked doc %d after test change" % docId, LF)
+            else:
+                cdr.logwrite ("Unlocked doc %d after failure" % docId, LF)
             checkedOut = 0
 
         # If successful, add this document to the list of sucesses
@@ -580,17 +638,15 @@ for idTitle in originalDocs:
             failCount += 1
 
         # Record progress for user
-        progressMsg = "Completed %d of %d changes, %d ok, %d failed" % \
-                      (goodCount + failCount, totalCount, goodCount, failCount)
-        jobObj.setProgressMsg (progressMsg)
+        logDocProgress (jobObj, goodCount, failCount, totalCount)
 
         # Has user cancelled job?
         status = jobObj.getStatus()[0]
         if status != cdrbatch.ST_IN_PROCESS:
-            progressMsg += "<br>Stopped job after seeing status = %s" % status
-            cdr.logwrite (progressMsg, LF)
+            G_progressMsg += "<br>Stopped job after seeing status = %s" % status
+            cdr.logwrite (G_progressMsg, LF)
             jobObj.setStatus (cdrbatch.ST_STOPPED)
-            jobObj.setProgressMsg (progressMsg)
+            jobObj.setProgressMsg (G_progressMsg)
             break
 
     except Exception, ex:
@@ -605,20 +661,21 @@ for idTitle in originalDocs:
         failCount += 1
 
         # Append info to message header to grab user's attention
-        progressMsg += \
+        G_progressMsg += \
             "<br><h3>Exception halted processing on doc %d<br>" \
             "Please inform support staff</h3>\n" % docId
 
         # If we reached our limit, quit
         excpCount += 1
         if excpCount > MAX_EXCEPTIONS:
-            progressMsg += "<br><h3>Stopped after %d exceptions</h3>" % \
+            G_progressMsg += "<br><h3>Stopped after %d exceptions</h3>" % \
                            excpCount
             break
 
 # Final report
 cdr.logwrite ("Finished processing", LF)
-cdr.logwrite ("Final status: %s" % progressMsg, LF)
+cdr.logwrite ("Final status: %s" % G_progressMsg, LF)
+logDocProgress (jobObj, goodCount, failCount, totalCount)
 
 html = """
 <html><head><title>Global change report</title></head>
@@ -627,7 +684,7 @@ html = """
 """
 html += chg.showSoFarHtml()
 
-html += "<h2>Final status:</h2>\n<p>" + progressMsg + "</p><hr>\n"
+html += "<h2>Final status:</h2>\n<p>" + G_progressMsg + "</p><hr>\n"
 
 if failCount:
     html += \
@@ -662,7 +719,7 @@ if resp:
     # Returns None if no error
     cdr.logwrite ("Email of final report failed: %s" % resp, LF)
 else:
-    cdr.logwrite ("Completed Global Change - %s" % progressMsg, LF)
+    cdr.logwrite ("Completed Global Change - %s" % G_progressMsg, LF)
 
 # Signal completion
 jobObj.setStatus (cdrbatch.ST_COMPLETED)
