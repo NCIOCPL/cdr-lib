@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.94 2004-09-15 01:02:58 ameyer Exp $
+# $Id: cdr.py,v 1.95 2004-09-15 03:14:36 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.94  2004/09/15 01:02:58  ameyer
+# Added stripBlankLines() and diffXmlDocs().
+#
 # Revision 1.93  2004/08/27 13:47:46  bkline
 # Added document status functions.
 #
@@ -3087,9 +3090,14 @@ def normalizeDoc(utf8DocString):
 # Extract a CDATA section from a document.
 # Simple version, only gets first CDATA, but we never use
 #  more than one.
+# If no CDATA, then assumes we've already extracted and
+#  silently returns original string.
 #----------------------------------------------------------------------
 def getCDATA(utf8string):
-    return extract(r"<!\[CDATA\[(.*?)]]>", utf8string)
+    data = extract(r"<!\[CDATA\[(.*?)]]>", utf8string)
+    if data:
+        return data
+    return utf8string
 
 #----------------------------------------------------------------------
 # Compares two XML documents by normalizing each.  Returns non-zero
@@ -3102,7 +3110,7 @@ def compareXmlDocs(utf8DocString1, utf8DocString2):
 #----------------------------------------------------------------------
 # Compare two XML documents by normalizing each.
 # Returns the output of a textual differencer as a sequence of lines.
-# See Python difflib.Differ.compare().
+# See Python difflib.Differ.compare() for diff format.
 #----------------------------------------------------------------------
 def diffXmlDocs(utf8DocString1, utf8DocString2):
     # Normalize
