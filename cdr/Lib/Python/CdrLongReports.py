@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.2 2003-05-08 20:36:52 bkline Exp $
+# $Id: CdrLongReports.py,v 1.3 2003-07-29 13:08:45 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2003/05/08 20:36:52  bkline
+# Added report for the Office of Science Policy.
+#
 # Revision 1.1  2003/02/26 01:37:37  bkline
 # Script for executing reports which are too long to be handled directly
 # by CGI.
@@ -651,6 +654,281 @@ The OSP report you requested on Protocols can be viewed at
     job.setStatus(cdrbatch.ST_COMPLETED)
     cdr.logwrite("Completed report", LOGFILE)
 
+class NonRespondentsReport:
+    def __init__(self, age, docType, host = 'localhost'):
+        self.age     = age
+        self.docType = docType
+        
+        #--------------------------------------------------------------
+        # Set up a database connection and cursor.
+        #--------------------------------------------------------------
+        try:
+            self.conn = cdrdb.connect('CdrGuest', dataSource = host)
+            self.cursor = self.conn.cursor()
+        except cdrdb.Error, info:
+            reportFailure('Database connection failure: %s' % info[1][0])
+            
+    def createSpreadsheet(self, job):
+
+        now = time.localtime()
+        startDate = list(now)
+        endDate   = list(now)
+        if self.age == "15":
+            startDate[2] -= 29
+            endDate[2]   -= 15
+            ageString     = '15-29 days since last mailer'
+        elif self.age == "30":
+            startDate[2] -= 59
+            endDate[2]   -= 30
+            ageString     = '30-59 days since last mailer'
+        else:
+            startDate[2] -= 120
+            endDate[2]   -= 60
+            ageString     = '60-120 days since last mailer'
+        startDate = time.mktime(startDate)
+        endDate   = time.mktime(endDate)
+        startDate = time.strftime("%Y-%m-%d", time.localtime(startDate))
+        endDate   = time.strftime("%Y-%m-%d 23:59:59.999",
+                                  time.localtime(endDate))
+        job.setProgressMsg("Job started")
+        try:
+            self.cursor.execute("""\
+                CREATE TABLE #last_mailers
+                (
+                    doc_id    INTEGER,
+                    mailer_id INTEGER
+                )""")
+            self.conn.commit()
+            job.setProgressMsg("#last_mailers table created")
+            self.cursor.execute("""\
+        INSERT INTO #last_mailers
+             SELECT q1.int_val, MAX(q1.doc_id)
+               FROM query_term q1
+               JOIN query_term q2
+                 ON q1.doc_id = q2.doc_id
+               JOIN document d
+                 ON d.id = q1.int_val
+               JOIN doc_type t
+                 ON t.id = d.doc_type
+              WHERE t.name = ?
+                AND q1.path = '/Mailer/Document/@cdr:ref'
+                AND q2.path = '/Mailer/Sent'
+                AND q2.value BETWEEN ? AND ?
+           GROUP BY q1.int_val""", (self.docType, startDate, endDate),
+                           timeout = 300)
+            self.conn.commit()
+            job.setProgressMsg("#last_mailers table populated")
+            self.cursor.execute("""\
+                CREATE TABLE #no_reply (doc_id INTEGER, mailer_id INTEGER)""")
+            self.conn.commit()
+            job.setProgressMsg("#no_reply table created")
+            self.cursor.execute("""\
+        INSERT INTO #no_reply
+             SELECT lm.doc_id, lm.mailer_id
+               FROM #last_mailers lm
+              WHERE NOT EXISTS(SELECT *
+                                 FROM query_term q
+                                WHERE q.doc_id = lm.mailer_id
+                                  AND q.path = '/Mailer/Response/Received')""",
+                           timeout = 300)
+            self.conn.commit()
+            job.setProgressMsg("#no_reply table populated")
+            self.cursor.execute("""\
+                 SELECT recip_name.title, 
+                        #no_reply.doc_id, 
+                        base_doc.doc_id, 
+                        mailer_type.value, 
+                     -- mailer_sent.value, 
+                        response_received.value,
+                        changes_category.value
+                   FROM document recip_name
+                   JOIN query_term recipient
+                     ON recipient.int_val = recip_name.id
+                   JOIN #no_reply
+                     ON #no_reply.mailer_id = recipient.doc_id
+                   JOIN query_term base_doc
+                     ON base_doc.int_val = #no_reply.doc_id
+                   JOIN query_term mailer_type
+                     ON mailer_type.doc_id = base_doc.doc_id
+                -- JOIN query_term mailer_sent
+                --   ON mailer_sent.doc_id = base_doc.doc_id
+        LEFT OUTER JOIN query_term response_received
+                     ON response_received.doc_id = base_doc.doc_id
+                    AND response_received.path = '/Mailer/Response/Received'
+        LEFT OUTER JOIN query_term changes_category
+                     ON changes_category.doc_id = base_doc.doc_id
+                    AND changes_category.path = '/Mailer/Response'
+                                              + '/ChangesCategory'
+                  WHERE recipient.path = '/Mailer/Recipient/@cdr:ref'
+                    AND mailer_type.path = '/Mailer/Type'
+                --  AND mailer_sent.path = '/Mailer/Sent'
+                    AND base_doc.path = '/Mailer/Document/@cdr:ref'
+                    AND mailer_type.value NOT LIKE
+                                   'Protocol-%status/participant check'
+               ORDER BY recip_name.title,
+                        #no_reply.doc_id,
+                        base_doc.doc_id DESC""",
+            timeout = 300)
+            job.setProgressMsg("report rows selected")
+            rows = self.cursor.fetchall()
+            job.setProgressMsg("%d report rows fetched" % len(rows))
+        except Exception, info:
+            reportFailure("Database failure fetching report information: %s" %
+                          str(info))
+        if self.docType == "InScopeProtocol":
+            self.docType = "Protocol Summary"
+
+        xl = win32com.client.Dispatch("Excel.Application")
+        xl.Visible = 0
+        wb = xl.Workbooks.Add()
+
+        # Get rid of unwanted sheets, and rename the one we're keeping.
+        xl.DisplayAlerts = 0
+        sheet = xl.Sheets("Sheet1")
+        sheet.Name = "Mailer Non-Respondents"
+        xl.Sheets("Sheet2").Select()
+        xl.ActiveWindow.SelectedSheets.Delete()
+        xl.Sheets("Sheet3").Select()
+        xl.ActiveWindow.SelectedSheets.Delete()
+        sheet.Activate()
+        
+        # Doesn't work: bug in Excel.
+        #sheet.PageSetup.Orientation = win32com.client.constants.xlPortrait
+        headings = (
+            "Recipient Name",
+            "DocId",
+            "Mailer",
+            "Mailer Type",
+         #  "Generated",
+            "Response"
+            )
+        sheet.Cells(1, 1).Value = "Mailer Non-Respondents Report %s" % (
+            time.strftime("%B %d, %Y"))
+        cells = sheet.Cells.Range("A1:E1")
+        cells.Font.Bold = 1
+        cells.Font.Name = 'Times New Roman'
+        cells.Font.Size = 14
+        cells.MergeCells = 1
+        cells.RowHeight = 20
+        cells.Interior.ColorIndex = 35
+        cells.VerticalAlignment = win32com.client.constants.xlCenter
+        cells.HorizontalAlignment = win32com.client.constants.xlCenter
+        cells = sheet.Cells.Range("A2:E2")
+        cells.MergeCells = 1
+        cells.VerticalAlignment = win32com.client.constants.xlCenter
+        cells.HorizontalAlignment = win32com.client.constants.xlCenter
+        cells = sheet.Cells.Range("A2:E3")
+        cells.Font.Bold = 1
+        cells.Font.Name = 'Times New Roman'
+        cells.Font.Size = 12
+        cells.Interior.ColorIndex = 35
+        sheet.Cells(2, 1).Value = "Mailer Type: %s" % self.docType
+        sheet.Cells(3, 1).Value = "Non-Response Time: %s" % ageString
+        headerRows = 3
+        for i in range(len(headings)):
+            sheet.Cells(headerRows, i + 1).Value = headings[i]
+
+        done = 0
+        rowNum = headerRows + 1
+        recipRows = 0
+        lastRecipName = ""
+        lastBaseDocId = None
+        if not rows:
+            reportFailure("No data found for report")
+        for row in rows:
+            cells = sheet.Cells.Range("%d:%d" % (rowNum, rowNum))
+            cells.Font.Name = 'Times New Roman'
+            cells.Font.Size = 11
+            cells.WrapText = 1
+            cells.VerticalAlignment = win32com.client.constants.xlTop
+            cells.HorizontalAlignment = win32com.client.constants.xlLeft
+            #cells = sheet.Cells.Range("A%d:E%d" % (rowNum, rowNum))
+            if row[0] == lastRecipName:
+                cells.RowHeight = 12.75
+                recipName = ""
+                recipRows += 1
+                if recipRows > 3:
+                    done += 1
+                    continue
+            else:
+                #cells.Rows.AutoFit()
+                cells.RowHeight = 12.75
+                border = cells.Borders(win32com.client.constants.xlEdgeTop)
+                border.LineStyle  = win32com.client.constants.xlContinuous
+                border.Weight     = win32com.client.constants.xlThin
+                border.ColorIndex = win32com.client.constants.xlAutomatic
+                recipRows = 1
+                recipName = lastRecipName = row[0]
+                semicolon = recipName.find(";")
+                if semicolon != -1:
+                    recipName = recipName[:semicolon]
+                recipName = cdrcgi.unicodeToLatin1(recipName)
+            if row[1] == lastBaseDocId:
+                baseDocId = ""
+            else:
+                baseDocId = "%d" % row[1]
+                lastBaseDocId = row[1]
+            # generatedDate = row[4] and row[4][:10] or ""
+            responseDate  = row[4] and row[4][:10] or ""
+            if row[5] == "Returned to sender":
+                responseDate = "RTS"
+            sheet.Cells(rowNum, 1).Value = recipName
+            sheet.Cells(rowNum, 2).Value = baseDocId
+            sheet.Cells(rowNum, 3).Value = "%d" % row[2]
+            sheet.Cells(rowNum, 4).Value = row[3]
+            #sheet.Cells(rowNum, 5).Value = generatedDate
+            sheet.Cells(rowNum, 5).Value = responseDate
+            #cells.RowHeight = 14
+            rowNum += 1
+            done += 1
+            msg = "%d rows of %d processed; %d rows added" % (
+                done, len(rows), rowNum - headerRows)
+            job.setProgressMsg(msg)
+
+        sheet.Columns.Range("A:A").ColumnWidth = 36.00
+        sheet.Columns.Range("B:B").ColumnWidth =  9.00
+        sheet.Columns.Range("C:C").ColumnWidth =  7.00
+        sheet.Columns.Range("D:D").ColumnWidth = 24.00
+        #sheet.Columns.Range("E:E").ColumnWidth = 10.00
+        sheet.Columns.Range("E:E").ColumnWidth =  9.57
+
+        # Make the top rows (the ones with column labels) always visible.
+        sheet.Rows.Range("%d:%d" % (headerRows + 1, headerRows + 1)).Select()
+        xl.ActiveWindow.FreezePanes = 1
+
+        # Move to the first row of data.
+        xl.Range("A%d" % (headerRows + 1)).Select()
+
+        # Save the report.
+        name = "/MailerNonRespondentsReport-%d.xls" % job.getJobId()
+        wb.SaveAs(Filename = REPORTS_BASE + name)
+        cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
+        url = "http://mahler.nci.nih.gov/CdrReports%s" % name
+        cdr.logwrite("url: %s" % url, LOGFILE)
+        msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (
+            url, url)
+        wb.Close(SaveChanges = 0)
+
+        # Tell the user where to find it.
+        body = """\
+The OSP report you requested on Protocols can be viewed at
+%s.
+""" % url
+        sendMail(job, "Report results", body)
+        job.setProgressMsg(msg)
+        job.setStatus(cdrbatch.ST_COMPLETED)
+        cdr.logwrite("Completed report", LOGFILE)
+        
+#----------------------------------------------------------------------
+# Run a report of mailers which haven't had responses.
+#----------------------------------------------------------------------
+def nonRespondentsReport(job):
+    age         = job.getParm("Age")
+    baseDocType = job.getParm("BaseDocType")
+    host        = job.getParm("Host")
+    report      = NonRespondentsReport(age, baseDocType, host)
+    report.createSpreadsheet(job)
+
 #----------------------------------------------------------------------
 # Top level entry point.
 #----------------------------------------------------------------------
@@ -680,13 +958,20 @@ if __name__ == "__main__":
     # Find out what we're supposed to do.
     jobName = job.getJobName()
     #print "job name is %s" % jobName
-    if jobName == "Protocol Sites Without Phones":
-        protsWithoutPhones(job)
-    elif jobName == "Report for Office of Science Policy":
-        ospReport(job)
-        
-    # That's all we know how to do right now.
-    else:
-        job.fail("CdrLogReports: unknown job name '%s'" % jobName,
-                 logfile = LOGFILE)
 
+    try:
+        if jobName == "Protocol Sites Without Phones":
+            protsWithoutPhones(job)
+        elif jobName == "Report for Office of Science Policy":
+            ospReport(job)
+        elif jobName == "Mailer Non-Respondents":
+            nonRespondentsReport(job)
+        # That's all we know how to do right now.
+        else:
+            job.fail("CdrLogReports: unknown job name '%s'" % jobName,
+                     logfile = LOGFILE)
+    except Exception, info:
+        cdr.logwrite("Failure executing job %d: %s" % (jobId, str(info)),
+                     LOGFILE, 1)
+        job.fail("Caught exception: %s" % str(info), logfile = LOGFILE)
+        
