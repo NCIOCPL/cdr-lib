@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.39 2002-11-14 20:21:46 pzhang Exp $
+# $Id: cdrpub.py,v 1.40 2002-11-20 16:38:20 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.39  2002/11/14 20:21:46  pzhang
+# Added version infor for CG team.
+#
 # Revision 1.38  2002/11/07 23:12:58  pzhang
 # Changed default values for subset parameters.
 #
@@ -746,7 +749,8 @@ class Publish:
             self.__updateMessage(message, jobId)
             cgWorkLink = self.__cdrHttp + "/PubStatus.py?id=1&type=CgWork"
             link = "<A style='text-decoration: underline;' href='%s'> \
-                Check pushed docs</A><BR>" % cgWorkLink          
+                Check pushed docs</A>(<B>inaccurate after next pushing \
+                job has started</B>).<BR>" % cgWorkLink          
             if pubType == "Full Load" or pubType == "Export":
                 self.__createWorkPPC(vendor_job, vendor_dest, jobId)
                 pubTypeCG = pubType
@@ -1007,22 +1011,33 @@ class Publish:
                             """, (vendor_job), timeout = self.__timeOut
                            )
             rows = cursor.fetchall()
+        except:
+            raise StandardError("Fetchall in setting A to PPCW failed.")
+        
+        try:
             for row in rows:
                 id     = row[0]
                 type   = row[1]
                 subdir = row[2]
                 ver    = row[3]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
-                xml    = open(path, "rb").read()
+                try: xml = open(path, "rb").read()
+                except: raise StandardError(
+                        "Opening file: %s failed.<BR>" % path)
                 xml    = unicode(xml, 'utf-8')
-                cursor.execute("""
+                try:
+                    cursor.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
                                                   doc_type, xml, num)
                          VALUES (?, ?, ?, ?, ?, ?)
-                               """, (id, vendor_job, cg_job, type, xml, ver)
+                               """, 
+                               (id, vendor_job, cg_job, type, xml, ver),
+                               timeout = self.__timeOut                              
                               )
-        except:
-            raise StandardError("Setting A to pub_proc_cg_work failed.")
+                except:
+                    raise StandardError("Inserting %d to PPCW failed." % id)                    
+        except StandardError, arg:
+            raise StandardError(arg[0])
         msg = "Finished insertion for adding at %s.<BR>" % time.ctime()
         self.__updateMessage(msg, cg_job)
 
@@ -1208,19 +1223,25 @@ class Publish:
                             """, (vendor_job), timeout = self.__timeOut
                            )
             rows = cursor.fetchall()
+        except:
+            raise StandardError("Fetchall in setting A to PPCW failed.")
+
+        try:
             for row in rows:
                 id     = row[0]
                 type   = row[1]
                 subdir = row[2]
                 ver    = row[3]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
-                xml    = open(path, "rb").read()
+                xml    = open(path, "rb").read()              
                 xml    = unicode(xml, 'utf-8')
                 cursor.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
                                                   doc_type, xml, num)
                          VALUES (?, ?, ?, ?, ?, ?)
-                               """, (id, vendor_job, cg_job, type, xml, ver)
+                               """, 
+                               (id, vendor_job, cg_job, type, xml, ver),
+                               timeout = self.__timeOut                         
                               )
         except:
             raise StandardError("Setting A to pub_proc_cg_work failed.")
@@ -1268,7 +1289,7 @@ class Publish:
         # Update a document, if its id is in both PPC and PPD.
         try:
             cursor.execute ("""
-                SELECT ppcw.id, ppcw.xml
+                SELECT ppcw.id, ppcw.xml, ppcw.vendor_job
                   FROM pub_proc_cg_work ppcw
                  WHERE EXISTS ( SELECT *
                                   FROM pub_proc_cg ppc
@@ -1279,12 +1300,12 @@ class Publish:
             for row in rows:
                 cursor.execute("""
                         UPDATE pub_proc_cg
-                           SET xml = ?
+                           SET xml = ?, pub_proc = ?
                          WHERE id  = ?
-                               """, (row[1], row[0])
+                               """, (row[1], row[2], row[0])
                               )
         except:
-            raise StandardError("Updating xml to pub_proc_cg_work failed.")
+            raise StandardError("Updating xml, job from PPCW to PPC failed.")
 
         # Add new documents into PPC finally.
         try:
@@ -1351,7 +1372,7 @@ class Publish:
         # Update a document, if its id is in both PPC and PPD.
         try:
             cursor.execute ("""
-                SELECT ppcw.id, ppcw.xml
+                SELECT ppcw.id, ppcw.xml, ppcw.vendor_job
                   FROM pub_proc_cg_work ppcw
                  WHERE EXISTS ( SELECT *
                                   FROM pub_proc_cg ppc
@@ -1362,12 +1383,12 @@ class Publish:
             for row in rows:
                 cursor.execute("""
                         UPDATE pub_proc_cg
-                           SET xml = ?
+                           SET xml = ?, pub_proc = ?
                          WHERE id  = ?
-                               """, (row[1], row[0])
+                               """, (row[1], row[2], row[0])
                               )
         except:
-            raise StandardError("Updating xml from PPCW to PPC failed.")
+            raise StandardError("Updating xml, job from PPCW to PPC failed.")
 
         # Add new documents into PPC finally.
         try:
