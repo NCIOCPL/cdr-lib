@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.53 2002-09-13 02:36:03 ameyer Exp $
+# $Id: cdr.py,v 1.54 2002-09-15 16:58:53 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.53  2002/09/13 02:36:03  ameyer
+# Fixed bug in valDoc, wrong attribute spelling.
+#
 # Revision 1.52  2002/09/12 20:59:26  bkline
 # Added missing import for tempfile package.
 #
@@ -183,7 +186,7 @@ import os, smtplib, time, cdrdb, tempfile
 # Set some package constants
 #----------------------------------------------------------------------
 PROD_HOST     = 'bach.nci.nih.gov'
-CVSROOT       = "mmdb2.nci.nih.gov:/d//usr/local/cvsroot"
+CVSROOT       = "mahler.nci.nih.gov:/d//usr/local/cvsroot"
 DEFAULT_HOST  = 'localhost'
 DEFAULT_PORT  = 2019
 URDATE        = '2002-06-22'
