@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.18 2005-01-19 23:27:19 venglisc Exp $
+# $Id: CdrLongReports.py,v 1.19 2005-03-01 15:35:03 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.18  2005/01/19 23:27:19  venglisc
+# Added section to search for and display protocols that are listing the
+# organization in question as a Clinical Trial Office.
+#
 # Revision 1.17  2004/09/23 14:07:46  venglisc
 # Modified string passed by UI to display on report. (Bug 1337)
 #
@@ -616,7 +620,7 @@ def ospReport(job):
         docXml = cursor.fetchone()[0]
         dom = xml.dom.minidom.parseString(docXml.encode('utf-8'))
         prot = Protocol(row[0], dom.documentElement)
-        if prot.wasActive("1998-01-01", "2003-12-31"):
+        if prot.wasActive("1999-01-01", "2004-12-31"):
             protocols.append(prot)
         done += 1
         now = time.time()
