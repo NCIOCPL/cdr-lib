@@ -1,8 +1,11 @@
 #
 # Script for command line and CGI publishing.
 #
-#$Id: publish.py,v 1.5 2002-01-31 18:20:49 mruben Exp $
+#$Id: publish.py,v 1.6 2002-02-07 14:46:17 mruben Exp $
 #$Log: not supported by cvs2svn $
+#Revision 1.5  2002/01/31 18:20:49  mruben
+#Fixed SQL for selecting publishing systems
+#
 #Revision 1.4  2001/12/03 23:14:15  Pzhang
 #Added code for email notification.
 #Disabled updateStatuses since pub_event is now a view.
@@ -77,14 +80,15 @@ class Publish:
 
     # Do nothing but set local variables.
     def __init__(self, strCtrlDocId, subsetName, credential,
-                docIds, params, email = None, jobId = 0, ):
+                docIds, params, email = None, no_output = 0, jobId = 0, ):
         self.strCtrlDocId = strCtrlDocId      
         self.subsetName = subsetName
         self.credential = credential    
         self.docIds = docIds
         self.params = params  
         self.email = email            
-        self.jobId = jobId            
+        self.jobId = jobId
+        self.no_output = no_output
     
     # This is a CGI helper function.
     def getPubSys(self):
@@ -167,7 +171,7 @@ class Publish:
                         tuple[1] = ''
                         for n in node.childNodes:
                             if n.nodeName == 'SubsetName':
-                                for m in n.childNodes:                                    
+                                for m in n.childNodes:
                                     if m.nodeType == xml.dom.minidom.Node.TEXT_NODE:
                                         tuple[0] = tuple[0] + m.nodeValue
                             if n.nodeName == 'SubsetDescription':
@@ -246,12 +250,13 @@ class Publish:
     
         # Get user ID and Name from SessionName in CDR.
         self.__getUser()
-
+ 
         # At most one active publishing process can exist.
         self.__procId = self.__existProcess()
         if self.__procId:                
             self.__cdrConn = None
-            return "*Error: there is an active process with ID: %d." % self.__procId    
+            return "*Error: there is an active process with ID: %d." \
+                    % self.__procId    
         else:
             # A row in pub_proc table is created. Rows are also 
             # created in pub_proc_parm and pub_proc_doc tables.
@@ -259,7 +264,7 @@ class Publish:
             # The status is initially "Initial", and then "Ready".
             self.__procId = self.__createProcess()
             self.__cdrConn = None
-            return self.__procId
+        return self.__procId
 
     # This is a CGI helper function.
     def getStatus(self, jobId):
@@ -334,7 +339,8 @@ class Publish:
             # Don't know the rule to check permission yet?
             permitted = self.__isPermitted(action)
             if not permitted:                
-                msg = "*Error: " + self.__userName + " is not permitted to publish."
+                msg = "*Error: " + self.__userName + \
+                      " is not permitted to publish."
                 self.__updateStatus(Publish.FAIL, msg)
                 sys.exit(1)
 
@@ -599,6 +605,7 @@ Please do not reply to this message.
             #if self.__procId != 0:
                 #self.__updateStatus(Publish.FAIL, reason)
             if NCGI: print reason
+            print reason
             rs = None
             self.__cdrConn.Close()
             self.__cdrConn = None
@@ -674,10 +681,10 @@ Please do not reply to this message.
         if NCGI: print "in __existProcess\n"
         sql = "SELECT id FROM pub_proc WHERE pub_system = "
         sql += self.strCtrlDocId + " AND pub_subset = '" + self.subsetName 
-        sql += """' AND status NOT IN ('%s', '%s', '%s')""" % (Publish.SUCCEED, 
-                Publish.WAIT, Publish.FAIL)
+        sql += """' AND status NOT IN ('%s', '%s', '%s')""" \
+               % (Publish.SUCCEED, Publish.WAIT, Publish.FAIL)
         rs = self.__execSQL(sql)
-
+ 
         id = 0
         while not rs.EOF:
             id = rs.Fields("id").Value
@@ -698,11 +705,13 @@ Please do not reply to this message.
         if NCGI: print "in __createProcess\n"
 
         sql = """INSERT INTO pub_proc (pub_system, pub_subset, usr,
-            output_dir, started, completed, status, messages, email) 
-            VALUES (%s, '%s', %d, 'temp', GETDATE(), null, '%s', '%s', '%s')
+            output_dir, started, completed, status, messages, email,
+            no_output) 
+            VALUES (%s, '%s', %d, 'temp', GETDATE(), null, '%s', '%s', '%s',
+                    '%s')
             """ % (self.strCtrlDocId, self.subsetName, self.__userId,
                     Publish.INIT, 'This row has just been created.',
-                    self.email)
+                    self.email, self.no_output)
         self.__execSQL(sql)
 
         sql = """SELECT id FROM pub_proc WHERE pub_system = %s AND
@@ -803,7 +812,7 @@ Please do not reply to this message.
 
     #----------------------------------------------------------------
     # Get a list of document type for publishing. This is used
-    # when DestinationType is DocType and when checking permission.
+    # when DestinationType is DocType
     #----------------------------------------------------------------
     def __getDocTypes(self, localDocIds):
         if NCGI: print "in __getDocTypes\n"
@@ -811,13 +820,31 @@ Please do not reply to this message.
     #----------------------------------------------------------------
     # Check to see if a user is allowed to publish this set 
     #    of documents. 
-    # Return false if not allowed for any document in the set.
-    # The permission depends on user group and document type.
+    # Return false if not allowed
+    # The permission depends on user group
     # credential is used.
     #----------------------------------------------------------------
     def __isPermitted(self, action):
+        
         if NCGI: print "in __isPermitted\n"
-	return 1
+        if action.strip() = "" : return 1        # no authorization required
+        
+        sql = "SELECT COUNT(*) " \
+              "FROM action a " \
+              "JOIN grp_action ga " \
+              "ON a.id = ga.action " \
+              "JOIN grp_usr gu " \
+              "ON ga.grp = gu.grp " \
+              "WHERE a.name = " + action + " " \
+              "AND gu.usr = " + self.__userid
+        rs = self.__execSQL(sql)
+        rc = 0
+        if not rs.EOF :
+            rc = rs.Fields(0)
+            
+        rs.Close()
+
+        return rc
 
 
     #----------------------------------------------------------------
@@ -1085,8 +1112,8 @@ Please do not reply to this message.
     #     destination directory are deleted before adding the 
     #    new files.
     #----------------------------------------------------------------
-    def __publishType(self, loclDocIds, filters, 
-            loclaParams, dest, docTypes, options):
+    def __publishType(self, localDocIds, filters, 
+            localParams, dest, docTypes, options):
         # Similar to publishAll(), but have to loop through all
         #     different docTypes.
         if NCGI: print "in __publishType\n"         
@@ -1281,18 +1308,19 @@ Please do not reply to this message.
     #----------------------------------------------------------------
     # Save the document in the temporary subdirectory.
     #----------------------------------------------------------------
-    def __saveDoc(self, document, dir, fileName):
+    def __saveDoc(self, document, dir, fileName, mode = "w"):
         if not os.path.isdir(dir):
             os.makedirs(dir)
-        fileObj = open(dir + "/" + fileName, 'w')
+        fileObj = open(dir + "/" + fileName, mode)
         fileObj.write(document)
+        fileObj.close()
 
     #----------------------------------------------------------------
     # Handle process script. This is specific for Bob's Python script.
     # If this subset does not contain process script, simply return.
     # The cmd string should be determined by options in the control
     #   document, not hard-coded unless we agree that all the process
-    #	script will only accept JobId as its only argument.
+    #   script will only accept JobId as its only argument.
     #----------------------------------------------------------------
     def __invokeProcessScript(self, subset):
         if NCGI: print "in __invokeProcessScript\n"
@@ -1335,7 +1363,8 @@ def main():
             if NCGI: print "*Error: Usage: pubmod.py jobId."
             sys.exit(1)
        
-        p = Publish("Fake", "Fake", "Fake", [], [], "Fake", string.atoi(sys.argv[1]))
+        p = Publish("Fake", "Fake", "Fake", [], [], "Fake", 0,
+                    string.atoi(sys.argv[1]))
         p.publish() 
 
     except:        
