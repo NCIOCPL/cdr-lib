@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.9 2002-09-30 19:29:53 pzhang Exp $
+# $Id: cdr2cg.py,v 1.10 2002-10-03 16:04:59 pzhang Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2002/09/30 19:29:53  pzhang
+# Accepted docType and docId for command line testing.
+#
 # Revision 1.8  2002/09/13 16:51:40  pzhang
 # Changed PDQDTD to point to MAHLER.
 #
@@ -336,9 +339,12 @@ def sendRequest(body, app = application, host = host, headers = headers):
         raise StandardError("tried to connect 3 times unsuccessfully")
     
     if response.status != 200:
-        logString("HTTP ERROR", response.read())
-        raise StandardError("HTTP error: %d (%s)" % (response.status,
-                                                     response.reason))
+        resp = response.read()
+        logString("HTTP ERROR", resp)
+        resp = "(occurred at %s) (%s)" % (time.ctime(), resp)
+        raise StandardError("HTTP error: %d (%s) %s" % (response.status,
+                                                     response.reason,
+                                                     resp))
 
     # Get the response payload and return it.
     data = response.read()
