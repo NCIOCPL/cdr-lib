@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.73 2003-03-14 01:35:03 bkline Exp $
+# $Id: cdr.py,v 1.74 2003-04-25 20:26:40 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.73  2003/03/14 01:35:03  bkline
+# Suppressed version attribute for filter in filterDoc() when version is
+# empty.
+#
 # Revision 1.72  2003/02/24 21:18:35  bkline
 # Added version attribute to Filter element.
 #
@@ -720,6 +724,9 @@ def addDoc(credentials, file = None, doc = None, comment = '',
         if file: return "<Errors><Err>%s not found</Err></Errors>" % file
         else:    return "<Errors><Err>Document missing.</Err></Errors>"
 
+    # Ensure that unicode appears as utf-8
+    if type(doc)==type(u""): doc = doc.encode('utf-8')
+
     # If comment passed, filter doc to add DocComment to CdrDocCtl
     # Raises exception if fails
     if len(comment) > 0:
@@ -770,6 +777,9 @@ def repDoc(credentials, file = None, doc = None, comment = '',
     if not doc:
         if file: return "<Errors><Err>%s not found</Err></Errors>" % file
         else:    return "<Errors><Err>Document missing.</Err></Errors>"
+
+    # Ensure that unicode appears as utf-8
+    if type(doc)==type(u""): doc = doc.encode('utf-8')
 
     # If comment passed, filter doc to add DocComment to CdrDocCtl
     # Raises exception if fails
