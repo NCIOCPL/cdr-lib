@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.83 2004-02-03 15:38:21 bkline Exp $
+# $Id: cdr.py,v 1.84 2004-02-26 21:03:40 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.83  2004/02/03 15:38:21  bkline
+# Plugged in cgitb debugging help.
+#
 # Revision 1.82  2003/12/19 22:07:39  ameyer
 # Added utf-8 encoding of filterDoc doc and parameters, in case of need.
 #
@@ -277,7 +280,11 @@ import os, smtplib, time, cdrdb, tempfile, traceback
 #----------------------------------------------------------------------
 # Set some package constants
 #----------------------------------------------------------------------
-PROD_HOST     = 'bach.nci.nih.gov'
+DOMAIN_NAME   = 'nci.nih.gov'
+PROD_NAME     = 'bach'
+DEV_NAME      = 'mahler'
+PROD_HOST     = '%s.%s' % (PROD_NAME, DOMAIN_NAME)
+DEV_HOST      = '%s.%s' % (DEV_NAME, DOMAIN_NAME)
 CVSROOT       = "verdi.nci.nih.gov:/usr/local/cvsroot"
 DEFAULT_HOST  = 'localhost'
 DEFAULT_PORT  = 2019
@@ -2896,11 +2903,11 @@ def compareXmlDocs(utf8DocString1, utf8DocString2):
 #----------------------------------------------------------------------
 def isDevHost():
     localhost = socket.gethostname()
-    return localhost.upper().startswith("MAHLER")
+    return localhost.upper().startswith(DEV_NAME.upper())
 
 #----------------------------------------------------------------------
 # Tell the caller if we are on the development host.
 #----------------------------------------------------------------------
 def isProdHost():
     localhost = socket.gethostname()
-    return localhost.upper().startswith("BACH")
+    return localhost.upper().startswith(PROD_NAME.upper())
