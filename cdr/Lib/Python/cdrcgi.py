@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.28 2002-09-05 16:31:14 pzhang Exp $
+# $Id: cdrcgi.py,v 1.29 2002-11-07 13:08:23 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.28  2002/09/05 16:31:14  pzhang
+# Added port parameter to get session.
+#
 # Revision 1.27  2002/08/15 21:18:07  bkline
 # Added command for sending broadcast email.
 #
@@ -111,9 +114,9 @@ HEADER   = """\
 <HTML>
  <HEAD>
   <TITLE>%s</TITLE>
- </HEAD>
- <BASEFONT FACE='Arial, Helvetica, sans-serif'>
- <LINK REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
+  <BASEFONT FACE='Arial, Helvetica, sans-serif'>
+  <LINK REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
+ %s</HEAD>
  <BODY BGCOLOR='EEEEEE'>
   <FORM ACTION='/cgi-bin/cdr/%s' METHOD='%s'>
    <TABLE WIDTH='100%%' CELLSPACING='0' CELLPADDING='0' BORDER='0'>
@@ -146,8 +149,8 @@ SUBBANNER = """\
 # Display the header for a CDR web form.
 #----------------------------------------------------------------------
 def header(title, banner, subBanner, script = '', buttons = None, bkgd = '',
-           numBreaks = 2, method = 'POST'):
-    html = HEADER % (title, script, method, banner)
+           numBreaks = 2, method = 'POST', stylesheet=''):
+    html = HEADER % (title, stylesheet, script, method, banner)
     if buttons:
         html = html + B_CELL
         for button in buttons:
