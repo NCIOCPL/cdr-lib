@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.13 2002-09-02 00:38:00 bkline Exp $
+# $Id: cdrdb.py,v 1.14 2002-09-03 12:49:19 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.13  2002/09/02 00:38:00  bkline
+# Added optional timeout parameter to callproc().
+#
 # Revision 1.12  2002/05/23 22:05:29  ameyer
 # setAutoCommit() now returns the previous state of the autocommit flag.
 # getAutoCommit() fetches the autocommit state.
@@ -717,7 +720,7 @@ class Connection:
 #----------------------------------------------------------------------
 # Connect to the CDR using known login account.
 #----------------------------------------------------------------------
-def connect(user = 'cdr', dataSource = 'localhost'):
+def connect(user = 'cdr', dataSource = 'localhost', db = 'cdr'):
     """
     Factory for creating a connection to the database.  Returns a
     Connection Object. It takes a number of parameters which are
@@ -738,9 +741,9 @@ def connect(user = 'cdr', dataSource = 'localhost'):
     try:
         adoConn.Open("Provider=SQLOLEDB;\
                       Data Source=%s;\
-                      Initial Catalog=cdr;\
+                      Initial Catalog=%s;\
                       User ID=%s;\
-                      Password=%s" % (dataSource, user, password))
+                      Password=%s" % (dataSource, db, user, password))
     except:
         raise DatabaseError, ("connect", buildErrorList(adoConn))
     return Connection(adoConn)
