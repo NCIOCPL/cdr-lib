@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.58 2004-09-14 18:05:51 ameyer Exp $
+# $Id: cdrpub.py,v 1.59 2004-10-07 14:35:50 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.58  2004/09/14 18:05:51  ameyer
+# Introduced basic multi-threading for the filtering and publishing
+# of documents selected by SQL queries.
+#
 # Revision 1.57  2004/08/25 02:43:14  ameyer
 # Significant changes to a number of parts of the program to implement
 # multi-threading.
@@ -217,6 +221,50 @@ PUB_THREADS = 5
 LOG_MODULUS = 1000
 
 #-----------------------------------------------------------------------
+# class: Doc
+#   Information about a document to be published, or that is published.
+#   A list of these objects is created either by selecting documents
+#   that a user has already placed in the pub_proc_doc table, or by
+#   selecting documents via a SQL query for a publishing subset.
+#-----------------------------------------------------------------------
+class Doc:
+    def __init__(self, docId, version, docTypeStr, recorded=False):
+
+        self.__docId      = docId       # CDR id
+        self.__version    = version     # Last publishable version num
+        self.__docTypeStr = docTypeStr  # e.g., 'InScopeProtocol'
+        self.__msgs       = None        # Filter or other errs or warnings
+        self.__failed     = False       # True=publishing failed
+        self.__removed    = False       # True=doc removed from cg (future use)
+        self.__published  = False       # True=doc was output
+        self.__recorded   = recorded    # Row exists in pub_proc_doc
+
+    # Accessors
+    def getDocId(self):      return self.__docId
+    def getVersion(self):    return self.__version
+    def getDocTypeStr(self): return self.__docTypeStr
+    def getMsgs(self):       return self.__msgs
+    def getFailed(self):     return self.__failed
+    def getRemoved(self):    return self.__removed
+    def getPublished(self):  return self.__published
+    def getRecorded(self):   return self.__recorded
+
+    # Setters.
+    #   Id, version, type, can't change
+    #   Booleans once switched on, stay on
+    def setFailed(self):     self.__failed    = True
+    def setRemoved(self):    self.__removed   = True
+    def setPublished(self):  self.__published = True
+    def setRecorded(self):   self.__recorded  = True
+
+    # Msgs are appended to
+    def addMsg(self, msg):
+        if not self.__msgs:
+            self.__msgs = msg
+        else:
+            self.__msgs += msg
+
+#-----------------------------------------------------------------------
 # class: Publish
 #    This class encapsulates the publishing data and methods.
 #    There is one public method, publish().
@@ -258,8 +306,8 @@ class Publish:
     __validateDocs      = 0
     __logDocModulus     = LOG_MODULUS
 
-    # List of docs to be published, tuples of docId, version, doctype str
-    __docs = ()
+    # List of Docs to be published
+    __docs = []
 
     # Next doc to be published.  Threads synchronize to use this
     __nextDoc = 0
@@ -270,7 +318,6 @@ class Publish:
     # Thread locking objects.
     # All threads share this one instance of a Publish object.
     __lockNextDoc = threading.Lock()
-    __lockError   = threading.Lock()
     __lockLog     = threading.Lock()
 
     # Publish this many docs in parallel
@@ -382,7 +429,8 @@ class Publish:
 
             row = cursor.fetchone()
             while row:
-                self.__userDocList.append((row[0], row[1], row[2]))
+                self.__userDocList.append(Doc(row[0], row[1], row[2],
+                                          recorded=True))
                 row = cursor.fetchone()
         except cdrdb.Error, info:
             msg = 'Failure retrieving documents for job %d: %s' % \
@@ -571,9 +619,10 @@ class Publish:
 
                     # See which user-listed documents we can publish here.
                     for doc in self.__userDocList:
-                        if doc[0] in self.__alreadyPublished:
+                        if doc.getDocId() in self.__alreadyPublished:
                             continue
-                        if docTypesAllowed and doc[2] not in docTypesAllowed:
+                        if docTypesAllowed and \
+                           doc.getDocTypeStr() not in docTypesAllowed:
                             continue
 
                         # Don't want to use subdir for user-listed docs
@@ -593,18 +642,22 @@ class Publish:
                             self.__updateMessage("%d docs failed so far.<BR>"
                                                   % numFailures)
 
-                        self.__alreadyPublished[doc[0]] = 1
+                        self.__alreadyPublished[doc.getDocId()] = 1
                         userListedDocsRemaining -= 1
                         if not userListedDocsRemaining: break
 
             # Make sure all the user-listed documents are accounted for.
             for doc in self.__userDocList:
-                if doc[0] not in self.__alreadyPublished:
+                if doc.getDocId() not in self.__alreadyPublished:
                     self.__checkProblems(doc,
                                 "User-specified document CDR%010d "
                                 "has document type %s which is "
                                 "not allowed for this publication "
-                                "type" % (doc[0], doc[2]), "")
+                                "type" %
+                             (doc.getDocId(), doc.getDocTypeStr()), "")
+
+            # Update the pub_proc_doc table with any generated messages
+            self.__addPubProcDocMsgs()
 
             # Now walk through the specifications again executing queries.
             self.__debugLog("Processing document-selection queries.")
@@ -1860,29 +1913,29 @@ has started</B>).<BR>""" % cgWorkLink
         # Build the input hash.
         docPairList = {}
         for doc in self.__userDocList:
-            docPairList[doc[0]] = doc[1]
+            docPairList[doc.getDocId()] = doc.getVersion()
 
         # Find all the linked documents.
-        resp = findLinkedDocs(docPairList)
-        msg  = resp[0]
-        hash = resp[1]
+        resp      = findLinkedDocs(docPairList)
+        msg       = resp[0]
+        idVerHash = resp[1]
         self.__updateMessage(msg)
 
         # Insert all pairs into PPD. Because these linked documents are
         # not in PPD yet, it should succeed with all insertions.
         try:
             cursor = self.__conn.cursor()
-            for docId in hash.keys():
+            for docId in idVerHash.keys():
 
                 # Update the PPD table.
                 cursor.execute ("""
                     INSERT INTO pub_proc_doc
                                 (pub_proc, doc_id, doc_version)
                          VALUES  (?, ?, ?)
-                                """, (self.__jobId, docId, hash[docId])
+                                """, (self.__jobId, docId, idVerHash[docId])
                                )
 
-                # Update the __useDocList.
+                # Update the __userDocList.
                 cursor.execute ("""
                          SELECT t.name
                            FROM doc_type t, document d
@@ -1892,7 +1945,8 @@ has started</B>).<BR>""" % cgWorkLink
                                )
                 row = cursor.fetchone()
                 if row and row[0]:
-                    self.__userDocList.append((docId, hash[docId], row[0]))
+                    self.__userDocList.append(Doc(docId, idVerHash[docId],
+                                                  row[0], recorded=True))
                 else:
                     msg = "Failed in adding docs to __userDocList.<BR>"
                     raise StandardError(msg)
@@ -2022,12 +2076,12 @@ has started</B>).<BR>""" % cgWorkLink
             except cdrdb.Error, info:
                 self.__debugLog(
                      "Database error publishing doc %d ver %d in %s:\n  %s"
-                     % (doc[0], doc[1], threadId, info[1][0]), tb=1)
+                     % (doc.getDocId(), doc.getVersion(), threadId, info[1][0]), tb=1)
                 error = 1
             except:
                 self.__debugLog(
                      "Exception publishing doc %d ver %d in %s"
-                     % (doc[0], doc[1], threadId), tb=1)
+                     % (doc.getDocId(), doc.getVersion(), threadId), tb=1)
                 error = 1
 
             # If error occurred, signal it
@@ -2059,7 +2113,8 @@ has started</B>).<BR>""" % cgWorkLink
     #------------------------------------------------------------------
     def __publishDoc(self, doc, filters, destType, destDir, subDir = ''):
 
-        self.__debugLog("Publishing CDR%010d." % doc[0])
+        docId = doc.getDocId()
+        self.__debugLog("Publishing CDR%010d." % docId)
 
         # Keep track of problems encountered during filtering.
         warnings = ""
@@ -2074,7 +2129,7 @@ has started</B>).<BR>""" % cgWorkLink
             paramList = []
             for pair in filterSet[1]:
                 if pair[0] == 'DateFirstPub':
-                    date = self.__dateFirstPub[doc[0]]
+                    date = self.__dateFirstPub[docId]
                     paramList.append((pair[0], date))
                 else:
                     paramList.append((pair[0], pair[1]))
@@ -2082,7 +2137,7 @@ has started</B>).<BR>""" % cgWorkLink
             # First filter set is run against document from database.
             if not filteredDoc:
                 result = cdr.filterDoc(self.__credentials, filterSet[0],
-                                       docId = doc[0], docVer = doc[1],
+                                       docId = docId, docVer = doc.getVersion(),
                                        parm = paramList,
                                        port = self.__pubPort)
 
@@ -2101,7 +2156,7 @@ has started</B>).<BR>""" % cgWorkLink
 
         # Validate the filteredDoc against Vendor DTD.
         if self.__validateDocs and filteredDoc:
-            errObj = validateDoc(filteredDoc, docId = doc[0])
+            errObj = validateDoc(filteredDoc, docId = docId)
             for error in errObj.Errors:
                 errors += "%s<BR>" % error
                 invalDoc = "InvalidDocs"
@@ -2119,11 +2174,12 @@ has started</B>).<BR>""" % cgWorkLink
                     self.__saveDoc(filteredDoc, destDir, self.__fileName, "a")
                 # Removed because not threadsafe and never used
                 # elif destType == Publish.DOCTYPE:
-                #     self.__saveDoc(filteredDoc, destDir, doc[2], "a")
+                #     self.__saveDoc(filteredDoc, destDir,
+                #                    doc.getDocTypeStr(), "a")
                 else:
-                    self.__saveDoc(filteredDoc, destDir, "CDR%d.xml" % doc[0])
+                    self.__saveDoc(filteredDoc, destDir, "CDR%d.xml" % docId)
             except:
-                errors = "Failure writing document CDR%010d" % doc[0]
+                errors = "Failure writing document CDR%010d" % docId
 
         # Handle errors and warnings.
         self.__checkProblems(doc, errors, warnings)
@@ -2143,37 +2199,30 @@ has started</B>).<BR>""" % cgWorkLink
         # If not None, we have an abort situation
         msg = None
 
-        # Synchronize critical section
-        self.__lockError.acquire(1)
+        # Check errors
+        if errors:
+            self.__addDocMessages(doc, errors, Publish.SET_FAILURE_FLAG)
+            self.__errorCount += 1
+            if self.__errorsBeforeAborting != -1:
+                if self.__errorCount > self.__errorsBeforeAborting:
+                    if self.__errorsBeforeAborting:
+                      msg = "Aborting on error detected in CDR%010d.<BR>" % \
+                             doc.getDocId()
+                    else:
+                      msg = "Aborting: too many errors encountered"
 
-        # Wrap everything in try bloc to ensure lock release
-        try:
-            if errors:
-                self.__addDocMessages(doc, errors, Publish.SET_FAILURE_FLAG)
-                self.__errorCount += 1
-                if self.__errorsBeforeAborting != -1:
-                    if self.__errorCount > self.__errorsBeforeAborting:
-                        if self.__errorsBeforeAborting:
-                          msg = "Aborting on error detected in CDR%010d.<BR>" \
-                                    % doc[0]
-                        else:
-                          msg = "Aborting: too many errors encountered"
-            if warnings:
-                self.__addDocMessages(doc, warnings)
-                self.__warningCount += 1
-                if self.__publishIfWarnings == "No":
-                    msg = "Aborting on warning(s) detected in CDR%010d.<BR>" \
-                        % doc[0]
+        # Check warnings
+        if warnings:
+            self.__addDocMessages(doc, warnings)
+            self.__warningCount += 1
+            if self.__publishIfWarnings == "No":
+                msg = "Aborting on warning(s) detected in CDR%010d.<BR>" % \
+                      doc.getDocId()
 
-            # Did we get an abort message?
-            if msg:
-                self.__debugLog("checkProblems raises StandardError, msg=%s" \
-                                 % msg)
-                raise StandardError(msg)
-
-        # Ensure release of lock
-        finally:
-            self.__lockError.release()
+        # Did we get an abort message?
+        if msg:
+            self.__debugLog("checkProblems raises StandardError, msg=%s" % msg)
+            raise StandardError(msg)
 
     #------------------------------------------------------------------
     # Record warning or error messages for the job.
@@ -2205,32 +2254,10 @@ has started</B>).<BR>""" % cgWorkLink
     #------------------------------------------------------------------
     def __addDocMessages(self, doc, messages, failure = None):
 
-        try:
-            cursor = self.__conn.cursor()
-            cursor.execute("""
-                SELECT messages, failure
-                  FROM pub_proc_doc
-                 WHERE doc_id = ?
-                   AND pub_proc = ?
-                           """, (doc[0], self.__jobId)
-                          )
-            row  = cursor.fetchone()
-            msg  = (row and row[0] or '') + messages
-
-            # Don't reset column failure if the input is None!
-            fail = failure or (row and row[1])
-
-            cursor.execute("""\
-                UPDATE pub_proc_doc
-                   SET messages = ?,
-                       failure  = ?
-                 WHERE pub_proc = ?
-                   AND doc_id   = ?""", (msg, fail,
-                                         self.__jobId, doc[0]))
-        except cdrdb.Error, info:
-            msg = 'Failure recording message for document %d: %s' % \
-                  (doc[0], info[1][0])
-            raise StandardError(msg)
+        # Just update the Doc object.  Database update comes later
+        doc.addMsg(messages)
+        if failure:
+            doc.setFailed()
 
     #------------------------------------------------------------------
     # Record the publication of all of the documents.
@@ -2238,29 +2265,69 @@ has started</B>).<BR>""" % cgWorkLink
     def __addPubProcDocRows(self, subDir):
 
         # All selected docs
-        # This could be optimized if we decide to write an optimized
-        #   cdrdb.executemany().  I have left it alone to avoid the
-        #   rewrite for something that may never come to pass.
+        # This might be optimized if we decide to write an optimized
+        #   cdrdb.executemany()
+        cursor = self.__conn.cursor()
         for doc in (self.__docs):
             try:
-                cursor = self.__conn.cursor()
-                cursor.execute("""\
-                    INSERT INTO pub_proc_doc
-                    (
-                                pub_proc,
-                                doc_id,
-                                doc_version,
-                                subdir
-                    )
-                         VALUES
-                    (
-                                ?,
-                                ?,
-                                ?,
-                                ?
-                    )""", (self.__jobId, doc[0], doc[1], subDir))
+                if not doc.getRecorded():
+                    cursor.execute("""\
+                        INSERT INTO pub_proc_doc
+                        (
+                                    pub_proc,
+                                    doc_id,
+                                    doc_version,
+                                    messages,
+                                    failure,
+                                    subdir
+                        )
+                             VALUES
+                        (
+                                    ?, ?, ?, ?, ?, ?
+                        )""", (self.__jobId,
+                               doc.getDocId(),
+                               doc.getVersion(),
+                               doc.getMsgs(),
+                               doc.getFailed(),
+                               subDir))
+                    doc.setRecorded()
+                else:
+                    msg = "Internal error, asked to create PPD row for doc" \
+                          " that's already recorded: jobId/docId=%d/%d" % \
+                           (self.__jobId, doc.getDocId())
+                    raise StandardError(msg)
+
             except cdrdb.Error, info:
-                msg = 'Failure adding row for document %d: %s' % \
+                msg = 'Failure adding or updating row for document %d: %s' % \
+                      (self.__jobId, info[1][0])
+                raise StandardError(msg)
+
+    #------------------------------------------------------------------
+    # For docs already in the pub_proc_doc table, add any messages
+    # and failure codes.
+    #------------------------------------------------------------------
+    def __addPubProcDocMsgs(self):
+
+        # All user listed docs
+        cursor = self.__conn.cursor()
+        for doc in (self.__userDocList):
+            try:
+                # Row already exists, set messages if there are any
+                # Previous versions would retrieve messages and failure
+                #   codes from the database first, to be sure we don't
+                #   overwrite them.
+                # But now we do all updates in this one spot, so it
+                #   isn't necessary to examine what's already there.
+                if doc.getMsgs():
+                    cursor.execute("""\
+                        UPDATE pub_proc_doc
+                           SET messages=?, failure=?
+                         WHERE pub_proc=? AND doc_id=?""",
+                         (doc.getMsgs(), doc.getFailed(),
+                          self.__jobId, doc.getDocId()))
+
+            except cdrdb.Error, info:
+                msg = 'Failure updating row for document %d: %s' % \
                       (self.__jobId, info[1][0])
                 raise StandardError(msg)
 
@@ -2316,8 +2383,8 @@ has started</B>).<BR>""" % cgWorkLink
                             if threshold != -1:
                                 if self.__errorCount > threshold:
                                     raise
-                            self.__addJobMessages(arg[0])
-                        docs.append(doc)
+                            self.__addJobMessages(arg)
+                        docs.append(Doc(doc[0], doc[1], doc[2]))
                         self.__alreadyPublished[oneId] = 1
                         row = cursor.fetchone()
 
@@ -2347,7 +2414,7 @@ has started</B>).<BR>""" % cgWorkLink
                             if self.__errorCount > threshold:
                                 raise
                         self.__addJobMessages(arg[0])
-                    docs.append(doc)
+                    docs.append(Doc(doc[0], doc[1], doc[2]))
                     self.__alreadyPublished[oneId] = 1
 
         self.__debugLog("SubsetSpecification queries selected %d documents."
