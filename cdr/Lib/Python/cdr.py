@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.35 2002-06-26 02:24:58 ameyer Exp $
+# $Id: cdr.py,v 1.36 2002-07-01 21:39:59 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.35  2002/06/26 02:24:58  ameyer
+# Added lastVersions().
+#
 # Revision 1.34  2002/06/18 22:19:16  ameyer
 # Added canDo() to check authorization to do something.
 #
@@ -976,7 +979,7 @@ def getDoctypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Parse the response.
     types = re.findall("<DocType>(.*?)</DocType>", resp)
-    if 'filter' not in types: types.append('filter')
+    if 'Filter' not in types: types.append('Filter')
     types.sort()
     return types
 
