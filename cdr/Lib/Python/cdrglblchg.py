@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.10 2002-11-20 00:42:53 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.11 2002-11-20 00:46:32 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2002/11/20 00:42:53  ameyer
+# Added ability to select a particular Principal Investigator when a
+# particular Lead Org has been selected.
+#
 # Revision 1.9  2002/10/17 23:13:47  ameyer
 # Fixed bug introduced recently that attempted to pass replacement parameters
 # where none existed.
@@ -309,7 +313,6 @@ class GlblChg:
         # Select docs
         cdr.logwrite ("Selecting docs for willChange report", LF)
         rows = self.selDocs()
-        cdr.logwrite ("Done selecting docs for willChange report", LF)
 
         # If there aren't any
         if not rows:
@@ -904,7 +907,6 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
        self.sessionVars['fromStatusName'],
        self.sessionVars['restrId'],
        cdr.exNormalize(self.sessionVars['restrPiId'])[1])
-        cdr.logwrite ("Query: %s" % qry, LF)
 
         # Call a common routine to get the rows corresponding to the query
         return _execQry (qry)
