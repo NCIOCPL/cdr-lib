@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.18 2002-02-14 21:42:14 mruben Exp $
+# $Id: cdr.py,v 1.19 2002-02-15 06:56:31 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.18  2002/02/14 21:42:14  mruben
+# Fixed log comment [bkline for mruben].
+#
 # Revision 1.17  2002/02/14 21:25:49  mruben
 # Added no_output option to filterDoc() [committed by RMK].
 #
@@ -156,7 +159,7 @@ def getErrors(xml):
     errors  =  pattern.search(xml)
     if errors: return errors.group()
     else:      return "<Errors><Err>Internal failure</Err></Errors>"
-    
+
 #----------------------------------------------------------------------
 # Extract a piece of the CDR Server's response.
 #----------------------------------------------------------------------
@@ -187,7 +190,7 @@ def extract_multiple(pattern, response):
 # Log in to the CDR Server.  Returns session ID.
 #----------------------------------------------------------------------
 def login(userId, passWord, host = DEFAULT_HOST, port = DEFAULT_PORT):
-    
+
     # Send the login request to the server.
     cmds = LOGON_STRING % (userId, passWord) + "</CdrCommandSet>"
     resp = sendCommands(cmds, host, port)
@@ -258,22 +261,22 @@ class Doc:
         xml = self.xml and unicode(self.xml, 'latin-1').encode('utf-8') or ''
         rep += "</CdrDocCtl><CdrDocXml><![CDATA[%s]]></CdrDocXml>" % xml
         if self.blob:
-            rep += ("<CdrDocBlob>%s</CdrDocBlob>" 
+            rep += ("<CdrDocBlob>%s</CdrDocBlob>"
                     % base64.encodestring(self.blob))
         rep += "</CdrDoc>"
         return rep
-        
+
 #----------------------------------------------------------------------
 # Add a new document to the CDR Server.
 #----------------------------------------------------------------------
-def addDoc(credentials, file = None, doc = None, 
+def addDoc(credentials, file = None, doc = None,
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
            verPublishable = 'Y', setLinks = 'Y',
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Load the document if necessary.
     if file: doc = open(file, "r").read()
-    if not doc: 
+    if not doc:
         if file: return "<Errors><Err>%s not found</Err></Errors>" % (fileName)
         else:    return "<Errors><Err>Document missing.</Err></Errors>"
 
@@ -283,7 +286,7 @@ def addDoc(credentials, file = None, doc = None,
     reason  = "<Reason>%s</Reason>" % (reason)
     doLinks = "<SetLinks>%s</SetLinks>" % setLinks
     ver     = "<Version Publishable='%s'>%s</Version>" % (verPublishable, ver)
-    cmd     = "<CdrAddDoc>%s%s%s%s%s%s</CdrAddDoc>" % (checkIn, val, ver, 
+    cmd     = "<CdrAddDoc>%s%s%s%s%s%s</CdrAddDoc>" % (checkIn, val, ver,
                                                        doLinks, reason, doc)
 
     # Submit the commands.
@@ -295,14 +298,14 @@ def addDoc(credentials, file = None, doc = None,
 #----------------------------------------------------------------------
 # Replace an existing document in the CDR Server.
 #----------------------------------------------------------------------
-def repDoc(credentials, file = None, doc = None, 
+def repDoc(credentials, file = None, doc = None,
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
            verPublishable = 'Y', setLinks = 'Y',
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Load the document if necessary.
     if file: doc = open(file, "r").read()
-    if not doc: 
+    if not doc:
         if file: return "<Errors><Err>%s not found</Err></Errors>" % (fileName)
         else:    return "<Errors><Err>Document missing.</Err></Errors>"
 
@@ -312,7 +315,7 @@ def repDoc(credentials, file = None, doc = None,
     reason  = "<Reason>%s</Reason>" % (reason)
     doLinks = "<SetLinks>%s</SetLinks>" % setLinks
     ver     = "<Version Publishable='%s'>%s</Version>" % (verPublishable, ver)
-    cmd     = "<CdrRepDoc>%s%s%s%s%s%s</CdrRepDoc>" % (checkIn, val, ver, 
+    cmd     = "<CdrRepDoc>%s%s%s%s%s%s</CdrRepDoc>" % (checkIn, val, ver,
                                                        doLinks, reason, doc)
 
     # Submit the commands.
@@ -362,7 +365,7 @@ def delDoc(credentials, docId, val = 'N', reason = '',
 #----------------------------------------------------------------------
 # Validate a CDR document.
 #----------------------------------------------------------------------
-def valDoc(credentials, docType, docId = None, doc = None, 
+def valDoc(credentials, docType, docId = None, doc = None,
            valLinks = 'Y', valSchema = 'Y',
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
@@ -380,8 +383,8 @@ def valDoc(credentials, docType, docId = None, doc = None,
     else:
         raise StandardError("valDoc: no validation method specified")
     cmd     = "<CdrValidateDoc DocType='%s' "\
-              "ValidationType='%s'>%s</CdrValidateDoc>" % (docType, 
-                                                           valTypes, 
+              "ValidationType='%s'>%s</CdrValidateDoc>" % (docType,
+                                                           valTypes,
                                                            doc)
 
     # Submit the commands.
@@ -438,7 +441,7 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
     output = ""
     if no_output == "Y":
         output = ' Output="N"'
-        
+
     cmd = "<CdrFilter%s>%s%s%s</CdrFilter>" % (output, filterElem,
                                                docElem, parmElem)
 
@@ -577,7 +580,7 @@ def getDoctype(credentials, doctype, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    
+
     # Extract the response.
     results = extract("<CdrGetDocTypeResp (.*)</CdrGetDocTypeResp>", resp)
     if string.find(results, "<Err") != -1:
@@ -594,7 +597,7 @@ def getDoctype(credentials, doctype, host = DEFAULT_HOST, port = DEFAULT_PORT):
                                 re.DOTALL)
     schemaExpr     = re.compile(r"<DocSchema>(.*)</DocSchema>", re.DOTALL)
     enumSetExpr    = re.compile(r"""<EnumSet\s+Node\s*=\s*"""
-                                r"""['"]([^'"]+)['"]\s*>(.*?)</EnumSet>""", 
+                                r"""['"]([^'"]+)['"]\s*>(.*?)</EnumSet>""",
                                 re.DOTALL)
     vvExpr         = re.compile("<ValidValue>(.*?)</ValidValue>", re.DOTALL)
 
@@ -615,7 +618,7 @@ def getDoctype(credentials, doctype, host = DEFAULT_HOST, port = DEFAULT_PORT):
         for enumSet in enumSets:
             vvList = vvExpr.findall(enumSet[1])
             vvLists.append((enumSet[0], vvList))
-    
+
     # Return a dtinfo instance.
     return dtinfo(type       = type       and type      .group(1) or '',
                   format     = format     and format    .group(1) or '',
@@ -678,7 +681,7 @@ class Term:
         this.name     = name
         this.parents  = []
         this.children = []
-        
+
 class TermSet:
     def __init__(this, error = None):
         this.terms = {}
@@ -895,7 +898,7 @@ def getGroup(credentials, gName, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Stores information about a CDR group.
 #----------------------------------------------------------------------
-def putGroup(credentials, gName, group, host = DEFAULT_HOST, 
+def putGroup(credentials, gName, group, host = DEFAULT_HOST,
                                         port = DEFAULT_PORT):
 
     # Create the command
@@ -947,11 +950,11 @@ def putGroup(credentials, gName, group, host = DEFAULT_HOST,
 # Holds information about a single CDR user.
 #----------------------------------------------------------------------
 class User:
-    def __init__(self, 
-                 name, 
-                 password, 
-                 fullname = None, 
-                 office   = None, 
+    def __init__(self,
+                 name,
+                 password,
+                 fullname = None,
+                 office   = None,
                  email    = None,
                  phone    = None,
                  groups   = [],
@@ -1003,7 +1006,7 @@ def getUser(credentials, uName, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Stores information about a CDR user.
 #----------------------------------------------------------------------
-def putUser(credentials, uName, user, host = DEFAULT_HOST, 
+def putUser(credentials, uName, user, host = DEFAULT_HOST,
                                       port = DEFAULT_PORT):
 
     # Create the command
@@ -1105,7 +1108,7 @@ def getAction(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Stores information for a CDR action.
 #----------------------------------------------------------------------
-def putAction(credentials, name, action, host = DEFAULT_HOST, 
+def putAction(credentials, name, action, host = DEFAULT_HOST,
                                          port = DEFAULT_PORT):
 
     # Create the command
@@ -1161,8 +1164,8 @@ def delAction(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # Holds information about a single CDR link type.
 #----------------------------------------------------------------------
 class LinkType:
-    def __init__(self, name, linkSources = None, 
-                             linkTargets = None, 
+    def __init__(self, name, linkSources = None,
+                             linkTargets = None,
                              linkProps   = None,
                              comment     = None):
         self.name        = name
@@ -1253,11 +1256,11 @@ def getLinkType(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Stores information for a CDR link type.
 #----------------------------------------------------------------------
-def putLinkType(credentials, name, linkType, host = DEFAULT_HOST, 
-                                             port = DEFAULT_PORT):
+def putLinkType(credentials, name, linkType, linkAct,
+                host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Create the command
-    if name:
+    if linkAct == "modlink":
         cmd = "<CdrModLinkType><Name>%s</Name>" % name
         if linkType.name and name != linkType.name:
             cmd += "<NewName>%s</NewName>" % linkType.name
@@ -1284,7 +1287,10 @@ def putLinkType(credentials, name, linkType, host = DEFAULT_HOST,
         cmd += "<Comment>%s</Comment></LinkProperties>" % prop[2]
 
     # Submit the request.
-    cmd += (name and "</CdrModLinkType>" or "</CdrAddLinkType>")
+    if linkAct == "modlink":
+        cmd += "</CdrModLinkType>"
+    else:
+        cmd += "</CdrAddLinkType>"
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
     if string.find(resp, "<Err>") != -1:
         expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
@@ -1360,7 +1366,7 @@ def listQueryTermDefs(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
     pathExpr     = re.compile("<Path>(.*)</Path>")
     ruleExpr     = re.compile("<Rule>(.*)</Rule>")
     err          = checkErr(resp)
-    if err: 
+    if err:
         return err
     definitions  = defExpr.findall(resp)
     rc           = []
