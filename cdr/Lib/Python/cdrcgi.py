@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.5 2001-12-01 17:55:45 bkline Exp $
+# $Id: cdrcgi.py,v 1.6 2002-02-14 19:33:21 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2001/12/01 17:55:45  bkline
+# Added support for advanced search.
+#
 # Revision 1.4  2001/06/13 22:33:10  bkline
 # Added logout and mainMenu functions.
 #
@@ -261,6 +264,38 @@ class SearchField:
         self.selectors = selectors
 
 #----------------------------------------------------------------------
+# Generate picklist for miscellaneous document types.
+#----------------------------------------------------------------------
+def miscTypesList(conn, fName):
+    path = '/MiscellaneousDocument/MiscellaneousMetadata' \
+           '/MiscellaneousDocumentType'
+    try:
+        cursor = conn.cursor()
+        query  = """\
+SELECT DISTINCT value
+           FROM query_term
+          WHERE path = '%s'
+       ORDER BY value""" % path
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        cursor.close()
+        cursor = None
+    except cdrdb.Error, info:
+        bail('Failure retrieving misc type list from CDR: %s' % info[1][0])
+    html = """\
+      <SELECT NAME='%s'>
+       <OPTION VALUE='' SELECTED>&nbsp;</OPTION>
+""" % fName
+    for row in rows:
+        html += """\
+       <OPTION VALUE='%s'>%s &nbsp;</OPTION>
+""" % (row[0], row[0])
+    html += """\
+      </SELECT>
+"""
+    return html
+
+#----------------------------------------------------------------------
 # Generate picklist for document publication status valid values.
 #----------------------------------------------------------------------
 def pubStatusList(conn, fName):
@@ -283,7 +318,7 @@ def countryList(conn, fName):
     FROM document d
     JOIN doc_type t
       ON t.id = d.doc_type
-   WHERE t.name = 'GeographicEntity'
+   WHERE t.name = 'Country'
 ORDER BY d.title
 """
         cursor.execute(query)
@@ -312,28 +347,16 @@ def stateList(conn, fName):
     try:
         cursor = conn.cursor()
         query  = """\
-SELECT DISTINCT c.id, 
-                c.title, 
-                state_name.value,
-                frag_id.value,
-                short_name.value
-           FROM document c
-           JOIN doc_type t
-             ON (t.id = c.doc_type)
-           JOIN query_term state_name
-             ON (state_name.doc_id = c.id)
-           JOIN query_term frag_id
-             ON (frag_id.doc_id = c.id
-            AND frag_id.node_loc = LEFT(state_name.node_loc, 4))
-LEFT OUTER JOIN query_term short_name
-             ON short_name.doc_id = c.id
-          WHERE t.name = 'GeographicEntity'
-            AND state_name.path = '/GeographicEntity/PoliticalUnit' +
-                                  '/PoliticalUnitFullName'
-            AND frag_id.path    = '/GeographicEntity/PoliticalUnit/@cdr:id'
-            AND short_name.path = '/GeographicEntity/CountryShortName'
-       ORDER BY state_name.value
-"""
+SELECT DISTINCT s.id,
+                s.title,
+                c.title
+           FROM document s
+           JOIN query_term clink
+             ON clink.doc_id = s.id
+           JOIN document c
+             ON clink.int_val = c.id
+          WHERE clink.path = '/PoliticalSubUnit/Country/@cdr:ref'
+       ORDER BY s.title, c.title"""
         cursor.execute(query)
         rows = cursor.fetchall()
         cursor.close()
@@ -345,10 +368,9 @@ LEFT OUTER JOIN query_term short_name
        <OPTION VALUE='' SELECTED>&nbsp;</OPTION>
 """ % fName
     for row in rows:
-        cName = row[4] and row[4] or row[1]
         html += """\
-       <OPTION VALUE='CDR%010d#%s'>%s [%s]&nbsp;</OPTION>
-""" % (row[0], row[3], row[2], cName)
+       <OPTION VALUE='CDR%010d'>%s [%s]&nbsp;</OPTION>
+""" % (row[0], row[1], row[2])
     html += """\
       </SELECT>
 """
@@ -431,7 +453,8 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
     </TR>
 """ % (field[0], field[2](conn, field[1]))
 
-    html += """\
+    if len(fields) > 1:
+        html += """\
     <TR>
      <TD        NOWRAP
                 WIDTH       = "15%"
@@ -446,7 +469,9 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
        <OPTION>OR</OPTION>
       </SELECT>
      </TD>
-    </TR>
+    </TR>"""
+
+    html += """\
     <TR>
      <TD        WIDTH       = "15%">&nbsp;</TD>
      <TD        WIDTH       = "55%">&nbsp;</TD>
