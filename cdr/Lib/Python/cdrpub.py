@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.28 2002-09-05 14:41:45 pzhang Exp $
+# $Id: cdrpub.py,v 1.29 2002-09-05 16:26:01 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.28  2002/09/05 14:41:45  pzhang
+# Added port parameter to cdr.py function calls.
+# Made __reportOnly default to 0 so that pushing job will have value 0.
+#
 # Revision 1.27  2002/09/03 21:54:13  pzhang
 # Changed default values from 'No' to 'Yes'.
 # Enabled output_dir for ReportOnly.
@@ -117,7 +121,7 @@ class Publish:
     __pd2cg    = "Push_Documents_To_Cancer.Gov"
     __cdrHttp  = "http://%s.nci.nih.gov/cgi-bin/cdr" % socket.gethostname()
     __ignoreUserDocList = 0
-    __interactiveMode = 1
+    __interactiveMode = 0
     __checkRemovedDocs  = 1    
     __includeLinkedDocs = 1
     __reportOnly        = 0
@@ -240,8 +244,8 @@ class Publish:
             self.__params["IncludeLinkedDocs"] != "Yes":
             self.__includeLinkedDocs = 0
         if self.__params.has_key("InteractiveMode") and \
-            self.__params["InteractiveMode"] != "Yes":
-            self.__interactiveMode = 0	
+            self.__params["InteractiveMode"] == "Yes":
+            self.__interactiveMode = 1	
         if self.__params.has_key("CheckRemovedDocs") and \
             self.__params["CheckRemovedDocs"] != "Yes":
             self.__checkRemovedDocs = 0	
