@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrmailcommon.py,v 1.3 2002-11-01 02:42:57 ameyer Exp $
+# $Id: cdrmailcommon.py,v 1.4 2002-11-01 05:24:13 ameyer Exp $
 #
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2002/11/01 02:42:57  ameyer
+# New version using multi-temp-table queries developed by Bob.
+#
 # Revision 1.2  2002/10/24 23:13:07  ameyer
 # Revised selections and numerous small changes.
 #
@@ -87,6 +90,7 @@ class RemailSelector:
               preformatted for inclusion in an IN clause, e.g.,
                 "'Physician-Initial', 'Physician-Annual update'", or
                 "'Organization-Annual update'"
+                Allows us to test for multiple types in a remail.
               Note: This is not a tuple, it's a string, with SQL single
                     quotes included in the string.
               Note: It is legal to specify a set containing only one
@@ -237,17 +241,15 @@ class RemailSelector:
                      SELECT %d, doc, tracker
                        FROM #remail_temp""" % jobId)
 
-            # If we don't do this, results will be thrown away
-            self.__conn.commit()
+            # self.__conn.commit()
 
         except cdrdb.Error, info:
             raise 'database error saving remailer_ids %s' % str(info[1][0])
 
-    def getRelatedIds(self, docId):
+    def getRelatedId(self, docId):
         """
-        Return the ids of the mailer tracking documents
-        for a particular document to be remailed.
-        Data is returned as a sequence of tuples of tracker id.
+        Return the id of the mailer tracking document corresponding
+        to the original mailer for a particular document to be remailed.
         """
         try:
             self.__cursor.execute (
@@ -255,7 +257,7 @@ class RemailSelector:
                 "  FROM remailer_ids "
                 " WHERE job=? AND doc=?", (self.__jobId, docId))
 
-            return self.__cursor.fetchall()
+            return self.__cursor.fetchone()[0]
 
         except cdrdb.Error, info:
             raise 'database error getting related remailer_ids: %s' \
