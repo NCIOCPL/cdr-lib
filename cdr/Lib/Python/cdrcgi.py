@@ -1,10 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.35 2003-09-12 12:36:38 bkline Exp $
+# $Id: cdrcgi.py,v 1.36 2003-11-04 16:56:22 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.35  2003/09/12 12:36:38  bkline
+# Modified the function which constructs an advanced search query,
+# adding support for finding documents based on values in linked
+# documents.  Also added significantly expanded documentation to
+# the function.
+#
 # Revision 1.34  2003/08/12 19:59:23  ameyer
 # Added optional logfile parameter to bail().  If given, the messages written
 # back to the browser are also written to the named logfile.
@@ -348,9 +354,11 @@ def mainMenu(session, news = None):
       <LI><A HREF='%s/getBatchStatus.py%s'>View Batch Job Status</A></LI>
       <LI><A HREF='%s/MessageLoggedInUsers.py%s'>
             Send Email to Users Currently Logged in to the CDR</A></LI>
+      <LI><A HREF='%s/CTGov.py%s'>ClinicalTrials.Gov Protocols</A></LI>
       <LI><A HREF='%s/Logout.py%s'>Log Out</A></LI>
      </OL>
     """ % (BASE, session,
+           BASE, session,
            BASE, session,
            BASE, session,
            BASE, session,
