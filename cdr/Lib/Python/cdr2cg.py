@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.7 2002-08-22 12:40:25 bkline Exp $
+# $Id: cdr2cg.py,v 1.8 2002-09-13 16:51:40 pzhang Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2002/08/22 12:40:25  bkline
+# Added publish preview.
+#
 # Revision 1.6  2002/07/25 20:56:01  pzhang
 # Split docTemplate into docTemplateHead and docTemplateTail
 # and encoded them to UTF-8.
@@ -59,7 +62,7 @@ PUBTYPES = {
     'Hotfix (Remove)' : 'Delete individual documents from Cancer.gov',
     'Hotfix (Export)' : 'Send individual documents to Cancer.gov'
 }
-PDQDTD = "http://mmdb2.nci.nih.gov/dtds/PDQ.dtd"
+PDQDTD = "http://mahler.nci.nih.gov/dtds/PDQ.dtd"
 
 #----------------------------------------------------------------------
 # XML wrappers.
