@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.27 2002-08-15 21:18:07 bkline Exp $
+# $Id: cdrcgi.py,v 1.28 2002-09-05 16:31:14 pzhang Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.27  2002/08/15 21:18:07  bkline
+# Added command for sending broadcast email.
+#
 # Revision 1.26  2002/08/07 16:35:35  bkline
 # Added unicodeToLatin1() to sendPage().
 #
@@ -93,6 +96,7 @@ import cgi, cdr, cdrdb, sys, codecs, re, socket
 #----------------------------------------------------------------------
 USERNAME = "UserName"
 PASSWORD = "Password"
+PORT     = "Port"
 SESSION  = "Session"
 REQUEST  = "Request"
 DOCID    = "DocId"
@@ -158,13 +162,13 @@ def header(title, banner, subBanner, script = '', buttons = None, bkgd = '',
 # Get a session ID based on current form field values.
 #----------------------------------------------------------------------
 def getSession(fields):
-
+   
     # If we already have a Session field value, use it.
     if fields.has_key(SESSION):
         session = fields[SESSION].value
         if len(session) > 0:
             return session
-
+   
     # Check for missing fields.
     if not fields.has_key(USERNAME) or not fields.has_key(PASSWORD):
         return None
@@ -174,7 +178,10 @@ def getSession(fields):
         return None
 
     # Log on to the CDR Server.
-    session = cdr.login(userId, password)
+    if fields.has_key(PORT):       
+        session = cdr.login(userId, password, port = cdr.getPubPort())
+    else:    
+        session = cdr.login(userId, password)
     if session.find("<Err") >= 0: return None
     else:                         return session
 
