@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.16 2002-08-08 15:18:21 pzhang Exp $
+# $Id: cdrpub.py,v 1.17 2002-08-08 17:00:07 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.16  2002/08/08 15:18:21  pzhang
+# Don't push vendor documents that are not good.
+#
 # Revision 1.15  2002/08/07 19:47:38  pzhang
 # Added code to handle Subdirectory of SubsetSpecification.
 #
@@ -555,8 +558,9 @@ class Publish:
                     id      = row[0]
                     docType = row[1]  
                     if docType == "InScopeProtocol":
-                        docType = "Protocol"              
-                    xml = XmlDeclLine.sub("", row[2])
+                        docType = "Protocol"  
+                    xml = row[2].encode('utf-8')            
+                    xml = XmlDeclLine.sub("", xml)
                     xml = DocTypeLine.sub("", xml)
 
                     response = cdr2cg.sendDocument(jobId, docNum, 
