@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.98 2004-11-05 05:16:52 ameyer Exp $
+# $Id: cdr.py,v 1.99 2004-11-05 05:54:35 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,12 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.98  2004/11/05 05:16:52  ameyer
+# Added some new support for blobs, including zero length blobs (indicating
+# that a blob should be deleted/dissociated from a document).
+# Added makeDocBlob() function.
+# Added some documentation to the Doc class.
+#
 # Revision 1.97  2004/10/14 22:05:20  ameyer
 # If sendMail fails, log the error message as well as return it.
 #
@@ -1134,13 +1140,16 @@ def repDoc(credentials, file = None, doc = None, comment = '',
 # Retrieve a specified document from the CDR Server.
 #----------------------------------------------------------------------
 def getDoc(credentials, docId, checkout = 'N', version = "Current",
+           xml='Y', blob='N',
            host = DEFAULT_HOST, port = DEFAULT_PORT, getObject = 0):
 
     # Create the command.
-    did = normalize(docId)
-    lck = "<Lock>%s</Lock>" % (checkout)
-    ver = "<DocVersion>%s</DocVersion>" % (version)
-    cmd = "<CdrGetDoc><DocId>%s</DocId>%s%s</CdrGetDoc>" % (did, lck, ver)
+    did  = normalize(docId)
+    lck  = "<Lock>%s</Lock>" % (checkout)
+    ver  = "<DocVersion>%s</DocVersion>" % (version)
+    what = "includeXml='%s' includeBlob='%s'" % (xml, blob)
+    cmd  = "<CdrGetDoc %s><DocId>%s</DocId>%s%s</CdrGetDoc>" % \
+           (what, did, lck, ver)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
