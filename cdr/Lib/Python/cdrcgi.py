@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.10 2002-04-12 19:56:21 bkline Exp $
+# $Id: cdrcgi.py,v 1.11 2002-05-24 18:03:22 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2002/04/12 19:56:21  bkline
+# Added import statement for cdrdb module.
+#
 # Revision 1.9  2002/03/21 20:01:59  bkline
 # Added function for converting integers to Roman numerals.
 #
@@ -696,7 +699,8 @@ def advancedSearchResultsPage(docType, rows, strings, filter):
      <A         HREF = "%s?DocId=%s&Filter=%s">%s</A>
     </TD>
    </TR>
-""" % (i + 1, cgi.escape(title, 1), dtcol, '/cgi-bin/cdr/Filter.py', 
+""" % (i + 1, cgi.escape(unicodeToLatin1(title), 1), 
+       dtcol, '/cgi-bin/cdr/Filter.py', 
        docId, filt, docId)
     return html + "  </TABLE>\n </BODY>\n</HTML>\n"
 
