@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.68 2002-12-05 18:33:39 bkline Exp $
+# $Id: cdr.py,v 1.69 2003-01-31 00:08:20 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.68  2002/12/05 18:33:39  bkline
+# Fixed some ternary logic syntax in the publish() command.
+#
 # Revision 1.67  2002/11/22 14:40:48  bkline
 # Removed superfluous space before body in sendMail().
 #
@@ -1318,6 +1321,130 @@ def getDoctypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
     return types
 
 #----------------------------------------------------------------------
+# Add a value to the sys_value table.
+#----------------------------------------------------------------------
+def addSysValue(credentials, name, value, program=None, notes=None,
+                host = DEFAULT_HOST, port = DEFAULT_PORT):
+    """
+    Add a value to sys_value table on server.
+    Parameters:
+        credentials, port, host = standard stuff.
+        name    = Name of the value.
+        value   = Value string, can be empty.
+        program = Optional program name.
+        notes   = Documentation to store with name.
+    Return:
+        None.
+        Raises StandardError if failure.
+    """
+    _sysValue(credentials, "Add", name, value, program, notes, host, port)
+
+#----------------------------------------------------------------------
+# Replace a value in the sys_value table.
+#----------------------------------------------------------------------
+def repSysValue(credentials, name, value, program=None, notes=None,
+                host = DEFAULT_HOST, port = DEFAULT_PORT):
+    """
+    Replace a value to sys_value table on server.
+    Parameters:
+        See addSysValue
+    Return:
+        None.
+        Raises StandardError if failure.
+    """
+    _sysValue(credentials, "Rep", name, value, program, notes, host, port)
+
+#----------------------------------------------------------------------
+# Replace a value in the sys_value table.
+#----------------------------------------------------------------------
+def delSysValue(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
+    """
+    Delete row from sys_value table on server.
+    Parameters:
+        credentials, port, host = standard stuff.
+        name = "name" column of the row to delete.
+    Return:
+        None.
+        Raises StandardError if failure.
+    """
+    _sysValue(credentials, "Del", name, host=host, port=port)
+
+#----------------------------------------------------------------------
+# Retrieve a value from the sys_value table by its name.
+#----------------------------------------------------------------------
+def getSysValue(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
+    """
+    Retrieve value from sys_value table on server by its name.
+    Parameters:
+        credentials, port, host = standard stuff.
+          (Any credentials will do, no special authorization required.)
+        name = "name" column of the row from which to retrieve value.
+    Return:
+        Value string:
+            May be empty string.
+            Returns None if NULL in database.
+        Raises StandardError if failure.
+    """
+    return _sysValue(credentials, "Get", name, host=host, port=port)
+
+#----------------------------------------------------------------------
+# Internal routine to do the work of add/rep/del/getSysValue.
+#----------------------------------------------------------------------
+def _sysValue(credentials, action, name, value=None, program=None,
+              notes=None, host=DEFAULT_HOST, port=DEFAULT_PORT):
+    """
+    Add a value to sys_value table on server.
+    Parameters:
+        credentials, port, host = standard stuff.
+        action  = One of "Add", "Rep", "Del", "Get"
+                    Unchecked - this should only be called by the four
+                    front-end routines above that guarantee this.
+        name    = Name of the value.
+        value   = Value string, can be empty.
+        program = Optional program name.
+        notes   = Documentation to store with name.
+    Return:
+        None.
+        Raises StandardError if failure.
+    """
+    # Required for anything
+    if not credentials:
+        raise StandardError ("No credentials passed to %sSysValue" % action)
+    if not name:
+        raise StandardError ("No name passed to %sSysValue" % action)
+
+    # Create command
+    tag = "Cdr" + action + "SysValue"
+    cmd = " <%s>\n  <Name>%s</Name>\n" % (tag, name)
+    if value:
+        cmd += "  <Value>%s</Value>\n" % value
+    if program:
+        cmd += "  <Program>%s</Program>\n" % program
+    if notes:
+        cmd += "  <Notes>%s</Notes>\n" % notes
+    cmd += " </%s>\n" % tag
+
+    # Wrap with credentials and command structure
+    cmd = wrapCommand (cmd, credentials)
+
+    # Submit to server
+    resp = sendCommands (cmd, host, port)
+
+    # Did server report error?
+    errs = getErrors (resp, 0)
+    if len(errs) > 0:
+        raise StandardError ("Server error on %sSysValue:\n%s" % (action,errs))
+
+    # Do we need to return a value?
+    if action == "Get":
+        valPat   = re.compile("<Value>(.*)</Value>", re.DOTALL)
+        valMatch = valPat.search (resp)
+        if valMatch:
+            return valMatch.group(1)
+
+    return None
+
+#----------------------------------------------------------------------
 # Type used by getCssFiles() below.
 #----------------------------------------------------------------------
 class CssFile:
@@ -2327,7 +2454,7 @@ def wrapException(caller, errElems):
     raise exception
 
 #----------------------------------------------------------------------
-# Extract main CdrResponse node from a response document.  This 
+# Extract main CdrResponse node from a response document.  This
 # function will be called in one of two situations:
 #  (a) a CDR session has already been established, and only
 #      one CdrResponse element will be present; or
@@ -2360,7 +2487,7 @@ def extractResponseNode(caller, responseString):
     if not errElems:
         raise StandardError(caller, 'call failed but Err elements missing')
     wrapException(caller, errElems)
-    
+
 #----------------------------------------------------------------------
 # Get the list of filters in the CDR.
 #----------------------------------------------------------------------
