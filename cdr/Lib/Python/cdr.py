@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.77 2003-08-21 19:27:02 bkline Exp $
+# $Id: cdr.py,v 1.78 2003-08-26 17:36:26 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,11 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.77  2003/08/21 19:27:02  bkline
+# Added functions for normalizing and comparing XML for CDR documents;
+# added code to do XML escaping of character entities in control
+# elements of Doc class when serializing.
+#
 # Revision 1.76  2003/07/29 13:02:03  bkline
 # Added function to retrieve lists of valid values.  Changed CVSROOT
 # to point to verdi.
@@ -2653,17 +2658,20 @@ def getFilterSets(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 class FilterSet:
     def __init__(self, name, desc, notes = None, members = None):
-        self.name    = name
-        self.desc    = desc
-        self.notes   = notes
-        self.members = members or []
+        self.name     = name
+        self.desc     = desc
+        self.notes    = notes
+        self.members  = members or []
+        self.expanded = 0
     def __repr__(self):
         rep = "name=%s\n" % self.name
         rep += "desc=%s\n" % self.desc
         if self.notes:
             rep += "notes=%s\n" % self.notes
+        if self.expanded:
+            rep += "Expanded list of filters:\n"
         for member in self.members:
-            if type(member.id) == type(9):
+            if not self.expanded and type(member.id) == type(9):
                 rep += "filter set %d (%s)\n" % (member.id, member.name)
             else:
                 rep += "filter %s (%s)\n" % (member.id, member.name)
@@ -2737,6 +2745,58 @@ def getFilterSet(session, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
                 member = IdAndName(int(node.getAttribute('SetId')), textContent)
                 members.append(member)
     return FilterSet(name, desc, notes, members)
+
+#----------------------------------------------------------------------
+# Recursively rolls out the list of filters invoked by a named filter
+# set.  In contrast with getFilterSet, which returns a list of nested
+# filter sets and filters intermixed, all of the members of the list
+# returned by this function represent filters.  Since there is no need
+# to distinguish filters from nested sets by the artifice of
+# representing filter IDs as strings, the id member of each object
+# in this list is an integer.
+#
+# Takes the name of the filter set as input.  Returns a FilterSet
+# object, with the members attribute as described above.
+#
+# Note: since it is possible for bad data to trigger infinite
+# recursion, we throw an exception if the depth of nesting exceeds
+# a reasonable level.
+#
+# WARNING: treat the returned objects as read-only, otherwise you'll
+# corrupt the cache used for future calls.
+#----------------------------------------------------------------------
+_expandedFilterSetCache = {}
+def expandFilterSet(session, name, level = 0,
+                    host = DEFAULT_HOST, port = DEFAULT_PORT):
+    global _expandedFilterSetCache
+    if level > 100:
+        raise StandardError('expandFilterSet', 'infinite nesting of sets')
+    if _expandedFilterSetCache.has_key(name):
+        return _expandedFilterSetCache[name]
+    set = getFilterSet(session, name, host, port)
+    newSetMembers = []
+    for member in set.members:
+        if type(member.id) == type(9):
+            nestedSet = expandFilterSet(session, member.name, level + 1)
+            newSetMembers += nestedSet.members
+        else:
+            newSetMembers.append(member)
+    set.members = newSetMembers
+    set.expanded = 1
+    _expandedFilterSetCache[name] = set
+    return set
+
+#----------------------------------------------------------------------
+# Returns a dictionary containing all of the CDR filter sets, rolled
+# out by the expandFilterSet() function above, indexed by the filter
+# set names.
+#----------------------------------------------------------------------
+def expandFilterSets(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
+    sets = {}
+    for set in getFilterSets(session):
+        sets[set.name] = expandFilterSet(session, set.name, host = host,
+                                         port = port)
+    return sets
 
 #----------------------------------------------------------------------
 # Delete an existing CDR filter set.
