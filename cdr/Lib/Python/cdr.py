@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.69 2003-01-31 00:08:20 ameyer Exp $
+# $Id: cdr.py,v 1.70 2003-01-31 01:00:04 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.69  2003/01/31 00:08:20  ameyer
+# Added functions to add/replace/delete/get values in server sys_value table.
+#
 # Revision 1.68  2002/12/05 18:33:39  bkline
 # Fixed some ternary logic syntax in the publish() command.
 #
@@ -1323,7 +1326,7 @@ def getDoctypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Add a value to the sys_value table.
 #----------------------------------------------------------------------
-def addSysValue(credentials, name, value, program=None, notes=None,
+def addSysValue(credentials, name, value="", program=None, notes=None,
                 host = DEFAULT_HOST, port = DEFAULT_PORT):
     """
     Add a value to sys_value table on server.
@@ -1342,7 +1345,7 @@ def addSysValue(credentials, name, value, program=None, notes=None,
 #----------------------------------------------------------------------
 # Replace a value in the sys_value table.
 #----------------------------------------------------------------------
-def repSysValue(credentials, name, value, program=None, notes=None,
+def repSysValue(credentials, name, value="", program=None, notes=None,
                 host = DEFAULT_HOST, port = DEFAULT_PORT):
     """
     Replace a value to sys_value table on server.
@@ -1416,7 +1419,7 @@ def _sysValue(credentials, action, name, value=None, program=None,
     # Create command
     tag = "Cdr" + action + "SysValue"
     cmd = " <%s>\n  <Name>%s</Name>\n" % (tag, name)
-    if value:
+    if value != None:
         cmd += "  <Value>%s</Value>\n" % value
     if program:
         cmd += "  <Program>%s</Program>\n" % program
