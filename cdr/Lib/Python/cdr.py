@@ -1,18 +1,20 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.1 2001-03-26 00:32:57 bkline Exp $
+# $Id: cdr.py,v 1.2 2001-04-08 16:31:53 bkline Exp $
 #
 # Module of common CDR routines.
 #
 # Usage:
 #   import cdr
 #
+# $Log: not supported by cvs2svn $
+#
 #----------------------------------------------------------------------
 
 #----------------------------------------------------------------------
 # Import required packages.
 #----------------------------------------------------------------------
-import socket, string, struct, sys, re
+import socket, string, struct, sys, re, cgi, xml.dom.minidom
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -132,7 +134,7 @@ def addDoc(credentials, file = None, doc = None,
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
 
     # Extract the document ID.
-    return extract("(<DocId[>\s].*</DocId>)", resp)
+    return extract("<DocId.*>(CDR\d+)</DocId>", resp)
 
 #----------------------------------------------------------------------
 # Replace an existing document in the CDR Server.
@@ -157,7 +159,7 @@ def repDoc(credentials, file = None, doc = None,
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
 
     # Extract the document ID.
-    return extract("(<DocId[>\s].*</DocId>)", resp)
+    return extract("<DocId.*>(CDR\d+)</DocId>", resp)
 
 #----------------------------------------------------------------------
 # Retrieve a specified document from the CDR Server.
@@ -179,12 +181,14 @@ def getDoc(credentials, docId, checkout = 'N', version = "Current",
 #----------------------------------------------------------------------
 # Retrieve a specified document from the CDR Server using a filter.
 #----------------------------------------------------------------------
-def filterDoc(credentials, docId, filterId,
+def filterDoc(credentials, filterId, docId = None, doc = None,
               host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Create the command.
-    cmd = """<CdrFilter><Filter href='%s'/>
-             <Document href='%s'/></CdrFilter>""" % (filterId, docId)
+    if docId: docElem = "<Document href='%s'/>" % docId
+    elif doc: docElem = "<Document><![CDATA[%s]]></Document>" % doc
+    else: return "<Errors><Err>Document not specified.</Err></Errors>"
+    cmd = "<CdrFilter><Filter href='%s'/>%s</CdrFilter>" % (filterId, docElem)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -192,3 +196,277 @@ def filterDoc(credentials, docId, filterId,
     # Extract the filtered document.
     return extract("<Document[>\s][^<]*"
                    "<!\[CDATA\[(.*)\]\]>\s*</Document>", resp)
+
+#----------------------------------------------------------------------
+# Request the output for a CDR report.
+#----------------------------------------------------------------------
+def report(credentials, name, parms, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command.
+    cmd = "<CdrReport><ReportName>%s</ReportName>" % name
+
+    # Add the parameters.
+    if parms:
+        cmd = cmd + "<ReportParams>"
+        for parm in parms:
+            cmd = cmd + '<ReportParam Name="%s" Value="%s"/>' % (
+                cgi.escape(parm[0], 1), cgi.escape(parm[1], 1))
+        cmd = cmd + "</ReportParams>"
+
+    # Submit the commands.
+    resp = sendCommands(wrapCommand(cmd + "</CdrReport>", credentials),
+                        host, port)
+
+    # Extract the report.
+    return extract("(<ReportBody[>\s].*</ReportBody>)", resp)
+
+#----------------------------------------------------------------------
+# Process a CDR query.  Returns a tuple with two members, the first of
+# which is a list of tuples containing id, doctype and title for each
+# document in the search result, and the second of which is an <Errors>
+# element.  Exactly one of these two member of the tuple will be None.
+#----------------------------------------------------------------------
+def search(credentials, query, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command.
+    cmd = ("<CdrSearch><Query>//CdrDoc[%s]/CdrCtl/DocId</Query></CdrSearch>"
+            % query)
+
+    # Submit the search.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+
+    # Extract the results.
+    results = extract("<QueryResults>(.*)</QueryResults>", resp)
+    if string.find(results, "<Err") != -1:
+        return (None, results)
+    qrElemsPattern  = re.compile("<QueryResult>(.*?)</QueryResult>", re.DOTALL)
+    docIdPattern    = re.compile("<DocId>(.*)</DocId>", re.DOTALL)
+    docTypePattern  = re.compile("<DocType>(.*)</DocType>", re.DOTALL)
+    docTitlePattern = re.compile("<DocTitle>(.*)</DocTitle>", re.DOTALL)
+    ret = []
+    for qr in qrElemsPattern.findall(results):
+        docId    = docIdPattern.search(qr).group(1)
+        docType  = docTypePattern.search(qr).group(1)
+        docTitle = docTitlePattern.search(qr).group(1)
+        ret.append((docId, docType, docTitle))
+    return (ret, None)
+
+#----------------------------------------------------------------------
+# Class to contain CDR document type information.
+#----------------------------------------------------------------------
+class dtinfo:
+    def __init__(this,
+                 type       = None,
+                 format     = None,
+                 versioning = None,
+                 created    = None,
+                 schema_mod = None,
+                 dtd        = None,
+                 schema     = None,
+                 comment    = None,
+                 error      = None):
+        this.type           = type
+        this.format         = format
+        this.versioning     = versioning
+        this.created        = created
+        this.schema_mod     = schema_mod
+        this.dtd            = dtd
+        this.schema         = schema
+        this.comment        = comment
+        this.error          = error
+    def __repr__(this):
+        if this.error: return this.error
+        return """\
+[CDR Document Type]
+            Name: %s
+          Format: %s
+      Versioning: %s
+         Created: %s
+ Schema Modified: %s
+          Schema:
+%s
+             DTD:
+%s
+         Comment:
+%s
+""" % (this.type or '',
+       this.format or '',
+       this.versioning or '',
+       this.created or '',
+       this.schema_mod or '',
+       this.schema or '',
+       this.dtd or '',
+       this.comment or '')
+
+#----------------------------------------------------------------------
+# Retrieve document type information from the CDR.
+#----------------------------------------------------------------------
+def getDoctype(credentials, doctype, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrGetDocType Type='%s'/>" % doctype
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    
+    # Extract the response.
+    results = extract("<CdrGetDocTypeResp (.*)</CdrGetDocTypeResp>", resp)
+    if string.find(results, "<Err") != -1:
+        return dtinfo(error = extract("<Err>(.*)</Err>", results))
+
+    # Build the regular expressions.
+    typeExpr       = re.compile("Type=['\"]([^'\"]*)['\"]")
+    formatExpr     = re.compile("Format=['\"]([^'\"]*)['\"]")
+    versioningExpr = re.compile("Versioning=['\"]([^'\"]*)['\"]")
+    createdExpr    = re.compile("Created=['\"]([^'\"]*)['\"]")
+    schemaModExpr  = re.compile("SchemaMod=['\"]([^'\"]*)['\"]")
+    commentExpr    = re.compile("<Comment>(.*)</Comment>", re.DOTALL)
+    dtdExpr        = re.compile(r"<DocDtd>\s*<!\[CDATA\[(.*)\]\]>\s*</DocDtd>",
+                                re.DOTALL)
+    schemaExpr     = re.compile(r"<DocSchema>\s*<!\[CDATA\[(.*)\]\]>"
+                                r"\s*</DocSchema>",
+                                re.DOTALL)
+
+    # Parse out the components.
+    type       = typeExpr      .search(results)
+    format     = formatExpr    .search(results)
+    versioning = versioningExpr.search(results)
+    created    = createdExpr   .search(results)
+    schema_mod = schemaModExpr .search(results)
+    dtd        = dtdExpr       .search(results)
+    schema     = schemaExpr    .search(results)
+    comment    = commentExpr   .search(results)
+    
+    # Return a dtinfo instance.
+    return dtinfo(type       = type       and type      .group(1) or '',
+                  format     = format     and format    .group(1) or '',
+                  versioning = versioning and versioning.group(1) or '',
+                  created    = created    and created   .group(1) or '',
+                  schema_mod = schema_mod and schema_mod.group(1) or '',
+                  dtd        = dtd        and dtd       .group(1) or '',
+                  schema     = schema     and schema    .group(1) or '',
+                  comment    = comment    and comment   .group(1) or '')
+
+#----------------------------------------------------------------------
+# Modify existing document type information in the CDR.
+#----------------------------------------------------------------------
+def modDoctype(credentials, info, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrModDocType Type='%s' Format='%s' Versioning='%s'>"\
+          "<DocSchema><![CDATA[%s]]></DocSchema>"\
+        % (info.type, info.format, info.versioning, info.schema)
+    if info.comment:
+        cmd = cmd + "<Comment>%s</Comment>" % info.comment
+    cmd = cmd + "</CdrModDocType>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return dtinfo(error = err)
+    return getDoctype(credentials, info.type, host, port)
+
+#----------------------------------------------------------------------
+# Class representing recursive tree context for CDR terminology document.
+#----------------------------------------------------------------------
+class TermTree:
+    def __init__(this, 
+                 id         = None, 
+                 name       = None, 
+                 parents    = None, 
+                 children   = None, 
+                 error      = None):
+        this.id             = id
+        this.name           = name
+        this.parents        = parents
+        this.children       = children
+        this.error          = error
+    def parentRep(this, level = 0):
+        if not this.parents: return ''
+        rep = ''
+        for p in this.parents:
+            rep = rep + ' ' * level + "%s (%s)\n%s" % (p.name, 
+                                                       p.id,
+                                                       p.parentRep(level + 1))
+        return rep
+    def childrenRep(this, level = 0):
+        if not this.children: return ''
+        rep = ''
+        for c in this.children:
+            rep = rep + ' ' * level + "%s (%s)\n%s" % (c.name, 
+                                                       c.id,
+                                                       c.childrenRep(level + 1))
+        return rep
+    def __repr__(this):
+        if this.error: return this.error
+        rep = """\
+[Term] %s (%s)
+[Parents]
+%s
+[Children]
+%s
+""" % (this.name, 
+       this.id, 
+       this.parentRep(),
+       this.childrenRep())
+        return rep
+
+#----------------------------------------------------------------------
+# Extract the text content of a DOM element.
+#----------------------------------------------------------------------
+def getTextContent(node):
+    text = ''
+    for n in node.childNodes:
+        if n.nodeType == xml.dom.minidom.Node.TEXT_NODE:
+            text = text + n.nodeValue
+    return text
+
+#----------------------------------------------------------------------
+# Recursively parse Term information from a DOM node.
+#----------------------------------------------------------------------
+def parseTermNode(node):
+    id       = ''
+    name     = ''
+    parents  = []
+    children = []
+    for n in node.childNodes:
+        if n.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
+            if n.nodeName == 'DocId': id = getTextContent(n)
+            elif n.nodeName == 'TermName': name = getTextContent(n)
+            elif n.nodeName == 'Parents':
+                for p in n.childNodes:
+                    parents.append(parseTermNode(p))
+            elif n.nodeName == 'Children':
+                for c in n.childNodes:
+                    children.append(parseTermNode(c))
+    return TermTree(id, name, parents, children)
+
+#----------------------------------------------------------------------
+# Gets context information for term's position in terminology tree.
+#----------------------------------------------------------------------
+def getTree(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrGetTree><DocId>%s</DocId></CdrGetTree>" % docId
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return TermTree(error = err)
+
+    # Parse the tree
+    expr = re.compile("<CdrGetTreeResp>(.*)</CdrGetTreeResp>", re.DOTALL)
+    docString = expr.search(resp)
+    if not docString: return TermTree(error = "Response not found")
+    try:
+        dom = xml.dom.minidom.parseString(docString.group(1))
+        if not dom: return TermTree(error = "Failure parsing response")
+        return parseTermNode(dom.documentElement)
+    except:
+        return TermTree(error = "Failure parsing response")
