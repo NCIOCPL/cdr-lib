@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.12 2002-10-23 20:44:20 pzhang Exp $
+# $Id: cdr2cg.py,v 1.13 2002-11-01 19:16:05 pzhang Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.12  2002/10/23 20:44:20  pzhang
+# Used a single GateKeeper with 3 different sources: Development,
+#     Staging, and Production.
+#
 # Revision 1.11  2002/10/16 16:34:02  pzhang
 # Made GateKeeper hostname depend on localhost.
 #
@@ -309,7 +313,7 @@ def extractXmlResult(bodyNode):
 
 def logString(type, str):
     if debuglevel:
-        open("d:/cdr/log/cdr2cg.log", "a").write("==== %s %s ====\n%s\n" % 
+        open("d:/cdr/log/cdr2cg.log", "ab").write("==== %s %s ====\n%s\n" % 
             (time.ctime(), type, re.sub("\r", "", str)))
 
 def sendRequest(body, app = application, host = host, headers = headers):
