@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.85 2004-03-31 13:29:04 bkline Exp $
+# $Id: cdr.py,v 1.86 2004-04-02 17:06:54 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.85  2004/03/31 13:29:04  bkline
+# Made _addRepDocComment() function more robust in the face of unusual
+# conditions.
+#
 # Revision 1.84  2004/02/26 21:03:40  bkline
 # Expanded, generalized support for dynamic discovery of host name.
 #
@@ -781,6 +785,55 @@ def _addRepDocComment(doc, comment):
     # Insert comment
     return (parts[0] + "\n<DocComment>"+comment+"</DocComment>\n" + parts[1])
 
+#----------------------------------------------------------------------
+# Internal subroutine to add or replace DocActiveStatus element in CdrDocCtl.
+#----------------------------------------------------------------------
+def _addRepDocActiveStatus(doc, newStatus):
+
+    """
+    Add or replace DocActiveStatus element in CdrDocCtl.
+    Done by text manipulation.
+
+    Pass:
+        doc - Full document in CdrDoc format.
+        newStatus - 'I' or 'A'.
+
+    Return:
+        Full CdrDoc with DocActiveStatus element inserted or replaced.
+
+    Assumptions:
+        Both doc and comment must be UTF-8.  (Else must add conversions here.)
+    """
+
+    # Sanity check.
+    if not doc:
+        raise StandardError("_addRepDocActiveStatus(): missing doc argument")
+    
+    # Search for and delete existing DocComment
+    delPat = re.compile (r"\n*<DocActiveStatus.*</DocActiveStatus>\n*",
+                         re.DOTALL)
+    newDoc = delPat.sub ('', doc).replace('<DocActiveStatus/>', '')
+
+    # Search for CdrDocCtl to insert new DocComment after it
+    newDoc = newDoc.replace('<CdrDocCtl/>', '<CdrDocCtl></CdrDocCtl>')
+    insPat = re.compile (r"(?P<first>.*<CdrDocCtl[^>]*>)\n*(?P<last>.*)",
+                         re.DOTALL)
+    insRes = insPat.search (newDoc)
+    if insRes:
+        parts = insRes.group ('first', 'last')
+    if not insRes or len (parts) != 2:
+        # Should never happen unless there's a bug
+        raise StandardError ("addRepDocActiveStatus: No CdrDocCtl in doc:\n%s"
+                             % doc)
+
+    # Comment must be compatible with CdrDoc utf-8
+    if type(newStatus) == type(u""):
+        newStatus = newStatus.encode('utf-8')
+
+    # Insert new status
+    return (parts[0] + "\n<DocActiveStatus>" + newStatus
+            + "</DocActiveStatus>\n" + parts[1])
+
 
 #----------------------------------------------------------------------
 # Add a new document to the CDR Server.
@@ -798,6 +851,7 @@ def _addRepDocComment(doc, comment):
 def addDoc(credentials, file = None, doc = None, comment = '',
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
            verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
+           activeStatus = None,
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Load the document if necessary.
@@ -814,6 +868,10 @@ def addDoc(credentials, file = None, doc = None, comment = '',
     if len(comment) > 0:
         doc = _addRepDocComment (doc, comment)
 
+    # Change the active_status if requested; raises exception on failure.
+    if activeStatus:
+        doc = _addRepDocActiveStatus(doc, activeStatus)
+        
     # Create the command.
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
     val     = "<Validate>%s</Validate>" % (val)
@@ -848,10 +906,12 @@ def addDoc(credentials, file = None, doc = None, comment = '',
 # document and doc_version tables populated, you must supply a
 # DocComment child of the CdrDocCtl element inside the CdrDoc
 # of the doc argument.
+# [That's done for you now if you supply a 'comment' argument.]
 #----------------------------------------------------------------------
 def repDoc(credentials, file = None, doc = None, comment = '',
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
            verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
+           activeStatus = None,
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Load the document if necessary.
@@ -868,6 +928,10 @@ def repDoc(credentials, file = None, doc = None, comment = '',
     if len(comment) > 0:
         doc = _addRepDocComment (doc, comment)
 
+    # Change the active_status if requested; raises exception on failure.
+    if activeStatus:
+        doc = _addRepDocActiveStatus(doc, activeStatus)
+        
     # Create the command.
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
     val     = "<Validate>%s</Validate>" % (val)
