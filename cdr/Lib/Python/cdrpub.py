@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.50 2003-02-14 20:10:13 pzhang Exp $
+# $Id: cdrpub.py,v 1.51 2003-03-05 16:19:58 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.50  2003/02/14 20:10:13  pzhang
+# Dropped document type and added job description at prolog level.
+#
 # Revision 1.49  2003/01/29 21:52:09  pzhang
 # Fixed the bug in creating the pushing job. The new logic is:
 #     1) Vendor job will create a pushing job and then finish
@@ -1851,7 +1854,7 @@ class Publish:
             if self.__errorsBeforeAborting != -1:
                 if self.__errorCount > self.__errorsBeforeAborting:
                     if self.__errorsBeforeAborting:
-                        msg = "Aborting on error detected in CDR%010d<BR>" \
+                        msg = "Aborting on error detected in CDR%010d.<BR>" \
                                 % doc[0]
                     else:
                         msg = "Aborting: too many errors encountered"                    
@@ -1860,8 +1863,8 @@ class Publish:
             self.__addDocMessages(doc, warnings)
             self.__warningCount += 1
             if self.__publishIfWarnings == "No":
-                msg = "Aborting on warning(s) detected in CDR%010d" % doc[0]
-                self.__updateStatus(Publish.FAILURE, msg)
+                msg = "Aborting on warning(s) detected in CDR%010d.<BR>" \
+                    % doc[0]                
                 raise StandardError(msg)
 
     #------------------------------------------------------------------
@@ -2485,7 +2488,7 @@ Please do not reply to this message.
             cursor.execute("""
                 SELECT count(*)
                   FROM pub_proc_doc
-                 WHERE failure = 'Y'
+                 WHERE (failure = 'Y' OR messages IS NOT NULL)
                    AND pub_proc = %d
                            """ % id
                           )
