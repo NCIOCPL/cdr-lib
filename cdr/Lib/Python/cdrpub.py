@@ -1,10 +1,17 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.60 2004-11-09 15:59:22 bkline Exp $
+# $Id: cdrpub.py,v 1.61 2004-11-29 19:56:38 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.60  2004/11/09 15:59:22  bkline
+# Added code to collect terminology semantic types; fixed threading bug
+# (added test for whether we were done before trying to publish a
+# document).  Added a couple of wrapper methods for determining what
+# kind of job this is.  Added a couple of comments about places where
+# the code doesn't make sense (marked with XXX).
+#
 # Revision 1.59  2004/10/07 14:35:50  ameyer
 # Significant changes extending the multithreading.
 # Fixed bug whereby messages added to a doc were lost because an attempt
@@ -324,8 +331,9 @@ class Publish:
 
     # Thread locking objects.
     # All threads share this one instance of a Publish object.
-    __lockNextDoc = threading.Lock()
-    __lockLog     = threading.Lock()
+    __lockNextDoc  = threading.Lock()
+    __lockLog      = threading.Lock()
+    __lockManifest = threading.Lock()
 
     # Publish this many docs in parallel
     __numThreads  = PUB_THREADS
@@ -334,6 +342,9 @@ class Publish:
     # Other threads will see it and exit
     __threadError = None
 
+    # Rows to be written to the image manifest file.
+    __mediaManifest = []
+    
     #---------------------------------------------------------------
     # Hash __dateFirstPub is specifically designed to solve the issue
     # that DateFirstPublished element in vendor documents must be
@@ -831,8 +842,17 @@ class Publish:
         self.__updateFirstPub()
         
         # Capture terminology for processing NLM export docs.
-        if self.__outputDir:
+        if self.__outputDir and os.path.isdir(self.__outputDir):
             TermParser().getSemanticTypes(self.__conn, self.__outputDir)
+
+            # If any images were published, write out a manifest file.
+            if self.__mediaManifest:
+                import csv
+                filename = os.path.join(self.__outputDir, "media.catalog")
+                manifestFile = file(filename, "wb")
+                csvWriter = csv.writer(manifestFile)
+                csvWriter.writerows(self.__mediaManifest)
+                manifestFile.close()
 
         # Send email to notify user of job status.
         self.__sendMail()
@@ -2148,65 +2168,93 @@ has started</B>).<BR>""" % cgWorkLink
         errors   = ""
         invalDoc = ""
 
-        # Apply each filter set to the document.
-        filteredDoc = None
-        for filterSet in filters:
-
-            # Substitute parameter value of DateFirstPub.
-            paramList = []
-            for pair in filterSet[1]:
-                if pair[0] == 'DateFirstPub':
-                    date = self.__dateFirstPub[docId]
-                    paramList.append((pair[0], date))
-                else:
-                    paramList.append((pair[0], pair[1]))
-
-            # First filter set is run against document from database.
-            if not filteredDoc:
-                result = cdr.filterDoc(self.__credentials, filterSet[0],
-                                       docId = docId, docVer = doc.getVersion(),
-                                       parm = paramList,
-                                       port = self.__pubPort)
-
-            # Subsequent filter sets are applied to previous results.
-            else:
-                result = cdr.filterDoc(self.__credentials, filterSet[0],
-                                       doc = filteredDoc, parm = paramList,
-                                       port = self.__pubPort)
-            if type(result) not in (type([]), type(())):
-                errors = result or "Unspecified failure filtering document"
-                filteredDoc = None
-                break
-
-            filteredDoc = result[0]
-            if result[1]: warnings += result[1]
-
-        # Validate the filteredDoc against Vendor DTD.
-        if self.__validateDocs and filteredDoc:
-            errObj = validateDoc(filteredDoc, docId = docId)
-            for error in errObj.Errors:
-                errors += "%s<BR>" % error
-                invalDoc = "InvalidDocs"
-            for warning in errObj.Warnings:
-                warnings += "%s<BR>" % warning
-                invalDoc = "InvalidDocs"
-
-        # Save the output as instructed.
-        if self.__no_output != 'Y' and filteredDoc:
+        # Save blob, not XML, for Media docs.
+        if doc.getDocTypeStr() == "Media":
+            name = "CDR%010d" % docId
             try:
-                if invalDoc:
-                    subDir = invalDoc
-                destDir = destDir + "/" + subDir
-                if destType == Publish.FILE:
-                    self.__saveDoc(filteredDoc, destDir, self.__fileName, "a")
-                # Removed because not threadsafe and never used
-                # elif destType == Publish.DOCTYPE:
-                #     self.__saveDoc(filteredDoc, destDir,
-                #                    doc.getDocTypeStr(), "a")
-                else:
-                    self.__saveDoc(filteredDoc, destDir, "CDR%d.xml" % docId)
+                cdrDoc = cdr.getDoc('guest', docId,
+                                    version = str(doc.getVersion()),
+                                    blob = 'Y', getObject = True)
+                name = cdrDoc.getPublicationFilename()
+                self.__saveDoc(cdrDoc.blob, destDir, name, "wb")
+                lastChange = cdr.getVersionedBlobChangeDate('guest', docId,
+                                                            doc.getVersion(),
+                                                            self.__conn)
+                title = cdrDoc.ctrl.get('DocTitle', '').strip()
+                title = title.replace('\r', '').replace('\n', ' ')
+                self.__lockManifest.acquire(1)
+                self.__mediaManifest.append((name, lastChange, title))
+                self.__lockManifest.release()
+            except Exception, e:
+                errors = "Failure writing %s: %s" % (name, str(e))
             except:
-                errors = "Failure writing document CDR%010d" % docId
+                errors = "Failure writing %s" % name
+            
+        # Standard processing for non-Media documents.
+        else:
+            
+            # Apply each filter set to the document.
+            filteredDoc = None
+            for filterSet in filters:
+
+                # Substitute parameter value of DateFirstPub.
+                paramList = []
+                for pair in filterSet[1]:
+                    if pair[0] == 'DateFirstPub':
+                        date = self.__dateFirstPub[docId]
+                        paramList.append((pair[0], date))
+                    else:
+                        paramList.append((pair[0], pair[1]))
+
+                # First filter set is run against document from database.
+                if not filteredDoc:
+                    result = cdr.filterDoc(self.__credentials, filterSet[0],
+                                           docId = docId,
+                                           docVer = doc.getVersion(),
+                                           parm = paramList,
+                                           port = self.__pubPort)
+
+                # Subsequent filter sets are applied to previous results.
+                else:
+                    result = cdr.filterDoc(self.__credentials, filterSet[0],
+                                           doc = filteredDoc, parm = paramList,
+                                           port = self.__pubPort)
+                if type(result) not in (type([]), type(())):
+                    errors = result or "Unspecified failure filtering document"
+                    filteredDoc = None
+                    break
+
+                filteredDoc = result[0]
+                if result[1]: warnings += result[1]
+
+            # Validate the filteredDoc against Vendor DTD.
+            if self.__validateDocs and filteredDoc:
+                errObj = validateDoc(filteredDoc, docId = docId)
+                for error in errObj.Errors:
+                    errors += "%s<BR>" % error
+                    invalDoc = "InvalidDocs"
+                for warning in errObj.Warnings:
+                    warnings += "%s<BR>" % warning
+                    invalDoc = "InvalidDocs"
+
+            # Save the output as instructed.
+            if self.__no_output != 'Y' and filteredDoc:
+                try:
+                    if invalDoc:
+                        subDir = invalDoc
+                    destDir = destDir + "/" + subDir
+                    if destType == Publish.FILE:
+                        self.__saveDoc(filteredDoc, destDir,
+                                       self.__fileName, "a")
+                    # Removed because not threadsafe and never used
+                    # elif destType == Publish.DOCTYPE:
+                    #     self.__saveDoc(filteredDoc, destDir,
+                    #                    doc.getDocTypeStr(), "a")
+                    else:
+                        self.__saveDoc(filteredDoc, destDir,
+                                       "CDR%d.xml" % docId)
+                except:
+                    errors = "Failure writing document CDR%010d" % docId
 
         # Handle errors and warnings.
         self.__checkProblems(doc, errors, warnings)
@@ -2315,7 +2363,7 @@ has started</B>).<BR>""" % cgWorkLink
                                doc.getDocId(),
                                doc.getVersion(),
                                doc.getMsgs(),
-                               doc.getFailed(),
+                               doc.getFailed() and 'Y' or None,
                                subDir))
                     doc.setRecorded()
                 else:
@@ -2350,7 +2398,7 @@ has started</B>).<BR>""" % cgWorkLink
                         UPDATE pub_proc_doc
                            SET messages=?, failure=?
                          WHERE pub_proc=? AND doc_id=?""",
-                         (doc.getMsgs(), doc.getFailed(),
+                         (doc.getMsgs(), doc.getFailed() and 'Y' or None,
                           self.__jobId, doc.getDocId()))
 
             except cdrdb.Error, info:
