@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.20 2005-03-01 21:10:22 bkline Exp $
+# $Id: CdrLongReports.py,v 1.21 2005-03-10 14:18:20 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.20  2005/03/01 21:10:22  bkline
+# Made active date range controlled by parameters.
+#
 # Revision 1.19  2005/03/01 15:35:03  bkline
 # Modified the date range for the OSP report.
 #
@@ -375,6 +378,7 @@ def ospReport(job):
                                     name = cdr.getTextContent(greatgrandchild)
                             if name and date:
                                 self.statuses.append(Status(name, date))
+            self.statuses.sort(lambda a, b: cmp(a.startDate, b.startDate))
             for i in range(len(self.statuses)):
                 if i == len(self.statuses) - 1:
                     self.statuses[i].endDate = time.strftime("%Y-%m-%d")
@@ -499,7 +503,7 @@ def ospReport(job):
                            "Completed",
                            "Closed",
                            "Approved-not yet active"):
-                if status in statusSet:
+                if status.upper() in statusSet:
                     return status
             return ""
 
@@ -640,6 +644,13 @@ def ospReport(job):
     rowNum = 1
     protocols.sort(lambda a,b: cmp(a.firstPub, b.firstPub))
     for prot in protocols:
+
+        # Change requested by Lakshmi 2005-02-25 (request #1567).
+        if prot.status in ('Closed', 'Completed'):
+            closedDate = prot.closed
+        else:
+            closedDate = ''
+
         rowNum += 1
         cell = sheet.Cells(rowNum, 1)
         url = ("http://www.cancer.gov/clinicaltrials/"
@@ -654,7 +665,7 @@ def ospReport(job):
         sheet.Cells(rowNum, 2).Value = prot.firstId
         sheet.Cells(rowNum, 3).Value = "; ".join(prot.otherIds)
         sheet.Cells(rowNum, 4).Value = prot.firstPub
-        sheet.Cells(rowNum, 5).Value = prot.closed
+        sheet.Cells(rowNum, 5).Value = closedDate
         sheet.Cells(rowNum, 6).Value = "; ".join(prot.types)
         sheet.Cells(rowNum, 7).Value = prot.status
         sheet.Cells(rowNum, 8).Value = prot.ageRange
