@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.17 2003-11-05 01:44:54 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.18 2003-11-14 02:16:34 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,10 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.17  2003/11/05 01:44:54  ameyer
+# Changes to allow a document to be filtered multiple times for one global
+# change, each with different filters and/or parameters.
+#
 # Revision 1.16  2003/09/16 19:43:28  ameyer
 # Moved assignment of filter parameters from here to cdrglblchg.py.
 # Now performing filterDoc operations in a loop, allowing multiple
@@ -123,6 +127,114 @@ def logDocErr (docId, where, msg):
     # Different format for HTML report to user
     return ("Error %s:<br>%s" % (where, msg))
 
+#----------------------------------------------------------------------
+# Utility function to filter a document
+#----------------------------------------------------------------------
+def runFilters (docId, docVerType, docVer):
+    """
+    Execute one or more filters to produce changed doc.
+
+    If more than one filter is required then:
+        Each filter has different parameters.
+        First filter operates on doc in database.
+        Subsequent filters operate on output of last filtering.
+
+    Pass:
+        docId      - Numeric document ID.
+        docVerType - Tells whether we're processing the current
+                     working document or a publishable version, one of:
+                        cdrglblchg.FLTR_CWD
+                        cdrglblchg.FLTR_PUB
+        docVer     - Version number, or None for CWD.
+
+    Return:
+        Sequence of:
+            Modified document (None if filtering failed).
+            Messages (None if no errors or warnings).
+
+    Notes:
+        runFilters() may return a document plus warning messages.
+        But if there is a serious error, a document is never returned.
+    """
+
+    # Setup name of what we're doing based on document version type
+    if docVerType == cdrglblchg.FLTR_CWD:
+        docVerName = "CWD"
+    elif docVerType == cdrglblchg.FLTR_PUB:
+        docVerName = "last publishable version"
+    else:
+        errs = logDocErr (docId, "runFilters",
+                          "Bad docVerType %d passed" % docVerType)
+        return (None, errs)
+
+    # Filtering can be done in multiple passes
+    passNumber  = 0
+
+    # No results yet
+    filteredDoc = None
+    errs        = None
+
+    # Same as docId to start, then becomes None
+    docNum = docId
+
+    # What we are about to do
+    cdr.logwrite ("Filtering doc=%d docVerName=%s docVer=%s" % \
+                   (docId, docVerName, str(docVer)), LF)
+
+    # Make each pass until no more filter info to process
+    while 1:
+        # Find filter name and parameters
+        fltrInfo = chg.getFilterInfo (docVerType)
+
+        # If there aren't any more, we're done
+        if not fltrInfo:
+            break;
+
+        # Log all filter info for debugging
+        cdr.logwrite ("Type docId=%s" % str(type(docId)), LF)
+        cdr.logwrite ("filter=%s\n  parms=%s\n  docId=%d pass=%d" % \
+           (fltrInfo[0], fltrInfo[1], docId, passNumber), LF)
+
+        # First pass uses docNum and optional docVer
+        # Next pass(es) use filteredDoc
+        filtResp = cdr.filterDoc (session,
+                   filter=fltrInfo[0], parm=fltrInfo[1],
+                   docId=docNum, doc=filteredDoc, docVer=docVer)
+
+        # Finished a filter pass
+        passNumber += 1
+
+        # Did it fail?
+        if type(filtResp) != type(()):
+            logDocErr (docId, "filter failure, pass=%d" % passNumber, filtResp)
+
+            # Setup error return to caller
+            filteredDoc = None
+            errs        = filtResp
+            break
+
+        # Else success
+        # Get document and messages
+        filteredDoc = filtResp[0]
+        if filtResp[1]:
+            if errs:
+                errs += "<br>" + filtResp[1]
+            else:
+                errs = filtResp[1]
+
+        # In next iteration (if any) we filter the results of
+        #   the last filtering rather than the repository doc
+        docNum = None
+        docVer = None
+
+    # Did we fail to find any filters at all?
+    if passNumber == 0:
+        errs = logDocErr (docId, "Filtering",
+                          "No filters found via getFilterInfo()");
+
+    cdr.logwrite ("Finished filtering %s" % docVerName, LF)
+
+    return (filteredDoc, errs)
 
 #----------------------------------------------------------------------
 # Setup job
@@ -280,32 +392,12 @@ for idTitle in originalDocs:
                               (lastVerNum, lastPubVerNum, isChanged), LF)
 
                 # Execute one or more filters to produce changed CWD
-                passNumber = 0
-                result     = 1
-                cdr.logwrite ("Filtering CWD", LF)
-                while result:
-                    result = chg.getFilterInfo (cdrglblchg.FLTR_CWD)
-                    if result:
-                        cdr.logwrite (\
-                           " filter=%s\n  parms=%s\n  docId=%d pass=%d" % \
-                           (result[0], result[1], docId, passNumber), LF)
-                        if result:
-                            filtResp = cdr.filterDoc (session,
-                                       filter=result[0], parm=result[1],
-                                       docId=docId, docVer=None)
-                        passNumber += 1
+                (chgCwdXml, errs) = runFilters (docId, cdrglblchg.FLTR_CWD,
+                                                None)
 
-                if passNumber == 0:
-                    failed = logDocErr (docId, "Filtering CWD",
-                                "No filters found via getFilterInfo()");
-
-                if type(filtResp) != type(()):
-                    failed = logDocErr (docId, "filtering CWD, pass=%d" % \
-                                        passNumber, filtResp)
-                else:
-                    # Get document, ignore messages (filtResp[1])
-                    chgCwdXml = filtResp[0]
-                cdr.logwrite ("Finished filtering doc", LF)
+                # No doc means errors only
+                if not chgCwdXml:
+                    failed = errs
 
         if not failed:
 
@@ -332,31 +424,13 @@ for idTitle in originalDocs:
                 else:
                     # Last published version is different from the CWD
                     # Fetch and filter it
-                    passNumber = 0
-                    result     = 1
-                    cdr.logwrite ("Filtering last version", LF)
-                    while result:
-                        result = chg.getFilterInfo (cdrglblchg.FLTR_PUB)
-                        if result:
-                            cdr.logwrite (\
-                               " filter=%s\n  parms=%s\n  docId=%d pass=%d" % \
-                               (result[0], result[1], docId, passNumber), LF)
-                            filtResp = cdr.filterDoc (session, filter=result[0],
-                                       parm=result[1], docId=docId,
-                                       docVer=lastPubVerNum)
-                            passNumber += 1
+                    (chgPubVerXml, errs) = runFilters (docId,
+                                                       cdrglblchg.FLTR_PUB,
+                                                       lastPubVerNum)
 
-                    if passNumber == 0:
-                        failed = logDocErr (docId, "Filtering last version",
-                                    "No filters found via getFilterInfo()");
-
-                    if type(filtResp) != type(()):
-                        failed = logDocErr(docId,
-                             "filtering last publishable version, pass=%d" %
-                              passNumber, filtResp)
-                    else:
-                        chgPubVerXml = filtResp[0]
-                    cdr.logwrite ("Finished filtering last version", LF)
+                # No doc means errors only
+                if not chgCwdXml:
+                    failed = errs
 
         if not failed:
             # For debug
