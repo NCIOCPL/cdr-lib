@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.10 2002-10-03 16:04:59 pzhang Exp $
+# $Id: cdr2cg.py,v 1.11 2002-10-16 16:34:02 pzhang Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2002/10/03 16:04:59  pzhang
+# Logged HTTP error in log file and StandardError.
+#
 # Revision 1.9  2002/09/30 19:29:53  pzhang
 # Accepted docType and docId for command line testing.
 #
@@ -35,7 +38,7 @@
 # Module for communicating with Cancer.Gov SOAP server (GateKeeper).
 #
 #----------------------------------------------------------------------
-import httplib, re, sys, time, xml.dom.minidom
+import httplib, re, sys, time, xml.dom.minidom, socket, string
 
 #----------------------------------------------------------------------
 # Namespaces we don't really need.
@@ -49,10 +52,14 @@ import httplib, re, sys, time, xml.dom.minidom
 # Module data.
 #----------------------------------------------------------------------
 debuglevel          = 0
-host                = "gatekeeper.cancer.gov"
+localhost           = socket.gethostname()
+remotehost          = "gatekeeper"
+if string.upper(localhost) == "BACH":
+    remotehost = "stage"
+host                = "%s.cancer.gov" % remotehost
 port                = 80
 soapNamespace       = "http://schemas.xmlsoap.org/soap/envelope/"
-application         = "/GateKeeper.asmx"
+application         = "/GateKeeper/GateKeeper.asmx"
 headers             = {
     'Content-type': 'text/xml; charset="utf-8"',
     'SOAPAction'  : 'http://gatekeeper.cancer.gov/Request'
