@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.13 2004-08-06 22:31:02 bkline Exp $
+# $Id: CdrLongReports.py,v 1.14 2004-08-27 13:50:45 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.13  2004/08/06 22:31:02  bkline
+# Made table titles bold for Glossary Term Search report at Margaret's
+# request.
+#
 # Revision 1.12  2004/07/28 20:56:37  venglisc
 # Modified to use different filter set for OrgProtocolReview report.
 # Requested under Bug 1264.
@@ -1533,8 +1537,9 @@ The URL report you requested can be viewed at
 #----------------------------------------------------------------------
 class GlossaryTermSearch:
 
-    def __init__(self, id):
+    def __init__(self, id, types):
         self.docId = id
+        self.types = types or "HPSummaries PatientSummaries PatientAbstracts"
 
     class Word:
         "Normalized token for one word in a phrase."
@@ -1594,7 +1599,6 @@ class GlossaryTermSearch:
             wordsLeft   = len(words)
             currentMap  = self.nodeMap
             currentWord = 0
-            self.clearFlags()
             while wordsLeft > 0:
                 nodes = []
                 currentMap = self.nodeMap
@@ -1656,12 +1660,7 @@ class GlossaryTermSearch:
                 
     def strip(s):
         "Remove unused punctuation from glossary term."
-        #return s.strip(GlossaryTermSearch.punct) Not supported by 2.2.1?
-        while s and (s[0] in GlossaryTermSearch.punct):
-            s = s[1:]
-        while s and s[-1] in GlossaryTermSearch.punct:
-            s = s[:-1]
-        return s
+        return s.strip(GlossaryTermSearch.punct)
 
     def getWords(text):
         "Extract Word tokens from phrase or text block."
@@ -1730,6 +1729,7 @@ class GlossaryTermSearch:
         row = self.cursor.fetchone()
         numRows = 0
         while row:
+            self.tree.clearFlags()
             docId, docXml, docTitle = row
             title = cgi.escape(docTitle)
             dom = xml.dom.minidom.parseString(docXml.encode('utf-8'))
@@ -1742,6 +1742,7 @@ class GlossaryTermSearch:
                             sectionTitle = self.getTextContent(child)
                             sectionTitle = cgi.escape(sectionTitle)
                             break
+                    self.tree.clearFlags()
                     for phrase in self.tree.findPhrases(text):
                         phrase = cgi.escape(phrase)
                         mp = self.MatchingPhrase(phrase, title, docId,
@@ -1824,15 +1825,18 @@ class GlossaryTermSearch:
         ON t.id = d.doc_type
      WHERE t.name = 'InScopeProtocol'
        AND d.active_status = 'A'"""
-        html += self.addTable(tableTitles[0], "SectionTitle",
-                              summaryQuery % 'Health professionals',
-                              self.summarySorter)
-        html += self.addTable(tableTitles[1], "SectionTitle",
-                              summaryQuery % 'Health professionals',
-                              self.summarySorter)
-        html += self.addTable(tableTitles[2], "Element Name",
-                              protocolQuery,
-                              self.protocolSorter)
+        if "HPSummaries" in self.types:
+            html += self.addTable(tableTitles[0], "SectionTitle",
+                                  summaryQuery % 'Health professionals',
+                                  self.summarySorter)
+        if "PatientSummaries" in self.types:
+            html += self.addTable(tableTitles[1], "SectionTitle",
+                                  summaryQuery % 'Patients',
+                                  self.summarySorter)
+        if "PatientAbstracts" in self.types:
+            html += self.addTable(tableTitles[2], "Element Name",
+                                  protocolQuery,
+                                  self.protocolSorter)
         html += u"""\
  </body>
 </html>
@@ -1902,9 +1906,10 @@ def orgProtocolReview(job):
 #----------------------------------------------------------------------
 def glossaryTermSearch(job):
     docId  = job.getParm("id")
+    types  = job.getParm("types")
     digits = re.sub(r"[^\d]", "", docId)
     docId  = int(digits)
-    report = GlossaryTermSearch(docId)
+    report = GlossaryTermSearch(docId, types)
     report.report(job)
 
 ## class Job:
