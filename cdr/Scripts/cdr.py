@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.14 2002-01-22 22:30:59 bkline Exp $
+# $Id: cdr.py,v 1.15 2002-01-31 21:39:26 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.14  2002/01/22 22:30:59  bkline
+# Added depth argument to getTree() function.
+#
 # Revision 1.13  2001/12/24 19:35:04  bkline
 # Added valDoc function.
 #
@@ -377,9 +380,11 @@ def valDoc(credentials, docType, docId = None, doc = None,
 
 #----------------------------------------------------------------------
 # Retrieve a specified document from the CDR Server using a filter.
-# Returns list of [filtered_document, messages] or error_string
+# Returns list of [filtered_document, messages] or error_string.
+# Set the inline parameter to 1 if you want the second argument to
+# be recognized as the filter XML document string in memory.
 #----------------------------------------------------------------------
-def filterDoc(credentials, filterId, docId = None, doc = None,
+def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
               host = DEFAULT_HOST, port = DEFAULT_PORT, parm = []):
 
     # Create the command.
@@ -387,10 +392,14 @@ def filterDoc(credentials, filterId, docId = None, doc = None,
     elif doc: docElem = "<Document><![CDATA[%s]]></Document>" % doc
     else: return "<Errors><Err>Document not specified.</Err></Errors>"
 
+    # The filter is given to us as a string containing the XML directly.
+    if inline:
+        filterElem = "<Filter><![CDATA[%s]]></Filter>" % filter
 
-    if type(filterId) is type([]):
+    # We have a list of filters given by ID or name.
+    elif type(filter) is type([]):
         filterElem = ""
-        for l in filterId:
+        for l in filter:
             filt = ""
             if l != "":
                 if l.startswith("name:"):
@@ -401,8 +410,10 @@ def filterDoc(credentials, filterId, docId = None, doc = None,
                     ref="href"
             if filt != "":
                 filterElem += ("<Filter %s='%s'/>" % (ref, filt))
+
+    # We have a single filter identified by ID.
     else:
-        filt = normalize(filterId)
+        filt = normalize(filter)
         filterElem = ("<Filter href='%s'/>" % filt)
 
     parmElem = ""
