@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.10 2001-12-19 20:31:03 bkline Exp $
+# $Id: cdrdb.py,v 1.11 2002-04-23 22:54:06 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2001/12/19 20:31:03  bkline
+# Added optional dataSource argument to connect().
+#
 # Revision 1.9  2001/12/19 20:24:42  bkline
 # Added date/time formatting and support for CdrPublishing login.
 #
@@ -318,7 +321,7 @@ class Cursor:
         self.description = None
         self.rowcount    = -1
 
-    def execute(self, query, params = None):
+    def execute(self, query, params = None, timeout = 30):
         """
         Prepare and execute a database operation (query or command). 
         Parameters may be provided as sequence or mapping and will be 
@@ -353,6 +356,7 @@ class Cursor:
         cmd.ActiveConnection = self.__conn
         cmd.CommandText      = query
         cmd.CommandType      = win32com.client.constants.adCmdText
+        cmd.CommandTimeout   = timeout
         try:
             if params:
                 cmdParams = cmd.Parameters
