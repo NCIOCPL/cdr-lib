@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.17 2003-08-29 03:33:52 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.18 2003-09-16 19:41:44 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.17  2003/08/29 03:33:52  ameyer
+# Interim version with many changes for terminology.
+# May be more to come.
+#
 # Revision 1.16  2003/08/12 19:53:38  ameyer
 # Intermediate save of working copy but with some additional not yet working
 # global terminology change logic.
@@ -72,7 +76,7 @@
 #
 #------------------------------------------------------------
 
-import xml.dom.minidom, string, cdr, cdrdb, cdrbatch, cdrcgi
+import xml.dom.minidom, string, time, cdr, cdrdb, cdrbatch, cdrcgi
 
 #------------------------------------------------------------
 # Constants
@@ -389,6 +393,9 @@ class GlblChg:
         # Holds variables for this session, assigned in factory method
         self.ssVars = {}
         self.stages = ()
+
+        # This should be overridden by subclasses
+        self.description = None
 
     def getStages(self):
         return self.stages
@@ -1319,6 +1326,36 @@ class GlblChg:
         """ Select documents - implemented only in subclasses """
         pass
 
+    def getFilterInfo (self, passNumber):
+        """
+        Determine the correct filter, description, and filter parameters
+        for the global change.
+
+        self.description is set here for convenience.
+
+        Implemented only in subclasses.
+
+        Pass:
+            passNumber - Ordinal number of the pass through the document
+                         0 = first filter to apply
+                         1 = second filter to apply
+                         etc.
+
+                         TermChg.getFilterInfo() is the only one of the
+                         global changes that currently uses multiple passes.
+
+        Return:
+            If there is another filter to apply then:
+                Tuple of:
+                    Filter identifier.
+                    Tuple of tuples of parameters:
+                        Each parameter is a tuple of:
+                            parameter name
+                            parameter value
+            Else
+                None
+        """
+        pass
 
 #------------------------------------------------------------
 # Person specific global change object
@@ -1328,7 +1365,6 @@ class PersonChg (GlblChg):
     # Names of filter for Person Link global changes
     # cdr.filterDoc() requires a list, with leading 'name:' for named
     #   filters
-    chgFilter = ['name:Global Change: Person Link']
     locFilter = ['name:Person Locations Picklist']
 
     def __init__(self):
@@ -1498,13 +1534,34 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
             return _execQry (qry, (self.ssVars['fromId'],
                                    self.ssVars['restrId']))
 
+    def getFilterInfo (self, passNumber):
+        """
+        See class GlblChg.getFilterInfo for description.
+        """
+        # Set description if not yet done
+        if not self.description:
+            self.description = "global change of person link %s to %s on %s" %\
+                               (self.ssVars['fromId'],
+                                self.ssVars['toId'],
+                                time.ctime (time.time()))
+        # Only one pass
+        if passNumber == 0:
+            filterName  = ['name:Global Change: Person Link']
+            parms = []
+            parms.append (['changeFrom', self.ssVars['fromId']])
+            parms.append (['changeTo', self.ssVars['toId']])
+
+            return (filterName, parms)
+
+        return None
+
+
 #------------------------------------------------------------
 # Organization specific global change object
 #------------------------------------------------------------
 class OrgChg (GlblChg):
 
-    # Name of filter for Organization Link global changes
-    chgFilter = ['name:Global Change: Organization Link']
+    # Name of filter for Organization link picklist
     locFilter = ['name:Organization Locations Picklist']
 
     def __init__(self):
@@ -1661,15 +1718,33 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
         # Call a common routine to get the rows corresponding to the query
         return _execQry (qry)
 
+    def getFilterInfo (self, passNumber):
+        """
+        See class GlblChg.getFilterInfo for description.
+        """
+        if not self.description:
+            self.description = "global change of org link %s to %s on %s" % \
+                               (self.ssVars['fromId'],
+                                self.ssVars['toId'],
+                                time.ctime (time.time()))
+        # Only one pass
+        if passNumber == 0:
+            filterName  = ['name:Global Change: Organization Link']
+            parms = []
+            parms.append (['changeFrom', self.ssVars['fromId']])
+            parms.append (['changeTo', self.ssVars['toId']])
+
+            return (filterName, parms)
+
+        return None
+
 
 #------------------------------------------------------------
 # Organization status global change object
 #------------------------------------------------------------
 class OrgStatusChg (GlblChg):
 
-    # Name of filter for OrgStatus global changes
     # There is no location picklist.  All locations are affected.
-    chgFilter = ['name:Global Change: Org Status']
 
     def __init__(self):
         GlblChg.__init__(self)
@@ -1880,13 +1955,38 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
         return _execQry (qry)
 
 
+    def getFilterInfo (self, passNumber):
+        """
+        See class GlblChg.getFilterInfo for description.
+        """
+        if not self.description:
+            self.description = "global status change from %s to %s on %s" % \
+                              (self.ssVars['fromStatusName'],
+                               self.ssVars['toStatusName'],
+                                time.ctime (time.time()))
+        # Only one pass
+        if passNumber == 0:
+            filterName  = ['name:Global Change: Org Status']
+            parms = []
+            parms.append (['orgId', self.ssVars['fromId']])
+            parms.append (['oldStatus', self.ssVars['fromStatusName']])
+            parms.append (['newStatus', self.ssVars['toStatusName']])
+            if self.ssVars.has_key ('restrId'):
+                parms.append (['leadOrgId', self.ssVars['restrId']])
+                if self.ssVars.has_key ('restrPiId'):
+                    parms.append (['personId', self.ssVars['restrPiId']])
+
+            return (filterName, parms)
+
+        return None
+
+
 #------------------------------------------------------------
 # Insert a new site into protocols with a particular lead org
 #------------------------------------------------------------
 class InsertOrgChg (GlblChg):
 
-    # Names of filters for global changes and for contact info
-    chgFilter = ['name:Global Change: Insert Participating Org']
+    # Picklist filter
     locFilter = ['name:Person Locations Picklist']
 
     def __init__(self):
@@ -2016,6 +2116,35 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
 
         # Call a common routine to get the rows corresponding to the query
         return _execQry (qry)
+
+
+    def getFilterInfo (self, passNumber):
+        """
+        See class GlblChg.getFilterInfo for description.
+        """
+        if not self.description:
+            self.description = "global insert of orgsite %s on %s" % \
+                              (self.ssVars['insertOrgId'],
+                                time.ctime (time.time()))
+
+        # Only one pass
+        if passNumber == 0:
+            filterName  = ['name:Global Change: Insert Participating Org']
+            parms = []
+            parms.append (['leadOrgID', self.ssVars['restrId']])
+            parms.append (['newOrgSiteID', self.ssVars['insertOrgId']])
+            parms.append (['newPersonID', self.ssVars['insertPersId']])
+            if self.ssVars.has_key ('coopType'):
+                parms.append (['coop', self.ssVars['coopType']])
+            if self.ssVars.has_key ('specificRole'):
+                parms.append (['setRole', self.ssVars['specificRole']])
+            if self.ssVars.has_key ('specificPhone'):
+                parms.append (['setSpecificPhone',self.ssVars['specificPhone']])
+
+            return (filterName, parms)
+
+        return None
+
 
 
 #------------------------------------------------------------
@@ -2199,6 +2328,66 @@ class TermChg (GlblChg):
             return rows
         return None
 
+    def getFilterInfo (self, passNumber):
+        """
+        See class GlblChg.getFilterInfo for description.
+        """
+        # If we haven't already done it, find out how many passes we need
+        if not self.__dict__.has_key ("addCount"):
+            self.addCount = self.countSelTypes (TERMADD, TERM_MAX_CHANGES)
+            self.delCount = self.countSelTypes (TERMDEL, TERM_MAX_CHANGES)
+
+        if not self.description:
+            # Can't easily describe this because lots of changes could
+            #   be made by one change.
+            self.description = "global terminology change"
+            if self.addCount:
+                self.description += " adding:"
+                for termNum in range (self.addCount):
+                    self.description += " %s=%s" % \
+                        (self.ssVars['termAddField%d' % termNum],
+                         self.ssVars['termAddID%d' % termNum])
+                for termNum in self.delCount:
+                    self.description += " %s=%s" % \
+                        (self.ssVars['termDelField%d' % termNum],
+                         self.ssVars['termDelID%d' % termNum])
+
+            self.description += " on %s" % time.ctime(time.time())
+
+        # Initial values of data to return
+        filterName  = None
+        parms       = []
+
+        # Do all adds first
+        if passNumber < self.addCount:
+            # There's no way to pass a list of filters with different
+            #   parameters for each, so we make a list of one with its
+            #   parameters, then do the next on the next pass, etc.
+            filterName  = ["name:Global Change: Add term"]
+            parms.append (['addElement',
+                           self.ssVars ('termAddField%d' % passNumber)])
+            parms.append (['addTermID',
+                           self.ssVars ('termAddId%d' % passNumber)])
+
+        else:
+            # Set passNumber to zero origin for delete counter
+            passNumber -= self.addCount
+
+            # Do all deletes
+            if passNumber < self.delCount:
+                filterName  = ["name:Global Change: Delete term"]
+                parms.append (['addElement',
+                               self.ssVars ('termDelField%d' % passNumber)])
+                parms.append (['addTermID',
+                               self.ssVars ('termDelId%d' % passNumber)])
+
+            # Else we're done
+            else:
+                return None
+
+        # Return tuple of all of that
+        return (filterName, parms)
+
     def countSelTypes (self, termUse, maxCnt):
         """
         Count the number of active terms entered by the user for a given
@@ -2357,7 +2546,7 @@ class TermChg (GlblChg):
         Pass:
             No parms needed.
         """
-        cdr.logwrite("Verifying term IDs", LF)
+        cdr.logwrite ("Verifying term IDs", LF)
         # No bugs, no args, no pychecker warning
         if parms != []:
            return FuncReturn (RET_ERROR,
@@ -2374,22 +2563,23 @@ class TermChg (GlblChg):
                 keyVal = "trm%sVal%d" % (termUse, termRow)
 
                 # If the ID exists, validate it
-                cdr.logwrite("Looking: keyVal=%s keyId=%s"%(keyVal,keyId),LF)
+                cdr.logwrite ("Looking: keyVal=%s keyId=%s"%(keyVal,keyId),LF)
                 if self.ssVars.has_key (keyId):
                     termId = self.ssVars[keyId]
-                    cdr.logwrite("Verifying keyVal=%s keyId=%s"%(keyVal,keyId),LF)
+                    cdr.logwrite ("Verifying keyVal=%s keyId=%s" % \
+                                  (keyVal, keyId), LF)
                     result = self.verifyId ((termId, docType, keyVal))
 
                     # If verify failed, result will be an error msg
                     # Bounce back to stage interpreter to give this to user
                     if result.getRetType == RET_ERROR:
-                        cdr.logwrite("Error in verifying ids")
+                        cdr.logwrite ("Error in verifying ids")
                         return result
 
                 # Else no ID, if there's a value string, disambiguate it
                 # Constructs picklist and returns it to user
                 elif self.ssVars.has_key (keyVal):
-                    cdr.logwrite("About to get picklist")
+                    cdr.logwrite ("About to get picklist")
                     return self.getPickList ((docType, self.ssVars[keyVal],
                                               "Select term string", keyId))
 
