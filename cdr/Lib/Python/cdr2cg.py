@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.11 2002-10-16 16:34:02 pzhang Exp $
+# $Id: cdr2cg.py,v 1.12 2002-10-23 20:44:20 pzhang Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.11  2002/10/16 16:34:02  pzhang
+# Made GateKeeper hostname depend on localhost.
+#
 # Revision 1.10  2002/10/03 16:04:59  pzhang
 # Logged HTTP error in log file and StandardError.
 #
@@ -53,10 +56,12 @@ import httplib, re, sys, time, xml.dom.minidom, socket, string
 #----------------------------------------------------------------------
 debuglevel          = 0
 localhost           = socket.gethostname()
-remotehost          = "gatekeeper"
+source              = "CDR Staging"
 if string.upper(localhost) == "BACH":
-    remotehost = "stage"
-host                = "%s.cancer.gov" % remotehost
+    source = "CDR Production"
+elif string.upper(localhost) == "MAHLER":
+    source = "CDR Development"
+host                = "gatekeeper.cancer.gov"
 port                = 80
 soapNamespace       = "http://schemas.xmlsoap.org/soap/envelope/"
 application         = "/GateKeeper/GateKeeper.asmx"
@@ -92,7 +97,7 @@ requestWrapper      = """\
 
 initRequestTemplate = """\
   <Request xmlns="http://gatekeeper.cancer.gov">
-   <source>CDR</source>
+   <source>%s</source>
    <requestID>Initiate Request</requestID>
    <message>
     <PubEvent>
@@ -105,7 +110,7 @@ initRequestTemplate = """\
 
 dataPrologTemplate = """\
   <Request xmlns="http://gatekeeper.cancer.gov">
-   <source>CDR</source>
+   <source>%s</source>
    <requestID>%d</requestID>
    <message>
     <PubEvent>
@@ -119,7 +124,7 @@ dataPrologTemplate = """\
 
 docTemplateHead= """\
   <Request xmlns="http://gatekeeper.cancer.gov">
-   <source>CDR</source>
+   <source>%s</source>
    <requestID>%d</requestID>
    <message>
     <PubData>
@@ -359,13 +364,15 @@ def sendRequest(body, app = application, host = host, headers = headers):
     return data
 
 def initiateRequest(pubType, docType, lastJobId):
-    xmlString = sendRequest(initRequestTemplate % (pubType, 
+    xmlString = sendRequest(initRequestTemplate % (source,
+                                                   pubType, 
                                                    docType, 
                                                    lastJobId))
     return Response(xmlString)
     
 def sendDataProlog(jobId, pubType, docType, lastJobId, docCount):
-    xmlString = sendRequest(dataPrologTemplate % (jobId, 
+    xmlString = sendRequest(dataPrologTemplate % (source,
+                                                  jobId, 
                                                   pubType, 
                                                   docType, 
                                                   lastJobId,
@@ -375,7 +382,8 @@ def sendDataProlog(jobId, pubType, docType, lastJobId, docCount):
 def sendDocument(jobId, docNum, transType, docType, docId, doc = ""): 
     
     # The mixed UTF-8 and ASCII string is disallowed by python.
-    req = docTemplateHead % (jobId, docNum, transType, docType, docId)    
+    req = docTemplateHead % (source, jobId, docNum, transType, 
+                             docType, docId)    
     req = req.encode('utf-8') + doc   
     req += docTemplateTail.encode('utf-8') 
    
