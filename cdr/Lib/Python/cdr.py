@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.45 2002-08-15 23:35:32 ameyer Exp $
+# $Id: cdr.py,v 1.46 2002-08-16 03:13:23 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.45  2002/08/15 23:35:32  ameyer
+# Added html parameter to sendMail.
+# Made a number of trivial revisions to silence pychecker warnings.
+#
 # Revision 1.44  2002/07/31 05:03:11  ameyer
 # Fixed idSessionUser.
 #
@@ -501,6 +505,28 @@ class Doc:
         return rep
 
 #----------------------------------------------------------------------
+# Internal subroutine to add or replace DocComment element in CdrDocCtl.
+#----------------------------------------------------------------------
+def _addRepDocComment(doc, comment):
+
+    # Search for and delete existing DocComment
+    delPat = re.compile (r"\n*<DocComment.*</DocComment>\n*", re.DOTALL)
+    newDoc = delPat.sub ('', doc)
+
+    # Search for CdrDocCtl to insert new DocComment after it
+    insPat = re.compile (r"(?P<first>.*<CdrDocCtl[^>]*>)\n*(?P<last>.*)",
+                         re.DOTALL)
+    insRes = insPat.search (newDoc)
+    parts  = insRes.group ('first', 'last')
+    if len (parts) != 2:
+        # Should never happen unless there's a bug
+        raise StandardError ("addRepDocComment: No CdrDocCtl in doc:\n" % doc)
+
+    # Return with inserted comment
+    return "%s\n<DocComment>%s</DocComment>\n%s" % (parts[0],comment,parts[1])
+
+
+#----------------------------------------------------------------------
 # Add a new document to the CDR Server.
 # If showWarnings is set to non-zero value, the caller will be given
 # a tuple containing the document ID string as the first value, and
@@ -513,7 +539,7 @@ class Doc:
 #
 # See also the comment on repDoc below regarding the 'reason' argument.
 #----------------------------------------------------------------------
-def addDoc(credentials, file = None, doc = None,
+def addDoc(credentials, file = None, doc = None, comment = '',
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
            verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
            host = DEFAULT_HOST, port = DEFAULT_PORT):
@@ -523,6 +549,11 @@ def addDoc(credentials, file = None, doc = None,
     if not doc:
         if file: return "<Errors><Err>%s not found</Err></Errors>" % file
         else:    return "<Errors><Err>Document missing.</Err></Errors>"
+
+    # If comment passed, filter doc to add DocComment to CdrDocCtl
+    # Raises exception if fails
+    if len(comment) > 0:
+        doc = _addRepDocComment (doc, comment)
 
     # Create the command.
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
@@ -559,7 +590,7 @@ def addDoc(credentials, file = None, doc = None,
 # DocComment child of the CdrDocCtl element inside the CdrDoc
 # of the doc argument.
 #----------------------------------------------------------------------
-def repDoc(credentials, file = None, doc = None,
+def repDoc(credentials, file = None, doc = None, comment = '',
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
            verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
            host = DEFAULT_HOST, port = DEFAULT_PORT):
@@ -569,6 +600,11 @@ def repDoc(credentials, file = None, doc = None,
     if not doc:
         if file: return "<Errors><Err>%s not found</Err></Errors>" % file
         else:    return "<Errors><Err>Document missing.</Err></Errors>"
+
+    # If comment passed, filter doc to add DocComment to CdrDocCtl
+    # Raises exception if fails
+    if len(comment) > 0:
+        doc = _addRepDocComment (doc, comment)
 
     # Create the command.
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
