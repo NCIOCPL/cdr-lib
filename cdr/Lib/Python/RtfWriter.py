@@ -28,11 +28,14 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: RtfWriter.py,v 1.2 2005-02-24 02:20:35 bkline Exp $
+# $Id: RtfWriter.py,v 1.3 2005-02-24 04:32:04 bkline Exp $
 #
 # Module for generating RTF documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2005/02/24 02:20:35  bkline
+# Fleshed out comments for pydoc.
+#
 #----------------------------------------------------------------------
 import time, re
 
@@ -74,7 +77,7 @@ class Font:
     """
     Object for representing a single font in an RTF document.
 
-    Switch to a font by inserting the command \fN in the body of
+    Switch to a font by inserting the command \\fN in the body of
     the document, where N is the ID (number) of the desired font.
     
     A default RtfWriter Document has three fonts pre-registered:
@@ -242,7 +245,8 @@ class Document:
         fonts       - seeded with SERIF, SANSSERIF, and FIXED; use
                       doc.addFont() method to augment the list of
                       available fonts
-        lists       - initialized with a bulleted list type
+        lists       - initialized with a bulleted list type;
+                      manipulate with addList() method
         margL       - left margin in twips (initialized to 1 inch)
         margR       - right margin in twips (initialized to 1 inch)
         margT       - top margin in twips (initialized to 1 inch)
@@ -253,7 +257,7 @@ class Document:
     Notes:
 
         The margin and default document font size attributes can be modified
-        directly.
+        directly, as can the defaultFont and extraHeader attributes.
 
     """
     
@@ -356,7 +360,7 @@ class Document:
 
         """
         Registers a new font for use in the document.  Returns the
-        ID to be embedded in the \fN command to use the font in
+        ID to be embedded in the \\fN command to use the font in
         the document (where N is the font's ID).  Pass in the
         name by which the font will be recognized by the system
         on the user's machine.  Optionally pass the name of the
@@ -375,7 +379,7 @@ class Document:
         Registers a new list type.  Pass in the style of numbering to
         be used (currently only List.ARABIC is supported).  The ID
         of the new list is returned to be used in the \lsN command
-        in the document for the actual list, where N is ID returned
+        in the document for the actual list, where N is the ID returned
         by this method.
         """
         
