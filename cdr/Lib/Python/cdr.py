@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.97 2004-10-14 22:05:20 ameyer Exp $
+# $Id: cdr.py,v 1.98 2004-11-05 05:16:52 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.97  2004/10/14 22:05:20  ameyer
+# If sendMail fails, log the error message as well as return it.
+#
 # Revision 1.96  2004/09/21 20:35:58  ameyer
 # Changes to new diffXmlDoc() function and subroutines - supporting output
 # of entire doc with changes in context, or differences only.
@@ -726,6 +729,73 @@ def getTextContent(node):
     return text
 
 #----------------------------------------------------------------------
+# Encode a blob.
+#----------------------------------------------------------------------
+def makeDocBlob(blob=None, inFile=None, outFile=None, wrapper=None, attrs=""):
+    """
+    Encode a blob from either a string or a file in base64 with
+    optional CdrDocBlob XML wrapper.
+
+    This is a pretty trivial and probably unnecessary function, but
+    it gives us a single point of control for constructing blobs.
+
+    Parameters:
+        blob=None       Blob as a string of bytes.  If None, use inFile.
+                        An empty blob ("") is legal.  We return a null
+                         string with the requested wrapper.
+        inFile=None     Name of input file containing blob.  If None use blob.
+        outFile=None    Write output to this file, overwriting whatever
+                         may be there, if anything.  If None, return blob
+                         as a string.
+        wrapper=None    True=wrap blob in passed xml element tag.  Else not.
+        attrs=None      Attribute string to include if passed wrapper.
+
+    Returns:
+        Base64 encoded blob if outFile not specified.
+        Else returns empty string with output to file.
+
+    Raises StandardError if invalid parms or bad file i/o.
+    """
+    # Check parms
+    if blob == None and not inFile:
+        raise StandardError("makeDocBlob: requires passed blob or inFile")
+    if blob and inFile:
+        raise StandardError("makeDocBlob: pass blob or inFile, not both")
+
+    if inFile:
+        # Get blob from file
+        try:
+            fp = open(inFile, "rb")
+            blob = fp.read()
+            fp.close()
+        except IOError, info:
+            raise StandardError("makeDocBlob: %s" % info)
+        if not blob:
+            raise StandardError("makeDocBlob: no data read from file %s" % \
+                                 inFile)
+
+    # Encode with or without wrapper
+    startTag = endTag = ""
+    if wrapper:
+        startTag = "<" + wrapper
+        if attrs:
+            startTag += " " + attrs
+        startTag += ">"
+        endTag   = "</" + wrapper + ">"
+    encodedBlob = startTag + base64.encodestring(blob) + endTag
+
+    # Output
+    if outFile:
+        try:
+            fp = open(outFile, "wb")
+            fp.write(encodedBlob)
+            fp.close()
+        except IOError, info:
+            raise StandardError("makeDocBlob: %s" % info)
+        return ""
+    return encodedBlob
+
+#----------------------------------------------------------------------
 # Object containing components of a CdrDoc element.
 #
 # NOTE: If the strings passed in for the constructor are encoded as
@@ -735,6 +805,29 @@ def getTextContent(node):
 class Doc:
     def __init__(self, x, type = None, ctrl = None, blob = None, id = None,
                  encoding = 'latin-1'):
+        """
+        An object encapsulating all the elements of a CDR document.
+
+        Parameters:
+            x           XML as utf-8 or Unicode string.
+            type        Document type.
+                         If passed, all other components of the Doc must
+                          also be passed.
+                         If none, then a CdrDoc must be passed with all
+                          other components derived from the document string.
+            ctrl        If type passed, dictionary of CdrDocCtl elements:
+                         key = element name/tag
+                         value = element text content
+            blob        If type passed, blob, as a string of bytes will be
+                          encoded as base64.  Should not be encoded already.
+                         Else if CdrDocBlob is in the document string as a
+                          base64 encoded string, it will be extracted as
+                          the blob.
+                         Else no blob.
+            id          If type passed, document id, else derived from CdrDoc.
+            encoding    Character encoding.  Must be accurate.  All
+                         XML strings will be internally converted to utf-8.
+        """
         # Two flavors for the constructor: one for passing in all the pieces:
         if type:
             self.id       = id
@@ -769,14 +862,35 @@ class Doc:
                     elif node.nodeName == 'CdrDocBlob':
                         self.extractBlob(node)
     def parseCtl(self, node):
+        """
+        Parse a CdrDocCtl node to extract all its elements into the ctrl
+        dictionary.
+
+        Pass:
+            DOM node for CdrDocCtl.
+        """
         for child in node.childNodes:
             if child.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
                 self.ctrl[child.nodeName.encode('ascii')] = \
                     getTextContent(child).encode(self.encoding)
+
     def extractBlob(self, node):
+        """
+        Extract a base64 encoded blob from the XML string.
+
+        Pass:
+            DOM node for CdrDocBlob.
+        """
         encodedBlob = getTextContent(node)
         self.blob   = base64.decodestring(encodedBlob.encode('ascii'))
+
     def __str__(self):
+        """
+        Serialize the object into a single CdrDoc XML string.
+
+        Return:
+            utf-8 encoded XML string.
+        """
         alreadyUtf8 = self.encoding.lower() == "utf-8"
         rep = "<CdrDoc Type='%s'" % self.type
         if self.id: rep += " Id='%s'" % self.id
@@ -786,16 +900,14 @@ class Doc:
             if not alreadyUtf8:
                 value = unicode(value, self.encoding).encode('utf-8')
             rep += "<%s>%s</%s>" % (key, cgi.escape(value), key)
+        rep += "</CdrDocCtl>\n"
         xml = self.xml
         if xml:
             if not alreadyUtf8:
                 xml = unicode(self.xml, self.encoding).encode('utf-8')
-        else:
-            xml = ''
-        rep += "</CdrDocCtl><CdrDocXml><![CDATA[%s]]></CdrDocXml>" % xml
-        if self.blob:
-            rep += ("<CdrDocBlob>%s</CdrDocBlob>"
-                    % base64.encodestring(self.blob))
+            rep += "<CdrDocXml><![CDATA[%s]]></CdrDocXml>" % xml
+        if self.blob != None:
+            rep += makeDocBlob(self.blob, wrapper="CdrDocBlob")
         rep += "</CdrDoc>"
         return rep
 
@@ -1511,8 +1623,8 @@ def getTree(credentials, docId, depth = 1,
 
     # Extract the names of all terms returned.
     for term in termExpr.findall(groups.group(2)):
-        (id, name) = term
-        terms[id]  = Term(id = id, name = name)
+        (trmId, name) = term
+        terms[trmId]  = Term(id = trmId, name = name)
 
     # Extract the child-parent relationship pairs.
     for pair in pairExpr.findall(groups.group(1)):
