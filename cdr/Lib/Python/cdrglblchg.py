@@ -1,8 +1,11 @@
-# $Id: cdrglblchg.py,v 1.7 2002-09-24 23:38:05 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.8 2002-10-03 19:38:32 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2002/09/24 23:38:05  ameyer
+# Fix problem discovered by Bob in using %s when I needed variable interpolation.
+#
 # Revision 1.6  2002/08/27 22:45:17  ameyer
 # Now allowing user to enter organization ids with or without address
 # fragments.
@@ -119,7 +122,7 @@ SELECT d.title, t.name
             "Database error checking document id: %s" % info[1][0])
 
     if not row:
-        raise cdrbatch.BatchException ("Could not find doc with id=%d", id)
+        raise cdrbatch.BatchException ("Could not find doc with id=%d" % id)
 
     title = row[0]
     type  = row[1]
@@ -304,7 +307,7 @@ class GlblChg:
         html = "<input type='hidden' name='okToRun' value='Y'>\n"
 
         # Remember the count
-        self.sessionVars['chgCount'] = len(rows)
+        self.sessionVars['chgCount'] = str(len(rows))
 
         # Session for host query
         session = self.sessionVars[cdrcgi.SESSION]
