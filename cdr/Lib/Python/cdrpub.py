@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.46 2003-01-23 20:37:33 pzhang Exp $
+# $Id: cdrpub.py,v 1.47 2003-01-24 22:03:44 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.46  2003/01/23 20:37:33  pzhang
+# Added code to generate DateFirstPublished element
+# in a vendor document when it is first published.
+#
 # Revision 1.45  2003/01/13 17:56:48  pzhang
 # Fixed code for Hotfix-Export based on code review.
 #
@@ -1010,6 +1014,7 @@ class Publish:
     def __createWorkPPC(self, vendor_job, vendor_dest, cg_job):
 
         cursor = self.__conn.cursor()
+        cursor2 = self.__conn.cursor()
 
         # Wipe out all rows in pub_proc_cg_work. Only one job can be run
         # for Cancer.gov transaction. This is guaranteed by calling
@@ -1048,8 +1053,13 @@ class Publish:
                   """ % (vendor_job, vendor_job)
             cursor.execute(qry, timeout = self.__timeOut)
             row = cursor.fetchone()
+            idsInserted = {}
             while row:
                 id     = row[0]
+                if idsInserted.has_key(id):
+                    row = cursor.fetchone()
+                    continue
+                idsInserted[id] = 1                    
                 type   = row[1]
                 xml    = row[2]
                 subdir = row[3]
@@ -1058,8 +1068,7 @@ class Publish:
                 file   = open(path, "rb").read()
                 file   = unicode(file, 'utf-8')
 
-                if xml != file:
-                    cursor2 = self.__conn.cursor()
+                if xml != file:                    
                     cursor2.execute("""
                         INSERT INTO pub_proc_cg_work (id, vendor_job,
                                         cg_job, doc_type, xml, num)
@@ -1085,7 +1094,8 @@ class Publish:
         # pub_proc_cg.
         try:
             cursor.execute ("""
-                     SELECT ppd.doc_id, t.name, ppd.subdir, ppd.doc_version
+                     SELECT DISTINCT ppd.doc_id, t.name, ppd.subdir, 
+                            ppd.doc_version
                        FROM pub_proc_doc ppd, doc_type t, document d
                       WHERE ppd.pub_proc = %d
                         AND d.id = ppd.doc_id
@@ -1107,8 +1117,7 @@ class Publish:
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
                 xml    = open(path, "rb").read()               
                 xml    = unicode(xml, 'utf-8')
-                try:
-                    cursor2 = self.__conn.cursor()
+                try:                    
                     cursor2.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
                                                   doc_type, xml, num)
@@ -1152,7 +1161,8 @@ class Publish:
             qry = """
                 INSERT INTO pub_proc_cg_work (id, num, vendor_job,
                                               cg_job, doc_type)
-                     SELECT ppc.id, ppd_cg.doc_version, %d, %d, t.name
+                     SELECT DISTINCT ppc.id, ppd_cg.doc_version, 
+                            %d, %d, t.name
                        FROM pub_proc_cg ppc, doc_type t, document d,
                             pub_proc_doc ppd_cg
                       WHERE d.id = ppc.id
@@ -1228,7 +1238,8 @@ class Publish:
             qry = """
                 INSERT INTO pub_proc_cg_work (id, num, vendor_job,
                                               cg_job, doc_type)
-                     SELECT ppd.doc_id, ppd.doc_version, %d, %d, t.name
+                     SELECT DISTINCT ppd.doc_id, ppd.doc_version, 
+                            %d, %d, t.name
                        FROM pub_proc_doc ppd, doc_type t, document d
                       WHERE d.id = ppd.doc_id
                         AND d.doc_type = t.id
@@ -1247,6 +1258,7 @@ class Publish:
     def __createWorkPPCHE(self, vendor_job, vendor_dest, cg_job):
 
         cursor = self.__conn.cursor()
+        cursor2 = self.__conn.cursor()
 
         # Wipe out all rows in pub_proc_cg_work. Only one job can be run
         # for Cancer.gov transaction. This is guaranteed by calling
@@ -1283,8 +1295,13 @@ class Publish:
                   """ % (vendor_job, vendor_job)
             cursor.execute(qry, timeout = self.__timeOut)
             row = cursor.fetchone()
+            idsInserted = {}
             while row:
                 id     = row[0]
+                if idsInserted.has_key(id):
+                    row = cursor.fetchone()
+                    continue
+                idsInserted[id] = 1  
                 type   = row[1]
                 xml    = row[2]
                 subdir = row[3]
@@ -1293,8 +1310,7 @@ class Publish:
                 file   = open(path, "rb").read()
                 file   = unicode(file, 'utf-8')
 
-                if xml != file:
-                    cursor2 = self.__conn.cursor()
+                if xml != file:                    
                     cursor2.execute("""
                         INSERT INTO pub_proc_cg_work (id, vendor_job,
                                         cg_job, doc_type, xml, num)
@@ -1319,7 +1335,8 @@ class Publish:
         # pub_proc_cg.
         try:
             cursor.execute ("""
-                     SELECT ppd.doc_id, t.name, ppd.subdir, ppd.doc_version
+                     SELECT DISTINCT ppd.doc_id, t.name, ppd.subdir, 
+                            ppd.doc_version
                        FROM pub_proc_doc ppd, doc_type t, document d
                       WHERE ppd.pub_proc = ?
                         AND d.id = ppd.doc_id
@@ -1340,8 +1357,7 @@ class Publish:
                 ver    = row[3]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
                 xml    = open(path, "rb").read()              
-                xml    = unicode(xml, 'utf-8')
-                cursor2 = self.__conn.cursor()
+                xml    = unicode(xml, 'utf-8')                
                 cursor2.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
                                                   doc_type, xml, num)
