@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.3 2001-04-08 22:50:06 bkline Exp $
+# $Id: cdr.py,v 1.4 2001-05-03 20:17:11 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2001/04/08 22:50:06  bkline
+# Replaced getTerm implementation with version that uses results from
+# stored procedure.
+#
 # Revision 1.2  2001/04/08 16:31:53  bkline
 # Added report, search, doctype, and term tree support.
 #
@@ -28,6 +32,18 @@ LOGON_STRING  = """<CdrCommandSet><CdrCommand><CdrLogon>
                    <UserName>%s</UserName><Password>%s</Password>
                    </CdrLogon></CdrCommand>"""
 LOGOFF_STRING = "<CdrCommand><CdrLogoff/></CdrCommand></CdrCommandSet>"
+
+#----------------------------------------------------------------------
+# Normalize a document id to form 'CDRnnnnnnnnnn'.
+#----------------------------------------------------------------------
+def normalize(id):
+    if id is None: return None
+    if type(id) == type(9):
+        idNum = id
+    else:
+        digits = re.sub('[^\d]', '', id)
+        idNum  = string.atoi(digits)
+    return "CDR%010d" % idNum
 
 #----------------------------------------------------------------------
 # Send a set of commands to the CDR Server and return its response.
@@ -68,6 +84,16 @@ def wrapCommand(command, credentials):
               <CdrCommand>%s</CdrCommand>
               </CdrCommandSet>""" % (credentials, command)
     return cmds
+
+#----------------------------------------------------------------------
+# Extract a single error element from XML response.
+#----------------------------------------------------------------------
+def checkErr(resp):
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
 
 #----------------------------------------------------------------------
 # Extract error elements from XML.
@@ -171,9 +197,10 @@ def getDoc(credentials, docId, checkout = 'N', version = "Current",
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Create the command.
+    id  = normalize(docId)
     lck = "<Lock>%s</Lock>" % (checkout)
     ver = "<DocVersion>%s</DocVersion>" % (version)
-    cmd = "<CdrGetDoc><DocId>%s</DocId>%s%s</CdrGetDoc>" % (docId, lck, ver)
+    cmd = "<CdrGetDoc><DocId>%s</DocId>%s%s</CdrGetDoc>" % (id, lck, ver)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -188,10 +215,11 @@ def filterDoc(credentials, filterId, docId = None, doc = None,
               host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Create the command.
-    if docId: docElem = "<Document href='%s'/>" % docId
+    if docId: docElem = "<Document href='%s'/>" % normalize(docId)
     elif doc: docElem = "<Document><![CDATA[%s]]></Document>" % doc
     else: return "<Errors><Err>Document not specified.</Err></Errors>"
-    cmd = "<CdrFilter><Filter href='%s'/>%s</CdrFilter>" % (filterId, docElem)
+    filt = normalize(filterId)
+    cmd = "<CdrFilter><Filter href='%s'/>%s</CdrFilter>" % (filt, docElem)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -391,7 +419,7 @@ class TermSet:
 def getTree(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Create the command
-    cmd = "<CdrGetTree><DocId>%s</DocId></CdrGetTree>" % docId
+    cmd = "<CdrGetTree><DocId>%s</DocId></CdrGetTree>" % normalize(docId)
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -426,3 +454,471 @@ def getTree(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
         terms[parent].children.append(terms[child])
 
     return result
+
+#----------------------------------------------------------------------
+# Gets the list of CDR actions which can be authorized.
+#----------------------------------------------------------------------
+def getActions(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrListActions/>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # Parse the response.
+    actions = {}
+    for a in re.findall("<Action>\s*<Name>(.*)</Name>\s*"
+                        "<NeedDoctype>(.*)</NeedDoctype>\s*</Action>", resp):
+        actions[a[0]] = a[1]
+    return actions
+
+#----------------------------------------------------------------------
+# Gets the list of CDR users.
+#----------------------------------------------------------------------
+def getUsers(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrListUsrs/>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # Parse the response.
+    return re.findall("<UserName>(.*)</UserName>", resp)
+
+#----------------------------------------------------------------------
+# Gets the list of CDR authorization groups.
+#----------------------------------------------------------------------
+def getGroups(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrListGrps/>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # Parse the response.
+    return re.findall("<GrpName>(.*)</GrpName>", resp)
+
+#----------------------------------------------------------------------
+# Deletes a CDR group.
+#----------------------------------------------------------------------
+def delGroup(credentials, grp, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrDelGrp><GrpName>%s</GrpName></CdrDelGrp>" % grp
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # No errors to report.
+    return None
+
+#----------------------------------------------------------------------
+# Gets the list of CDR document types.
+#----------------------------------------------------------------------
+def getDoctypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrListDocTypes/>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # Parse the response.
+    return re.findall("<DocType>(.*)</DocType>", resp)
+
+#----------------------------------------------------------------------
+# Holds information about a single CDR group.
+#----------------------------------------------------------------------
+class Group:
+    def __init__(self, name, actions = {}, users = [], comment = None):
+        self.name    = name
+        self.actions = actions
+        self.users   = users
+        self.comment = comment
+
+#----------------------------------------------------------------------
+# Retrieves information about a CDR group.
+#----------------------------------------------------------------------
+def getGroup(credentials, gName, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrGetGrp><GrpName>%s</GrpName></CdrGetGrp>" % gName
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # Parse the response.
+    name     = re.findall("<GrpName>(.*)</GrpName>", resp)[0]
+    group    = Group(name)
+    authExpr = re.compile("<Auth>(.*?)</Auth>", re.DOTALL)
+    cmtExpr  = re.compile("<Comment>(.*)</Comment>", re.DOTALL)
+    comment  = cmtExpr.findall(resp)
+    for user in re.findall("<UserName>(.*?)</UserName>", resp):
+        group.users.append(user)
+    for auth in authExpr.findall(resp):
+        action  = re.findall("<Action>(.*)</Action>", auth)
+        docType = re.findall("<DocType>(.*)</DocType>", auth)
+        #group.actions.append((action[0], docType and docType[0] or None))
+        action  = action[0]
+        docType = docType and docType[0] or None
+        if not group.actions.has_key(action): group.actions[action] = []
+        group.actions[action].append(docType)
+    if comment: group.comment = comment[0]
+    return group
+
+#----------------------------------------------------------------------
+# Stores information about a CDR group.
+#----------------------------------------------------------------------
+def putGroup(credentials, gName, group, host = DEFAULT_HOST, 
+                                        port = DEFAULT_PORT):
+
+    # Create the command
+    if gName:
+        cmd = "<CdrModGrp><GrpName>%s</GrpName>" % gName
+        if group.name and gName != group.name:
+            cmd += "<NewGrpName>%s</NewGrpName>" % group.name
+    else:
+        cmd = "<CdrAddGrp><GrpName>%s</GrpName>" % group.name
+
+    # Add the comment, if any.
+    if group.comment is not None:
+        cmd += "<Comment>%s</Comment>" % group.comment
+
+    # Add the users.
+    if group.users:
+        for user in group.users:
+            cmd += "<UserName>%s</UserName>" % user
+
+    # Add the actions.
+    if group.actions:
+        actions = list(group.actions.keys())
+        actions.sort()
+        for action in actions:
+            doctypes = group.actions[action]
+            if not doctypes:
+                cmd += "<Auth><Action>%s</Action></Auth>" % action
+            else:
+                for doctype in doctypes:
+                    cmd += "<Auth><Action>%s</Action>"\
+                           "<DocType>%s</DocType></Auth>" % (action, doctype)
+
+    # Finish the command.
+    if gName: cmd += "</CdrModGrp>"
+    else:     cmd += "</CdrAddGrp>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # No errors to report.
+    return None
+
+#----------------------------------------------------------------------
+# Holds information about a single CDR user.
+#----------------------------------------------------------------------
+class User:
+    def __init__(self, 
+                 name, 
+                 password, 
+                 fullname = None, 
+                 office   = None, 
+                 email    = None,
+                 phone    = None,
+                 groups   = [],
+                 comment  = None):
+        self.name         = name
+        self.password     = password
+        self.fullname     = fullname
+        self.office       = office
+        self.email        = email
+        self.phone        = phone
+        self.groups       = groups
+        self.comment      = comment
+
+#----------------------------------------------------------------------
+# Retrieves information about a CDR group.
+#----------------------------------------------------------------------
+def getUser(credentials, uName, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrGetUsr><UserName>%s</UserName></CdrGetUsr>" % uName
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # Parse the response.
+    name     = re.findall("<UserName>(.*)</UserName>", resp)[0]
+    password = re.findall("<Password>(.*)</Password>", resp)[0]
+    user     = User(name, password)
+    fullname = re.findall("<FullName>(.*)</FullName>", resp)
+    office   = re.findall("<Office>(.*)</Office>", resp)
+    email    = re.findall("<Email>(.*)</Email>", resp)
+    phone    = re.findall("<Phone>(.*)</Phone>", resp)
+    groups   = re.findall("<GrpName>(.*?)</GrpName>", resp)
+    cmtExpr  = re.compile("<Comment>(.*)</Comment>", re.DOTALL)
+    comment  = cmtExpr.findall(resp)
+    user.groups = groups
+    if fullname: user.fullname = fullname[0]
+    if office:   user.office   = office[0]
+    if email:    user.email    = email[0]
+    if phone:    user.phone    = phone[0]
+    if comment:  user.comment  = comment[0]
+    return user
+
+#----------------------------------------------------------------------
+# Stores information about a CDR user.
+#----------------------------------------------------------------------
+def putUser(credentials, uName, user, host = DEFAULT_HOST, 
+                                      port = DEFAULT_PORT):
+
+    # Create the command
+    if uName:
+        cmd = "<CdrModUsr><UserName>%s</UserName>" % uName
+        if user.name and uName != user.name:
+            cmd += "<NewName>%s</NewName>" % user.name
+    else:
+        cmd = "<CdrAddUsr><UserName>%s</UserName>" % user.name
+
+    # Add the user's password.
+    cmd += "<Password>%s</Password>" % user.password
+
+    # Add the optional single elements.
+    if user.fullname is not None:
+        cmd += "<FullName>%s</FullName>" % user.fullname
+    if user.office is not None:
+        cmd += "<Office>%s</Office>" % user.office
+    if user.email is not None:
+        cmd += "<Email>%s</Email>" % user.email
+    if user.phone is not None:
+        cmd += "<Phone>%s</Phone>" % user.phone
+    if user.comment is not None:
+        cmd += "<Comment>%s</Comment>" % user.comment
+
+    # Add the groups.
+    if user.groups:
+        for group in user.groups:
+            cmd += "<GrpName>%s</GrpName>" % group
+
+    # Finish the command.
+    if uName: cmd += "</CdrModUsr>"
+    else:     cmd += "</CdrAddUsr>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # No errors to report.
+    return None
+
+#----------------------------------------------------------------------
+# Deletes a CDR user.
+#----------------------------------------------------------------------
+def delUser(credentials, usr, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrDelUsr><UserName>%s</UserName></CdrDelUsr>" % usr
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # No errors to report.
+    return None
+
+#----------------------------------------------------------------------
+# Holds information about a single CDR action.
+#----------------------------------------------------------------------
+class Action:
+    def __init__(self, name, doctypeSpecific, comment  = None):
+        self.name            = name
+        self.doctypeSpecific = doctypeSpecific
+        self.comment         = comment
+
+#----------------------------------------------------------------------
+# Retrieves information about a CDR action.
+#----------------------------------------------------------------------
+def getAction(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrGetAction><Name>%s</Name></CdrGetAction>" % name
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # Parse the response.
+    name     = re.findall("<Name>(.*)</Name>", resp)[0]
+    flag     = re.findall("<DoctypeSpecific>(.*)</DoctypeSpecific>", resp)[0]
+    cmtExpr  = re.compile("<Comment>(.*)</Comment>", re.DOTALL)
+    comment  = cmtExpr.findall(resp)
+    action   = Action(name, flag)
+    if comment:  action.comment  = comment[0]
+    return action
+
+#----------------------------------------------------------------------
+# Stores information for a CDR action.
+#----------------------------------------------------------------------
+def putAction(credentials, name, action, host = DEFAULT_HOST, 
+                                         port = DEFAULT_PORT):
+
+    # Create the command
+    if name:
+        cmd = "<CdrRepAction><Name>%s</Name>" % name
+        if action.name and name != action.name:
+            cmd += "<NewName>%s</NewName>" % action.name
+    else:
+        cmd = "<CdrAddAction><Name>%s</Name>" % action.name
+
+    # Add the action's doctype-specific flag.
+    cmd += "<DoctypeSpecific>%s</DoctypeSpecific>" % action.doctypeSpecific
+
+    # Add the comment, if present.
+    if action.comment is not None:
+        cmd += "<Comment>%s</Comment>" % action.comment
+
+    # Finish the command.
+    if name: cmd += "</CdrRepAction>"
+    else:    cmd += "</CdrAddAction>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # No errors to report.
+    return None
+
+#----------------------------------------------------------------------
+# Deletes a CDR action.
+#----------------------------------------------------------------------
+def delAction(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrDelAction><Name>%s</Name></CdrDelAction>" % name
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    if string.find(resp, "<Err>") != -1:
+        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
+        err = expr.search(resp)
+        err = err and err.group(1) or "Unknown failure"
+        return err
+
+    # No errors to report.
+    return None
+
+#----------------------------------------------------------------------
+# Holds information about a single CDR link type.
+#----------------------------------------------------------------------
+class LinkType:
+    def __init__(self, name, linkSources = [], 
+                             linkTargets = [], 
+                             comment  = None):
+        self.name        = name
+        self.linkSources = linkSources
+        self.linkTargets = linkTargets
+        self.comment     = comment
+
+#----------------------------------------------------------------------
+# Retrieves list of CDR link type names.
+#----------------------------------------------------------------------
+def getLinkTypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Stub version.
+    return ["Investigator", "Cite", "AbstractRef", "Vocabulary"]
+
+#----------------------------------------------------------------------
+# Retrieves information from the CDR for a link type.
+#----------------------------------------------------------------------
+def getLinkType(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Stub version.
+    if name == "Investigator":
+        return LinkType(name, [('Protocol', 'PrincipalInvestigator')],
+                              ['Org'],
+                              'This is a dummy produced by stub getLinkType()')
+    elif name == "Cite":
+        return LinkType(name, [('Protocol', 'ReportedIn')],
+                              ['Statement'],
+                              'This is a dummy produced by stub getLinkType()')
+    elif name == "AbstractRef":
+        return LinkType(name, [('Protocol', 'FullAbstract')],
+                              ['Protocol'],
+                              'This is a dummy produced by stub getLinkType()')
+    elif name == "Vocabulary":
+        return LinkType(name, [('Protocol', 'Diagnosis')],
+                              ['Term'],
+                              'This is a dummy produced by stub getLinkType()')
+
+#----------------------------------------------------------------------
+# Log out from the CDR.
+#----------------------------------------------------------------------
+def logout(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command
+    cmd = "<CdrLogoff/>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    err = checkErr(resp)
+    if err: return err
+
+    # No errors to report.
+    return None
