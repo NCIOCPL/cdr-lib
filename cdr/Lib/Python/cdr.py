@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.65 2002-11-13 16:57:54 bkline Exp $
+# $Id: cdr.py,v 1.66 2002-11-13 20:36:05 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.65  2002/11/13 16:57:54  bkline
+# Added delFilterSet().
+#
 # Revision 1.64  2002/11/12 11:43:57  bkline
 # Added filter set support.
 #
@@ -852,7 +855,8 @@ def valDoc(credentials, docType, docId = None, doc = None,
 #----------------------------------------------------------------------
 def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
               host = DEFAULT_HOST, port = DEFAULT_PORT, parm = [],
-              no_output = 'N', docVer = None, docDate = None):
+              no_output = 'N', docVer = None, docDate = None,
+              filterVer = ''):
 
     # Create the command.
     if docId:
@@ -875,15 +879,23 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
         filterElem = ""
         for l in filter:
             filt = ""
+            isSet = 0
             if l != "":
                 if l.startswith("name:"):
                     filt = l[5:]
                     ref="Name"
+                elif l.startswith("set:"):
+                    filt = l[4:]
+                    isSet = 1
                 else:
                     filt = normalize(l)
                     ref="href"
             if filt != "":
-                filterElem += ("<Filter %s='%s'/>" % (ref, filt))
+                if isSet:
+                    filterElem += '<FilterSet Name="%s" Version="%s"/>' % \
+                        (cgi.escape(filt, 1), filterVer)
+                else:
+                    filterElem += ("<Filter %s='%s'/>" % (ref, filt))
 
     # We have a single filter identified by ID.
     else:
