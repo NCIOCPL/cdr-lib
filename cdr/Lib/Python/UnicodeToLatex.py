@@ -24,9 +24,12 @@ r"""
 
 #----------------------------------------------------------------------
 #
-# $Id: UnicodeToLatex.py,v 1.3 2002-11-08 21:47:59 bkline Exp $
+# $Id: UnicodeToLatex.py,v 1.4 2003-06-02 19:36:44 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2002/11/08 21:47:59  bkline
+# Added alternating double quote support.
+#
 # Revision 1.2  2001/10/20 18:46:59  bkline
 # Filled in a few holes; used dot-less i for accented glyphs.
 #
@@ -298,6 +301,10 @@ codeMap = {
     0x2013: r"""--""",
     0x2014: r"""---""",
     0x2016: r"""$\|$""",
+    0x2018: r"""`""",
+    0x2019: r"""'""",
+    0x201C: r"""``""",
+    0x201D: r"""''""",
     0x2020: r"""\dag{}""",
     0x2021: r"""\ddag{}""",
     0x2022: r"""\textbullet{}""",
