@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.62 2004-12-16 20:50:24 bkline Exp $
+# $Id: cdrpub.py,v 1.63 2004-12-16 21:00:16 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.62  2004/12/16 20:50:24  bkline
+# Renamed media manifest file at Volker's request.  Sorted manifest file
+# contents at Volker's request.  Fixed threading bug.
+#
 # Revision 1.61  2004/11/29 19:56:38  bkline
 # Added support for publishing images; fixed a bug in code to set
 # the failure flag in the pub_proc_doc table.
@@ -2181,7 +2185,7 @@ has started</B>).<BR>""" % cgWorkLink
                                     version = str(doc.getVersion()),
                                     blob = 'Y', getObject = True)
                 name = cdrDoc.getPublicationFilename()
-                self.__saveDoc(cdrDoc.blob, destDir, name, "wb")
+                self.__saveDoc(cdrDoc.blob, destDir + '/' + subDir, name, "wb")
                 lastChange = cdr.getVersionedBlobChangeDate('guest', docId,
                                                             doc.getVersion(),
                                                             self.__conn)
