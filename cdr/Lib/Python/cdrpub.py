@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.32 2002-09-17 21:17:00 pzhang Exp $
+# $Id: cdrpub.py,v 1.33 2002-09-26 20:41:07 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.32  2002/09/17 21:17:00  pzhang
+# Added __updateFirstPub().
+#
 # Revision 1.31  2002/09/11 20:47:09  pzhang
 # Added a global __timeOut variable.
 # Encoded file to unicode after it is read from file system.
@@ -97,7 +100,7 @@ from xml.parsers.xmlproc import xmlval, xmlproc
 
 #-----------------------------------------------------------------------
 # Value for controlling debugging output.  None means no debugging
-# output is generated.  An empty string means debugging output is 
+# output is generated.  An empty string means debugging output is
 # written to the standard error file.  Any other string is used as
 # the pathname of the logfile to which to write debugging output.
 #-----------------------------------------------------------------------
@@ -115,7 +118,7 @@ class Publish:
 
     # Used as optional argument to __addDocMessages().
     SET_FAILURE_FLAG = "Y"
-    
+
     # Job status values.
     SUCCESS    = "Success"
     FAILURE    = "Failure"
@@ -137,22 +140,22 @@ class Publish:
     __cdrHttp  = "http://%s.nci.nih.gov/cgi-bin/cdr" % socket.gethostname()
     __ignoreUserDocList = 0
     __interactiveMode = 0
-    __checkRemovedDocs  = 1    
+    __checkRemovedDocs  = 1
     __includeLinkedDocs = 1
     __reportOnly        = 0
     __validateDocs      = 1
-   
+
     #---------------------------------------------------------------
     # Load the job settings from the database.  User-specified
     # documents will already have been recorded in the pub_proc_doc
-    # table, but other documents can be added through SQL or XQL 
+    # table, but other documents can be added through SQL or XQL
     # queries.
     #---------------------------------------------------------------
     def __init__(self, jobId):
 
         # Make sure a port is available for publising.
         self.__pubPort = cdr.getPubPort()
-        
+
         # Initialize a few values used for error processing.
         self.__errorCount           = 0
         self.__errorsBeforeAborting = 0
@@ -169,11 +172,11 @@ class Publish:
 
         # Retrieve the basic settings for the job from the database.
         sql = """\
-            SELECT p.pub_system, 
-                   p.pub_subset, 
-                   p.usr, 
+            SELECT p.pub_system,
+                   p.pub_subset,
+                   p.usr,
                    p.output_dir,
-                   p.email, 
+                   p.email,
                    p.started,
                    p.no_output,
                    u.name,
@@ -212,7 +215,7 @@ class Publish:
         self.__userDocList = []
         try:
             cursor.execute("""\
-                SELECT pub_proc_doc.doc_id, 
+                SELECT pub_proc_doc.doc_id,
                        pub_proc_doc.doc_version,
                        doc_type.name
                   FROM pub_proc_doc
@@ -240,7 +243,7 @@ class Publish:
         self.__params = {}
         try:
             cursor.execute("""\
-                SELECT parm_name, 
+                SELECT parm_name,
                        parm_value
                   FROM pub_proc_parm
                  WHERE pub_proc = ?""", self.__jobId)
@@ -254,7 +257,7 @@ class Publish:
                   (self.__jobId, info[1][0])
             self.__updateStatus(Publish.FAILURE, msg)
             raise StandardError(msg)
-   
+
         if self.__params.has_key("IncludeLinkedDocs") and \
             self.__params["IncludeLinkedDocs"] != "Yes":
             self.__includeLinkedDocs = 0
@@ -275,12 +278,12 @@ class Publish:
     # This is the major public entry point to publishing.
     #---------------------------------------------------------------
     def publish(self):
-        
+
         try:
 
             # Record the fact that the job is in process.
             self.__updateStatus(Publish.RUN)
-      
+
             # Load the publishing system's control document from the DB.
             docElem = self.__getCtrlDoc()
 
@@ -288,7 +291,7 @@ class Publish:
             # Set __sysName needed by Cancer.gov as a side-effect.
             subset = self.__getSubSet(docElem)
 
-            # Invoke an external process script, if any.  Will not return 
+            # Invoke an external process script, if any.  Will not return
             # if an external script is attached to this publishing system
             # subset.
             self.__invokeProcessScript(subset)
@@ -325,9 +328,9 @@ class Publish:
             specSubdirs             = []
             userListedDocsRemaining = len(self.__userDocList)
             self.__debugLog("Processing user-listed documents.")
-            
+
             # Number of documents have been filtered and validated.
-            numDocs = 0          
+            numDocs = 0
             self.__updateMessage(
                 "Start filtering/validating at %s.<BR>" % time.ctime())
 
@@ -348,23 +351,23 @@ class Publish:
                     # user-listed documents remaining to be published.
                     if not userListedDocsRemaining:
                         continue
-                   
+
                     # Hotfix-Export requirement and implementation have
-                    # changed. User-selected docs will not be processed as 
+                    # changed. User-selected docs will not be processed as
                     # it was supposed to be. This trick is used only for
                     # Hotfix-Export where all linked documents including
-                    # user-selected will be processed in their own typed SS. 
-                    # Refer to the control document for this tricky 
+                    # user-selected will be processed in their own typed SS.
+                    # Refer to the control document for this tricky
                     # implementation.
                     if self.__sysName == "Primary" and \
                         self.__subsetName == "Hotfix-Export":
-                        if self.__includeLinkedDocs:                                        
+                        if self.__includeLinkedDocs:
                             self.__addLinkedDocsToPPD()
                         self.__ignoreUserDocList = 1
                         userListedDocsRemaining = 0
                         continue
 
-                    # Find out if this subset specification allows user 
+                    # Find out if this subset specification allows user
                     # doc lists.
                     docTypesAllowed = self.__getAllowedDocTypes(spec)
                     if docTypesAllowed is None:
@@ -375,12 +378,12 @@ class Publish:
                         if doc[0] in self.__alreadyPublished:
                             continue
                         if docTypesAllowed and doc[2] not in docTypesAllowed:
-                            continue  
-                             
+                            continue
+
                         # Don't want to use subdir for user-listed docs
                         # due to complexity of specifying the multiple
                         # subdirs when calling cdr.publish(). This may
-                        # change in release XX.                    
+                        # change in release XX.
                         self.__publishDoc(doc, filters, destType, dest)
                         numDocs += 1
                         if numDocs % 1000 == 0:
@@ -388,8 +391,8 @@ class Publish:
                                 "Filtered/validated %d docs at %s.<BR>" % (
                                             numDocs, time.ctime()))
                             numFailures = self.__getFailures()
-                            self.__updateMessage("""%d docs failed so 
-                                far.<BR>""" % numFailures)  
+                            self.__updateMessage("""%d docs failed so
+                                far.<BR>""" % numFailures)
                             if self.__interactiveMode:
                                 self.__waitUserApproval()
 
@@ -400,8 +403,8 @@ class Publish:
             # Make sure all the user-listed documents are accounted for.
             if not self.__ignoreUserDocList:
                 for doc in self.__userDocList:
-                    if doc[0] not in self.__alreadyPublished:         
-                        self.__checkProblems(doc, 
+                    if doc[0] not in self.__alreadyPublished:
+                        self.__checkProblems(doc,
                                     "User-specified document CDR%010d "
                                     "has document type %s which is "
                                     "not allowed for this publication "
@@ -418,36 +421,36 @@ class Publish:
                         if specChild.nodeName == "SubsetSelection":
                             docs = self.__selectQueryDocs(specChild)
                             for doc in docs:
-                                self.__publishDoc(doc, specFilters[i], 
-                                      destType, dest, 
+                                self.__publishDoc(doc, specFilters[i],
+                                      destType, dest,
                                       Publish.STORE_ROW_IN_PUB_PROC_DOC_TABLE,
                                       specSubdirs[i])
                                 numDocs += 1
                                 if numDocs % 1000 == 0:
                                     numFailures = self.__getFailures()
                                     self.__updateMessage("""Filtered/validated
-                                        %d docs at %s, and %d docs failed so 
+                                        %d docs at %s, and %d docs failed so
                                         far.<BR>""" % (numDocs, time.ctime(),
-                                                       numFailures))                                
+                                                       numFailures))
                     i += 1
 
-            self.__updateMessage("""Finish filtering/validating all %d docs 
-                                    at %s.<BR>""" % (numDocs, time.ctime())) 
-            numFailures = self.__getFailures() 
+            self.__updateMessage("""Finish filtering/validating all %d docs
+                                    at %s.<BR>""" % (numDocs, time.ctime()))
+            numFailures = self.__getFailures()
             if numFailures > 0:
-                msg = """Total of %d docs failed. 
-                    <A href="%s/PubStatus.py?id=%d&type=FilterFailure">Check 
-                    the failure details.</A><BR>""" % (numFailures, 
-                    self.__cdrHttp, self.__jobId)  
+                msg = """Total of %d docs failed.
+                    <A href="%s/PubStatus.py?id=%d&type=FilterFailure">Check
+                    the failure details.</A><BR>""" % (numFailures,
+                    self.__cdrHttp, self.__jobId)
                 self.__updateMessage(msg)
             else:
-                self.__updateMessage("Total of 0 docs failed.<BR>")                    
+                self.__updateMessage("Total of 0 docs failed.<BR>")
 
             if self.__publishIfWarnings == "Ask" and self.__warningCount:
                 self.__updateStatus(Publish.WAIT, "Warnings encountered")
 
             # Rename the output directory from its working name if appropriate.
-            else:                
+            else:
                 if self.__no_output != "Y":
                     try:
                         os.rename(dest, dest_base)
@@ -460,15 +463,15 @@ class Publish:
                     elif not self.__canPush():
                         lenPd2Cg = len(self.__pd2cg)
                         if (self.__subsetName)[0:lenPd2Cg] == self.__pd2cg:
-                            self.__updateStatus(Publish.FAILURE) 
+                            self.__updateStatus(Publish.FAILURE)
                         else:
-                            self.__updateStatus(Publish.SUCCESS)                      
+                            self.__updateStatus(Publish.SUCCESS)
 
-                    # Filtered documents have to be in dest before sending 
+                    # Filtered documents have to be in dest before sending
                     # them to Cancer.gov. The following piece of code is
                     # quite confusing. Keep in mind that there are possibly
-                    # two jobs involved.                 
-                    else:                        
+                    # two jobs involved.
+                    else:
 
                         # Single job for sending filtered documents only,
                         # not producing the filtered documents again.
@@ -481,37 +484,37 @@ class Publish:
                             vendor_job    = vendorInfo[0]
                             vendor_dest   = vendorInfo[1]
                             vendor_subset = vendorInfo[2]
-                         
+
                             if not vendor_job:
-                                self.__updateStatus(Publish.FAILURE, 
-                                    "No enough vendor info found.<BR>") 
-                            else: 
-                             
-                                # Long job of many hours starts!                              
+                                self.__updateStatus(Publish.FAILURE,
+                                    "No enough vendor info found.<BR>")
+                            else:
+
+                                # Long job of many hours starts!
                                 cgResp = self.__pushDocsToCG(vendor_job,
-                                    vendor_dest, vendor_subset, self.__jobId)  
-                                
-                                # Update the status with message.                              
-                                self.__updateStatus(cgResp[1], cgResp[2])  
+                                    vendor_dest, vendor_subset, self.__jobId)
+
+                                # Update the status with message.
+                                self.__updateStatus(cgResp[1], cgResp[2])
 
                         # Two jobs involved. The second job will be created
                         # by __pushDocsToCG().
-                        else: 
-                        
+                        else:
+
                             # Send a first message indicating that the vendor
                             # data are ready and pushing these documents to
-                            # CG is in progress.                          
-                            self.__updateStatus(Publish.SUCCESS, 
+                            # CG is in progress.
+                            self.__updateStatus(Publish.SUCCESS,
                                 """Pushing filtered documents to Cancer.gov
                                 is in progress. You will receive a second
                                 email when it is done.<BR>""")
                             self.__sendMail()
 
                             # Long job of many hours starts!
-                            cgResp = self.__pushDocsToCG(self.__jobId, 
+                            cgResp = self.__pushDocsToCG(self.__jobId,
                                     dest_base, self.__subsetName)
 
-                            # Update the message no matter what happened.                                                  
+                            # Update the message no matter what happened.
                             self.__updateMessage(cgResp[2])
 
                             # Update statuse of the cg_job and send a second
@@ -521,9 +524,16 @@ class Publish:
                                 self.__updateStatus(cgResp[1], cgResp[2],
                                     cgResp[0])
                                 if cgResp[1] == Publish.FAILURE:
-                                    self.__sendMail(cgResp[0]) 
-                else: 
-                    self.__updateStatus(Publish.SUCCESS)                   
+                                    self.__sendMail(cgResp[0])
+                else:
+                    self.__updateStatus(Publish.SUCCESS)
+
+        except SystemExit:
+            # __invokeProcessScript() can exit, which raises SystemExit
+            # Since we catch all exceptions below, we would catch this one
+            #   in the general Except clause and report an
+            #   "Unexpected failure", which we don't want to do.
+            sys.exit(0)
 
         except StandardError, arg:
             self.__updateStatus(Publish.FAILURE, arg[0])
@@ -534,6 +544,7 @@ class Publish:
                     pass
         except:
             self.__updateStatus(Publish.FAILURE, "Unexpected failure")
+            cdr.logwrite ("Unhandled exception in publish:", LOG, tback=1)
             if self.__no_output != "Y":
                 try:
                     os.rename(dest, dest_base + ".FAILURE")
@@ -542,8 +553,8 @@ class Publish:
 
         # Send email to notify user of job status.
         if self.__reportOnly:
-            self.__updateStatus(Publish.FAILURE, """The job status is 
-                set to Failure because it was running for pre-publishing 
+            self.__updateStatus(Publish.FAILURE, """The job status is
+                set to Failure because it was running for pre-publishing
                 reports.<BR>""")
 
         # Update first_pub in all_docs table.
@@ -552,7 +563,7 @@ class Publish:
         self.__sendMail()
 
     #------------------------------------------------------------------
-    # Update first_pub when appropriate.  
+    # Update first_pub when appropriate.
     #------------------------------------------------------------------
     def __updateFirstPub(self):
         try:
@@ -565,8 +576,8 @@ class Publish:
                        AND ppd.pub_proc = ppj.id
                        AND ppj.id = %d
                        AND d.first_pub IS NULL
-                       AND d.first_pub_knowable = 'Y'                   
-                  ORDER BY ppd.doc_id             
+                       AND d.first_pub_knowable = 'Y'
+                  ORDER BY ppd.doc_id
                            """ % self.__jobId
                            )
             rows = cursor.fetchall()
@@ -574,14 +585,14 @@ class Publish:
                 cursor.execute("""\
                     UPDATE all_docs
                        SET first_pub = '%s'
-                     WHERE id = %d                 
+                     WHERE id = %d
                                """ % (row[1], row[0])
                               )
                 conn.commit()
         except cdrdb.Error, info:
-            self.__updateStatus(Publish.FAILURE, """Failure updating first_pub 
+            self.__updateStatus(Publish.FAILURE, """Failure updating first_pub
                         for job %d: %s""" % (self.__jobId, info[1][0]))
-  
+
     #------------------------------------------------------------------
     # Allow only one pushing job run.
     # Return 0 if there is a pending pushing job.
@@ -592,30 +603,30 @@ class Publish:
             cursor.execute("""\
                     SELECT TOP 1 id
                       FROM pub_proc
-                     WHERE NOT status IN ('%s', '%s') 
+                     WHERE NOT status IN ('%s', '%s')
                        AND pub_subset LIKE '%s%%'
-                       AND pub_system = %d 
-                       AND NOT id = %d 
-                  ORDER BY id DESC             
-                           """ % (Publish.SUCCESS, Publish.FAILURE, 
+                       AND pub_system = %d
+                       AND NOT id = %d
+                  ORDER BY id DESC
+                           """ % (Publish.SUCCESS, Publish.FAILURE,
                                   self.__pd2cg, self.__ctrlDocId,
                                   self.__jobId)
                            )
             row = cursor.fetchone()
             if row:
-                msg = """Pushing job %d is pending. Please push again 
-                         later.<BR>""" % row[0] 
+                msg = """Pushing job %d is pending. Please push again
+                         later.<BR>""" % row[0]
                 self.__updateMessage(msg)
                 return 0
 
         except cdrdb.Error, info:
-            raise StandardError("""Failure finding pending pushing jobs 
+            raise StandardError("""Failure finding pending pushing jobs
                         for job %d: %s""" % (self.__jobId, info[1][0]))
         return 1
 
     #------------------------------------------------------------------
-    # Find the vendor job and destination directory based on parameter 
-    # value SubSetName belonging to this job.    
+    # Find the vendor job and destination directory based on parameter
+    # value SubSetName belonging to this job.
     #------------------------------------------------------------------
     def __findVendorData(self):
         if not self.__params.has_key('SubSetName'):
@@ -627,7 +638,7 @@ class Publish:
                 cursor.execute("""\
                     SELECT TOP 1 id, output_dir
                       FROM pub_proc
-                     WHERE status = '%s' 
+                     WHERE status = '%s'
                        AND pub_subset = '%s'
                        AND pub_system = %d
                   ORDER BY id DESC
@@ -635,34 +646,34 @@ class Publish:
                 row = cursor.fetchone()
                 if not row:
                     raise StandardError(
-                        "Corresponding vendor job does not exist.<BR>") 
+                        "Corresponding vendor job does not exist.<BR>")
 
                 id   = row[0]
-                dest = row[1]              
-                
-                prevId = self.__getLastJobId(subsetName) 
+                dest = row[1]
+
+                prevId = self.__getLastJobId(subsetName)
                 if prevId > id:
-                    raise StandardError("""This same job has been previously 
+                    raise StandardError("""This same job has been previously
                         successfully done by job %d.""" % prevId)
-                         
+
                 return [id, dest, subsetName]
 
             except cdrdb.Error, info:
                 raise StandardError("""Failure finding vendor job and vendor
-                        destination for job %d: %s""" % (self.__jobId, 
+                        destination for job %d: %s""" % (self.__jobId,
                                                          info[1][0]))
-              
+
     #------------------------------------------------------------------
-    # Push documents of a specific vendor_job to Cancer.gov using cdr2cg 
-    # module. Create a new cg_job to handle this task if a cg_job has not 
-    # been created. When a value of cg_job is passed in, it must be the 
+    # Push documents of a specific vendor_job to Cancer.gov using cdr2cg
+    # module. Create a new cg_job to handle this task if a cg_job has not
+    # been created. When a value of cg_job is passed in, it must be the
     # same as vendor job (i.e., the SubSet is Push_Documents_To_Cancer.Gov).
     # We handle different pubTypes in separate code for clarity.
-    # Return a list [cg_job, status, message].   
+    # Return a list [cg_job, status, message].
     #------------------------------------------------------------------
-    def __pushDocsToCG(self, vendor_job, vendor_dest, vendor_subsetName, 
-                       cg_job=None):    
-        
+    def __pushDocsToCG(self, vendor_job, vendor_dest, vendor_subsetName,
+                       cg_job=None):
+
         msg = ""
         jobId = cg_job or 0
 
@@ -670,91 +681,91 @@ class Publish:
         if not cg_job:
             resp = cdr.publish(self.__credentials, "Primary",
                            "%s_%s" % (self.__pd2cg, vendor_subsetName),
-                           email = self.__email,                           
+                           email = self.__email,
                            noOutput = self.__no_output,
                            port = self.__pubPort)
             cg_job = resp[0]
             if not cg_job:
                 msg += "<B>Failed:</B> %s\n" % resp[1]
-                msg += """<BR>Please run %s job separately or 
+                msg += """<BR>Please run %s job separately or
                     again later.<BR>""" % self.__pd2cg
-                return [None, Publish.SUCCESS, msg]       
-            jobId = int(cg_job)        
-     
+                return [None, Publish.SUCCESS, msg]
+            jobId = int(cg_job)
+
         # Get the value of pubType for this vendor_job.
         if self.__params.has_key('PubType'):
             pubType = self.__params['PubType']
-            if not cdr2cg.PUBTYPES.has_key(pubType):              
+            if not cdr2cg.PUBTYPES.has_key(pubType):
                 msg = """The value of parameter PubType, %s, is unsupported.
-                       <BR>Please modify the control document or the source 
+                       <BR>Please modify the control document or the source
                        code.<BR>""" % pubType
                 return [jobId, Publish.FAILURE, msg]
         else:
             msg = "There is no parameter PubType in the control document."
-            return [jobId, Publish.FAILURE, msg] 
-        
+            return [jobId, Publish.FAILURE, msg]
+
         try:
-            cursor = self.__conn.cursor() 
+            cursor = self.__conn.cursor()
 
             # If pubType is "Full Load", clean up pub_proc_cg table.
             if pubType == "Full Load":
                 message = "Deleting pub_proc_cg at %s.<BR>" % time.ctime()
-                self.__updateMessage(message, jobId) 
-                try: cursor.execute("DELETE pub_proc_cg", 
-                                    timeout = self.__timeOut) 
+                self.__updateMessage(message, jobId)
+                try: cursor.execute("DELETE pub_proc_cg",
+                                    timeout = self.__timeOut)
                 except:
                     msg = "Deleting pub_proc_cg failed."
                     return [jobId, Publish.FAILURE, msg]
-        
+
             # Create a working table pub_proc_cg_work to hold information
-            # on transactions to Cancer.gov.  
+            # on transactions to Cancer.gov.
             message = "Creating pub_proc_cg_work at %s.<BR>" % time.ctime()
-            self.__updateMessage(message, jobId) 
+            self.__updateMessage(message, jobId)
             cgWorkLink = self.__cdrHttp + "/PubStatus.py?id=1&type=CgWork"
-            link = "<A href='%s'>Check removed docs</A><BR>" % cgWorkLink         
+            link = "<A href='%s'>Check removed docs</A><BR>" % cgWorkLink
             if pubType == "Full Load" or pubType == "Export":
-                self.__createWorkPPC(vendor_job, vendor_dest, jobId) 
-                pubTypeCG = pubType 
-                if self.__checkRemovedDocs or self.__interactiveMode:                   
+                self.__createWorkPPC(vendor_job, vendor_dest, jobId)
+                pubTypeCG = pubType
+                if self.__checkRemovedDocs or self.__interactiveMode:
                     self.__updateMessage(link)
                     self.__waitUserApproval(jobId)
             elif pubType == "Hotfix (Remove)":
                 self.__createWorkPPCHR(vendor_job, vendor_dest, jobId)
                 pubTypeCG = "Hotfix"
             elif pubType == "Hotfix (Export)":
-                self.__createWorkPPCHE(vendor_job, vendor_dest, jobId)  
-                pubTypeCG = "Hotfix" 
+                self.__createWorkPPCHE(vendor_job, vendor_dest, jobId)
+                pubTypeCG = "Hotfix"
                 if self.__checkRemovedDocs or self.__interactiveMode:
                     self.__updateMessage(link)
                     self.__waitUserApproval(jobId)
             else:
-                raise StandardError("pubType %s not supported." % pubType)   
-            
+                raise StandardError("pubType %s not supported." % pubType)
+
             docNum  = 1
-            numDocs = 0  
+            numDocs = 0
             cursor.execute ("""
                 SELECT count(*)
-                  FROM pub_proc_cg_work                
+                  FROM pub_proc_cg_work
                             """)
-            row = cursor.fetchone()            
+            row = cursor.fetchone()
             if row and row[0]:
-                numDocs = row[0] 
-            
+                numDocs = row[0]
+
             if numDocs == 0:
                 msg = "No documents pushed to Cancer.gov."
                 return [jobId, Publish.SUCCESS, msg]
-            
+
             # Get last successful cg_jobId. GateKeeper does not
             # care which subset it belongs to.
             # Returns 0 if there is no previous success.
             # Raise an exception when failed.
-            lastJobId = self.__getLastCgJob()   
+            lastJobId = self.__getLastCgJob()
 
             docType = "Deprecated"
-   
+
             # See if the GateKeeper is awake.
             msg += "Initiating request with pubType=%s, \
-                    docType=%s, lastJobId=%d ...<BR>" % (pubTypeCG, 
+                    docType=%s, lastJobId=%d ...<BR>" % (pubTypeCG,
                     docType, lastJobId)
             response = cdr2cg.initiateRequest(pubTypeCG, docType, lastJobId)
             if response.type != "OK":
@@ -765,94 +776,94 @@ class Publish:
                     return [jobId, Publish.FAILURE, msg]
                 elif response.details:
                     lastJobId = response.details.lastJobId
-                    msg += "Last job ID from server: %d<BR>" % lastJobId          
+                    msg += "Last job ID from server: %d<BR>" % lastJobId
 
             # Prepare the server for a list of documents to send.
             msg += """Sending data prolog with jobId=%d, pubType=%s,
                     docType=%s, lastJobId=%d, numDocs=%d ...<BR>
-                    """ % (jobId, pubTypeCG, docType, lastJobId, numDocs)          
+                    """ % (jobId, pubTypeCG, docType, lastJobId, numDocs)
             response = cdr2cg.sendDataProlog(jobId, pubTypeCG, docType,
                                                  lastJobId, numDocs)
             if response.type != "OK":
                 msg += "%s: %s<BR>" % (response.type, response.message)
-                return [jobId, Publish.FAILURE, msg]  
-            
-            msg += "Pushing documents starts at %s.<BR>" % time.ctime()
-            self.__updateMessage(msg, jobId) 
-            msg = ""   
+                return [jobId, Publish.FAILURE, msg]
 
-            # Send all new and updated documents.                    
+            msg += "Pushing documents starts at %s.<BR>" % time.ctime()
+            self.__updateMessage(msg, jobId)
+            msg = ""
+
+            # Send all new and updated documents.
             cursor.execute ("""
                 SELECT id, doc_type, xml
                   FROM pub_proc_cg_work
                  WHERE NOT xml IS NULL
                             """, timeout = self.__timeOut)
-            rows    = cursor.fetchall()  
-            addCount = len(rows)             
-            if addCount > 0:                 
+            rows    = cursor.fetchall()
+            addCount = len(rows)
+            if addCount > 0:
                 XmlDeclLine = re.compile("<\?xml.*?\?>\s*", re.DOTALL)
-                DocTypeLine = re.compile("<!DOCTYPE.*?>\s*", re.DOTALL)                   
-                for row in rows:                
+                DocTypeLine = re.compile("<!DOCTYPE.*?>\s*", re.DOTALL)
+                for row in rows:
                     id      = row[0]
-                    docType = row[1]  
+                    docType = row[1]
                     if docType == "InScopeProtocol":
-                        docType = "Protocol"  
-                    xml = row[2].encode('utf-8')            
+                        docType = "Protocol"
+                    xml = row[2].encode('utf-8')
                     xml = XmlDeclLine.sub("", xml)
                     xml = DocTypeLine.sub("", xml)
 
-                    response = cdr2cg.sendDocument(jobId, docNum, 
+                    response = cdr2cg.sendDocument(jobId, docNum,
                                 "Export", docType, id, xml)
                     if response.type != "OK":
                         msg += "sent document: %d<BR>" % id
                         msg += "send failed. %s: %s<BR>" % \
                                 (response.type, response.message)
-                        return [jobId, Publish.FAILURE, msg] 
-                    docNum  = docNum + 1 
-                    if docNum % 1000 == 0:
-                        msg += "Pushed %d documents at %s.<BR>" % (
-                                    docNum, time.ctime())
-                        self.__updateMessage(msg, jobId)
-                        msg = ""  
-                msg += "%d documents sent to Cancer.gov.<BR>" % addCount
-                self.__updateMessage(msg, jobId)
-                msg = "" 
-
-            # Remove all the removed documents. 
-            cursor.execute ("""
-                SELECT id, doc_type
-                  FROM pub_proc_cg_work
-                 WHERE xml IS NULL
-                            """)
-            rows = cursor.fetchall()  
-            delCount = len(rows)
-            if delCount > 0: 
-                for row in rows:               
-                    id        = row[0]               
-                    docType   = row[1] 
-                    if docType == "InScopeProtocol":
-                        docType = "Protocol"   
-                    response = cdr2cg.sendDocument(jobId, docNum, "Remove", 
-                                                   docType, id)                 
-                    if response.type != "OK":
-                        msg += "deleted document: %d<BR>" % id
-                        msg += "deleting failed. %s: %s<BR>" % \
-                                (response.type, response.message)
-                        return [jobId, Publish.FAILURE, msg]  
+                        return [jobId, Publish.FAILURE, msg]
                     docNum  = docNum + 1
                     if docNum % 1000 == 0:
                         msg += "Pushed %d documents at %s.<BR>" % (
                                     docNum, time.ctime())
                         self.__updateMessage(msg, jobId)
                         msg = ""
-                msg += "%d documents removed from Cancer.gov.<BR>" % delCount    
+                msg += "%d documents sent to Cancer.gov.<BR>" % addCount
                 self.__updateMessage(msg, jobId)
-                msg = ""                               
-            msg += "Pushing done at %s.<BR>" % time.ctime() 
+                msg = ""
+
+            # Remove all the removed documents.
+            cursor.execute ("""
+                SELECT id, doc_type
+                  FROM pub_proc_cg_work
+                 WHERE xml IS NULL
+                            """)
+            rows = cursor.fetchall()
+            delCount = len(rows)
+            if delCount > 0:
+                for row in rows:
+                    id        = row[0]
+                    docType   = row[1]
+                    if docType == "InScopeProtocol":
+                        docType = "Protocol"
+                    response = cdr2cg.sendDocument(jobId, docNum, "Remove",
+                                                   docType, id)
+                    if response.type != "OK":
+                        msg += "deleted document: %d<BR>" % id
+                        msg += "deleting failed. %s: %s<BR>" % \
+                                (response.type, response.message)
+                        return [jobId, Publish.FAILURE, msg]
+                    docNum  = docNum + 1
+                    if docNum % 1000 == 0:
+                        msg += "Pushed %d documents at %s.<BR>" % (
+                                    docNum, time.ctime())
+                        self.__updateMessage(msg, jobId)
+                        msg = ""
+                msg += "%d documents removed from Cancer.gov.<BR>" % delCount
+                self.__updateMessage(msg, jobId)
+                msg = ""
+            msg += "Pushing done at %s.<BR>" % time.ctime()
             self.__updateMessage(msg, jobId)
             msg = ""
 
-            # Before we claim success, we will have to update 
+            # Before we claim success, we will have to update
             # pub_proc_cg and pub_proc_doc from pub_proc_cg_work.
             # These transactions must succeed! Failure will cause
             # a mismatch between PPC/D and Cancer.gov database.
@@ -860,72 +871,72 @@ class Publish:
                 self.__updateFromPPCW()
             elif pubType == "Hotfix (Remove)":
                 self.__updateFromPPCWHR()
-            elif pubType == "Hotfix (Export)":               
-                self.__updateFromPPCWHE()   
+            elif pubType == "Hotfix (Export)":
+                self.__updateFromPPCWHE()
             else:
-                raise StandardError("pubType %s not supported." % pubType)  
-                       
-            msg += "Updating PPC/PPD tables done at %s.<BR>" % time.ctime() 
+                raise StandardError("pubType %s not supported." % pubType)
+
+            msg += "Updating PPC/PPD tables done at %s.<BR>" % time.ctime()
             self.__updateMessage(msg, jobId)
             msg = ""
-                   
+
         except StandardError, arg:
             msg += arg[0]
             return [jobId, Publish.FAILURE, msg]
 
         return [jobId, Publish.SUCCESS, msg]
-    
+
     #------------------------------------------------------------------
-    # Create rows in the working pub_proc_cg_work table before updating 
-    # pub_proc_cg and pub_proc_doc tables. After successfully sending 
-    # documents to CG, we can update PPC and PPD in a few instead of 
-    # possible 80,000 transactions. We will also update PPD to record 
+    # Create rows in the working pub_proc_cg_work table before updating
+    # pub_proc_cg and pub_proc_doc tables. After successfully sending
+    # documents to CG, we can update PPC and PPD in a few instead of
+    # possible 80,000 transactions. We will also update PPD to record
     # the history of deleted documents. cg_job column seems useless except
     # that it indicates which job has created rows in pub_proc_cg_work.
     # No rows in PPC or PPP will be created for cg_job except for those
-    # for vendor part. Note that all docs in PPCW are partitioned into 3 
+    # for vendor part. Note that all docs in PPCW are partitioned into 3
     # sets: updated, new, and removed, although we don't distiguish the
-    # first two in the table (we could do it with an action column for 
-    # clarity if needed).  
+    # first two in the table (we could do it with an action column for
+    # clarity if needed).
     #------------------------------------------------------------------
-    def __createWorkPPC(self, vendor_job, vendor_dest, cg_job):  
-    
-        cursor = self.__conn.cursor()   
+    def __createWorkPPC(self, vendor_job, vendor_dest, cg_job):
 
-        # Wipe out all rows in pub_proc_cg_work. Only one job can be run 
-        # for Cancer.gov transaction. This is garanteed by calling 
+        cursor = self.__conn.cursor()
+
+        # Wipe out all rows in pub_proc_cg_work. Only one job can be run
+        # for Cancer.gov transaction. This is garanteed by calling
         # __canPush().
-        try:                   
+        try:
             cursor.execute("""
                 DELETE pub_proc_cg_work
-                  """, timeout = self.__timeOut) 
+                  """, timeout = self.__timeOut)
         except:
             raise StandardError("Deleting pub_proc_cg_work failed.")
-        msg = "Finished deleting pub_proc_cg_work at %s.<BR>" % time.ctime() 
+        msg = "Finished deleting pub_proc_cg_work at %s.<BR>" % time.ctime()
         self.__updateMessage(msg, cg_job)
 
         # Insert updated documents into pub_proc_cg_work. Updated documents
         # are those that are in both pub_proc_cg and pub_proc_doc belonging
-        # to this vendor_job. This is slow. We compare the XML document 
+        # to this vendor_job. This is slow. We compare the XML document
         # content to see if it needs updating. If needed, we insert a row
-        # into pub_proc_cg_work with xml set to the new document.        
-        try: 
+        # into pub_proc_cg_work with xml set to the new document.
+        try:
             qry = """
                 SELECT ppc.id, t.name, ppc.xml, ppd2.subdir
                   FROM pub_proc_cg ppc, doc_type t, document d,
                        pub_proc_doc ppd2
                  WHERE d.id = ppc.id
-                   AND d.doc_type = t.id 
+                   AND d.doc_type = t.id
                    AND ppd2.doc_id = d.id
                    AND ppd2.pub_proc = %d
                    AND EXISTS (
-                           SELECT * 
+                           SELECT *
                              FROM pub_proc_doc ppd
-                            WHERE ppd.doc_id = ppc.id 
+                            WHERE ppd.doc_id = ppc.id
                               AND ppd.pub_proc = %d
                               AND ppd.failure IS NULL
                               )
-                            """ % (vendor_job, vendor_job)        
+                            """ % (vendor_job, vendor_job)
             cursor.execute(qry, timeout = self.__timeOut)
             rows = cursor.fetchall()
             for row in rows:
@@ -934,63 +945,63 @@ class Publish:
                 xml    = row[2]
                 subdir = row[3]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
-                file   = open(path, "r").read()  
+                file   = open(path, "r").read()
                 file   = unicode(file, 'latin-1')
-               
+
                 if xml != file:
                     cursor.execute("""
-                        INSERT INTO pub_proc_cg_work (id, vendor_job, 
+                        INSERT INTO pub_proc_cg_work (id, vendor_job,
                                         cg_job, doc_type, xml)
-                             VALUES (?, ?, ?, ?, ?)                             
+                             VALUES (?, ?, ?, ?, ?)
                                    """, (id, vendor_job, cg_job, type, file)
                                   )
         except:
             raise StandardError("Setting U to pub_proc_cg_work failed.")
-        msg = "Finished insertion for updating at %s.<BR>" % time.ctime() 
-        self.__updateMessage(msg, cg_job) 
-    
-        # Insert new documents into pub_proc_cg_work. New documents are 
-        # those in pub_proc_doc belonging to vendor_job, but not in 
-        # pub_proc_cg. 
-        try:                
+        msg = "Finished insertion for updating at %s.<BR>" % time.ctime()
+        self.__updateMessage(msg, cg_job)
+
+        # Insert new documents into pub_proc_cg_work. New documents are
+        # those in pub_proc_doc belonging to vendor_job, but not in
+        # pub_proc_cg.
+        try:
             cursor.execute ("""
                      SELECT ppd.doc_id, t.name, ppd.subdir
                        FROM pub_proc_doc ppd, doc_type t, document d
                       WHERE ppd.pub_proc = ?
                         AND d.id = ppd.doc_id
-                        AND d.doc_type = t.id 
+                        AND d.doc_type = t.id
                         AND ppd.failure IS NULL
-                        AND NOT EXISTS ( 
-                                SELECT * 
+                        AND NOT EXISTS (
+                                SELECT *
                                   FROM pub_proc_cg ppc
-                                 WHERE ppc.id = ppd.doc_id                                
+                                 WHERE ppc.id = ppd.doc_id
                                        )
                             """, (vendor_job), timeout = self.__timeOut
-                           )      
+                           )
             rows = cursor.fetchall()
             for row in rows:
                 id     = row[0]
-                type   = row[1]  
-                subdir = row[2]            
+                type   = row[1]
+                subdir = row[2]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
-                xml    = open(path, "r").read()  
-                xml    = unicode(xml, 'latin-1')              
+                xml    = open(path, "r").read()
+                xml    = unicode(xml, 'latin-1')
                 cursor.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
                                                   doc_type, xml)
-                         VALUES (?, ?, ?, ?, ?)                             
+                         VALUES (?, ?, ?, ?, ?)
                                """, (id, vendor_job, cg_job, type, xml)
                               )
         except:
-            raise StandardError("Setting A to pub_proc_cg_work failed.") 
-        msg = "Finished insertion for adding at %s.<BR>" % time.ctime() 
-        self.__updateMessage(msg, cg_job)     
+            raise StandardError("Setting A to pub_proc_cg_work failed.")
+        msg = "Finished insertion for adding at %s.<BR>" % time.ctime()
+        self.__updateMessage(msg, cg_job)
 
         # Insert removed documents into pub_proc_cg_work.
         # Removed documents are those in pub_proc_cg, but not in
-        # pub_proc_doc belonging to vendor_job. The document version number 
+        # pub_proc_doc belonging to vendor_job. The document version number
         # is obtained from the job in pub_proc_cg. If we want the most
-        # recent version, we will either reconstruct the query or update 
+        # recent version, we will either reconstruct the query or update
         # pub_proc column in pub_proc_cg for each job. The version
         # number is only used for history recording.
 
@@ -999,36 +1010,36 @@ class Publish:
         # Get a list of docType IDs such as "18, 19, 11".
         docTypes = self.__getSubsetDocTypes(vendor_job)
 
-        try:                  
+        try:
             qry = """
-                INSERT INTO pub_proc_cg_work (id, num, vendor_job, 
+                INSERT INTO pub_proc_cg_work (id, num, vendor_job,
                                           cg_job, doc_type)
                      SELECT ppc.id, prevd.doc_version, %d, %d, t.name
-                       FROM pub_proc_cg ppc, doc_type t, document d, 
+                       FROM pub_proc_cg ppc, doc_type t, document d,
                             pub_proc_doc prevd
                       WHERE d.id = ppc.id
-                        AND d.doc_type = t.id 
+                        AND d.doc_type = t.id
                         AND d.doc_type IN (%s)
                         AND prevd.doc_id = ppc.id
                         AND prevd.pub_proc = ppc.pub_proc
-                        AND NOT EXISTS ( 
-                                SELECT * 
+                        AND NOT EXISTS (
+                                SELECT *
                                   FROM pub_proc_doc ppd
                                  WHERE ppd.doc_id = ppc.id
                                    AND ppd.pub_proc = %d
                                        )
-                  """ % (vendor_job, cg_job, docTypes, vendor_job)                          
+                  """ % (vendor_job, cg_job, docTypes, vendor_job)
             cursor.execute(qry, timeout = self.__timeOut)
         except:
             raise StandardError("Setting D to pub_proc_cg_work failed.")
-        msg = "Finished insertion for deleting at %s.<BR>" % time.ctime() 
-        self.__updateMessage(msg, cg_job) 
-    
+        msg = "Finished insertion for deleting at %s.<BR>" % time.ctime()
+        self.__updateMessage(msg, cg_job)
+
     #------------------------------------------------------------------
-    # Return a string of doc type IDs to be used in query.   
+    # Return a string of doc type IDs to be used in query.
     #------------------------------------------------------------------
     def __getSubsetDocTypes(self, vendor_job):
-        
+
         docTypes = ""
 
         try:
@@ -1042,28 +1053,28 @@ class Publish:
                           )
             rows = cursor.fetchall()
             for row in rows:
-                docTypes += "%d," % row[0]             
+                docTypes += "%d," % row[0]
             return docTypes[:-1]
-               
+
         except cdrdb.Error, info:
             msg = "Failure executing query to find doc types " \
                   "for job: %d" % vendor_job
-            raise StandardError(msg)    
-    
+            raise StandardError(msg)
+
     #------------------------------------------------------------------
     # Different version of __createWorkPPC for Hotfix (Remove)
     #------------------------------------------------------------------
-    def __createWorkPPCHR(self, vendor_job, vendor_dest, cg_job):  
-    
-        cursor = self.__conn.cursor()   
+    def __createWorkPPCHR(self, vendor_job, vendor_dest, cg_job):
 
-        # Wipe out all rows in pub_proc_cg_work. Only one job can be run 
-        # for Cancer.gov transaction. This is garanteed by calling 
+        cursor = self.__conn.cursor()
+
+        # Wipe out all rows in pub_proc_cg_work. Only one job can be run
+        # for Cancer.gov transaction. This is garanteed by calling
         # __canPush().
-        try:                   
+        try:
             cursor.execute("""
                 DELETE pub_proc_cg_work
-                  """, timeout = self.__timeOut) 
+                  """, timeout = self.__timeOut)
         except:
             raise StandardError("Deleting pub_proc_cg_work failed.")
 
@@ -1071,59 +1082,59 @@ class Publish:
         # Removed documents are those in vendor_job. We will later
         # set the removed column in PPD and remove the PPC rows if
         # exist.
-        try:                  
+        try:
             qry = """
-                INSERT INTO pub_proc_cg_work (id, num, vendor_job, 
+                INSERT INTO pub_proc_cg_work (id, num, vendor_job,
                                               cg_job, doc_type)
                      SELECT ppd.doc_id, ppd.doc_version, %d, %d, t.name
-                       FROM pub_proc_doc ppd, doc_type t, document d                          
+                       FROM pub_proc_doc ppd, doc_type t, document d
                       WHERE d.id = ppd.doc_id
-                        AND d.doc_type = t.id                        
-                        AND ppd.pub_proc = %d                        
-                  """ % (vendor_job, cg_job, vendor_job)                          
+                        AND d.doc_type = t.id
+                        AND ppd.pub_proc = %d
+                  """ % (vendor_job, cg_job, vendor_job)
             cursor.execute(qry, timeout = self.__timeOut)
         except:
             raise StandardError("Setting D to pub_proc_cg_work failed.")
-    
+
     #------------------------------------------------------------------
     # Different version of __createWorkPPC for Hotfix (Export)
     #------------------------------------------------------------------
-    def __createWorkPPCHE(self, vendor_job, vendor_dest, cg_job):  
-    
-        cursor = self.__conn.cursor()   
+    def __createWorkPPCHE(self, vendor_job, vendor_dest, cg_job):
 
-        # Wipe out all rows in pub_proc_cg_work. Only one job can be run 
-        # for Cancer.gov transaction. This is garanteed by calling 
+        cursor = self.__conn.cursor()
+
+        # Wipe out all rows in pub_proc_cg_work. Only one job can be run
+        # for Cancer.gov transaction. This is garanteed by calling
         # __canPush().
-        try:                   
+        try:
             cursor.execute("""
                 DELETE pub_proc_cg_work
-                  """, timeout = self.__timeOut) 
+                  """, timeout = self.__timeOut)
         except:
             raise StandardError("Deleting pub_proc_cg_work failed.")
-        
+
         # Insert updated documents into pub_proc_cg_work. Updated documents
         # are those that are in both pub_proc_cg and pub_proc_doc belonging
-        # to this vendor_job. This is slow. We compare the XML document 
+        # to this vendor_job. This is slow. We compare the XML document
         # content to see if it needs updating. If needed, we insert a row
-        # into pub_proc_cg_work with xml set to the new document.        
-        try: 
+        # into pub_proc_cg_work with xml set to the new document.
+        try:
             qry = """
                 SELECT ppc.id, t.name, ppc.xml, ppd2.subdir
                   FROM pub_proc_cg ppc, doc_type t, document d,
                        pub_proc_doc ppd2
                  WHERE d.id = ppc.id
-                   AND d.doc_type = t.id 
+                   AND d.doc_type = t.id
                    AND ppd2.doc_id = d.id
                    AND ppd2.pub_proc = %d
                    AND EXISTS (
-                           SELECT * 
+                           SELECT *
                              FROM pub_proc_doc ppd
-                            WHERE ppd.doc_id = ppc.id 
+                            WHERE ppd.doc_id = ppc.id
                               AND ppd.pub_proc = %d
                               AND ppd.failure IS NULL
                               )
-                            """ % (vendor_job, vendor_job)        
+                            """ % (vendor_job, vendor_job)
             cursor.execute(qry, timeout = self.__timeOut)
             rows = cursor.fetchall()
             for row in rows:
@@ -1132,131 +1143,131 @@ class Publish:
                 xml    = row[2]
                 subdir = row[3]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
-                file   = open(path, "r").read()  
+                file   = open(path, "r").read()
                 file   = unicode(file, 'latin-1')
-             
+
                 if xml != file:
                     cursor.execute("""
-                        INSERT INTO pub_proc_cg_work (id, vendor_job, 
+                        INSERT INTO pub_proc_cg_work (id, vendor_job,
                                         cg_job, doc_type, xml)
-                             VALUES (?, ?, ?, ?, ?)                             
+                             VALUES (?, ?, ?, ?, ?)
                                    """, (id, vendor_job, cg_job, type, file)
                                   )
         except:
             raise StandardError("Setting U to pub_proc_cg_work failed.")
-        msg = "Finished insertion for updating at %s.<BR>" % time.ctime() 
-        self.__updateMessage(msg, cg_job) 
-    
-        # Insert new documents into pub_proc_cg_work. New documents are 
-        # those in pub_proc_doc belonging to vendor_job, but not in 
-        # pub_proc_cg. 
-        try:                
+        msg = "Finished insertion for updating at %s.<BR>" % time.ctime()
+        self.__updateMessage(msg, cg_job)
+
+        # Insert new documents into pub_proc_cg_work. New documents are
+        # those in pub_proc_doc belonging to vendor_job, but not in
+        # pub_proc_cg.
+        try:
             cursor.execute ("""
                      SELECT ppd.doc_id, t.name, ppd.subdir
                        FROM pub_proc_doc ppd, doc_type t, document d
                       WHERE ppd.pub_proc = ?
                         AND d.id = ppd.doc_id
-                        AND d.doc_type = t.id 
+                        AND d.doc_type = t.id
                         AND ppd.failure IS NULL
-                        AND NOT EXISTS ( 
-                                SELECT * 
+                        AND NOT EXISTS (
+                                SELECT *
                                   FROM pub_proc_cg ppc
-                                 WHERE ppc.id = ppd.doc_id                                
+                                 WHERE ppc.id = ppd.doc_id
                                        )
                             """, (vendor_job), timeout = self.__timeOut
-                           )      
+                           )
             rows = cursor.fetchall()
             for row in rows:
                 id     = row[0]
-                type   = row[1]  
-                subdir = row[2]            
+                type   = row[1]
+                subdir = row[2]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
-                xml    = open(path, "r").read()  
-                xml    = unicode(xml, 'latin-1')             
+                xml    = open(path, "r").read()
+                xml    = unicode(xml, 'latin-1')
                 cursor.execute("""
                     INSERT INTO pub_proc_cg_work (id, vendor_job, cg_job,
                                                   doc_type, xml)
-                         VALUES (?, ?, ?, ?, ?)                             
+                         VALUES (?, ?, ?, ?, ?)
                                """, (id, vendor_job, cg_job, type, xml)
                               )
         except:
-            raise StandardError("Setting A to pub_proc_cg_work failed.") 
-        msg = "Finished insertion for adding at %s.<BR>" % time.ctime() 
-        self.__updateMessage(msg, cg_job)     
-     
+            raise StandardError("Setting A to pub_proc_cg_work failed.")
+        msg = "Finished insertion for adding at %s.<BR>" % time.ctime()
+        self.__updateMessage(msg, cg_job)
+
     #------------------------------------------------------------------
-    # Update pub_proc_cg and pub_proc_doc from pub_proc_cg_work. 
+    # Update pub_proc_cg and pub_proc_doc from pub_proc_cg_work.
     # These transactions have to be successful or we have to review
     # related tables to find out what is wrong.
-    # Note that the order of execution for PPC is critical: delete, 
+    # Note that the order of execution for PPC is critical: delete,
     # update, and insert.
     # It takes less than 20 minutes.
     #------------------------------------------------------------------
-    def __updateFromPPCW(self): 
+    def __updateFromPPCW(self):
 
         self.__conn.setAutoCommit(0)
         cursor = self.__conn.cursor()
-    
-        # Remove documents. The IN clause used should be OK.     
-        try:         
+
+        # Remove documents. The IN clause used should be OK.
+        try:
             cursor.execute ("""
-                DELETE pub_proc_cg                       
-                 WHERE id IN ( 
+                DELETE pub_proc_cg
+                 WHERE id IN (
                     SELECT ppcw.id
-                      FROM pub_proc_cg_work ppcw  
+                      FROM pub_proc_cg_work ppcw
                      WHERE ppcw.xml IS NULL
                              )
-                            """, timeout = self.__timeOut) 
+                            """, timeout = self.__timeOut)
         except:
-            raise StandardError("Deleting from pub_proc_cg_work failed.")   
+            raise StandardError("Deleting from pub_proc_cg_work failed.")
 
         # Insert rows in PPD for removed documents.
-        try:            
+        try:
             cursor.execute ("""
-                INSERT INTO pub_proc_doc (doc_id, doc_version, pub_proc, 
+                INSERT INTO pub_proc_doc (doc_id, doc_version, pub_proc,
                                           removed)
                      SELECT ppcw.id, ppcw.num, ppcw.vendor_job, 'Y'
                        FROM pub_proc_cg_work ppcw
                       WHERE ppcw.xml IS NULL
                             """, timeout = self.__timeOut)
         except:
-            raise StandardError("Inserting D into pub_proc_doc failed.")  
-            
+            raise StandardError("Inserting D into pub_proc_doc failed.")
+
         # Update a document, if its id is in both PPC and PPD.
-        try:         
-            cursor.execute ("""             
+        try:
+            cursor.execute ("""
                 SELECT ppcw.id, ppcw.xml
-                  FROM pub_proc_cg_work ppcw  
-                 WHERE EXISTS ( SELECT * 
+                  FROM pub_proc_cg_work ppcw
+                 WHERE EXISTS ( SELECT *
                                   FROM pub_proc_cg ppc
                                  WHERE ppc.id = ppcw.id
-                              )            
-                            """, timeout = self.__timeOut)                                
+                              )
+                            """, timeout = self.__timeOut)
             rows = cursor.fetchall()
-            for row in rows:               
+            for row in rows:
                 cursor.execute("""
                         UPDATE pub_proc_cg
                            SET xml = ?
-                         WHERE id  = ?                       
+                         WHERE id  = ?
                                """, (row[1], row[0])
                               )
         except:
             raise StandardError("Updating xml to pub_proc_cg_work failed.")
-            
+
         # Add new documents into PPC finally.
-        try:            
+        try:
             cursor.execute ("""
                 INSERT INTO pub_proc_cg (id, pub_proc, xml)
                      SELECT ppcw.id, ppcw.vendor_job, ppcw.xml
                        FROM pub_proc_cg_work ppcw
                       WHERE NOT ppcw.xml IS NULL
-                        AND NOT EXISTS ( SELECT * 
+                        AND NOT EXISTS ( SELECT *
                                            FROM pub_proc_cg ppc
                                           WHERE ppc.id = ppcw.id
                                         )
                             """, timeout = self.__timeOut)
         except:
-            raise StandardError("Inserting into pub_proc_cg failed.") 
+            raise StandardError("Inserting into pub_proc_cg failed.")
 
         self.__conn.commit()
         self.__conn.setAutoCommit(1)
@@ -1264,35 +1275,35 @@ class Publish:
     #------------------------------------------------------------------
     # Different version of __updateFromPPCW for Hotfix (Remove)
     #------------------------------------------------------------------
-    def __updateFromPPCWHR(self): 
+    def __updateFromPPCWHR(self):
 
         self.__conn.setAutoCommit(0)
         cursor = self.__conn.cursor()
-    
-        # Remove documents. The IN clause used should be OK.     
-        try:         
-            cursor.execute ("""
-                DELETE pub_proc_cg                       
-                 WHERE id IN ( 
-                    SELECT ppcw.id
-                      FROM pub_proc_cg_work ppcw 
-                             )
-                            """, timeout = self.__timeOut) 
-        except:
-            raise StandardError("Deleting from pub_proc_cg_work failed.")   
 
-        # Alter rows in PPD for removed documents.     
-        try:            
+        # Remove documents. The IN clause used should be OK.
+        try:
             cursor.execute ("""
-                     UPDATE pub_proc_doc 
+                DELETE pub_proc_cg
+                 WHERE id IN (
+                    SELECT ppcw.id
+                      FROM pub_proc_cg_work ppcw
+                             )
+                            """, timeout = self.__timeOut)
+        except:
+            raise StandardError("Deleting from pub_proc_cg_work failed.")
+
+        # Alter rows in PPD for removed documents.
+        try:
+            cursor.execute ("""
+                     UPDATE pub_proc_doc
                         SET removed = 'Y'
-                      WHERE pub_proc IN ( 
+                      WHERE pub_proc IN (
                         SELECT ppcw.vendor_job
-                          FROM pub_proc_cg_work ppcw 
+                          FROM pub_proc_cg_work ppcw
                                         )
                             """, timeout = self.__timeOut)
         except:
-            raise StandardError("Updating D in pub_proc_doc failed.")  
+            raise StandardError("Updating D in pub_proc_doc failed.")
 
         self.__conn.commit()
         self.__conn.setAutoCommit(1)
@@ -1300,55 +1311,55 @@ class Publish:
     #------------------------------------------------------------------
     # Different version of __updateFromPPCW for Hotfix (Export)
     #------------------------------------------------------------------
-    def __updateFromPPCWHE(self): 
+    def __updateFromPPCWHE(self):
 
         self.__conn.setAutoCommit(0)
         cursor = self.__conn.cursor()
-            
+
         # Update a document, if its id is in both PPC and PPD.
-        try:         
-            cursor.execute ("""             
+        try:
+            cursor.execute ("""
                 SELECT ppcw.id, ppcw.xml
-                  FROM pub_proc_cg_work ppcw  
-                 WHERE EXISTS ( SELECT * 
+                  FROM pub_proc_cg_work ppcw
+                 WHERE EXISTS ( SELECT *
                                   FROM pub_proc_cg ppc
                                  WHERE ppc.id = ppcw.id
-                              )            
-                            """, timeout = self.__timeOut)                                
+                              )
+                            """, timeout = self.__timeOut)
             rows = cursor.fetchall()
-            for row in rows:               
+            for row in rows:
                 cursor.execute("""
                         UPDATE pub_proc_cg
                            SET xml = ?
-                         WHERE id  = ?                       
+                         WHERE id  = ?
                                """, (row[1], row[0])
                               )
         except:
             raise StandardError("Updating xml from PPCW to PPC failed.")
-            
+
         # Add new documents into PPC finally.
-        try:            
+        try:
             cursor.execute ("""
                 INSERT INTO pub_proc_cg (id, pub_proc, xml)
                      SELECT ppcw.id, ppcw.vendor_job, ppcw.xml
                        FROM pub_proc_cg_work ppcw
                       WHERE NOT ppcw.xml IS NULL
-                        AND NOT EXISTS ( SELECT * 
+                        AND NOT EXISTS ( SELECT *
                                            FROM pub_proc_cg ppc
                                           WHERE ppc.id = ppcw.id
                                         )
                             """, timeout = self.__timeOut  )
         except:
-            raise StandardError("Inserting into PPC from PPCW failed.") 
+            raise StandardError("Inserting into PPC from PPCW failed.")
 
         self.__conn.commit()
         self.__conn.setAutoCommit(1)
-        
+
     #------------------------------------------------------------------
-    # Return the last successful cg_job for this vendor_job subset.   
+    # Return the last successful cg_job for this vendor_job subset.
     #------------------------------------------------------------------
     def __getLastJobId(self, subsetName):
-        
+
         jobId = 0
 
         try:
@@ -1356,31 +1367,31 @@ class Publish:
             cursor.execute("""
                     SELECT MAX(pp.id)
                       FROM pub_proc pp, pub_proc_parm ppp
-                     WHERE pp.status = ?                 
+                     WHERE pp.status = ?
                        AND pp.pub_subset = ?
                        AND pp.pub_system = ?
                        AND ppp.pub_proc = pp.id
                        AND ppp.parm_name = 'SubSetName'
-                       AND ppp.parm_value = ?                    
-                           """, (Publish.SUCCESS, 
+                       AND ppp.parm_value = ?
+                           """, (Publish.SUCCESS,
                                  "%s_%s" % (self.__pd2cg, subsetName),
                                  self.__ctrlDocId, subsetName)
                           )
             row = cursor.fetchone()
 
             if row and row[0]:
-                return row[0] 
+                return row[0]
             # else: return jobId 0 for the first timer.
-       
+
         except cdrdb.Error, info:
             msg = """Failure executing query to find last successful
                      jobId for this subset: %s""" % subsetName
-            raise StandardError(msg) 
-             
-        return jobId   
-    
+            raise StandardError(msg)
+
+        return jobId
+
     #------------------------------------------------------------------
-    # Return the last successful cg_job for any pushes.   
+    # Return the last successful cg_job for any pushes.
     #------------------------------------------------------------------
     def __getLastCgJob(self):
         try:
@@ -1388,50 +1399,50 @@ class Publish:
             cursor.execute("""
                     SELECT MAX(pp.id)
                       FROM pub_proc pp
-                     WHERE pp.status = ?                 
+                     WHERE pp.status = ?
                        AND pp.pub_subset LIKE ?
-                       AND pp.pub_system = ?                         
-                           """, (Publish.SUCCESS, 
+                       AND pp.pub_system = ?
+                           """, (Publish.SUCCESS,
                                  "%s%%" % self.__pd2cg,
                                  self.__ctrlDocId)
                           )
             row = cursor.fetchone()
 
             if row and row[0]:
-                return row[0] 
+                return row[0]
             else:
                 return 0
-           
+
         except cdrdb.Error, info:
             msg = """Failure executing query to find last successful
                      cg_job.<BR>"""
-            raise StandardError(msg)   
-     
+            raise StandardError(msg)
+
     #------------------------------------------------------------------
-    # Update pub_proc_doc table with all linked documents.  
+    # Update pub_proc_doc table with all linked documents.
     #------------------------------------------------------------------
     def __addLinkedDocsToPPD(self):
-        
+
         # Build the input hash.
-        docPairList = {}      
+        docPairList = {}
         for doc in self.__userDocList:
             docPairList[doc[0]] = doc[1]
-      
+
         # Find all the linked documents.
         resp = findLinkedDocs(docPairList)
         msg  = resp[0]
         hash = resp[1]
         self.__updateMessage(msg)
 
-        # Insert all pairs into PPD. Because these linked documents are 
-        # not in PPD yet, it should succeed with all insertions.     
+        # Insert all pairs into PPD. Because these linked documents are
+        # not in PPD yet, it should succeed with all insertions.
         try:
             cursor = self.__conn.cursor()
             for id in hash.keys():
-                cursor.execute ("""                
+                cursor.execute ("""
                     INSERT INTO pub_proc_doc
-                            (pub_proc, doc_id, doc_version)                 
-                    VALUES  (?, ?, ?) 
+                            (pub_proc, doc_id, doc_version)
+                    VALUES  (?, ?, ?)
                                 """, (self.__jobId, id, hash[id])
                                )
         except cdrdb.Error, info:
@@ -1442,7 +1453,7 @@ class Publish:
     #------------------------------------------------------------------
     # Publish one document.
     #
-    #   doc         tuple containing doc ID, doc version, and doc type 
+    #   doc         tuple containing doc ID, doc version, and doc type
     #               string
     #   filters     list of filter sets, each set with its own parm list
     #   destType    FILE, DOCTYPE, or DOC
@@ -1451,7 +1462,7 @@ class Publish:
     #               table
     #   subDir      subdirectory to store a subset of vendor docs
     #------------------------------------------------------------------
-    def __publishDoc(self, doc, filters, destType, destDir, 
+    def __publishDoc(self, doc, filters, destType, destDir,
                      recordDoc = 0, subDir = ''):
 
         self.__debugLog("Publishing CDR%010d." % doc[0])
@@ -1485,7 +1496,7 @@ class Publish:
             filteredDoc = result[0]
             if result[1]: warnings += result[1]
 
-        # Validate the filteredDoc against Vendor DTD.       
+        # Validate the filteredDoc against Vendor DTD.
         if self.__sysName == "Primary" and \
             self.__validateDocs and filteredDoc:
             errObj = validateDoc(filteredDoc, docId = doc[0])
@@ -1495,7 +1506,7 @@ class Publish:
             for warning in errObj.Warnings:
                 warnings += "%s<BR>" % warning
                 invalDoc = "InvalidDocs"
-                
+
         # Save the output as instructed.
         if self.__no_output != 'Y' and filteredDoc:
             try:
@@ -1577,7 +1588,7 @@ class Publish:
                    SET messages = ?,
                        failure  = ?
                  WHERE pub_proc = ?
-                   AND doc_id   = ?""", (messages, failure, 
+                   AND doc_id   = ?""", (messages, failure,
                                          self.__jobId, doc[0]))
         except cdrdb.Error, info:
             msg = 'Failure recording message for document %d: %s' % \
@@ -1609,11 +1620,11 @@ class Publish:
             msg = 'Failure adding row for document %d: %s' % \
                   (self.__jobId, info[1][0])
             raise StandardError(msg)
-        
+
     #------------------------------------------------------------------
     # Build a set of documents which match the queries for a subset
     # specification.  This version does not include any optimizations
-    # which might be achieved using temporary tables to collapse 
+    # which might be achieved using temporary tables to collapse
     # multiple queries into one.  XXX XQL queries not yet supported.
     #------------------------------------------------------------------
     def __selectQueryDocs(self, specNode):
@@ -1635,7 +1646,7 @@ class Publish:
                     # XXX Dependency on result set column names is fragile
                     # and non-portable, relying on (among other things)
                     # DBMS treatment of case of object names.  Consider
-                    # replacing this with a convention which uses the 
+                    # replacing this with a convention which uses the
                     # column count and order in the result set.
                     idCol = -1
                     verCol = -1
@@ -1765,7 +1776,7 @@ class Publish:
     # job notification.
     #------------------------------------------------------------------
     def __sendMail(self, newJobId=None):
-        
+
         jobId = newJobId or self.__jobId
         try:
             if self.__email and self.__email != "Do not notify":
@@ -1789,7 +1800,7 @@ Please do not reply to this message.
 
     #----------------------------------------------------------------
     # Set up a connection to CDR.  Processing of the publishing job
-    # is likely to take long enough that we can't afford to keep 
+    # is likely to take long enough that we can't afford to keep
     # locks on the publishing tables during the whole job, so we
     # avoid wrapping the whole job in a single transaction by turning
     # on auto commit mode.
@@ -1805,7 +1816,7 @@ Please do not reply to this message.
             raise StandardError(msg)
 
     #----------------------------------------------------------------
-    # Return the document for the publishing control system from 
+    # Return the document for the publishing control system from
     # the database.  Be sure to retrieve the version corresponding
     # to the date/time of the publication job.
     #----------------------------------------------------------------
@@ -1836,7 +1847,7 @@ Please do not reply to this message.
                                     "document CDR%010d" % self.__ctrlDocId)
         except cdrdb.Error, info:
             raise StandardError("Failure retrieving version of control "
-                                "document CDR%010d on or before %s: %s" % 
+                                "document CDR%010d on or before %s: %s" %
                                 (self.__ctrlDocId, self.__jobTime, info[1][0]))
 
         xml = row[0]
@@ -1907,7 +1918,7 @@ Please do not reply to this message.
                         if name == "AbortOnError":
                             abortOnError = value
                             if self.__params.has_key('AbortOnError'):
-                                abortOnError = self.__params['AbortOnError']                               
+                                abortOnError = self.__params['AbortOnError']
                         elif name == "PublishIfWarnings":
                             if value not in ["Yes", "No", "Ask"]:
                                 raise StandardError("Invalid value for "
@@ -1917,15 +1928,15 @@ Please do not reply to this message.
                 if abortOnError:
                     if abortOnError == "Yes": self.__errorsBeforeAborting = 0
                     elif abortOnError == "No": self.__errorsBeforeAborting = -1
-                    else: 
+                    else:
                         try:
                             self.__errorsBeforeAborting = int(abortOnError)
                         except:
                             raise StandardError("Invalid value for "
-                                                "AbortOnError: %s" % 
+                                                "AbortOnError: %s" %
                                                 abortOnError)
                 break
-        
+
         return options
 
     #----------------------------------------------------------------
@@ -1958,7 +1969,7 @@ Please do not reply to this message.
             raise StandardError("SubsetFilters element must have at least " \
                                 "one SubsetFilter child element")
         return (filters, parms)
-   
+
     #----------------------------------------------------------------
     # Extract the document ID or title for a filter.
     #----------------------------------------------------------------
@@ -1989,13 +2000,13 @@ Please do not reply to this message.
         return (parmName, parmValue)
 
     #----------------------------------------------------------------
-    # Extract the Subdirectory value. Return "" if not found.    
+    # Extract the Subdirectory value. Return "" if not found.
     #----------------------------------------------------------------
-    def __getSubdir(self, spec):       
+    def __getSubdir(self, spec):
         for node in spec.childNodes:
             if node.nodeName == "Subdirectory":
                 return cdr.getTextContent(node)
-                     
+
         return ""
 
     #----------------------------------------------------------------
@@ -2003,7 +2014,7 @@ Please do not reply to this message.
     # documents for.  Return None if this subset doesn't allow
     # listing of individual documents.  Return an empty list if
     # no document type restrictions are imposed on user-supplied
-    # document ID lists for this subset.  Otherwise, return a 
+    # document ID lists for this subset.  Otherwise, return a
     # list of document type names.
     #----------------------------------------------------------------
     def __getAllowedDocTypes(self, node):
@@ -2059,7 +2070,7 @@ Please do not reply to this message.
         fileObj.close()
 
     #----------------------------------------------------------------
-    # Handle process script, if one is specified, in which case 
+    # Handle process script, if one is specified, in which case
     # control is not returned to the caller.
     #----------------------------------------------------------------
     def __invokeProcessScript(self, subset):
@@ -2093,12 +2104,12 @@ Please do not reply to this message.
             cursor.execute("""
                 SELECT messages
                   FROM pub_proc
-                 WHERE id = %d 
+                 WHERE id = %d
                            """ % id
                           )
-            row     = cursor.fetchone()            
+            row     = cursor.fetchone()
             message = (row and row[0] or '') + (message or '')
-           
+
             cursor.execute("""
                 UPDATE pub_proc
                    SET status    = ?,
@@ -2113,22 +2124,22 @@ Please do not reply to this message.
     #----------------------------------------------------------------------
     # Update message in pub_proc table.
     #----------------------------------------------------------------------
-    def __updateMessage(self, message, newJobId=None):        
-        id = newJobId or self.__jobId      
+    def __updateMessage(self, message, newJobId=None):
+        id = newJobId or self.__jobId
         try:
             cursor = self.__conn.cursor()
             cursor.execute("""
                 SELECT messages
                   FROM pub_proc
-                 WHERE id = %d 
+                 WHERE id = %d
                            """ % id
                           )
-            row     = cursor.fetchone()            
+            row     = cursor.fetchone()
             message = (row and row[0] or '') + message
-           
+
             cursor.execute("""
                 UPDATE pub_proc
-                   SET messages  = ?                     
+                   SET messages  = ?
                  WHERE id        = ?""", (message, id))
         except cdrdb.Error, info:
             msg = 'Failure setting status for job %d: %s' % (id, info[1][0])
@@ -2146,17 +2157,17 @@ Please do not reply to this message.
                 SELECT count(*)
                   FROM pub_proc_doc
                  WHERE failure = 'Y'
-                   AND pub_proc = %d 
+                   AND pub_proc = %d
                            """ % id
                           )
-            row = cursor.fetchone() 
-            if row and row[0]:           
+            row = cursor.fetchone()
+            if row and row[0]:
                 return row[0]
-            else:         
+            else:
                 return 0
-                     
+
         except cdrdb.Error, info:
-            msg = 'Failure getting failed docs for job %d: %s' % (id, 
+            msg = 'Failure getting failed docs for job %d: %s' % (id,
                                                             info[1][0])
             self.__debugLog(msg)
             raise StandardError(msg)
@@ -2165,7 +2176,7 @@ Please do not reply to this message.
     # Wait for user's approval to proceed.
     #----------------------------------------------------------------------
     def __waitUserApproval(self, newJobId=None):
-            
+
         # Depend on which part this is called from.
         id     = newJobId or self.__jobId
 
@@ -2184,26 +2195,26 @@ Please do not reply to this message.
                 cursor.execute("""
                     SELECT status
                       FROM pub_proc
-                     WHERE id = %d 
+                     WHERE id = %d
                                """ % id
                               )
-                row = cursor.fetchone() 
-                if row and row[0]:           
+                row = cursor.fetchone()
+                if row and row[0]:
                     status = row[0]
                 else:
-                    msg = 'No status for job %d: %s' % (id, info[1][0])               
+                    msg = 'No status for job %d: %s' % (id, info[1][0])
                     raise StandardError(msg)
-                     
+
             except cdrdb.Error, info:
                 msg = 'Failure getting status for job %d: %s' % (
-                            id, info[1][0])              
+                            id, info[1][0])
                 raise StandardError(msg)
 
             # Wait another 10 seconds.
             now = time.ctime()
             if status == Publish.WAIT:
                 time.sleep(10)
-            elif status == Publish.RUN:               
+            elif status == Publish.RUN:
                 self.__updateMessage(
                     "Job is resumed by user at %s.<BR>" % now, id)
                 return
@@ -2212,7 +2223,7 @@ Please do not reply to this message.
                     "Job is killed by user at %s.<BR>" % now)
             else:
                 msg = "Unexpected status: %s for job %d.<BR>" % (status, id)
-                raise StandardError(msg)                
+                raise StandardError(msg)
 
     #----------------------------------------------------------------------
     # Log debugging message to d:/cdr/log/publish.log
@@ -2227,10 +2238,10 @@ Please do not reply to this message.
 
 #-----------------------------------------------------------------------
 # class: ErrObject
-#    This class encapsulates the DTD validating errors. 
+#    This class encapsulates the DTD validating errors.
 #-----------------------------------------------------------------------
 class ErrObject:
-    def __init__(self, Warnings=None, Errors=None):        
+    def __init__(self, Warnings=None, Errors=None):
         self.Warnings  = Warnings or []
         self.Errors    = Errors or []
 
@@ -2239,25 +2250,25 @@ class ErrObject:
 #    This class encapsulates the error handler for XML parser.
 #-----------------------------------------------------------------------
 class ErrHandler:
-    def __init__(self, loc):        self.locator = loc        
+    def __init__(self, loc):        self.locator = loc
     def set_locator(self, loc):     self.fulminator = loc
     def get_locator(self):          return self.locator
     def set_sysid(self, sysid):     self.__sysid = sysid
     def set_errobj(self, errObj):   self.__errObj = errObj
     def warning(self, msg):         self.__output("W:", msg)
     def error(self, msg):           self.__output("E:", msg)
-    def fatal(self, msg):           self.__output("F:", msg)   
+    def fatal(self, msg):           self.__output("F:", msg)
     def __output(self, prefix, msg):
         where = self.locator.get_current_sysid()
         if where == 'Unknown': where = self.__sysid
         xmlString = self.locator.get_raw_construct()
-        if prefix == "W:":          
+        if prefix == "W:":
             self.__errObj.Warnings.append("%s:%d:%d: %s (%s)\n" % (where,
                                          self.locator.get_line(),
                                          self.locator.get_column(),
                                          msg,
                                          xmlString))
-        else:           
+        else:
             self.__errObj.Errors.append("%s:%d:%d: %s (%s)\n" % (where,
                                          self.locator.get_line(),
                                          self.locator.get_column(),
@@ -2272,16 +2283,16 @@ __app        = xmlproc.Application()
 __errHandler = ErrHandler(__parser)
 __parser.set_application(__app)
 __parser.set_error_handler(__errHandler)
-      
+
 #----------------------------------------------------------------------
 # Validate a given document against its DTD.
 #----------------------------------------------------------------------
 def validateDoc(filteredDoc, docId = 0):
 
     errObj      = ErrObject()
-    docTypeExpr = re.compile(r"<!DOCTYPE\s+(.*?)\s+.*?>", re.DOTALL)   
+    docTypeExpr = re.compile(r"<!DOCTYPE\s+(.*?)\s+.*?>", re.DOTALL)
     docType     = """<!DOCTYPE %s SYSTEM "%s">
-                  """ 
+                  """
 
     match = docTypeExpr.search(filteredDoc)
     if match:
@@ -2290,14 +2301,14 @@ def validateDoc(filteredDoc, docId = 0):
         doc        = docTypeExpr.sub(docType, filteredDoc)
     else:
         errObj.Errors.append(
-            "%d.xml:0:0:DOCTYPE declaration is missing." % docId)  
-        return errObj      
+            "%d.xml:0:0:DOCTYPE declaration is missing." % docId)
+        return errObj
 
-    __errHandler.set_sysid("%d.xml" % docId)    
+    __errHandler.set_sysid("%d.xml" % docId)
     __errHandler.set_errobj(errObj)
     __parser.feed(doc)
     __parser.reset()
-  
+
     return errObj
 
 #----------------------------------------------------------------------
@@ -2314,7 +2325,7 @@ def findLinkedDocs(docPairList):
         cursor.execute("""
                 SELECT DISTINCT ln.source_doc,
                                 ln.target_doc,
-                                MAX(v.num)                    
+                                MAX(v.num)
                            FROM link_net ln
                            JOIN doc_version v
                              ON v.id = ln.target_doc
@@ -2346,12 +2357,12 @@ def findLinkedDocs(docPairList):
         linkedDocHash = {}
         for key in docPairList.keys():
             linkedDocHash[key] = docPairList[key]
- 
+
         # Find all linked docs recursively.
         done = 0
         passNum = 0
         while not done:
-            done = 1 
+            done = 1
             passNum += 1
             docIds = linkedDocHash.keys()
             for id in docIds:
@@ -2370,11 +2381,11 @@ def findLinkedDocs(docPairList):
 
         # Return what we have got.
         return [msg, linkedDocHash]
-                                           
-    except:
-        raise StandardError("Failure finding linked docs.<BR>")        
 
-    
+    except:
+        raise StandardError("Failure finding linked docs.<BR>")
+
+
 #----------------------------------------------------------------------
 # Test driver.
 #----------------------------------------------------------------------
