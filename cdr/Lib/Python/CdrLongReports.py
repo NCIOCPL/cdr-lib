@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.16 2004-09-21 14:57:48 venglisc Exp $
+# $Id: CdrLongReports.py,v 1.17 2004-09-23 14:07:46 venglisc Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.16  2004/09/21 14:57:48  venglisc
+# Added third header line to Excel report output.  Minor formatting of header
+# (increased row size). (Bug 1337)
+#
 # Revision 1.15  2004/08/27 14:27:31  bkline
 # Modified the glossary term search report to restrict its search to
 # active and temporarily closed protocols for the protocols portion
@@ -730,6 +734,8 @@ class NonRespondentsReport:
             startDate[2] -= 120
             endDate[2]   -= 60
             ageString     = '60-120 days since last mailer'
+	regexp    = re.compile('since last mailer')
+	ageText   = regexp.sub('prior', ageString)
         startDate = time.mktime(startDate)
         endDate   = time.mktime(endDate)
         startDate = time.strftime("%Y-%m-%d", time.localtime(startDate))
@@ -886,7 +892,7 @@ class NonRespondentsReport:
         cells.Interior.ColorIndex = 35
 
         sheet.Cells(2, 1).Value = "For period of %s to %s" % (
-            ageString, time.strftime("%B %d, %Y"))
+            ageText, time.strftime("%B %d, %Y"))
         cells = sheet.Cells.Range("A2:E2")
         cells.Font.Bold = 1
         cells.Font.Name = 'Times New Roman'
