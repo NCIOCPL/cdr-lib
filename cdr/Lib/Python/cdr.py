@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.78 2003-08-26 17:36:26 bkline Exp $
+# $Id: cdr.py,v 1.79 2003-09-16 22:01:46 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.78  2003/08/26 17:36:26  bkline
+# Added new functions expandFilterSet() and expandFilterSets().
+#
 # Revision 1.77  2003/08/21 19:27:02  bkline
 # Added functions for normalizing and comparing XML for CDR documents;
 # added code to do XML escaping of character entities in control
@@ -2428,9 +2431,13 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback = 0):
         # Sequence of messages or single message
         if type(msgs) == type(()) or type(msgs) == type([]):
             for msg in msgs:
+                if (type(msg)) == type(u""):
+                    msg = msg.encode ('utf-8')
                 f.write (msg)
                 f.write ("\n")
         else:
+            if (type(msgs)) == type(u""):
+                msgs = msgs.encode ('utf-8')
             f.write (msgs)
             f.write ("\n")
 
