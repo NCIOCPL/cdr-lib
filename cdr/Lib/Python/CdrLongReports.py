@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.6 2003-09-09 22:18:23 bkline Exp $
+# $Id: CdrLongReports.py,v 1.7 2003-09-10 12:51:16 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2003/09/09 22:18:23  bkline
+# Fixed SQL queries and name bug for inactive persons in mailer
+# non-respondent report.
+#
 # Revision 1.5  2003/09/04 15:31:23  bkline
 # Replaced calls to reportFailure() with job.fail().
 #
@@ -699,51 +703,65 @@ class NonRespondentsReport:
                                   time.localtime(endDate))
         job.setProgressMsg("Job started")
         try:
+
+            # Get the last mailer for each doc of this type.
             self.cursor.execute("""\
                 CREATE TABLE #last_mailers
                 (
                     doc_id    INTEGER,
-                    mailer_id INTEGER,
-                    sent_date VARCHAR(32)
+                    mailer_id INTEGER
                 )""")
             self.conn.commit()
             job.setProgressMsg("#last_mailers table created")
             self.cursor.execute("""\
         INSERT INTO #last_mailers
-             SELECT q1.int_val, MAX(q1.doc_id), q2.value
-               FROM query_term q1
-               JOIN query_term q2
-                 ON q1.doc_id = q2.doc_id
+             SELECT q.int_val, MAX(q.doc_id)
+               FROM query_term q
                JOIN document d
-                 ON d.id = q1.int_val
+                 ON d.id = q.int_val
                JOIN doc_type t
                  ON t.id = d.doc_type
                JOIN query_term mailer_type
-                 ON mailer_type.doc_id = q1.doc_id
+                 ON mailer_type.doc_id = q.doc_id
               WHERE t.name = ?
-                AND q1.path = '/Mailer/Document/@cdr:ref'
-                AND q2.path = '/Mailer/Sent'
+                AND q.path = '/Mailer/Document/@cdr:ref'
                 AND mailer_type.path = '/Mailer/Type'
                 AND mailer_type.value NOT LIKE
-                               'Protocol-%%status/participant check'
-           GROUP BY q1.int_val, q2.value
-             HAVING q2.value BETWEEN '%s' AND '%s'""" % (startDate, endDate),
-                                self.docType,
-                                timeout = 300)
+                               'Protocol-%status/participant check'
+           GROUP BY q.int_val""", self.docType, timeout = 300)
+
             self.conn.commit()
-            #job.fail("Got to milestone 2", logfile = LOGFILE)
             job.setProgressMsg("#last_mailers table populated")
+
+            # Find out which ones had their last mailer in the date range.
+            self.cursor.execute("""\
+               CREATE TABLE #in_scope (doc_id INTEGER, mailer_id INTEGER)""")
+            self.conn.commit()
+            job.setProgressMsg("#in_scope table created")
+            self.cursor.execute("""\
+        INSERT INTO #in_scope
+             SELECT lm.doc_id, lm.mailer_id
+               FROM #last_mailers lm
+               JOIN query_term q
+                 ON q.doc_id = lm.mailer_id
+              WHERE q.path = '/Mailer/Sent'
+                AND q.value BETWEEN ? AND ?""",
+                                (startDate, endDate), timeout = 300)
+            self.conn.commit()
+            job.setProgressMsg("#in_scope table populated")
+
+            # Which of these haven't had a reply yet?
             self.cursor.execute("""\
                 CREATE TABLE #no_reply (doc_id INTEGER, mailer_id INTEGER)""")
             self.conn.commit()
             job.setProgressMsg("#no_reply table created")
             self.cursor.execute("""\
         INSERT INTO #no_reply
-             SELECT lm.doc_id, lm.mailer_id
-               FROM #last_mailers lm
+             SELECT i.doc_id, i.mailer_id
+               FROM #in_scope i
               WHERE NOT EXISTS(SELECT *
                                  FROM query_term q
-                                WHERE q.doc_id = lm.mailer_id
+                                WHERE q.doc_id = i.mailer_id
                                   AND q.path = '/Mailer/Response/Received')""",
                            timeout = 300)
             self.conn.commit()
@@ -753,7 +771,6 @@ class NonRespondentsReport:
                         #no_reply.doc_id, 
                         base_doc.doc_id, 
                         mailer_type.value, 
-                     -- mailer_sent.value, 
                         response_received.value,
                         changes_category.value
                    FROM document recip_name
@@ -765,8 +782,6 @@ class NonRespondentsReport:
                      ON base_doc.int_val = #no_reply.doc_id
                    JOIN query_term mailer_type
                      ON mailer_type.doc_id = base_doc.doc_id
-                -- JOIN query_term mailer_sent
-                --   ON mailer_sent.doc_id = base_doc.doc_id
         LEFT OUTER JOIN query_term response_received
                      ON response_received.doc_id = base_doc.doc_id
                     AND response_received.path = '/Mailer/Response/Received'
@@ -776,7 +791,6 @@ class NonRespondentsReport:
                                               + '/ChangesCategory'
                   WHERE recipient.path = '/Mailer/Recipient/@cdr:ref'
                     AND mailer_type.path = '/Mailer/Type'
-                --  AND mailer_sent.path = '/Mailer/Sent'
                     AND base_doc.path = '/Mailer/Document/@cdr:ref'
                     AND mailer_type.value NOT LIKE
                                    'Protocol-%status/participant check'
