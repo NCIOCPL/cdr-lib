@@ -1,8 +1,11 @@
-# $Id: cdrglblchg.py,v 1.25 2004-02-06 02:36:23 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.26 2004-02-12 19:40:48 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.25  2004/02/06 02:36:23  ameyer
+# Changed name of a filter to reflect changes in it's actions.
+#
 # Revision 1.24  2004/02/04 00:52:56  ameyer
 # Added invocation of a filter to check for InterventionType without
 # InterventionNameLink after a global terminology change.
@@ -2891,12 +2894,11 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
                 if self.ssVars.has_key(keyId):
                     keyField = "trm%sField%d" % (use, i)
                     fieldName = self.ssVars[keyField]
-                    if fieldName == TERM_FLD_INTN:
+                    if fieldName in (TERM_FLD_INTV, TERM_FLD_INTN):
                         if not self.ssVars.has_key(TERM_SCAT_VAL):
                             cdr.logwrite ("No StudyCategory selected", LF)
                             return 0
-                    if fieldName in (TERM_FLD_INTV, TERM_FLD_INTN,
-                                     TERM_FLD_GENE, TERM_FLD_COND):
+                    if fieldName == TERM_FLD_INTN:
                         if not self.ssVars.has_key(TERM_INTV_VAL) and \
                            not self.ssVars.has_key(TERM_INTV_ID):
                             cdr.logwrite ("No InterventionType selected", LF)
