@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.11 2001-10-04 14:34:49 bkline Exp $
+# $Id: cdr.py,v 1.12 2001-12-19 20:23:18 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.11  2001/10/04 14:34:49  bkline
+# Added delDoc() function.
+#
 # Revision 1.10  2001/09/27 19:15:45  bkline
 # Added constants for PYTHON and SCRIPTS.
 #
@@ -44,6 +47,7 @@
 # Import required packages.
 #----------------------------------------------------------------------
 import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
+import smtplib
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -56,6 +60,7 @@ LOGON_STRING  = """<CdrCommandSet><CdrCommand><CdrLogon>
 LOGOFF_STRING = "<CdrCommand><CdrLogoff/></CdrCommand></CdrCommandSet>"
 PYTHON        = "d:\\python\\python.exe"
 SCRIPTS       = "d:/cdr/src/script"
+SMTP_RELAY    = "MAILFWD.NIH.GOV"
 
 #----------------------------------------------------------------------
 # Normalize a document id to form 'CDRnnnnnnnnnn'.
@@ -244,6 +249,7 @@ class Doc:
 #----------------------------------------------------------------------
 def addDoc(credentials, file = None, doc = None, 
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
+           verPublishable = 'Y', setLinks = 'Y',
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Load the document if necessary.
@@ -256,9 +262,10 @@ def addDoc(credentials, file = None, doc = None,
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
     val     = "<Validate>%s</Validate>" % (val)
     reason  = "<Reason>%s</Reason>" % (reason)
-    ver     = "<Version Publishable='Y'>%s</Version>" % (ver)
-    cmd     = "<CdrAddDoc>%s%s%s%s%s</CdrAddDoc>" % (checkIn, val, ver, 
-                                                     reason, doc)
+    doLinks = "<SetLinks>%s</SetLinks>" % setLinks
+    ver     = "<Version Publishable='%s'>%s</Version>" % (verPublishable, ver)
+    cmd     = "<CdrAddDoc>%s%s%s%s%s%s</CdrAddDoc>" % (checkIn, val, ver, 
+                                                       doLinks, reason, doc)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -271,6 +278,7 @@ def addDoc(credentials, file = None, doc = None,
 #----------------------------------------------------------------------
 def repDoc(credentials, file = None, doc = None, 
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
+           verPublishable = 'Y', setLinks = 'Y',
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Load the document if necessary.
@@ -283,9 +291,10 @@ def repDoc(credentials, file = None, doc = None,
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
     val     = "<Validate>%s</Validate>" % (val)
     reason  = "<Reason>%s</Reason>" % (reason)
-    ver     = "<Version Publishable='Y'>%s</Version>" % (ver)
-    cmd     = "<CdrRepDoc>%s%s%s%s%s</CdrRepDoc>" % (checkIn, val, ver, 
-                                                     reason, doc)
+    doLinks = "<SetLinks>%s</SetLinks>" % setLinks
+    ver     = "<Version Publishable='%s'>%s</Version>" % (verPublishable, ver)
+    cmd     = "<CdrRepDoc>%s%s%s%s%s%s</CdrRepDoc>" % (checkIn, val, ver, 
+                                                       doLinks, reason, doc)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -1328,6 +1337,63 @@ def delQueryTermDef(session, path, rule = None, host = DEFAULT_HOST,
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, session), host, port)
     return checkErr(resp)
+
+#----------------------------------------------------------------------
+# Construct a string containing the description of the last exception.
+#----------------------------------------------------------------------
+def exceptionInfo():
+    (eType, eValue) = sys.exc_info()[:2]
+    if eType:
+        eMsg = str(eType)
+        if eValue:
+            eMsg += (": %s" % str(eValue))
+    else:
+        eMsg = str(eValue) or "unable to find exception information"
+    return eMsg
+
+#----------------------------------------------------------------------
+# Send email to a list of recipients.
+#----------------------------------------------------------------------
+def sendMail(sender, recips, subject = "", body = ""):
+    if not recips:
+        return "sendMail: no recipients specified"
+    if type(recips) != type([]) and type(recips) != type(()):
+        return "sendMail: recipients must be a list of email addresses"
+    recipList = recips[0]
+    for recip in recips[1:]:
+        recipList += (",\n  %s" % recip)
+    try:
+        message = """\
+From: %s
+To: %s
+Subject: %s
+
+%s""" % (sender, recipList, subject, body)
+        server = smtplib.SMTP(SMTP_RELAY)
+        server.sendmail(sender, recips, message)
+        server.quit()
+    except:
+        return "sendMail failure: %s" % exceptionInfo()
+
+#----------------------------------------------------------------------
+# Check in a CDR document.
+#----------------------------------------------------------------------
+def unlock(credentials, docId, abandon = 'Y', force = 'Y', reason = '',
+           host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command.
+    attrs   = "Abandon='%s' ForceCheckIn='%s'" % (abandon, force)
+    docId   = "<DocumentId>%s</DocumentId>" % docId
+    reason  = reason and ("<Comment>%s</Comment>" % reason) or ''
+    cmd     = "<CdrCheckIn %s>%s%s</CdrCheckIn>" % (attrs, docId, reason)
+
+    # Submit the commands.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+
+    # Find any error messages.
+    err = checkErr(resp)
+    if err: return err
+    return ""
 
 #----------------------------------------------------------------------
 # Log out from the CDR.
