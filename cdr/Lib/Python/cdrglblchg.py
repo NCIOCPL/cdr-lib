@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.21 2003-11-18 17:14:04 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.22 2003-12-30 20:39:03 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.21  2003/11/18 17:14:04  ameyer
+# Fixed ordering of terminology items in the showSoFar status report.
+# Fixed missing StudyCategory in showSoFar status report.
+#
 # Revision 1.20  2003/11/14 02:17:21  ameyer
 # Completed changes for global terminology change.
 #
@@ -1240,8 +1244,6 @@ class GlblChg:
                 #   String values come from a valid values table, they aren't
                 #   titles of term documents XXXX
                 if name == TERM_SCAT_VAL:
-                    cdr.logwrite ("SCAT alreadySelected=%s" % alreadySelected,
-                                   LF)
                     html += "<td>" + getStudyCategories(name, alreadySelected)\
                                    + "</td>"
                 else:
@@ -2341,6 +2343,7 @@ class TermChg (GlblChg):
         TTBL_NOT  = "#gcTermNot"
         TTBL_DEL  = "#gcTermDel"
         TTBL_STAT = "#gcTermStat"
+        TTBL_SCAT = "#gcTermScat"
         TTBL_RES0 = "#gcTermRes0" # Temp results of merging above
         TTBL_RES1 = "#gcTermRes1" #   "     "     "    "      "
         TTBL_RES2 = "#gcTermRes2" #   "     "     "    "      "
@@ -2378,8 +2381,6 @@ class TermChg (GlblChg):
                 # If no docs with required terms, we're done
                 if reqCnt == 0:
                     done = 1
-
-        # Create a temporary table of docs having any optional terms.
         if not done:
             optCnt = 0
             if self.countSelTypes (TERMOPT, TERM_MAX_CRITERIA) > 0:
@@ -2445,6 +2446,26 @@ class TermChg (GlblChg):
 
                 # The intersection is now our temp results table
                 resultTbl = TTBL_RES2
+
+        # Restrict to docs with a particular StudyCategoryName, if specified
+        if not done:
+            if self.ssVars.has_key (TERM_SCAT_VAL):
+
+                # Searching existing results for docs with StudyCategoryName
+                sCatCnt = _execUpdate ("""
+SELECT doc_id INTO %s
+ FROM query_term
+WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
+  AND value = '%s'
+  AND doc_id IN (SELECT doc_id FROM %s)
+  """ % (TTBL_SCAT, self.ssVars[TERM_SCAT_VAL], resultTbl), cursor=cursor)
+
+                # If none, we're done
+                if sCatCnt == 0:
+                    done = 1
+
+                # Point to new results
+                resultTbl = TTBL_SCAT
 
         # One last selection
         # If we're deleting terms and not adding them, the selected set
@@ -2845,7 +2866,7 @@ class TermChg (GlblChg):
                     # If verify failed, result will be an error msg
                     # Bounce back to stage interpreter to give this to user
                     if result.getRetType == RET_ERROR:
-                        cdr.logwrite ("Error in verifying ids")
+                        cdr.logwrite ("Error in verifying ids", LF)
                         return result
 
                 # Else no ID, if there's a value string, disambiguate it
