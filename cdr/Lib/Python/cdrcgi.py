@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.9 2002-03-21 20:01:59 bkline Exp $
+# $Id: cdrcgi.py,v 1.10 2002-04-12 19:56:21 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2002/03/21 20:01:59  bkline
+# Added function for converting integers to Roman numerals.
+#
 # Revision 1.8  2002/03/02 13:50:54  bkline
 # Added unicodeToLatin1().
 #
@@ -31,7 +34,7 @@
 #----------------------------------------------------------------------
 # Import external modules needed.
 #----------------------------------------------------------------------
-import cgi, cdr, sys, codecs, re
+import cgi, cdr, cdrdb, sys, codecs, re
 
 #----------------------------------------------------------------------
 # Create some useful constants.
