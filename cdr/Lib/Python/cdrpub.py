@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.17 2002-08-08 17:00:07 pzhang Exp $
+# $Id: cdrpub.py,v 1.18 2002-08-08 22:43:38 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.17  2002/08/08 17:00:07  pzhang
+# Encoded xml value out of pub_proc_cg_work to UTF-8
+# before sending it to CG.
+#
 # Revision 1.16  2002/08/08 15:18:21  pzhang
 # Don't push vendor documents that are not good.
 #
@@ -499,15 +503,8 @@ class Publish:
                 self.__createWorkPPCHE(vendor_job, vendor_dest, jobId)  
                 pubTypeCG = "Hotfix" 
             else:
-                raise StandardError("pubType %s not supported." % pubType)                 
-
-            # Get last successful cg_jobId for this subset.
-            # Returns 0 if there is no previous success.
-            # Raise an exception when failed.
-            lastJobId = self.__getLastJobId(vendor_subsetName)   
-
-            docType = "Deprecated"
-
+                raise StandardError("pubType %s not supported." % pubType)   
+            
             docNum  = 1
             numDocs = 0  
             cursor.execute ("""
@@ -518,8 +515,19 @@ class Publish:
             if row and row[0]:
                 numDocs = row[0] 
             
+            if numDocs == 0:
+                msg = "No documents pushed to Cancer.gov."
+                return [jobId, Publish.SUCCESS, msg]
+            
+            # Get last successful cg_jobId for this subset.
+            # Returns 0 if there is no previous success.
+            # Raise an exception when failed.
+            lastJobId = self.__getLastJobId(vendor_subsetName)   
+
+            docType = "Deprecated"
+   
             # See if the GateKeeper is awake.
-            msg += "initiating request with pubType=%s, \
+            msg += "Initiating request with pubType=%s, \
                     docType=%s, lastJobId=%d ...<BR>" % (pubTypeCG, 
                     docType, lastJobId)
             response = cdr2cg.initiateRequest(pubTypeCG, docType, lastJobId)
@@ -534,7 +542,7 @@ class Publish:
                     msg += "Last job ID from server: %d<BR>" % lastJobId          
 
             # Prepare the server for a list of documents to send.
-            msg += """sending data prolog with jobId=%d, pubType=%s,
+            msg += """Sending data prolog with jobId=%d, pubType=%s,
                     docType=%s, lastJobId=%d, numDocs=%d ...<BR>
                     """ % (jobId, pubTypeCG, docType, lastJobId, numDocs)          
             response = cdr2cg.sendDataProlog(jobId, pubTypeCG, docType,
@@ -550,8 +558,8 @@ class Publish:
                  WHERE NOT xml IS NULL
                             """)
             rows    = cursor.fetchall()  
-           
-            if len(rows) > 0:                 
+            addCount = len(rows)
+            if addCount > 0:                 
                 XmlDeclLine = re.compile("<\?xml.*?\?>\s*", re.DOTALL)
                 DocTypeLine = re.compile("<!DOCTYPE.*?>\s*", re.DOTALL)                   
                 for row in rows:                
@@ -571,6 +579,7 @@ class Publish:
                                 (response.type, response.message)
                         return [jobId, Publish.FAILURE, msg] 
                     docNum  = docNum + 1 
+                msg += "%d documents sent to Cancer.gov.<BR>" % addCount
 
             # Remove all the removed documents. 
             cursor.execute ("""
@@ -579,8 +588,8 @@ class Publish:
                  WHERE xml IS NULL
                             """)
             rows = cursor.fetchall()  
-           
-            if len(rows)  > 0: 
+            delCount = len(rows)
+            if delCount > 0: 
                 for row in rows:               
                     id        = row[0]               
                     docType   = row[1] 
@@ -593,7 +602,8 @@ class Publish:
                         msg += "deleting failed. %s: %s<BR>" % \
                                 (response.type, response.message)
                         return [jobId, Publish.FAILURE, msg]  
-                    docNum  = docNum + 1                                  
+                    docNum  = docNum + 1
+                msg += "%d documents removed from Cancer.gov.<BR>" % delCount                                  
             
             # Before we claim success, we will have to update 
             # pub_proc_cg and pub_proc_doc from pub_proc_cg_work.
@@ -608,7 +618,7 @@ class Publish:
             else:
                 raise StandardError("pubType %s not supported." % pubType)  
                        
-            msg += "done!<BR>" 
+            msg += "Done!<BR>" 
                    
         except StandardError, arg:
             msg += arg[0]
@@ -673,8 +683,10 @@ class Publish:
                 xml    = row[2]
                 subdir = row[3]
                 path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, id)
-                file   = open(path, "r").read()
-                if 1: # xml != file: UNICODE!!!
+                file   = open(path, "r").read()              
+                xml    = xml.encode('utf-8')
+
+                if xml != file:
                     cursor.execute("""
                         INSERT INTO pub_proc_cg_work (id, vendor_job, 
                                         cg_job, doc_type, xml)
@@ -1474,6 +1486,8 @@ Please do not reply to this message.
                         self.__debugLog("Option %s='%s'." % (name, value))
                         if name == "AbortOnError":
                             abortOnError = value
+                            if self.__params.has_key('AbortOnError'):
+                                abortOnError = self.__params['AbortOnError']                               
                         elif name == "PublishIfWarnings":
                             if value not in ["Yes", "No", "Ask"]:
                                 raise StandardError("Invalid value for "
