@@ -1,8 +1,13 @@
-# $Id: cdrglblchg.py,v 1.5 2002-08-16 03:16:52 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.6 2002-08-27 22:45:17 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2002/08/16 03:16:52  ameyer
+# Replaced 'rmk' userid with CdrGuest.
+# Added publishable version check and report in the will change report.
+# Changed some cosmetics.
+#
 # Revision 1.4  2002/08/13 21:16:12  ameyer
 # Finished the third type of global change.
 # Ready for production unless further testing reveals some problem.
@@ -493,7 +498,18 @@ class GlblChg:
 <table border='1'>
 """ % (docId, self.sessionVars[titleType])
 
+        # For organizations, it is legal to select no fragment
+        # Seed the pick list with an entry for no/all fragments
+        # value attribute = doc id with no fragment added to it
+        if self.sessionVars['chgType'] == ORG_CHG:
+            html += """
+ <tr><td><input type='radio' name='%s' value='%s'>&nbsp;</input></td>
+     <td>No specific address fragment - all occurrences match regardless of
+     presence or absence of fragment id</td></tr>
+""" % (idType, docId)
+
         # Populate table with radio buttoned cdr ids and addresses
+        # value attribute = doc id with fragment appended
         checked=' checked'
         for addrInfo in idAddrs:
             html += """
@@ -661,6 +677,15 @@ class OrgChg (GlblChg):
         See PersonChg.selDocs()
         """
 
+        # If searching for an org with a fragment id, we need an exact match
+        # But if no fragment, we need to pick up all fragments, or mathes
+        #   with no fragment at all
+        fromId = self.sessionVars['fromId']
+        if fromId.find ('#') >= 0:
+            protOrgMatchStr = "protorg.value = '%s'" % fromId
+        else:
+            protOrgMatchStr = "protorg.int_val=%d" % cdr.exNormalize(fromId)[1]
+
         # If no restrictions
         if not self.sessionVars.has_key ('restrId'):
             qry = """
@@ -671,13 +696,13 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
     ON protstat.doc_id = doc.id
  WHERE protorg.path =
    '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteID/@cdr:ref'
-   AND protorg.value = '%s'
+   AND %s
    AND protstat.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrgProtocolStatuses/CurrentOrgStatus/StatusName'
    AND (protstat.value = 'Active' OR
         protstat.value = 'Approved-not yet active' OR
         protstat.value = 'Temporarily closed')
  ORDER BY doc.title
-""" % self.sessionVars['fromId']
+""" % protOrgMatchStr
 
         # Else restrict them by a particular lead organization
         else:
@@ -691,7 +716,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
     ON leadorg.doc_id = doc.id
  WHERE protorg.path =
    '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteID/@cdr:ref'
-   AND protorg.value = '%s'
+   AND %s
    AND protstat.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrgProtocolStatuses/CurrentOrgStatus/StatusName'
    AND (protstat.value = 'Active' OR
         protstat.value = 'Approved-not yet active' OR
@@ -699,7 +724,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
    AND leadorg.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrganizationID/@cdr:ref'
    AND leadorg.value = '%s'
  ORDER BY doc.title
-""" % (self.sessionVars['fromId'], self.sessionVars['restrId'])
+""" % (protOrgMatchStr, self.sessionVars['restrId'])
 
         # Call a common routine to get the rows corresponding to the query
         return _execQry (qry)
