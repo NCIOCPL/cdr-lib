@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.11 2004-04-26 20:55:12 bkline Exp $
+# $Id: CdrLongReports.py,v 1.12 2004-07-28 20:56:37 venglisc Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.11  2004/04/26 20:55:12  bkline
+# Added report on glossary term phrases.
+#
 # Revision 1.10  2004/02/10 14:19:30  bkline
 # Modified date range for OSP report.
 #
@@ -1030,8 +1033,10 @@ class OrgProtocolReview:
         #--------------------------------------------------------------
         # Build the base html for the report.
         #--------------------------------------------------------------
-        filters  = ['name:Organization Protocol Review Report Filter 1',
-                    'name:Organization Protocol Review Report Filter 2']
+        filters  = ['set:Denormalization Organization Set',
+                    'name:Organization Protocol Review']
+#        filters  = ['name:Organization Protocol Review Report Filter 1',
+#                    'name:Organization Protocol Review Report Filter 2']
         job.setProgressMsg("Filtering organization document")
         cdr.logwrite("Filtering organization document", LOGFILE)
         response = cdr.filterDoc('guest', filters, self.id) #, host = 'mahler')
