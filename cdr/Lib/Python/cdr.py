@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.16 2002-02-06 13:38:20 bkline Exp $
+# $Id: cdr.py,v 1.17 2002-02-14 21:25:49 mruben Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.16  2002/02/06 13:38:20  bkline
+# Fixed definition of SCRIPTS.
+#
 # Revision 1.15  2002/01/31 21:39:26  bkline
 # Exposed ability to pass a filter directly in memory as XML doc string.
 #
@@ -388,7 +391,8 @@ def valDoc(credentials, docType, docId = None, doc = None,
 # be recognized as the filter XML document string in memory.
 #----------------------------------------------------------------------
 def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
-              host = DEFAULT_HOST, port = DEFAULT_PORT, parm = []):
+              host = DEFAULT_HOST, port = DEFAULT_PORT, parm = [],
+              no_output = 'N'):
 
     # Create the command.
     if docId: docElem = "<Document href='%s'/>" % normalize(docId)
@@ -427,8 +431,13 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
                       + "</Value></Parm>"
     if parmElem:
         parmElem = "<Parms>%s</Parms>" % parmElem
+
+    output = ""
+    if no_output == "Y":
+        output = ' Output="N"'
         
-    cmd = "<CdrFilter>%s%s%s</CdrFilter>" % (filterElem, docElem, parmElem)
+    cmd = "<CdrFilter%s>%s%s%s</CdrFilter>" % (output, filterElem,
+                                               docElem, parmElem)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
