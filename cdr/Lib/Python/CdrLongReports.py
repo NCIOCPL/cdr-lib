@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.15 2004-08-27 14:27:31 bkline Exp $
+# $Id: CdrLongReports.py,v 1.16 2004-09-21 14:57:48 venglisc Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.15  2004/08/27 14:27:31  bkline
+# Modified the glossary term search report to restrict its search to
+# active and temporarily closed protocols for the protocols portion
+# (enhancement request #1319).
+#
 # Revision 1.14  2004/08/27 13:50:45  bkline
 # Added support for restricting glossary term search report by document
 # type; plugged in new (Python 2.3) approach to stripping specified
@@ -860,8 +865,7 @@ class NonRespondentsReport:
          #  "Generated",
             "Response"
             )
-        sheet.Cells(1, 1).Value = "Mailer Non-Respondents Report %s" % (
-            time.strftime("%B %d, %Y"))
+        sheet.Cells(1, 1).Value = "Mailer Non-Respondents Report"
         cells = sheet.Cells.Range("A1:E1")
         cells.Font.Bold = 1
         cells.Font.Name = 'Times New Roman'
@@ -880,9 +884,56 @@ class NonRespondentsReport:
         cells.Font.Name = 'Times New Roman'
         cells.Font.Size = 12
         cells.Interior.ColorIndex = 35
-        sheet.Cells(2, 1).Value = "Mailer Type: %s" % self.docType
-        sheet.Cells(3, 1).Value = "Non-Response Time: %s" % ageString
-        headerRows = 3
+
+        sheet.Cells(2, 1).Value = "For period of %s to %s" % (
+            ageString, time.strftime("%B %d, %Y"))
+        cells = sheet.Cells.Range("A2:E2")
+        cells.Font.Bold = 1
+        cells.Font.Name = 'Times New Roman'
+        cells.Font.Size = 12
+        cells.MergeCells = 1
+        cells.RowHeight = 16
+        cells.Interior.ColorIndex = 35
+        cells.VerticalAlignment = win32com.client.constants.xlCenter
+        cells.HorizontalAlignment = win32com.client.constants.xlCenter
+        cells = sheet.Cells.Range("A2:E2")
+        cells.MergeCells = 1
+        cells.VerticalAlignment = win32com.client.constants.xlCenter
+        cells.HorizontalAlignment = win32com.client.constants.xlCenter
+        cells = sheet.Cells.Range("A2:E3")
+        cells.Font.Bold = 1
+        cells.Font.Name = 'Times New Roman'
+        cells.Font.Size = 12
+        cells.Interior.ColorIndex = 35
+
+        sheet.Cells(3, 1).Value = "Mailer Type: %s" % self.docType
+        cells = sheet.Cells.Range("A3:E3")
+        cells.Font.Bold = 1
+        cells.Font.Name = 'Times New Roman'
+        cells.Font.Size = 12
+        cells.MergeCells = 1
+        cells.RowHeight = 16
+        cells.Interior.ColorIndex = 35
+        cells.VerticalAlignment = win32com.client.constants.xlCenter
+        cells.HorizontalAlignment = win32com.client.constants.xlCenter
+        cells = sheet.Cells.Range("A3:E3")
+        cells.MergeCells = 1
+        cells.VerticalAlignment = win32com.client.constants.xlCenter
+        cells.HorizontalAlignment = win32com.client.constants.xlCenter
+        cells = sheet.Cells.Range("A3:E3")
+        cells.Font.Bold = 1
+        cells.Font.Name = 'Times New Roman'
+        cells.Font.Size = 12
+        cells.Interior.ColorIndex = 35
+
+        sheet.Cells(4, 1).Value = "Non-Response Time: %s" % ageString
+        cells = sheet.Cells.Range("A4:E4")
+        cells.Font.Bold = 1
+        cells.Font.Name = 'Times New Roman'
+        cells.Font.Size = 12
+        cells.Interior.ColorIndex = 35
+        cells.RowHeight = 20
+        headerRows = 4
         for i in range(len(headings)):
             sheet.Cells(headerRows, i + 1).Value = headings[i]
 
@@ -902,7 +953,7 @@ class NonRespondentsReport:
             cells.HorizontalAlignment = win32com.client.constants.xlLeft
             #cells = sheet.Cells.Range("A%d:E%d" % (rowNum, rowNum))
             if row[0] == lastRecipName:
-                cells.RowHeight = 12.75
+                cells.RowHeight = 15.0
                 recipName = ""
                 recipRows += 1
                 if recipRows > 3:
@@ -910,7 +961,8 @@ class NonRespondentsReport:
                     continue
             else:
                 #cells.Rows.AutoFit()
-                cells.RowHeight = 12.75
+                cells.RowHeight = 15.0 
+                #cells.RowHeight = 12.75
                 border = cells.Borders(win32com.client.constants.xlEdgeTop)
                 border.LineStyle  = win32com.client.constants.xlContinuous
                 border.Weight     = win32com.client.constants.xlThin
