@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.56 2002-09-18 18:56:48 ameyer Exp $
+# $Id: cdr.py,v 1.57 2002-09-19 18:04:24 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.56  2002/09/18 18:56:48  ameyer
+# Fixed misspelling in comment.
+#
 # Revision 1.55  2002/09/18 18:28:43  ameyer
 # Added traceback capability to logwrite.
 #
@@ -558,6 +561,21 @@ class Doc:
 #----------------------------------------------------------------------
 def _addRepDocComment(doc, comment):
 
+    """
+    Add or replace DocComment element in CdrDocCtl.
+    Done by text manipulation.
+
+    Pass:
+        doc - Full document in CdrDoc format.
+        comment - Comment to insert.
+
+    Return:
+        Full CdrDoc with DocComment element inserted or replaced.
+
+    Assumptions:
+        Both doc and comment must be UTF-8.  (Else must add conversions here.)
+    """
+
     # Search for and delete existing DocComment
     delPat = re.compile (r"\n*<DocComment.*</DocComment>\n*", re.DOTALL)
     newDoc = delPat.sub ('', doc)
@@ -571,8 +589,12 @@ def _addRepDocComment(doc, comment):
         # Should never happen unless there's a bug
         raise StandardError ("addRepDocComment: No CdrDocCtl in doc:\n" % doc)
 
-    # Return with inserted comment
-    return "%s\n<DocComment>%s</DocComment>\n%s" % (parts[0],comment,parts[1])
+    # Comment must be compatible with CdrDoc utf-8
+    if type(comment) == type(u""):
+        comment = comment.encode('utf-8')
+
+    # Insert comment
+    return (parts[0] + "\n<DocComment>"+comment+"</DocComment>\n" + parts[1])
 
 
 #----------------------------------------------------------------------
@@ -2056,8 +2078,11 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback = 0):
 
         # If traceback is requested, include the last one
         if tback:
-            tb = sys.exc_info()[2]
-            traceback.print_tb (tb, 999, f)
+            try:
+                tb = sys.exc_info()[2]
+                traceback.print_exc (999, f)
+            except:
+                pass
 
     except IOError:
         pass
