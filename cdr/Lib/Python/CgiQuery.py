@@ -1,11 +1,14 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
 #
-# $Id: CgiQuery.py,v 1.4 2003-07-29 13:10:26 bkline Exp $
+# $Id: CgiQuery.py,v 1.5 2003-09-11 12:34:27 bkline Exp $
 #
 # Base class for CGI database query interface.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2003/07/29 13:10:26  bkline
+# Removed redundant cgi escaping.
+#
 # Revision 1.3  2003/04/09 21:57:40  bkline
 # Fixed encoding bug; fixed exception bug.
 #
@@ -26,11 +29,12 @@ def encode(unicodeString):
                   unicodeString).encode('ascii')
 class CgiQuery:
 
-    def __init__(self, conn, system, script):
+    def __init__(self, conn, system, script, timeout = 30):
         "Should be invoked by the derived class's constructor."
         self.conn          = conn
         self.system        = system
         self.script        = script
+        self.timeout       = timeout
         self.fields        = fields = cgi.FieldStorage()
         self.doWhat        = fields and fields.getvalue("doWhat") or None
         self.queryName     = fields and fields.getvalue("queries") or None
@@ -153,7 +157,7 @@ Cache-control: no-cache, must-revalidate
     def runQuery(self):
         try:
             cursor = self.conn.cursor()
-            cursor.execute(self.queryText)
+            cursor.execute(self.queryText, timeout = self.timeout)
             html = "<table border = '0' cellspacing = '1' cellpadding = '1'>"
             html += "<tr>\n"
             if not cursor.description:
