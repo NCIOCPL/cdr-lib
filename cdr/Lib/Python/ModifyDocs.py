@@ -1,11 +1,17 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.7 2004-11-22 20:58:46 bkline Exp $
+# $Id: ModifyDocs.py,v 1.8 2005-01-26 00:14:51 bkline Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2004/11/22 20:58:46  bkline
+# Fixed a typo in the comment for the transformation/versioning logic.
+# Added another substantial comment to explain why the test to determine
+# whether it's necessary to create a new unpublishable version works
+# correctly.
+#
 # Revision 1.6  2004/09/23 21:29:23  ameyer
 # Added ability to write output to file system or to database, depending
 # on whether we are in test mode or regular run mode.
@@ -73,7 +79,8 @@ class Job:
         self.filter    = filter
         self.transform = transform
         self.comment   = comment
-        self.cursor    = cdrdb.connect('CdrGuest')
+        self.conn      = cdrdb.connect('CdrGuest')
+        self.cursor    = self.conn.cursor()
         self.session   = cdr.login(uid, pwd)
         _testMode      = testMode
         error          = cdr.checkErr(self.session)
@@ -111,6 +118,12 @@ class Job:
         what = "%s: %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), what)
         self.logFile.write(what)
         sys.stderr.write(what)
+
+    def __del__(self):
+        try:
+            self.logFile.close()
+        except:
+            pass
 
 #----------------------------------------------------------------------
 # Class for a CDR document.
@@ -199,8 +212,10 @@ class Doc:
             Create new CWD using CWD(t)
         """
         global _testMode, _outputDir
-        lastSavedXml = None
-        docId        = self.cwd.id
+        lastSavedXml  = None
+        docId         = self.cwd.id
+        everValidated = self.lastp and True or self.__everValidated(job.cursor)
+        job.log("everValidated = %s" % everValidated)
 
         # Only save to database in run mode
         # Only write to output files in test mode
@@ -213,7 +228,8 @@ class Doc:
             if not _testMode:
                 # Save old CWD as new version
                 self.__saveDoc(str(self.cwd), ver='Y', pub='N', job=job,
-                               logWarnings=0)
+                               val = (everValidated and 'Y' or 'N'),
+                               logWarnings = False)
             lastSavedXml = self.lastv.xml
         if self.lastp and self.compare(self.lastp.xml, self.newLastp):
             if _testMode:
@@ -223,7 +239,8 @@ class Doc:
             else:
                 # Save new last pub version
                 self.lastp.xml = lastSavedXml = self.newLastp
-                self.__saveDoc(str(self.lastp), ver='Y', pub='Y', job=job)
+                self.__saveDoc(str(self.lastp), ver='Y', pub='Y', job=job,
+                               val = (everValidated and 'Y' or 'N'))
 
         #--------------------------------------------------------------
         # Note that in the very common case in which the last created
@@ -246,22 +263,50 @@ class Doc:
             else:
                 # Save new last non-pub version
                 self.lastv.xml = lastSavedXml = self.newLastv
-                self.__saveDoc(str(self.lastv), ver='Y', pub='N', job=job)
+                self.__saveDoc(str(self.lastv), ver='Y', pub='N', job=job,
+                               val = (everValidated and 'Y' or 'N'))
         if lastSavedXml and self.compare(self.newCwd, lastSavedXml):
             if not _testMode:
                 # Save new CWD
                 self.cwd.xml = self.newCwd
-                self.__saveDoc(str(self.cwd), ver='N', pub='N', job=job)
+                self.__saveDoc(str(self.cwd), ver='N', pub='N', job=job,
+                               val = (everValidated and 'Y' or 'N'))
+
+    #------------------------------------------------------------------
+    # Find out whether the document has ever been validated.
+    #------------------------------------------------------------------
+    def __everValidated(self, cursor):
+        cursor.execute("""\
+                SELECT val_status
+                  FROM document
+                 WHERE id = ?""", self.id)
+        rows = cursor.fetchall()
+        if not rows:
+            raise Exception("Failure retrieving val status for CDR%d" %
+                            self.id)
+        if rows[0][0] != 'U':
+            return True
+        cursor.execute("""\
+                SELECT COUNT(*)
+                  FROM doc_version
+                 WHERE id = ?
+                   AND val_status <> 'U'""", self.id)
+        rows = cursor.fetchall()
+        if not rows:
+            raise Exception("Failure retrieving val status for CDR%d" %
+                            self.id)
+        return rows[0][0] > 0
 
     #------------------------------------------------------------------
     # Invoke the CdrRepDoc command.
     #------------------------------------------------------------------
-    def __saveDoc(self, docStr, ver, pub, job, logWarnings = 1):
-        job.log("saveDoc(%d, ver='%s' pub='%s')" % (self.id, ver, pub))
+    def __saveDoc(self, docStr, ver, pub, job, val = 'Y', logWarnings = True):
+        job.log("saveDoc(%d, ver='%s' pub='%s' val='%s')" % (self.id, ver, 
+                                                             pub, val))
         # return 1
 
         response = cdr.repDoc(self.session, doc = docStr, ver = ver,
-                              val = 'Y',
+                              val = val,
                               verPublishable = pub,
                               reason = self.comment, comment = self.comment,
                               showWarnings = 'Y')
