@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.24 2004-09-21 20:31:54 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.25 2004-09-23 21:44:32 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,12 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.24  2004/09/21 20:31:54  ameyer
+# Added ability to output to files instead of to database - for test.
+# Added ability to run a filter for validation only, discarding any output.
+# Fixed bug in progress message where local variable overrode global and
+# final progress message did not appear in final report.
+#
 # Revision 1.23  2004/05/28 00:26:50  ameyer
 # If a save of a publishable version returns errors, I now go on to try to
 # save the changed CWD anyway.  Fixes a problem where an ancient, invalid,
@@ -588,7 +594,7 @@ for idTitle in originalDocs:
             #   but still be stored as a non-publishable version.  If we
             #   don't go on to save the modified CWD, the last publishable
             #   version will replace it, without our wanting it to.
-            chgCwdDocObj = cdr.Doc(id=docIdStr, type='InScopeProtocol',
+            chgCwdDocObj = cdr.Doc(id=docIdStr, type=oldCwdDocObj.type,
                                    x=chgCwdXml, encoding='utf-8')
             cdr.logwrite ("Saving CWD after change", LF)
             (repId, repErrs) = cdr.repDoc (session, doc=str(chgCwdDocObj),
@@ -684,7 +690,12 @@ html = """
 """
 html += chg.showSoFarHtml()
 
-html += "<h2>Final status:</h2>\n<p>" + G_progressMsg + "</p><hr>\n"
+html += "<h2>Final status:</h2>\n<p>" + G_progressMsg + "</p>\n"
+
+if testOnly:
+    html += "<p>Program ran in test mode, output data is in directory:<br>" +\
+            " &nbsp; %s</p>\n" % outputDir
+html += "<hr>\n"
 
 if failCount:
     html += \
