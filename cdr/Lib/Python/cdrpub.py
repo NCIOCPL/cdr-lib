@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.68 2005-01-28 19:16:01 bkline Exp $
+# $Id: cdrpub.py,v 1.69 2005-02-08 20:29:42 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.68  2005/01/28 19:16:01  bkline
+# Added a lock for use of the database connection by threaded operations.
+#
 # Revision 1.67  2005/01/24 21:20:50  bkline
 # Changed cdr.getDoc() for Media document to use the publishing port.
 # Eliminated overlong code line.
@@ -562,6 +565,10 @@ class Publish:
 
         try:
 
+            # Get the destination directory.
+            dest_base = self.__outputDir
+            dest = dest_base + ".InProcess"
+
             # Record the fact that the job is in process.
             self.__updateStatus(Publish.RUN)
 
@@ -576,10 +583,6 @@ class Publish:
             # if an external script is attached to this publishing system
             # subset.
             self.__invokeProcessScript(subset)
-
-            # Get the destination directory.
-            dest_base = self.__outputDir
-            dest = dest_base + ".InProcess"
 
             # Get the subset specifications node.
             self.__specs = self.__getSpecs(subset)
