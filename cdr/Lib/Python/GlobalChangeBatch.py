@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.14 2003-06-05 18:38:29 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.15 2003-09-09 15:41:51 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,9 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.14  2003/06/05 18:38:29  ameyer
+# Added proper character encodings for report emailed to users.
+#
 # Revision 1.13  2003/04/26 16:33:12  bkline
 # Added encoding argument to cdr.Doc() constructor invocation.
 #
@@ -231,7 +234,7 @@ cdr.logwrite ("Selecting docs for final processing", LF)
 try:
     originalDocs = chg.selDocs()
 except cdrbatch.BatchException, be:
-    cdr.logwrite ("GCBatch: Unable to select docs: %s" % str(be), LF)
+    jobObj.fail ("GCBatch: Unable to select docs: %s" % str(be), logfile=LF)
 
 # Initialize counts
 totalCount = len (originalDocs)
