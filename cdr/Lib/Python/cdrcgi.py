@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.43 2004-01-23 15:47:03 bkline Exp $
+# $Id: cdrcgi.py,v 1.44 2004-01-27 17:17:24 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.43  2004/01/23 15:47:03  bkline
+# Fixed typo (missing `if' in last modification).
+#
 # Revision 1.42  2004/01/23 15:45:46  bkline
 # Added try block for main menu code which detects whether the user
 # is Volker.
@@ -866,7 +869,7 @@ def constructAdvancedSearchQuery(searchFields, boolOp, docType):
 # Construct top of HTML page for advanced search results.
 #----------------------------------------------------------------------
 def advancedSearchResultsPageTop(docType, nRows, strings):
-    return """\
+    return u"""\
 <!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
 <HTML>
  <HEAD>
@@ -919,7 +922,7 @@ def advancedSearchResultsPageTop(docType, nRows, strings):
              COLSPAN = "4"
                CLASS = "Page">&nbsp;</TD>
    </TR>
-""" % (docType, docType, nRows, strings)
+""" % (docType, docType, nRows, unicode(strings, 'latin-1'))
 
 #----------------------------------------------------------------------
 # Construct HTML page for advanced search results.
@@ -930,7 +933,7 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
     session = session and ("&%s=%s" % (SESSION, session)) or ""
     for i in range(len(rows)):
         docId = "CDR%010d" % rows[i][0]
-        title = rows[i][1]
+        title = cgi.escape(rows[i][1])
         dtcol = "<TD>&nbsp;</TD>"
         filt  = filter
         if len(rows[i]) > 2:
@@ -952,7 +955,7 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
         else:
             href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId, filt,
                                                           session)
-        html += """\
+        html += u"""\
    <TR>
     <TD       NOWRAP
                WIDTH = "10"
@@ -966,7 +969,7 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
      <A         HREF = "%s">%s</A>
     </TD>
    </TR>
-""" % (i + 1, cgi.escape(title), dtcol, href, docId)
+""" % (i + 1, title, dtcol, href, docId)
 
         # Requested by LG, Issue #193.
         if docType == "Protocol":
