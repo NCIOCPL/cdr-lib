@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.22 2004-02-26 22:05:40 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.23 2004-05-28 00:26:50 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,11 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.22  2004/02/26 22:05:40  ameyer
+# Modified document id list handling to assume an actual list passed via
+# the database rather than a list parsable string.  Overcomes database
+# value length limit.
+#
 # Revision 1.21  2004/02/04 00:51:51  ameyer
 # Added capture and reporting of warning messages from the filters.
 #
@@ -496,15 +501,16 @@ for idTitle in originalDocs:
                              chg.description)
                 if repDocResp.startswith ("<Errors"):
                     failed = logDocErr (docId,
-                             "attempting to create version of pre-change doc",
+                         "Attempting to create version of pre-change doc - "+\
+                         " we are aborting save of all other versions: ",
                              repDocResp)
                     cdr.logwrite (("Creating pre-change doc", "Original CWD:",
                                    oldCwdXml, "================"), LF)
                 cdr.logwrite (\
                        "Finished saving copy of working doc before change", LF)
 
+        # If new publishable version was created, store it.
         if not failed:
-            # If new publishable version was created, store it
             if chgPubVerXml:
                 cdr.logwrite ("About to create Doc object for version", LF)
                 chgPubVerDocObj = cdr.Doc(id=docIdStr, type='InScopeProtocol',
@@ -522,8 +528,12 @@ for idTitle in originalDocs:
                  "<br>Store may have failed, or version may not be publishable"
                     failed = logDocErr (docId, msg, repErrs)
 
-        if not failed:
             # Finally, the working document
+            # At this point, we used to quit on failure, but it can cause
+            #   problems if we do.  A publishable version can fail validation
+            #   but still be stored as a non-publishable version.  If we
+            #   don't go on to save the modified CWD, the last publishable
+            #   version will replace it, without our wanting it to.
             chgCwdDocObj = cdr.Doc(id=docIdStr, type='InScopeProtocol',
                                    x=chgCwdXml, encoding='utf-8')
             cdr.logwrite ("Saving CWD after change", LF)
