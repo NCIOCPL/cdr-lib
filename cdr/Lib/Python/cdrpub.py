@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.37 2002-11-06 21:56:40 pzhang Exp $
+# $Id: cdrpub.py,v 1.38 2002-11-07 23:12:58 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.37  2002/11/06 21:56:40  pzhang
+# Allowed semicolon as an email address separator.
+#
 # Revision 1.36  2002/11/05 16:05:51  pzhang
 # Enhanced interface per Eileen's input.
 #
@@ -154,10 +157,10 @@ class Publish:
     __cdrHttp  = "http://%s.nci.nih.gov/cgi-bin/cdr" % socket.gethostname()
     __ignoreUserDocList = 0
     __interactiveMode = 0
-    __checkRemovedDocs  = 1
-    __includeLinkedDocs = 1
+    __checkPushedDocs  = 0
+    __includeLinkedDocs = 0
     __reportOnly        = 0
-    __validateDocs      = 1
+    __validateDocs      = 0
 
     #---------------------------------------------------------------
     # Load the job settings from the database.  User-specified
@@ -272,22 +275,22 @@ class Publish:
             self.__updateStatus(Publish.FAILURE, msg)
             raise StandardError(msg)
 
-        if self.__params.has_key("IncludeLinkedDocs") and \
-            self.__params["IncludeLinkedDocs"] != "Yes":
-            self.__includeLinkedDocs = 0
-        if self.__params.has_key("InteractiveMode") and \
-            self.__params["InteractiveMode"] == "Yes":
-            self.__interactiveMode = 1	
-        if self.__params.has_key("CheckRemovedDocs") and \
-            self.__params["CheckRemovedDocs"] != "Yes":
-            self.__checkRemovedDocs = 0	
-        if self.__params.has_key("ReportOnly") and \
-            self.__params["ReportOnly"] == "Yes":
-            self.__reportOnly = 1	
-        if self.__params.has_key("ValidateDocs") and \
-            self.__params["ValidateDocs"] != "Yes":
-            self.__validateDocs = 0	
-
+        if self.__params.has_key("IncludeLinkedDocs"):            
+            self.__includeLinkedDocs = \
+                self.__params["IncludeLinkedDocs"] == "Yes"
+        if self.__params.has_key("InteractiveMode"):
+            self.__interactiveMode = \
+                self.__params["InteractiveMode"] == "Yes"         
+        if self.__params.has_key("CheckPushedDocs"):
+            self.__checkPushedDocs = \
+                self.__params["CheckPushedDocs"] == "Yes"          
+        if self.__params.has_key("ReportOnly"):
+            self.__reportOnly = \
+                self.__params["ReportOnly"] == "Yes"           
+        if self.__params.has_key("ValidateDocs"):
+            self.__validateDocs = \
+                self.__params["ValidateDocs"] == "Yes"
+            
     #---------------------------------------------------------------
     # This is the major public entry point to publishing.
     #---------------------------------------------------------------
@@ -740,11 +743,11 @@ class Publish:
             self.__updateMessage(message, jobId)
             cgWorkLink = self.__cdrHttp + "/PubStatus.py?id=1&type=CgWork"
             link = "<A style='text-decoration: underline;' href='%s'> \
-                Check removed docs</A><BR>" % cgWorkLink
+                Check pushed docs</A><BR>" % cgWorkLink          
             if pubType == "Full Load" or pubType == "Export":
                 self.__createWorkPPC(vendor_job, vendor_dest, jobId)
                 pubTypeCG = pubType
-                if self.__checkRemovedDocs or self.__interactiveMode:
+                if self.__checkPushedDocs or self.__interactiveMode:
                     self.__updateMessage(link, jobId)
                     self.__waitUserApproval(jobId)
             elif pubType == "Hotfix (Remove)":
@@ -753,7 +756,7 @@ class Publish:
             elif pubType == "Hotfix (Export)":
                 self.__createWorkPPCHE(vendor_job, vendor_dest, jobId)
                 pubTypeCG = "Hotfix"
-                if self.__checkRemovedDocs or self.__interactiveMode:
+                if self.__checkPushedDocs or self.__interactiveMode:
                     self.__updateMessage(link, jobId)
                     self.__waitUserApproval(jobId)
             else:
