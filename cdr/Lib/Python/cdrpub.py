@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.11 2002-04-04 18:31:43 bkline Exp $
+# $Id: cdrpub.py,v 1.12 2002-04-09 13:12:32 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.11  2002/04/04 18:31:43  bkline
+# Fixed status value in query for pub_proc row; fixed query placeholder typo.
+#
 # Revision 1.10  2002/04/04 15:31:38  bkline
 # Cleaned up some of the obsolete log entries (see CVS logs for full history).
 #
@@ -521,9 +524,29 @@ class Publish:
                           (self.__jobId, info[1][0])
                     raise StandardError(msg)
 
-            # XXX Implement me!
+            # Handle XQL queries.
             elif child.nodeName == "SubsetXQL":
-                raise StandardError("XQL queries are not yet supported")
+                xql = self.__repParams(cdr.getTextContent(child))
+                resp = cdr.search(self.__credentials, xql)
+                if type(resp) in (type(""), type(u"")):
+                    raise StandardError("XQL failure: %s" % resp)
+                for queryResult in resp:
+                    id     = queryResult.docId
+                    type   = queryResult.docType
+                    digits = re.sub('[^\d]', '', id)
+                    id     = string.atoi(digits)
+                    if id in self.__alreadyPublished: continue
+                    try:
+                        doc = self.__findPublishableVersion(id)
+                    except StandardError, arg:
+                        self.__errorCount += 1
+                        threshold = self.__errorsBeforeAborting
+                        if threshold != -1:
+                            if self.__errorCount > threshold:
+                                raise
+                        self.__addJobMessages(arg[0])
+                    docs.append(doc)
+                    self.__alreadyPublished[id] = 1
 
         self.__debugLog("SubsetSpecification queries selected %d documents."
                         % len(docs))
