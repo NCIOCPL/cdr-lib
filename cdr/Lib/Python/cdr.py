@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.63 2002-10-29 21:00:16 pzhang Exp $
+# $Id: cdr.py,v 1.64 2002-11-12 11:43:57 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.63  2002/10/29 21:00:16  pzhang
+# Added allowInActive parameter to publish() to handle Hotfix-Remove.
+#
 # Revision 1.62  2002/10/24 19:57:19  ameyer
 # Fixed bug in getQueryTermValueForId().
 #
@@ -2262,3 +2265,199 @@ def makeTempDir(basename = "tmp", chdir = 1):
             raise StandardError("makeTempDir",
                                 "Cannot chdir to %s" % abspath)
     return abspath
+
+#----------------------------------------------------------------------
+# Object for ID and name (for example, of a document, in which case
+# the name is the title of the document), or a filter set, or a user,
+# or a group, or ....
+#----------------------------------------------------------------------
+class IdAndName:
+    def __init__(self, id, name):
+        self.id = id
+        self.name = name
+
+#----------------------------------------------------------------------
+# Object representing a CdrResponseNode.
+#----------------------------------------------------------------------
+class CdrResponseNode:
+    def __init__(self, node, when):
+        self.when            = when
+        self.responseWrapper = node
+        self.specificElement = None
+        for child in node.childNodes:
+            if child.nodeType == child.ELEMENT_NODE:
+                if self.specificElement:
+                    raise StandardError("CdrResponseNode: too many children "
+                                        "of CdrResponse element")
+                self.specificElement = child
+        if not self.specificElement:
+            raise StandardError("No element children found for CdrResponse")
+        self.elapsed         = self.specificElement.getAttribute('Elapsed')
+
+#----------------------------------------------------------------------
+# Raise an exception using the text content of Err elements.
+#----------------------------------------------------------------------
+def wrapException(caller, errElems):
+    args = [caller]
+    for elem in errElems:
+        args.append(getTextContent(elem))
+    exception = StandardError()
+    exception.args = tuple(args)
+    raise exception
+
+#----------------------------------------------------------------------
+# Extract main CdrResponse node from a response document.  This 
+# function will be called in one of two situations:
+#  (a) a CDR session has already been established, and only
+#      one CdrResponse element will be present; or
+#  (b) the caller was given a login ID and password, in which case
+#      there will be three CdrResponse elements present: one for
+#      the CdrLogon command; one for the command submitted by the
+#      original caller; and one for the CdrLogoff command.
+# While we're at it, we check to make sure that the status of the
+# command was success.
+#----------------------------------------------------------------------
+def extractResponseNode(caller, responseString):
+    docElem = xml.dom.minidom.parseString(responseString).documentElement
+    when = docElem.getAttribute('Time')
+    print responseString
+    cdrResponseElems = docElem.getElementsByTagName('CdrResponse')
+    if not cdrResponseElems:
+        errElems = docElem.getElementsByTagName('Err')
+        if errElems:
+            wrapException(caller, errElems)
+        else:
+            raise StandardError(caller, 'No CdrResponse elements found')
+    if len(cdrResponseElems) == 1:
+        responseElem = cdrResponseElems[0]
+    elif len(cdrResponseElems) == 3:
+        responseElem = cdrResponseElems[2]
+        raise StandardError(caller, 'Found %d CdrResponse elements; '
+                                    'expected one or three')
+    if responseElem.getAttribute('Status') == 'success':
+        return CdrResponseNode(responseElem, when)
+    errElems = cdrResponseElems[0].getElementsByTagName('Err')
+    if not errElems:
+        raise StandardError(caller, 'call failed but Err elements missing')
+    wrapException(caller, errElems)
+    
+#----------------------------------------------------------------------
+# Get the list of filters in the CDR.
+#----------------------------------------------------------------------
+def getFilters(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
+    cmd          = "<CdrGetFilters/>"
+    response     = sendCommands(wrapCommand(cmd, session), host, port)
+    responseElem = extractResponseNode('getFilters', response)
+    filters      = []
+    elems        = responseElem.specificElement.getElementsByTagName('Filter')
+    for elem in elems:
+        id       = elem.getAttribute('DocId')
+        name     = getTextContent(elem)
+        filters.append(IdAndName(id, name))
+    return filters
+
+#----------------------------------------------------------------------
+# Get the list of filter sets in the CDR.
+#----------------------------------------------------------------------
+def getFilterSets(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
+    cmd      = "<CdrGetFilterSets/>"
+    response = sendCommands(wrapCommand(cmd, session), host, port)
+    response = extractResponseNode('getFilterSets', response)
+    sets     = []
+    elems    = response.specificElement.getElementsByTagName('FilterSet')
+    for elem in elems:
+        id       = int(elem.getAttribute('SetId'))
+        name     = getTextContent(elem)
+        sets.append(IdAndName(id, name))
+    return sets
+
+#----------------------------------------------------------------------
+# Object for a named set of CDR filters.
+#----------------------------------------------------------------------
+class FilterSet:
+    def __init__(self, name, desc, notes = None, members = None):
+        self.name    = name
+        self.desc    = desc
+        self.notes   = notes
+        self.members = members or []
+    def __repr__(self):
+        rep = "name=%s\n" % self.name
+        rep += "desc=%s\n" % self.desc
+        if self.notes:
+            rep += "notes=%s\n" % self.notes
+        for member in self.members:
+            if type(member.id) == type(9):
+                rep += "filter set %d (%s)\n" % (member.id, member.name)
+            else:
+                rep += "filter %s (%s)\n" % (member.id, member.name)
+        return rep
+
+#----------------------------------------------------------------------
+# Pack up XML elements for a CDR filter set (common code used by
+# addFilterSet() and repFilterSet()).
+#----------------------------------------------------------------------
+def packFilterSet(filterSet):
+    elems = "<FilterSetName>%s</FilterSetName>" % filterSet.name
+    elems += "<FilterSetDescription>%s</FilterSetDescription>" % \
+            filterSet.desc
+    if filterSet.notes is not None:
+        elems += "<FilterSetNotes>%s</FilterSetNotes>" % filterSet.notes
+    for member in filterSet.members:
+        if type(member.id) == type(9):
+            elems += "<FilterSet SetId='%d'/>" % member.id
+        else:
+            elems += "<Filter DocId='%s'/>" % member.id
+    return elems
+
+#----------------------------------------------------------------------
+# Create a new CDR filter set.
+#----------------------------------------------------------------------
+def addFilterSet(session, filterSet, host = DEFAULT_HOST, port = DEFAULT_PORT):
+    cmd  = "<CdrAddFilterSet>%s</CdrAddFilterSet>" % packFilterSet(filterSet)
+    print "cmd=[%s]" % cmd
+    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    node = extractResponseNode('addFilterSet', resp)
+    return node.specificElement.getAttribute('TotalFilters')
+
+#----------------------------------------------------------------------
+# Replace an existing CDR filter set.
+#----------------------------------------------------------------------
+def repFilterSet(session, filterSet, host = DEFAULT_HOST, port = DEFAULT_PORT):
+    cmd  = "<CdrRepFilterSet>%s</CdrRepFilterSet>" % packFilterSet(filterSet)
+    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    node = extractResponseNode('repFilterSet', resp)
+    return node.specificElement.getAttribute('TotalFilters')
+
+#----------------------------------------------------------------------
+# Get the attributes and members of a CDR filter set.
+# The members attribute in the returned object will contain a list of
+# objects with id and name attributes.  For a nested filter set, the
+# id will be the integer representing the primary key of the set; for
+# a filter, the id will be a string containing the CDR document ID in
+# the form 'CDR0000099999'.
+#----------------------------------------------------------------------
+def getFilterSet(session, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
+    cmd          = "<CdrGetFilterSet><FilterSetName>%s" \
+                   "</FilterSetName></CdrGetFilterSet>" % name
+    response     = sendCommands(wrapCommand(cmd, session), host, port)
+    responseNode = extractResponseNode('getFilterSet', response)
+    name         = None
+    desc         = None
+    notes        = None
+    members      = []
+    for node in responseNode.specificElement.childNodes:
+        if node.nodeType == node.ELEMENT_NODE:
+            textContent = getTextContent(node)
+            if node.nodeName == 'FilterSetName':
+                name = textContent
+            elif node.nodeName == 'FilterSetDescription':
+                desc = textContent
+            elif node.nodeName == 'FilterSetNotes':
+                notes = textContent
+            elif node.nodeName == 'Filter':
+                member = IdAndName(node.getAttribute('DocId'), textContent)
+                members.append(member)
+            elif node.nodeName == 'FilterSet':
+                member = IdAndName(int(node.getAttribute('SetId')), textContent)
+                members.append(member)
+    return FilterSet(name, desc, notes, members)
