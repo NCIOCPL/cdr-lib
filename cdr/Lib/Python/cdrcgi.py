@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.26 2002-08-07 16:35:35 bkline Exp $
+# $Id: cdrcgi.py,v 1.27 2002-08-15 21:18:07 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.26  2002/08/07 16:35:35  bkline
+# Added unicodeToLatin1() to sendPage().
+#
 # Revision 1.25  2002/07/25 18:22:14  ameyer
 # Added View Batch Job Status option.
 #
@@ -295,9 +298,12 @@ def mainMenu(session, news = None):
       <LI><A HREF='%s/MergeProt.py%s'>Merge Protocol</A></LI>
       <LI><A HREF='%s/GlobalChange.py%s'>Make Global Changes</A></LI>
       <LI><A HREF='%s/getBatchStatus.py%s'>View Batch Job Status</A></LI>
+      <LI><A HREF='%s/MessageLoggedInUsers.py%s'>
+            Send Email to Users Currently Logged in to the CDR</A></LI>
       <LI><A HREF='%s/Logout.py%s'>Log Out</A></LI>
      </OL>
     """ % (BASE, session,
+           BASE, session,
            BASE, session,
            BASE, session,
            BASE, session,
