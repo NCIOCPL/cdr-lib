@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.17 2002-02-14 21:25:49 mruben Exp $
+# $Id: cdr.py,v 1.18 2002-02-14 21:42:14 mruben Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.17  2002/02/14 21:25:49  mruben
+# Added no_output option to filterDoc() [committed by RMK].
+#
 # Revision 1.16  2002/02/06 13:38:20  bkline
 # Fixed definition of SCRIPTS.
 #
