@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.27 2002-09-03 21:54:13 pzhang Exp $
+# $Id: cdrpub.py,v 1.28 2002-09-05 14:41:45 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.27  2002/09/03 21:54:13  pzhang
+# Changed default values from 'No' to 'Yes'.
+# Enabled output_dir for ReportOnly.
+#
 # Revision 1.26  2002/08/30 20:14:01  pzhang
 # Fixed a couple of minor bugs.
 #
@@ -116,7 +120,7 @@ class Publish:
     __interactiveMode = 1
     __checkRemovedDocs  = 1    
     __includeLinkedDocs = 1
-    __reportOnly        = 1
+    __reportOnly        = 0
     __validateDocs      = 1
    
     #---------------------------------------------------------------
@@ -126,6 +130,9 @@ class Publish:
     # queries.
     #---------------------------------------------------------------
     def __init__(self, jobId):
+
+        # Make sure a port is available for publising.
+        self.__pubPort = cdr.getPubPort()
         
         # Initialize a few values used for error processing.
         self.__errorCount           = 0
@@ -179,7 +186,8 @@ class Publish:
         self.__no_output   = row[6]
         self.__userName    = row[7]
         self.__passWord    = row[8]
-        self.__credentials = cdr.login(self.__userName, self.__passWord)
+        self.__credentials = cdr.login(self.__userName, self.__passWord,
+                        port = self.__pubPort)
 
         # Load user-supplied list of document IDs.
         self.__userDocList = []
@@ -238,8 +246,8 @@ class Publish:
             self.__params["CheckRemovedDocs"] != "Yes":
             self.__checkRemovedDocs = 0	
         if self.__params.has_key("ReportOnly") and \
-            self.__params["ReportOnly"] != "Yes":
-            self.__reportOnly = 0	
+            self.__params["ReportOnly"] == "Yes":
+            self.__reportOnly = 1	
         if self.__params.has_key("ValidateDocs") and \
             self.__params["ValidateDocs"] != "Yes":
             self.__validateDocs = 0	
@@ -509,7 +517,7 @@ class Publish:
 
         # Send email to notify user of job status.
         if self.__reportOnly:
-            self.__updateStatus(Publish.FAILURE, """The job statue is 
+            self.__updateStatus(Publish.FAILURE, """The job status is 
                 set to Failure because it was running for pre-publishing 
                 reports.<BR>""")
         self.__sendMail()
@@ -571,8 +579,9 @@ class Publish:
         if not cg_job:
             resp = cdr.publish(self.__credentials, "Primary",
                            "%s_%s" % (self.__pd2cg, vendor_subsetName),
-                           email=self.__email,                           
-                           noOutput=self.__no_output)
+                           email = self.__email,                           
+                           noOutput = self.__no_output,
+                           port = self.__pubPort)
             cg_job = resp[0]
             if not cg_job:
                 msg += "<B>Failed:</B> %s\n" % resp[1]
@@ -1258,12 +1267,14 @@ class Publish:
             if not filteredDoc:
                 result = cdr.filterDoc(self.__credentials, filterSet[0],
                                        docId = doc[0], docVer = doc[1],
-                                       parm = filterSet[1])
+                                       parm = filterSet[1],
+                                       port = self.__pubPort)
 
             # Subsequent filter sets are applied to previous results.
             else:
                 result = cdr.filterDoc(self.__credentials, filterSet[0],
-                                       doc = filteredDoc, parm = filterSet[1])
+                                       doc = filteredDoc, parm = filterSet[1],
+                                       port = self.__pubPort)
             if type(result) not in (type([]), type(())):
                 errors = result or "Unspecified failure filtering document"
                 filteredDoc = None
@@ -1560,7 +1571,7 @@ class Publish:
                 sender    = self.__cdrEmail
                 subject   = "CDR Publishing Job Status"
                 receivers = string.split(self.__email, ",")
-                message   = """\
+                message   = """
 Job %d has completed or changed status.  You can view a status report for this job at:
 
     %s/PubStatus.py?id=%d
