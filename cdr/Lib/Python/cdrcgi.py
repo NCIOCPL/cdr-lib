@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.38 2003-12-17 01:09:05 bkline Exp $
+# $Id: cdrcgi.py,v 1.39 2003-12-17 01:20:14 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.38  2003/12/17 01:09:05  bkline
+# Added advanced search support for CTGovProtocol documents.
+#
 # Revision 1.37  2003/12/16 16:16:07  bkline
 # Main menu rewritten at Lakshmi's request (#1000).
 #
@@ -916,7 +919,9 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
 """ % dt
 
         # XXX Consider using QcReport.py for all advanced search results pages.
-        if docType in ("Person", "Organization", "CTGovProtocol"):
+        if docType in ("Person", "Organization"):
+            href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
+        elif len(rows[i]) > 2 and dt == "CTGovProtocol":
             href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
         elif docType == "Summary":
             href = "%s/QcReport.py?DocId=%s&ReportType=nm%s" % (BASE, docId,
