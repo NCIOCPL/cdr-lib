@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrmailcommon.py,v 1.2 2002-10-24 23:13:07 ameyer Exp $
+# $Id: cdrmailcommon.py,v 1.3 2002-11-01 02:42:57 ameyer Exp $
 #
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2002/10/24 23:13:07  ameyer
+# Revised selections and numerous small changes.
+#
 # Revision 1.1  2002/09/19 21:40:00  ameyer
 # First fersion of common mailer routines.  Not yet operational.
 #
@@ -18,17 +21,34 @@ import sys, cdrdb
 LOGFILE = "d:/cdr/log/mailer.log"
 
 #----------------------------------------------------------------------
-# Class for finding documents and recipients for remailers.
+# Class for finding documents for remailers.
 #----------------------------------------------------------------------
 class RemailSelector:
     """
     Find all documents in a particular class which must be remailed.
 
-    Finds the content documents, the tracking documents for the
-      mailer which received no response, and the recipients
-      who did not respond.
+    Finds the content documents, including the version number, and
+      the tracking documents for the mailer which received no response
 
     Stores info temporarily in database tables.
+
+    Selects:
+       Latest publishable version of document for which:
+       A mailer was sent between
+          Some number of days (60 is expected)
+          and some other number (120 is expected)
+          (e.g., examines all mailers sent between 2 and 4
+           months ago.)
+       The mailer is the requested type, i.e., one of the
+          non-remailer types.
+       No response to the mailer was received.
+       No remailer has already been sent.
+    The selection also retrieves the id of the mailer tracking document
+       for the previous mailer - to be used in the RemailerFor element
+       in the new Mailer tracking document for this remailer.
+
+    Several temporary tables are used, primarily to simplify and
+      significantly speed up the selections.
     """
     def __init__(self, conn = None, jobId = None):
         """
@@ -49,8 +69,9 @@ class RemailSelector:
                 raise "database connection error: %s" % info[1][0]
 
         # Save connection and job id
-        self.__conn  = conn
-        self.__jobId = jobId
+        self.__conn   = conn
+        self.__cursor = conn.cursor()
+        self.__jobId  = jobId
 
 
     def select(self, originalMailType, maxMailers=sys.maxint,
@@ -62,8 +83,14 @@ class RemailSelector:
           to a previous mailer for this doc.
 
         Parameters:
-            originalMailType = Original mailer types, e.g.,
-              'Physician-Annual update'.
+            originalMailType = String containing original mailer types,
+              preformatted for inclusion in an IN clause, e.g.,
+                "'Physician-Initial', 'Physician-Annual update'", or
+                "'Organization-Annual update'"
+              Note: This is not a tuple, it's a string, with SQL single
+                    quotes included in the string.
+              Note: It is legal to specify a set containing only one
+                    element for an IN clause.
 
             maxMailers = Maximum number of documents to select for
               mailer generation.  Default is no limit.
@@ -85,81 +112,99 @@ class RemailSelector:
         Throws:
             Exceptions raised in cursor.execute are passed through.
         """
-        # Create a temporary table to hold our results
-        # Adding validation constraints is overkill on this table
-        # Data is coming from tables which must already be valid
-        # #remailTemp will automatically be dropped when this
-        #   connection closes.
+        # Get all the base mailers that have been sent out
+        #   between earlyDays and lateDays ago and store in
+        #   temp table #orig_mailers
+        # This is selecting document ids of mailer tracking documents,
+        #   not primary documents that are mailed.
         try:
-            cursor = self.__conn.cursor()
-            cursor.execute ("""
-                CREATE TABLE #remailTemp (
-                    doc         INTEGER,
-                    ver         INTEGER,
-                    tracker     INTEGER,
-                    recipient   INTEGER)""")
+            self.__cursor.execute ("""
+             SELECT mailer.doc_id
+               INTO #orig_mailers
+               FROM query_term mailer
+               JOIN query_term mailer_sent
+                 ON mailer_sent.doc_id = mailer.doc_id
+              WHERE mailer.path = '/Mailer/Type'
+                AND mailer.value IN (%s)
+                AND mailer_sent.path = '/Mailer/Sent'
+                AND mailer_sent.value
+            BETWEEN CONVERT(CHAR(10), DATEADD(DAY, -%d, GETDATE()), 121)
+                AND CONVERT(CHAR(10), DATEADD(DAY, -%d,  GETDATE()), 121)
+            """ % (originalMailType, earlyDays, lateDays))
         except cdrdb.Error, info:
-            raise 'database error creating temporary table #remailTemp %s'\
+            raise 'db error creating temporary table #orig_mailers %s'\
                   % str(info[1][0])
 
-        # Select hits into it
-        # Changes needed:
-        #  In future, may add pub_proc_doc failure check.
-        #  Database doesn't have this info at outset
-        #  Could be a major addition
-        #
+        # Create another temporary table containing all mailers in the
+        #   above table that received a response.
         try:
-            # Select latest version of document for which:
-            #    A mailer was sent between
-            #       Some number of days (60 is expected)
-            #       and some other number (120 is expected)
-            #       (e.g., examines all mailers sent between 2 and 4
-            #        months ago.)
-            #    The mailer is the requested type, i.e., one of the
-            #       non-remailer types.
-            #    No response to the mailer was received.
-            #    No remailer has already been sent.
-            # The selection also gathers other information, but note
-            #    that although the original recipient is picked up here,
-            #    the recipient must be recalculated for Organizations.
-            qry = """
-                INSERT INTO #remailTemp (doc, ver, tracker, recipient)
-                SELECT TOP %d qdoc.int_val, MAX(doc_version.num),
-                       MIN(qmailer.doc_id), qrecip.int_val
-                  FROM query_term qmailer
-                  JOIN doc_version
-                    ON qmailer.doc_id = doc_version.id
-                  JOIN query_term qsent
-                    ON qsent.doc_id  = qmailer.doc_id
-                  JOIN query_term qrecip
-                    ON qrecip.doc_id = qmailer.doc_id
-                  JOIN query_term qdoc
-                    ON qdoc.doc_id = qmailer.doc_id
-                 WHERE qmailer.path  = '/Mailer/Type'
-                   AND qmailer.value = '%s'
-                   AND qsent.path    = '/Mailer/Sent'
-                   AND qsent.value BETWEEN (GETDATE()-%d) AND (GETDATE()-%d)
-                   AND qrecip.path   = '/Mailer/Recipient/@cdr:ref'
-                   AND qdoc.path     = '/Mailer/Document/@cdr:ref'
-                   AND NOT EXISTS (
-                      SELECT *
-                        FROM query_term resp
-                       WHERE resp.path = '/Mailer/Response/Received'
-                         AND resp.doc_id = qmailer.doc_id)
-                   AND NOT EXISTS (
-                      SELECT *
-                        FROM query_term remail
-                       WHERE remail.path = '/Mailer/RemailerFor/@cdr:ref'
-                         AND remail.int_val = qmailer.doc_id)
-                GROUP BY qdoc.int_val, qrecip.int_val
-                """ % (maxMailers, originalMailType, earlyDays, lateDays)
-            cursor.execute (qry, timeout=180)
+            self.__cursor.execute ("""
+             SELECT query_term.doc_id
+               INTO #got_response
+               FROM query_term
+               JOIN #orig_mailers
+                 ON #orig_mailers.doc_id = query_term.doc_id
+              WHERE query_term.path = '/Mailer/Response/Received'
+                AND query_term.value IS NOT NULL
+                AND query_term.value <> ''
+            """)
+        except cdrdb.Error, info:
+            raise 'db error creating temporary table #got_response %s'\
+                  % str(info[1][0])
+
+        # How many have we already sent out remailers for (might be some
+        #   overlap with the previous set).
+        try:
+            self.__cursor.execute ("""
+             SELECT #orig_mailers.doc_id
+               INTO #already_remailed
+               FROM query_term
+               JOIN #orig_mailers
+                 ON #orig_mailers.doc_id = query_term.int_val
+              WHERE query_term.path = '/Mailer/RemailerFor/@cdr:ref'
+            """)
+        except cdrdb.Error, info:
+            raise 'db error creating temporary table #already_remailed %s'\
+                  % str(info[1][0])
+
+        # Get the primary document and version for each mailer that
+        #   isn't in either of the previous two subsets.  Remember the
+        #   mailer ID, too, so we can populate the RemailerFor element.
+        # XXXX - ISSUE - XXXX
+        #    Do we need to look at the pub_proc.status value for the original
+        #    job to make sure we aren't creating a remailer for a mailer that,
+        #    in fact, never went out.
+        try:
+            self.__cursor.execute ("""
+                 SELECT DISTINCT TOP %d document.id AS doc,
+                        MAX(doc_version.num) AS ver,
+                        #orig_mailers.doc_id AS tracker
+                   INTO #remail_temp
+                   FROM document
+                   JOIN doc_version
+                     ON doc_version.id = document.id
+                   JOIN query_term
+                     ON query_term.int_val = document.id
+                   JOIN #orig_mailers
+                     ON #orig_mailers.doc_id = query_term.doc_id
+                  WHERE query_term.path = '/Mailer/Document/@cdr:ref'
+                    AND doc_version.publishable = 'Y'
+                    AND #orig_mailers.doc_id NOT IN (
+                        SELECT doc_id
+                          FROM #got_response
+                         UNION
+                        SELECT doc_id
+                          FROM #already_remailed
+                        )
+               GROUP BY document.id, #orig_mailers.doc_id
+            """ % maxMailers)
 
             # Tell user how many hits there were
-            return cursor.rowcount
+            return self.__cursor.rowcount
 
         except cdrdb.Error, info:
-            raise 'database error selecting remailers %s' % str(info[1][0])
+            raise 'db error creating #remail_temp id/ver/tracker table: %s' \
+                  % str(info[1][0])
 
     def getDocIdQuery(self):
         """
@@ -167,7 +212,7 @@ class RemailSelector:
         Note:  Assumes same connection is used to access temp table
                as was used to build it.
         """
-        return "SELECT DISTINCT doc FROM #remailTemp"
+        return "SELECT DISTINCT doc FROM #remail_temp"
 
     def getDocIdVerQuery(self):
         """
@@ -177,7 +222,7 @@ class RemailSelector:
                as was used to build it.
         """
         return """SELECT DISTINCT id, MAX(num) FROM doc_version
-                   WHERE id IN (SELECT DISTINCT doc FROM #remailTemp)
+                   WHERE id IN (SELECT DISTINCT doc FROM #remail_temp)
                    GROUP BY id"""
 
     def fillMailerIdTable(self, jobId):
@@ -187,10 +232,10 @@ class RemailSelector:
         the batch portion of the mailer program can get at it
         """
         try:
-            self.__conn.cursor().execute(
-              """INSERT INTO remailer_ids (job, doc, tracker, recipient)
-                     SELECT %d, doc, tracker, recipient
-                       FROM #remailTemp""" % jobId)
+            self.__cursor.execute(
+              """INSERT INTO remailer_ids (job, doc, tracker)
+                     SELECT %d, doc, tracker
+                       FROM #remail_temp""" % jobId)
 
             # If we don't do this, results will be thrown away
             self.__conn.commit()
@@ -200,19 +245,17 @@ class RemailSelector:
 
     def getRelatedIds(self, docId):
         """
-        Return the ids of the mailer tracking documents and recipients
+        Return the ids of the mailer tracking documents
         for a particular document to be remailed.
-        Data is returned as a sequence of tuples of:
-            recipient id, tracker id
+        Data is returned as a sequence of tuples of tracker id.
         """
         try:
-            cursor = self.__conn.cursor()
-            cursor.execute (
-                "SELECT recipient, tracker "
+            self.__cursor.execute (
+                "SELECT tracker "
                 "  FROM remailer_ids "
                 " WHERE job=? AND doc=?", (self.__jobId, docId))
 
-            return cursor.fetchall()
+            return self.__cursor.fetchall()
 
         except cdrdb.Error, info:
             raise 'database error getting related remailer_ids: %s' \
@@ -224,7 +267,7 @@ class RemailSelector:
         Call when processing is finished.
         """
         try:
-            self.__conn.cursor().execute(
+            self.__cursor.execute(
                 "DELETE FROM remailer_ids WHERE job=?", self.__jobId)
 
             # Make object unusable
