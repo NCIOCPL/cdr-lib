@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.55 2002-09-18 18:28:43 ameyer Exp $
+# $Id: cdr.py,v 1.56 2002-09-18 18:56:48 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.55  2002/09/18 18:28:43  ameyer
+# Added traceback capability to logwrite.
+#
 # Revision 1.54  2002/09/15 16:58:53  bkline
 # Replaced mmdb2 with mahler for CVS server name macro.
 #
@@ -2025,11 +2028,11 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback = 0):
     Can also record traceback information.
 
     Pass:
-        msgs - Single string or tuple of strings to write.  Should not
-               contain binary data.
+        msgs    - Single string or tuple of strings to write.  Should not
+                   contain binary data.
         logfile - Optional log file path, else uses default.
-        traceback - True = log the latest traceback object.
-                    False = do not.
+        tback   - True = log the latest traceback object.
+                   False = do not.
 
     Return:
         Void.  Does nothing at all if it can't open the logfile or
