@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.13 2001-12-24 19:35:04 bkline Exp $
+# $Id: cdr.py,v 1.14 2002-01-22 22:30:59 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.13  2001/12/24 19:35:04  bkline
+# Added valDoc function.
+#
 # Revision 1.12  2001/12/19 20:23:18  bkline
 # Added options to doc save commands; added email support; added unlock()
 # function.
@@ -658,10 +661,13 @@ class TermSet:
 #----------------------------------------------------------------------
 # Gets context information for term's position in terminology tree.
 #----------------------------------------------------------------------
-def getTree(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getTree(credentials, docId, depth = 1,
+            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Create the command
-    cmd = "<CdrGetTree><DocId>%s</DocId></CdrGetTree>" % normalize(docId)
+    cmd = """\
+<CdrGetTree><DocId>%s</DocId><ChildDepth>%d</ChildDepth></CdrGetTree>
+""" % (normalize(docId), depth)
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
