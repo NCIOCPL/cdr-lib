@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.42 2002-07-24 02:40:38 bkline Exp $
+# $Id: cdr.py,v 1.43 2002-07-25 17:21:30 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.42  2002/07/24 02:40:38  bkline
+# Added PERL constant.
+#
 # Revision 1.41  2002/07/16 14:26:51  ameyer
 # Added process id to logwrite, and changed format of message header.
 #
@@ -459,6 +462,8 @@ class Doc:
 # or the string for an Errors element.  We're using this parameter
 # (and its default) in order to preserve compatibility with code which
 # expects a simple return value.
+#
+# See also the comment on repDoc below regarding the 'reason' argument.
 #----------------------------------------------------------------------
 def addDoc(credentials, file = None, doc = None,
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
@@ -500,6 +505,11 @@ def addDoc(credentials, file = None, doc = None,
 # Replace an existing document in the CDR Server.
 # See documentation of addDoc above for explanation of showWarnings
 # argument.
+# Note that the 'reason' argument is used to set a value in the
+# audit table.  If you want to have the comment column in the 
+# document and doc_version tables populated, you must supply a
+# DocComment child of the CdrDocCtl element inside the CdrDoc
+# of the doc argument.
 #----------------------------------------------------------------------
 def repDoc(credentials, file = None, doc = None,
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
