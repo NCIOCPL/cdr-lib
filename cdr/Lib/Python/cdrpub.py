@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.64 2004-12-18 18:07:50 bkline Exp $
+# $Id: cdrpub.py,v 1.65 2004-12-21 13:17:16 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.64  2004/12/18 18:07:50  bkline
+# Modified cg-push code to accomodate Media documents.
+#
 # Revision 1.63  2004/12/16 21:00:16  bkline
 # Added subdirectory name for saving media documents.
 #
@@ -226,7 +229,7 @@
 #
 #----------------------------------------------------------------------
 
-import cdr, cdrdb, os, re, string, sys, xml.dom.minidom, xml.sax
+import cdr, cdrdb, os, re, string, sys, xml.dom.minidom
 import socket, cdr2cg, time, threading, glob, base64
 from xml.parsers.xmlproc import xmlval, xmlproc
 
@@ -853,11 +856,9 @@ class Publish:
         # Update first_pub in all_docs table.
         self.__updateFirstPub()
         
-        # Capture terminology for processing NLM export docs.
+        # If any images were published, write out a manifest file.
         if self.__outputDir and os.path.isdir(self.__outputDir):
-            TermParser().getSemanticTypes(self.__conn, self.__outputDir)
 
-            # If any images were published, write out a manifest file.
             if self.__mediaManifest:
                 import csv
                 filename = os.path.join(self.__outputDir, "media_catalog.txt")
@@ -3265,148 +3266,6 @@ def findLinkedDocs(docPairList):
 
     except:
         raise StandardError("Failure finding linked docs.<BR>")
-
-#----------------------------------------------------------------------
-# New type for extracting term names and semantic types from the CDR
-# Term documents.  We need to collect and save this in a persistent
-# form now so that we can apply the appropriate terminology trans-
-# formation rules to the protocol documents published by the job when
-# we send those documents to NLM (see /cdr/Utilities/NlmFilter.py).
-#----------------------------------------------------------------------
-class TermParser(xml.sax.handler.ContentHandler):
-    digitPattern = re.compile(u"[^\\d]")
-    def __init__(self):
-        self.name          = u""
-        self.semanticTypes = []
-        self.inName        = False
-    def startDocument(self):
-        self.name          = u""
-        self.semanticTypes = []
-        self.inName        = False
-    def startElement(self, name, attributes):
-        if name == u'PreferredName':
-            self.inName = True
-        elif name == u'SemanticType':
-            id = TermParser.extractInt(attributes.getValue('cdr:ref'))
-            if id:
-                self.semanticTypes.append(id)
-    def endElement(self, name):
-        self.inName = False
-    def characters(self, content):
-        if self.inName:
-            self.name += content
-    def extractInt(s):
-        if not s:
-            return None
-        digits = TermParser.digitPattern.sub(u'', s)
-        if digits:
-            return int(digits)
-        return None
-    extractInt = staticmethod(extractInt)
-
-    # Find a semantic type term that didn't show up in the first query.
-    def getTermName(self, cursor, id):
-        cursor.execute("""\
-        SELECT MAX(num)
-          FROM doc_version
-         WHERE id = ?
-           AND val_status = 'V'
-           AND publishable = 'Y'""", id)
-        rows = cursor.fetchall()
-        if not rows:
-            return None
-        cursor.execute("""\
-        SELECT xml
-          FROM doc_version
-         WHERE id = ?
-           AND num = ?""", (id, rows[0][0]))
-        rows = cursor.fetchall()
-        if not rows:
-            return None
-        xml.sax.parseString(rows[0][0].encode('utf-8'), self)
-        return self.name
-
-    #------------------------------------------------------------------
-    # Collect and parse the term documents.  A dictionary is created
-    # and written in standard Python pickle format to a new file named
-    # terms.dump.bz2.  The output is compacted using bzip2 compression,
-    # and placed in the directory specified in the second parameter
-    # passed to the method (see dirName below).  The keys to the
-    # dictionary are the names of the terms found in the Term documents
-    # in the CDR (drawn from the PreferredName element).  The value
-    # for each member of the dictionary is another dictionary, whose
-    # keys are the names of the semantic types assigned to the term
-    # represented by the member.  The values of the sub-dictionary are
-    # irrelevant (i.e., the sub-dictionaries function as sets).
-    #
-    # Pass:
-    #    conn    - connection to CDR database, with select permission
-    #              on doc_version, document, and query_term tables
-    #    dirName - path to which job output is being written; directory
-    #              must exist
-    #
-    # Return:
-    #    None
-    #------------------------------------------------------------------
-    def getSemanticTypes(self, conn, dirName):
-        import cPickle, bz2
-
-        cursor = conn.cursor()
-        oldCommitFlag = conn.getAutoCommit()
-        conn.setAutoCommit()
-        cursor.execute("CREATE TABLE #t (id INTEGER, ver INTEGER)")
-        cursor.execute("""\
- INSERT INTO #t (id, ver)
-      SELECT d.id, MAX(v.num)
-        FROM doc_version v
-        JOIN document d
-          ON d.id = v.id
-        JOIN query_term q
-          ON q.doc_id = d.id
-       WHERE q.path = '/Term/TermStatus'
-         AND q.value IN ('Reviewed-Problematic',
-                         'Reviewed-Retain',
-                         'Unreviewed')
-         AND v.val_status = 'V'
-         AND v.publishable = 'Y'
-         AND d.active_status = 'A'
-    GROUP BY d.id""")
-        totalTerms = cursor.rowcount
-        conn.setAutoCommit(oldCommitFlag)
-        cursor.execute("""\
-      SELECT v.id, v.xml
-        FROM doc_version v
-        JOIN #t t
-          ON t.id = v.id
-         AND t.ver = v.num""")
-        tempTerms = {}
-        nTerms = 0
-        row = cursor.fetchone()
-        while row:
-            id, docXml = row
-            nTerms += 1
-            name = u""
-            links = []
-            xml.sax.parseString(docXml.encode('utf-8'), self)
-            tempTerms[id] = (self.name, self.semanticTypes)
-            row = cursor.fetchone()
-        terms = {}
-        for id in tempTerms:
-            name, links = tempTerms[id]
-            if name in terms:
-                term = terms[name]
-            else:
-                term = terms[name] = {}
-            for link in links:
-                try:
-                    typeName = tempTerms[link][0]
-                except:
-                    typeName = self.getTermName(cursor, link)
-                if typeName:
-                    term[typeName] = 1
-        termDumpFile = open(os.path.join(dirName, "terms.dump.bz2"), "wb")
-        termDumpFile.write(bz2.compress(cPickle.dumps(terms)))
-        termDumpFile.close()
 
 #----------------------------------------------------------------------
 # Test driver.
