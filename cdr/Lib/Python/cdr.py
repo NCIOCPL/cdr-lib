@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.51 2002-09-12 20:47:49 bkline Exp $
+# $Id: cdr.py,v 1.52 2002-09-12 20:59:26 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.51  2002/09/12 20:47:49  bkline
+# Added makeTempDir() function.
+#
 # Revision 1.50  2002/09/12 20:20:06  bkline
 # Added runCommand function and accompanying CommandResult class.
 #
@@ -171,7 +174,7 @@
 # Import required packages.
 #----------------------------------------------------------------------
 import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
-import os, smtplib, time, cdrdb
+import os, smtplib, time, cdrdb, tempfile
 
 #----------------------------------------------------------------------
 # Set some package constants
