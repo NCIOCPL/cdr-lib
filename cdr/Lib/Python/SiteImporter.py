@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.1 2005-03-15 21:12:32 bkline Exp $
+# $Id: SiteImporter.py,v 1.2 2005-03-30 14:35:53 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2005/03/15 21:12:32  bkline
+# Base class for jobs that import protocol site information from outside.
+#
 #----------------------------------------------------------------------
 import cdr, cdrdb, httplib, sys, time, zipfile, ModifyDocs
 
@@ -135,6 +138,7 @@ class ImportJob(ModifyDocs.Job):
     def getCursor(self):       return self.__cursor
     def getId(self):           return self.__id
     def getSourceId(self):     return self.__sourceId
+    def getSource(self):       return self.__source
     def getCutoff(self):       return self.__cutoff
     def getDispId(self, name): return self.__dispIds.get(name)
 
@@ -264,7 +268,8 @@ class ImportJob(ModifyDocs.Job):
                                    + '/IDType'
                         AND i.path = '/InScopeProtocol/ProtocolIDs/OtherID'
                                    + '/IDString'
-                        AND t.value = ?""", self.getSourceIdType())
+                        AND t.value = ?""", self.getSourceIdType(),
+                              timeout = 300)
         for cdrId, sourceId in self.__cursor.fetchall():
             idMap[ImportJob.normalizeSourceId(sourceId)] = cdrId
         if TEST_MODE:
@@ -351,8 +356,9 @@ class ImportDoc:
             self.importDocId = self.getImportDocId()
 
     def run(self, docObj):
+        parms = (('source', self.impJob.getSource()),)
         newXml = cdr.filterDoc('guest', ['name:Insert External Sites'],
-                               doc = docObj.xml)
+                               doc = docObj.xml, parm = parms)
         if type(newXml) in (type(""), type(u"")):
             self.impJob.log("CDR%d: %s" % (self.cdrId, newXml))
             return docObj.xml
