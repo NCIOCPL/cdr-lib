@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.58 2002-10-01 21:29:21 ameyer Exp $
+# $Id: cdr.py,v 1.59 2002-10-04 00:41:14 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,11 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.58  2002/10/01 21:29:21  ameyer
+# Added parameter allowNonPub to publish().  Passes it to the server to
+# allow the publishing system to publish documents not marked publishable.
+# Fixed parameter error in call to traceback.print_exc().
+#
 # Revision 1.57  2002/09/19 18:04:24  ameyer
 # Added check/convert for unicode comments in _addDocComment.
 # Changed print_tb to print_exc to get more info in traceback log.
@@ -2056,8 +2061,8 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback = 0):
     Can also record traceback information.
 
     Pass:
-        msgs    - Single string or tuple of strings to write.  Should not
-                   contain binary data.
+        msgs    - Single string or sequence of strings to write.
+                   Should not contain binary data.
         logfile - Optional log file path, else uses default.
         tback   - True = log the latest traceback object.
                    False = do not.
@@ -2068,13 +2073,13 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback = 0):
     """
     f = None
     try:
-        f = open (logfile, "a")
+        f = open (logfile, "a", 0)
 
         # Write process id and timestamp
-        f.write ("!<%d> %s: " % (os.getpid(), time.ctime()))
+        f.write ("!%d %s: " % (os.getpid(), time.ctime()))
 
-        # tuple of messages or single message
-        if type (msgs) == type (()):
+        # Sequence of messages or single message
+        if type(msgs) == type(()) or type(msgs) == type([]):
             for msg in msgs:
                 f.write (msg)
                 f.write ("\n")
