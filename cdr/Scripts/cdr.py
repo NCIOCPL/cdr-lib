@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.7 2001-07-31 17:23:07 bkline Exp $
+# $Id: cdr.py,v 1.8 2001-08-08 18:23:49 mruben Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2001/07/31 17:23:07  bkline
+# Added versioning flag to addDoc() and repDoc() functions.
+#
 # Revision 1.6  2001/06/13 22:37:17  bkline
 # Added DOM support.  Added QueryResult and Doc classes.  Added support
 # for commands to manipulate the query_term_def table.
@@ -130,6 +133,19 @@ def extract(pattern, response):
     # Search for the piece we want.
     piece = expr.search(response)
     if piece: return piece.group(1)
+    else:     return getErrors(response)
+
+#----------------------------------------------------------------------
+# Extract several pieces of the CDR Server's response.
+#----------------------------------------------------------------------
+def extract_multiple(pattern, response):
+
+    # Compile the regular expression.
+    expr = re.compile(pattern, re.DOTALL)
+
+    # Search for the piece we want.
+    piece = expr.search(response)
+    if piece: return piece.groups()
     else:     return getErrors(response)
 
 #----------------------------------------------------------------------
@@ -288,23 +304,53 @@ def getDoc(credentials, docId, checkout = 'N', version = "Current",
 
 #----------------------------------------------------------------------
 # Retrieve a specified document from the CDR Server using a filter.
+# Returns list of [filtered_document, messages] or error_string
 #----------------------------------------------------------------------
 def filterDoc(credentials, filterId, docId = None, doc = None,
-              host = DEFAULT_HOST, port = DEFAULT_PORT):
+              host = DEFAULT_HOST, port = DEFAULT_PORT, parm = []):
 
     # Create the command.
     if docId: docElem = "<Document href='%s'/>" % normalize(docId)
     elif doc: docElem = "<Document><![CDATA[%s]]></Document>" % doc
     else: return "<Errors><Err>Document not specified.</Err></Errors>"
-    filt = normalize(filterId)
-    cmd = "<CdrFilter><Filter href='%s'/>%s</CdrFilter>" % (filt, docElem)
+
+
+    if type(filterId) is type([]):
+        filterElem = ""
+        for l in filterId:
+            filt = ""
+            if l != "":
+                if l.startswith("name:"):
+                    filt = l[5:]
+                    ref="Name"
+                else:
+                    filt = normalize(l)
+                    ref="href"
+            if filt != "":
+                filterElem += ("<Filter %s='%s'/>" % (ref, filt))
+    else:
+        filt = normalize(filterId)
+        filterElem = ("<Filter href='%s'/>" % filt)
+
+    parmElem = ""
+    if type(parm) is type([]) or type(parm) is type(()):
+        for l in parm:
+            parmElem += "<Parm><Name>" + l[0] \
+                      + "</Name><Value>" + l[1] \
+                      + "</Value>"
+    if parmElem:
+        parmElem = "<Parms>%s</Parms>" % parmElem
+        
+    cmd = "<CdrFilter>%s%s%s</CdrFilter>" % (filterElem, docElem, parmElem)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
 
     # Extract the filtered document.
-    return extract("<Document[>\s][^<]*"
-                   "<!\[CDATA\[(.*)\]\]>\s*</Document>", resp)
+    return extract_multiple(r"<Document[>\s][^<]*<!\[CDATA\[(.*)\]\]>\s*"
+                              r"</Document>"
+                              r"\s*((?:<Messages>.*</Messages>)?)",
+                            resp)
 
 #----------------------------------------------------------------------
 # Request the output for a CDR report.
