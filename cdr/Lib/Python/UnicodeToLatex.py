@@ -24,9 +24,12 @@ r"""
 
 #----------------------------------------------------------------------
 #
-# $Id: UnicodeToLatex.py,v 1.5 2004-02-03 18:30:08 bkline Exp $
+# $Id: UnicodeToLatex.py,v 1.6 2004-02-03 18:40:46 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2004/02/03 18:30:08  bkline
+# Added \leq and \geq symbols.
+#
 # Revision 1.4  2003/06/02 19:36:44  bkline
 # Plugged in mappings for directional quote characters.
 #
@@ -367,8 +370,8 @@ codeMap = {
     0x21A6: r"""$\mapsto$""",
     0x21A9: r"""$\hookleftarrow$""",
     0x21AA: r"""$\hookrightarrow$""",
-    ox2264: r"""$\leq$""",
-    ox2265: r"""$\geq$""",
+    0x2264: r"""$\leq$""",
+    0x2265: r"""$\geq$""",
 }
 
 pattern = re.compile(u'([][\\\\#"$%&^_`{}~<>|\u0080-\uFFFD])')
