@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.22 2002-08-16 20:19:30 pzhang Exp $
+# $Id: cdrpub.py,v 1.23 2002-08-16 21:36:36 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.22  2002/08/16 20:19:30  pzhang
+# Added new implementation for Hotfix-Export.
+#
 # Revision 1.21  2002/08/15 17:39:16  pzhang
 # Added checking failure details link
 #
@@ -97,6 +100,8 @@ class Publish:
     __pd2cg    = "Push_Documents_To_Cancer.Gov"
     __cdrHttp  = "http://%s.nci.nih.gov/cgi-bin/cdr" % socket.gethostname()
     __ignoreUserDocList = 0
+    __isInteractiveMode = 0
+    __checkRemovedDocs  = 0
 
     #---------------------------------------------------------------
     # Load the job settings from the database.  User-specified
@@ -293,7 +298,8 @@ class Publish:
                     # Refer to the control document for this tricky 
                     # implementation.
                     if self.__sysName == "Primary" and \
-                        self.__subsetName == "Hotfix-Export":                        
+                        self.__subsetName == "Hotfix-Export": 
+                        self.__waitUserApproval()                       
                         self.__addLinkedDocsToPPD()
                         self.__ignoreUserDocList = 1
                         userListedDocsRemaining = 0
@@ -357,12 +363,11 @@ class Publish:
                                       specSubdirs[i])
                                 numDocs += 1
                                 if numDocs % 1000 == 0:
-                                    self.__updateMessage(
-                                        """Filtered/validated %d docs at 
-                                        %s.<BR>""" % (numDocs, time.ctime()))
                                     numFailures = self.__getFailures()
-                                    self.__updateMessage("""%d docs failed 
-                                        so far.<BR>""" % numFailures)      
+                                    self.__updateMessage("""Filtered/validated
+                                        %d docs at %s, and %d docs failed so 
+                                        far.<BR>""" % (numDocs, time.ctime(),
+                                                       numFailures))                                
                     i += 1
 
             self.__updateMessage("""Finish filtering/validating all %d docs 
@@ -1883,9 +1888,7 @@ Please do not reply to this message.
             row = cursor.fetchone() 
             if row and row[0]:           
                 return row[0]
-            else:
-                msg = 'No failed docs found for job %d.<BR>' % id            
-                self.__updateMessage(msg)
+            else:         
                 return 0
                      
         except cdrdb.Error, info:
@@ -1893,6 +1896,59 @@ Please do not reply to this message.
                                                             info[1][0])
             self.__debugLog(msg)
             raise StandardError(msg)
+
+    #----------------------------------------------------------------------
+    # Wait for user's approval to proceed.
+    #----------------------------------------------------------------------
+    def __waitUserApproval(self, newJobId=None):
+            
+        # Depend on which part this is called from.
+        id     = newJobId or self.__jobId
+
+        # Put a stop there.
+        status = Publish.WAIT
+        msg = "Job is waiting for user's approval at %s.<BR>" % time.ctime()
+        msg += "Change the publishing job status using Manage Publishing " \
+               "Job link under Publishing. <BR>"
+        self.__updateStatus(status, msg, id)
+        self.__sendMail(id)
+
+        # Wait until user does something.
+        while 1:
+            try:
+                cursor = self.__conn.cursor()
+                cursor.execute("""
+                    SELECT status
+                      FROM pub_proc
+                     WHERE id = %d 
+                               """ % id
+                              )
+                row = cursor.fetchone() 
+                if row and row[0]:           
+                    status = row[0]
+                else:
+                    msg = 'No status for job %d: %s' % (id, info[1][0])               
+                    raise StandardError(msg)
+                     
+            except cdrdb.Error, info:
+                msg = 'Failure getting status for job %d: %s' % (
+                            id, info[1][0])              
+                raise StandardError(msg)
+
+            # Wait another 10 seconds.
+            now = time.ctime()
+            if status == Publish.WAIT:
+                time.sleep(10)
+            elif status == Publish.RUN:               
+                self.__updateMessage(
+                    "Job is resumed by user at %s.<BR>" % now, id)
+                return
+            elif status == Publish.FAILURE:
+                raise StandardError(
+                    "Job is killed by user at %s.<BR>" % now)
+            else:
+                msg = "Unexpected status: %s for job %d.<BR>" % (status, id)
+                raise StandardError(msg)                
 
     #----------------------------------------------------------------------
     # Log debugging message to d:/cdr/log/publish.log
