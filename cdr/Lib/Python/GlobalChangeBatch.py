@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.5 2002-08-16 03:15:11 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.6 2002-09-19 18:01:09 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,12 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2002/08/16 03:15:11  ameyer
+# Switched from logging "reason" to "comment".
+# Fixed serious bug in version handling.
+# Added column to report to indicate whether publishable version existed.
+# Made cosmetic changes.
+#
 # Revision 1.4  2002/08/13 21:15:36  ameyer
 # Finished the third type of global change.
 # Ready for production unless further testing reveals some problem.
@@ -46,6 +52,9 @@ import sys, socket, time, cdr, cdrbatch, cdrglblchg, cdrcgi, traceback
 
 # Define log file
 LF = cdr.DEFAULT_LOGDIR + "/GlobalChange.log"
+
+# Quit processing if this many surprise exceptions are raised
+MAX_EXCEPTIONS = 5
 
 #----------------------------------------------------------------------
 # Utility function to log an error for a specific document
@@ -170,6 +179,7 @@ except cdrbatch.BatchException, be:
 totalCount = len (originalDocs)
 goodCount  = 0
 failCount  = 0
+excpCount  = 0
 
 # Log
 cdr.logwrite ("Done selecting docs for final processing", LF)
@@ -179,8 +189,8 @@ cdr.logwrite ("Processing %d docs, changing %s to %s" % \
 # Process each one
 progressMsg = "No docs processed yet"
 
-try:
-    for idTitle in originalDocs:
+for idTitle in originalDocs:
+    try:
 
         # Identify doc
         docId    = idTitle[0]
@@ -380,11 +390,28 @@ try:
             jobObj.setProgressMsg (progressMsg)
             break
 
-except Exception, ex:
-    progressMsg += \
-        "<br><h3>Exception halted processing doc %d:</h3>\n<p>%s</p>\n" % \
-                    (docId, str(ex))
-    traceback.print_tb(sys.exc_info()[2])
+    except Exception, ex:
+        # Write message and traceback to log file
+        cdr.logwrite ("Exception halted processing of doc %d:" % docId,
+                      LF, tback=1)
+
+        # Tell user (also goes to log)
+        failed = logDocErr (docId, "PLEASE INFORM SUPPORT STAFF",
+                            "Exception halted processing: %s" % str(ex))
+        failedDocs.append ((docId, saveCWDPubVer, title, failed))
+        failCount += 1
+
+        # Append info to message header to grab user's attention
+        progressMsg += \
+            "<br><h3>Exception halted processing on doc %d<br>" \
+            "Please inform support staff</h3>\n" % docId
+
+        # If we reached our limit, quit
+        excpCount += 1
+        if excpCount > MAX_EXCEPTIONS:
+            progressMsg += "<br><h3>Stopped after %d exceptions</h3>" % \
+                           excpCount
+            break
 
 # Final report
 cdr.logwrite ("Finished processing", LF)
