@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.15 2003-09-09 15:41:51 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.16 2003-09-16 19:43:28 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,9 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.15  2003/09/09 15:41:51  ameyer
+# Added proper job failure after database error selecting docs.
+#
 # Revision 1.14  2003/06/05 18:38:29  ameyer
 # Added proper character encodings for report emailed to users.
 #
@@ -183,43 +186,6 @@ chg.ssVars[cdrcgi.SESSION] = session
 #----------------------------------------------------------------------
 # Run the actual global change
 #----------------------------------------------------------------------
-# Set filter parameters and comments for different types of change
-parms = []
-description = ""
-if chgType == cdrglblchg.PERSON_CHG or chgType == cdrglblchg.ORG_CHG:
-    parms.append (['changeFrom', jobObj.getParm ('fromId')])
-    parms.append (['changeTo', jobObj.getParm ('toId')])
-    description = "global change of %s to %s on %s" % \
-                   (jobObj.getParm ('fromId'),
-                    jobObj.getParm ('toId'),
-                    time.ctime (time.time()))
-
-elif chgType == cdrglblchg.INS_ORG_CHG:
-    parms.append (['leadOrgID', jobObj.getParm ('restrId')])
-    parms.append (['newOrgSiteID', jobObj.getParm ('insertOrgId')])
-    parms.append (['newPersonID', jobObj.getParm ('insertPersId')])
-    if jobObj.getParm ('coopType'):
-        parms.append (['coop', jobObj.getParm ('coopType')])
-    if jobObj.getParm ('specificRole'):
-        parms.append (['setRole', jobObj.getParm ('specificRole')])
-    if jobObj.getParm ('specificPhone'):
-        parms.append (['setSpecificPhone', jobObj.getParm ('specificPhone')])
-    description = "global insert of orgsite %s on %s" % \
-                  (jobObj.getParm ('insertOrgId'),
-                    time.ctime (time.time()))
-
-elif chgType == cdrglblchg.STATUS_CHG:
-    parms.append (['orgId', jobObj.getParm ('fromId')])
-    parms.append (['oldStatus', jobObj.getParm ('fromStatusName')])
-    parms.append (['newStatus', jobObj.getParm ('toStatusName')])
-    if jobObj.getParm ('restrId'):
-        parms.append (['leadOrgId', jobObj.getParm ('restrId')])
-        if jobObj.getParm ('restrPiId'):
-            parms.append (['personId', jobObj.getParm ('restrPiId')])
-    description = "global status change from %s to %s on %s" % \
-                  (jobObj.getParm ('fromStatusName'),
-                   jobObj.getParm ('toStatusName'),
-                    time.ctime (time.time()))
 
 # We'll build two lists of docs to report
 # Documents successfully changed, id + title tuples
@@ -299,10 +265,16 @@ for idTitle in originalDocs:
             else:
                 (lastVerNum, lastPubVerNum, isChanged) = result
 
-                # Filter doc to get new, changed CWD
-                cdr.logwrite ("Filtering doc", LF)
-                filtResp = cdr.filterDoc (session, filter=chg.chgFilter,
-                                          parm=parms, docId=docId, docVer=None)
+                # Execute one or more filters to produce changed CWD
+                passNumber = 0
+                result     = 1
+                cdr.logwrite ("Filtering CWD", LF)
+                while result:
+                    result = chg.getFilterInfo (passNumber)
+                    if result:
+                        filtResp = cdr.filterdoc (session, filter=result[0],
+                                   parm=result[2], docId=docId, docVer=None)
+                    passNumber += 1
 
                 if type(filtResp) != type(()):
                     failed = logDocErr (docId, "filtering CWD", filtResp)
@@ -336,10 +308,16 @@ for idTitle in originalDocs:
                 else:
                     # Last published version is different from the CWD
                     # Fetch and filter it
+                    passNumber = 0
+                    result     = 1
                     cdr.logwrite ("Filtering last version", LF)
-                    filtResp = cdr.filterDoc (session, filter=chg.chgFilter,
-                                              parm=parms, docId=docId,
-                                              docVer=lastPubVerNum)
+                    while result:
+                        result = chg.getFilterInfo (passNumber)
+                        if result:
+                            filtResp = cdr.filterdoc (session, filter=result[0],
+                                       parm=result[2], docId=docId,
+                                       docVer=lastPubVerNum)
+                        passNumber += 1
                     if type(filtResp) != type(()):
                         failed = logDocErr(docId,
                                  "filtering last publishable version", filtResp)
@@ -364,7 +342,8 @@ for idTitle in originalDocs:
                 cdr.logwrite ("Saving copy of working doc before change", LF)
                 repDocResp = cdr.repDoc (session, doc=str(oldCwdDocObj),
                     ver='Y', checkIn='N', verPublishable='N',
-                    comment="Copy of working document before %s" % description)
+                    comment="Copy of working document before %s" % \
+                             chg.description)
                 if repDocResp.startswith ("<Errors"):
                     failed = logDocErr (docId,
                              "attempting to create version of pre-change doc",
@@ -384,7 +363,7 @@ for idTitle in originalDocs:
                 repDocResp = cdr.repDoc (session, doc=str(chgPubVerDocObj),
                     ver='Y', val='Y', checkIn='N', verPublishable='Y',
                     comment="Last publishable version, revised by %s" % \
-                             description)
+                             chg.description)
                 cdr.logwrite ("Replaced published version in CDR", LF)
                 if repDocResp.startswith ("<Errors"):
                     failed = logDocErr (docId,
@@ -399,7 +378,7 @@ for idTitle in originalDocs:
             repDocResp = cdr.repDoc (session, doc=str(chgCwdDocObj),
                 ver="Y", verPublishable=saveCWDPubVer,
                 val=saveCWDPubVer, checkIn='Y',
-                comment="Revised by %s" % description)
+                comment="Revised by %s" % chg.description)
             if repDocResp.startswith ("<Errors"):
                 failed = logDocErr (docId, "attempting to store changed CWD",
                                     repDocResp)
