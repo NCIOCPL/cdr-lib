@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.18 2002-08-08 22:43:38 pzhang Exp $
+# $Id: cdrpub.py,v 1.19 2002-08-12 16:49:18 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.18  2002/08/08 22:43:38  pzhang
+# Added AbortOnError as a parameter so that user can change this value.
+# Made comparison of xml and file work for updating documents.
+#
 # Revision 1.17  2002/08/08 17:00:07  pzhang
 # Encoded xml value out of pub_proc_cg_work to UTF-8
 # before sending it to CG.
@@ -40,7 +44,7 @@
 #----------------------------------------------------------------------
 
 import cdr, cdrdb, os, re, string, sys, xml.dom.minidom
-import socket, cdr2cg
+import socket, cdr2cg, time
 from xml.parsers.xmlproc import xmlval, xmlproc
 
 #-----------------------------------------------------------------------
@@ -343,7 +347,7 @@ class Publish:
                          
                             if not vendor_job:
                                 self.__updateStatus(Publish.FAILURE, 
-                                    "No enough vendor info found.") 
+                                    "No enough vendor info found.<BR>") 
                             else: 
                              
                                 # Long job of many hours starts!                              
@@ -363,7 +367,7 @@ class Publish:
                             self.__updateStatus(Publish.SUCCESS, 
                                 """Pushing filtered documents to Cancer.gov
                                 is in progress. You will receive a second
-                                email when it is done.""")
+                                email when it is done.<BR>""")
                             self.__sendMail()
 
                             # Long job of many hours starts!
@@ -371,7 +375,7 @@ class Publish:
                                     dest_base, self.__subsetName)
 
                             # Update the message no matter what happened.                                                  
-                            self.__updateStatus(Publish.SUCCESS, cgResp[2])
+                            self.__updateMessage(cgResp[2])
 
                             # Update statuse of the cg_job and send a second
                             # email only when failed, because message with
@@ -559,6 +563,9 @@ class Publish:
                             """)
             rows    = cursor.fetchall()  
             addCount = len(rows)
+            msg += "Pushing documents starts at %s.<BR>" % time.ctime()
+            self.__updateMessage(msg, cg_job) 
+            msg = ""    
             if addCount > 0:                 
                 XmlDeclLine = re.compile("<\?xml.*?\?>\s*", re.DOTALL)
                 DocTypeLine = re.compile("<!DOCTYPE.*?>\s*", re.DOTALL)                   
@@ -579,7 +586,14 @@ class Publish:
                                 (response.type, response.message)
                         return [jobId, Publish.FAILURE, msg] 
                     docNum  = docNum + 1 
+                    if docNum % 1000 == 0:
+                        msg += "Pushed %d documents at %s.<BR>" % (
+                                    docNum, time.ctime())
+                        self.__updateMessage(msg, cg_job)
+                        msg = ""  
                 msg += "%d documents sent to Cancer.gov.<BR>" % addCount
+                self.__updateMessage(msg, cg_job)
+                msg = "" 
 
             # Remove all the removed documents. 
             cursor.execute ("""
@@ -603,7 +617,14 @@ class Publish:
                                 (response.type, response.message)
                         return [jobId, Publish.FAILURE, msg]  
                     docNum  = docNum + 1
-                msg += "%d documents removed from Cancer.gov.<BR>" % delCount                                  
+                    if docNum % 1000 == 0:
+                        msg += "Pushed %d documents at %s.<BR>" % (
+                                    docNum, time.ctime())
+                        self.__updateMessage(msg, cg_job)
+                        msg = ""
+                msg += "%d documents removed from Cancer.gov.<BR>" % delCount    
+                self.__updateMessage(msg, cg_job)
+                msg = ""                               
             
             # Before we claim success, we will have to update 
             # pub_proc_cg and pub_proc_doc from pub_proc_cg_work.
@@ -618,7 +639,7 @@ class Publish:
             else:
                 raise StandardError("pubType %s not supported." % pubType)  
                        
-            msg += "Done!<BR>" 
+            msg += "Done at %s.<BR>" % time.ctime() 
                    
         except StandardError, arg:
             msg += arg[0]
@@ -1670,12 +1691,46 @@ Please do not reply to this message.
             date = "GETDATE()"
         try:
             cursor = self.__conn.cursor()
-            cursor.execute("""\
+            cursor.execute("""
+                SELECT messages
+                  FROM pub_proc
+                 WHERE id = %d 
+                           """ % id
+                          )
+            row     = cursor.fetchone()            
+            message = (row and row[0] or '') + (message or '')
+           
+            cursor.execute("""
                 UPDATE pub_proc
                    SET status    = ?,
                        messages  = ?,
                        completed = %s
                  WHERE id        = ?""" % date, (status, message, id))
+        except cdrdb.Error, info:
+            msg = 'Failure setting status for job %d: %s' % (id, info[1][0])
+            self.__debugLog(msg)
+            raise StandardError(msg)
+
+    #----------------------------------------------------------------------
+    # Update message in pub_proc table.
+    #----------------------------------------------------------------------
+    def __updateMessage(self, message, newJobId=None):        
+        id = newJobId or self.__jobId      
+        try:
+            cursor = self.__conn.cursor()
+            cursor.execute("""
+                SELECT messages
+                  FROM pub_proc
+                 WHERE id = %d 
+                           """ % id
+                          )
+            row     = cursor.fetchone()            
+            message = (row and row[0] or '') + message
+           
+            cursor.execute("""
+                UPDATE pub_proc
+                   SET messages  = ?                     
+                 WHERE id        = ?""", (message, id))
         except cdrdb.Error, info:
             msg = 'Failure setting status for job %d: %s' % (id, info[1][0])
             self.__debugLog(msg)
