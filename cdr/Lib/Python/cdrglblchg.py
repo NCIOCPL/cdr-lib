@@ -1,8 +1,14 @@
-# $Id: cdrglblchg.py,v 1.16 2003-08-12 19:53:38 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.17 2003-08-29 03:33:52 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.16  2003/08/12 19:53:38  ameyer
+# Intermediate save of working copy but with some additional not yet working
+# global terminology change logic.
+# Change to working code is that changed timeout on _execQry from default
+# (30 seconds) to 300 seconds.
+#
 # Revision 1.15  2003/08/01 01:10:18  ameyer
 # Interim save of modifications for global terminology change.
 # More to do but these changes are safe for production even though
@@ -88,46 +94,63 @@ RET_NONE   = 2          # Function didn't return anything
 MAX_PICK_LIST_SIZE = 100
 
 # Terminology change constants used in forming and display variables
+# These determine the role of a path/term combo in selecting or modifying docs
 TERMREQ = "Req"
 TERMOPT = "Opt"
 TERMNOT = "Not"
 TERMADD = "Add"
 TERMDEL = "Del"
+TERMTYP = "Typ"
 
-TERM_USES = (TERMREQ, TERMOPT, TERMNOT, TERMDEL, TERMADD)
+TERM_USES = (TERMREQ, TERMOPT, TERMNOT, TERMDEL, TERMADD, TERMTYP)
 TERM_MSGS = { \
     TERMREQ:"Required",
     TERMOPT:"Any of",
     TERMNOT:"Not",
     TERMDEL:"Delete",
-    TERMADD:"Add"}
+    TERMADD:"Add",
+    TERMTYP:"Associated"}
 
 TERM_PROMPTS = ( \
     "Only if they include ALL of these terms",
     "And at least ONE of these terms",
     "And NOT ANY of these terms",
     "Delete these terms from the documents",
-    "Add these terms to the documents")
+    "Add these terms to the documents",
+    "InterventionType (required if add/del NameLink)")
 
+# Field name abbreviation constants
+TERM_FLD_DIAG = "EligibilityCriteria/Diagnosis"
+TERM_FLD_EXC  = "ExclusionCriteria"
+TERM_FLD_INTV = "InterventionType"
+TERM_FLD_INTN = "InterventionNameLink"
+TERM_FLD_GENE = "Gene"
+TERM_FLD_COND = "Condition"
+
+# Terminology field names, in the order they should appear in the option list
+TERM_FIELD_ORDER = [\
+    TERM_FLD_DIAG, TERM_FLD_EXC, TERM_FLD_INTV,
+    TERM_FLD_INTN, TERM_FLD_GENE, TERM_FLD_COND]
+
+# Map of field name abbreviations to full XML paths to these fields
 TERM_FIELDS = {\
- "EligibilityCriteria/Diagnosis":
-  "/InScopeProtocol/Eligibility/Diagnosis/@cdr:ref",
- "ExclusionCriteria":
-  "/InScopeProtocol/Eligibility/ExclusionCriteria/@cdr:ref",
- "InterventionType":
-  "/InScopeProtocol/ProtocolDetail/StudyCategory/Intervention/InterventionType/@cdr:ref",
- "InterventionNameLink":
-  "/InScopeProtocol/ProtocolDetail/StudyCategory/Intervention/InterventionNameLink/@cdr:ref",
- "Gene":
-  "/InScopeProtocol/ProtocolDetail/Gene/@cdr:ref",
- "Condition":
-  "/InScopeProtocol/ProtocolDetail/Gene/@cdr:ref"}
+ TERM_FLD_DIAG: "/InScopeProtocol/Eligibility/Diagnosis/@cdr:ref",
+ TERM_FLD_EXC:  "/InScopeProtocol/Eligibility/ExclusionCriteria/@cdr:ref",
+ TERM_FLD_INTV: "/InScopeProtocol/ProtocolDetail/StudyCategory/Intervention" +\
+                "/InterventionType/@cdr:ref",
+ TERM_FLD_INTN: "/InScopeProtocol/ProtocolDetail/StudyCategory/Intervention" +\
+                "/InterventionNameLink/@cdr:ref",
+ TERM_FLD_GENE: "/InScopeProtocol/ProtocolDetail/Gene/@cdr:ref",
+ TERM_FLD_COND: "/InScopeProtocol/ProtocolDetail/Condition/@cdr:ref"}
 
 # Term status values session variable key
 TERM_STATVAL = "trmStatusName"
 
-# Num term prompts/msgs/uses for searching, rest are for modifying
+# First 3 prompts/msgs/uses are for searching, next 2 for modifying
+#  last is for associated InterventionType for InterventionNameLink
 TERM_SEARCH_USES = 3
+TERM_MODIFY_USES = 5
+TERM_ASSOC_USES  = 6
 
 # Max allowed terminology criteria of one type
 TERM_MAX_CRITERIA = 5
@@ -184,14 +207,15 @@ def createChg (ssVars):
 #------------------------------------------------------------
 # Execute a query, returning rows
 #------------------------------------------------------------
-def _execQry (qry, args=None):
+def _execQry (qry, args=None, cursor=None):
     """
     Called by specific subclass objects to execute their particular
     queries.
 
     Pass:
-        qry - Query string
-        args - Optional single arg or tuple of args for replacements.
+        qry    - Query string
+        args   - Optional single arg or tuple of args for replacements.
+        cursor - Optional cursor.  Else create one.
     Return:
         Sequence of all matching database rows, each containing a
         sequence of:
@@ -200,15 +224,61 @@ def _execQry (qry, args=None):
     """
 
     try:
-        conn   = cdrdb.connect ('CdrGuest')
-        cursor = conn.cursor()
+        # If no cursor passed, create one
+        callerCursor = 1
+        if not cursor:
+            # Use read-only credentials
+            conn   = cdrdb.connect ('CdrGuest')
+            cursor = conn.cursor()
+            callerCursor = 0
         cursor.execute (qry, args, timeout=300)
-        rows   = cursor.fetchall()
-        cursor.close()
+        rows = cursor.fetchall()
+
+        # Only free cursor if it's created here
+        if not callerCursor:
+            cursor.close()
+
         return rows
     except cdrdb.Error, info:
         raise cdrbatch.BatchException (\
             "Database error selecting docs for change %s<br>In query:<br>%s" \
+            % (info[1][0], qry))
+
+#------------------------------------------------------------
+# Execute an update query, returning a count of updated items
+#------------------------------------------------------------
+def _execUpdate (qry, args=None, cursor=None):
+    """
+    Called by specific subclass objects to execute their particular
+    queries.
+
+    Pass:
+        qry    - Query string
+        args   - Optional single arg or tuple of args for replacements.
+        cursor - Optional cursor.  Else create one.
+    Return:
+        Rowcount resulting from query, may be 0.
+        No data is returned.
+    """
+    try:
+        # If no cursor passed, create one
+        callerCursor = 1
+        if not cursor:
+            # This is an update query, can't use guest credentials
+            conn   = cdrdb.connect ('cdr')
+            cursor = conn.cursor()
+            callerCursor = 0
+        cursor.execute (qry, args, timeout=300)
+        rowCnt = cursor.rowcount
+
+        # Only free cursor if it's created here
+        if not callerCursor:
+            cursor.close()
+
+        return rowCnt
+    except cdrdb.Error, info:
+        raise cdrbatch.BatchException (\
+            "Database error executing update for change %s<br>In query:<br>%s"\
             % (info[1][0], qry))
 
 #------------------------------------------------------------
@@ -762,11 +832,11 @@ class GlblChg:
         # Search for every type of saved term criterion
         for trmUse in TERM_USES:
             for i in range (TERM_MAX_CRITERIA):
-                # Only compose a row if we have a term id for it
-                keyId = "trm%sId%d" % (trmUse, i)
-                if self.ssVars.has_key (keyId):
+                # Only compose a row if we have all info for it
+                keyId  = "trm%sId%d" % (trmUse, i)
+                keyVal = "trm%sVal%d" % (trmUse, i)
+                if self.ssVars.has_key(keyId) and self.ssVars.has_key(keyVal):
                     keyField = "trm%sField%d" % (trmUse, i)
-                    keyVal   = "trm%sVal%d" % (trmUse, i)
                     html += \
                  "<tr><td align='right'>%s %s: </td><td> %s (%s)</td></tr>\n"%\
                      (TERM_MSGS[trmUse], self.ssVars[keyField],
@@ -998,8 +1068,10 @@ class GlblChg:
 
             if i < TERM_SEARCH_USES:
                 rowCount = TERM_MAX_CRITERIA
-            else:
+            elif i < TERM_MODIFY_USES:
                 rowCount = TERM_MAX_CHANGES
+            else:
+                rowCount = 1
 
             # Table headers
             html += """
@@ -1018,16 +1090,30 @@ class GlblChg:
                 # Name of the XML element containing the term
                 name = "trm%sField%d" % (TERM_USES[i], row)
                 html += "  <td><select name='%s' size='0'>\n" % name
-                for field in TERM_FIELDS:
-                    alreadySelected=""
-                    if self.ssVars.has_key (name) and \
-                                self.ssVars.has_key[name] == field:
-                        # Copy value back into the form for editing
-                        # Don't duplicate it in hidden vars. Delete in session
-                        alreadySelected=" selected='selected'"
-                        del (self.ssVars[name])
+
+                # Selection list for element name
+                if name == 'trmTypField0':
+                    # InterventionType qualifier is a special case
+                    # Kludge it in
                     html += "   <option name='%s'%s size='0'>%s</option>\n" %\
-                        (name, alreadySelected, field)
+                            (name, " selected='selected'", TERM_FLD_INTV)
+                    # Copy value back into the form for editing
+                    # Don't duplicate in hidden vars. Delete in session
+                    if self.ssVars.has_key (name) and \
+                                self.ssVars[name] == TERM_FLD_INTV:
+                        del (self.ssVars[name])
+
+                else:
+                    # All other field selection options
+                    for field in TERM_FIELD_ORDER:
+                        alreadySelected=""
+                        if self.ssVars.has_key (name) and \
+                                    self.ssVars[name] == field:
+                            alreadySelected=" selected='selected'"
+                            del (self.ssVars[name])
+                        html += \
+                             "   <option name='%s'%s size='0'>%s</option>\n"%\
+                              (name, alreadySelected, field)
                 html += "  </select></td>"
 
                 # Place for user to enter string value of term
@@ -1045,7 +1131,7 @@ class GlblChg:
                 name = "trm%sId%d" % (TERM_USES[i], row)
                 alreadySelected=""
                 if self.ssVars.has_key (name):
-                    alreadySelected = self.ssVars.has_key[name]
+                    alreadySelected = self.ssVars[name]
                     del (self.ssVars[name])
                     firstTime = 0
                 html += """
@@ -1066,6 +1152,7 @@ class GlblChg:
   <li>one protocol status</li>
   <li>one required term (ALL) or one additional term (ANY)</li>
   <li>one Add or Delete term</li>
+  <li>an InterventionType if an InterventionNameLink is added or deleted</li>
 </ul>
 </font></h4>\n""" + html
 
@@ -1773,19 +1860,20 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
         protstat.value = 'Approved-not yet active' OR
         protstat.value = 'Temporarily closed')
    AND leadorg.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrganizationID/@cdr:ref'
+   AND leadorg.value = '%s'
    AND orgstat.path =
    '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteStatus'
    AND orgstat.value = '%s'
    AND LEFT (orgstat.node_loc, 16) = LEFT (protorg.node_loc, 16)
-   AND leadorg.value = '%s'
+   AND LEFT (orgstat.node_loc, 8) = LEFT (leadorg.node_loc, 8)
    AND protpers.path =
    '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteContact/SpecificPerson/Person/@cdr:ref'
    AND protpers.int_val = %s
    AND LEFT (orgstat.node_loc, 16) = LEFT (protpers.node_loc, 16)
  ORDER BY doc.title
 """ % (fromIdNum,
-       self.ssVars['fromStatusName'],
        self.ssVars['restrId'],
+       self.ssVars['fromStatusName'],
        cdr.exNormalize(self.ssVars['restrPiId'])[1])
 
         # Call a common routine to get the rows corresponding to the query
@@ -1936,7 +2024,10 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
 class TermChg (GlblChg):
 
     # Name of filter for changing terminology in a doc
-    chgFilter = ['name:Global Change: Terminology change']
+    # chgFilter = ['name:Global Change: Terminology change']
+
+    # For testing Python logic
+    chgFilter = ['name:Passthrough Filter']
 
     def __init__(self):
         GlblChg.__init__(self)
@@ -1962,17 +2053,242 @@ class TermChg (GlblChg):
         """
         See PersonChg.selDocs()
         """
-        # This is much more complicated to construct than the others
-        #   because the number of terms of each type is variable
-        # Here's the only invariant part
-        qry ="SELECT DISTINCT doc.id, doc.title FROM document doc "
+        # Constants for temporary table names
+        # XXXX - NEED TO CHECK THE LIFETIME OF THESE TABLES
+        #        MAY BE NECESSARY TO DROP OR CLEAR THEM FIRST
+        #        OR WORSE - MAKE THEM GLOBAL SO THAT EACH WILL
+        #        PERSIST FOR THE NEXT TRANSACTION
+        TTBL_REQ  = "#gcTermReq"
+        TTBL_OPT  = "#gcTermOpt"
+        TTBL_NOT  = "#gcTermNot"
+        TTBL_DEL  = "#gcTermDel"
+        TTBL_RES1 = "#gcTermRes1" # Temp results of merging above
+        TTBL_RES2 = "#gcTermRes2" #   "     "     "    "      "
+        TTBL_RES3 = "#gcTermRes3" #   "     "     "    "      "
+
+        # All temporary tables have to use a single connection/cursor
+        #  so they are visible to each other
+        conn   = None
+        cursor = None
+        try:
+            conn = cdrdb.connect ("cdr")
+            cursor = conn.cursor()
+            conn.setAutoCommit(1)
+        except cdrdb.Error, info:
+            raise cdrbatch.BatchException (\
+                "Database error creating update cursor: %s" % info[1][0])
+
+        # This flag gets set if we know there are no hits and don't
+        #   have to do any more searching
+        done = 0
+
+        # Create a temporary table of docs having all required terms.
+        reqCnt = 0
+        if self.countSelTypes (TERMREQ, TERM_MAX_CRITERIA) > 0:
+            reqCnt = self.makeTempSelTable (cursor, TTBL_REQ, TERMREQ,
+                                            TERM_MAX_CRITERIA, "AND")
+            # If no docs with required terms, we're done
+            if reqCnt == 0:
+                done = 1
+
+        # Create a temporary table of docs having any optional terms.
+        if not done:
+            optCnt = 0
+            if self.countSelTypes (TERMOPT, TERM_MAX_CRITERIA) > 0:
+                optCnt = self.makeTempSelTable (cursor, TTBL_OPT, TERMOPT,
+                                                TERM_MAX_CRITERIA, "OR")
+                # If optional terms specified, at least one must be in a doc
+                if optCnt == 0:
+                    done = 1
+
+        # If only one table retrieved, take that one table as our output
+        if not done:
+            if reqCnt == 0:
+                resultTbl = TTBL_OPT
+            elif optCnt == 0:
+                resultTbl = TTBL_REQ
+
+            # Else something in both, get the intersection of the two tables
+            else:
+                resCnt1 = _execUpdate (\
+                 """SELECT doc_id INTO %s FROM %s
+                     WHERE doc_id IN (SELECT doc_id FROM %s)"""% \
+                  (TTBL_RES1, TTBL_REQ, TTBL_OPT), args=None, cursor=cursor)
+
+                # Might not be any
+                if resCnt1 == 0:
+                    done = 1
+
+                # The intersection is now our temp results table
+                resultTbl = TTBL_RES1
+
+        # Check for terms that must NOT be in the documents
+        if not done:
+            notCnt = 0
+            if self.countSelTypes (TERMNOT, TERM_MAX_CRITERIA) > 0:
+                 notCnt = self.makeTempSelTable (cursor, TTBL_NOT, TERMNOT,
+                                                 TERM_MAX_CRITERIA, "OR")
+
+            # If any found, discard intersection of these and previous results
+            if notCnt > 0:
+                resCnt2 = _execUpdate (\
+              """SELECT doc_id INTO %s FROM %s
+                  WHERE doc_id NOT IN (SELECT doc_id FROM %s)""" % \
+                   (TTBL_RES2, resultTbl, TTBL_NOT), args=None, cursor=cursor)
+
+                # Might not be any
+                if resCnt2 == 0:
+                    done = 1
+
+                # The intersection is now our temp results table
+                resultTbl = TTBL_RES2
+
+        # One last selection
+        # If we're deleting terms and not adding them, the selected set
+        #   must have at least one of the deleted terms to be worth
+        #   processing.
+        # If we are adding some, then we might add even if the term(s) to
+        #   delete are not present.
+        if not done:
+            if self.countSelTypes (TERMDEL, TERM_MAX_CHANGES) > 0:
+                if self.countSelTypes (TERMADD, TERM_MAX_CHANGES) == 0:
+                    delCnt = self.makeTempSelTable (cursor, TTBL_DEL, TERMDEL,
+                                                    TERM_MAX_CHANGES, "OR")
+                    if delCnt == 0:
+                        return None
+
+                    resCnt3 = _execUpdate (\
+                        """SELECT doc_id INTO %s FROM %s
+                            WHERE doc_id IN (SELECT doc_id FROM %s)""" % \
+                       (TTBL_RES3, resultTbl, TTBL_DEL), args=None,
+                       cursor=cursor)
+
+                    if resCnt3 == 0:
+                        done = 1
+
+                    resultTbl = TTBL_RES3
+
+            # XXXX I could do the same thing in reverse for add terms.
+            #  If there are no delete terms, then could make sure that a
+            #   doc does not already contain all the add terms.
+            #  Could even check to be sure that an update will be possible
+            #   even if both add and delete are specified.
+            # Or maybe forget all this.  It reduces the appearance of unchanged
+            #  docs in the report, but it's basically an optimization.  User
+            #  can achieve the same thing by formulating different queries. XXXX
 
 
-  # JOIN query_term protstat
-    # ON protstat.doc_id = doc.id
- # WHERE (
+        # If we got this far, there are some docs that match our
+        #   (possibly complex) search criteria
+        # Return a query that retrieves the doc ids and titles
+        if not done:
+            rows = _execQry ("""
+                SELECT distinct id, title FROM document
+                 WHERE id IN (SELECT doc_id FROM %s)""" % resultTbl,
+                    args=None, cursor=cursor)
 
+        # Release the cursor
+        try:
+            cursor.close()
+        except cdrdb.Error, info:
+            raise cdrbatch.BatchException (\
+                "Database error closing doc selection cursor: %s" % info[1][0])
 
+        # Return data, or nothing
+        if not done:
+            return rows
+        return None
+
+    def countSelTypes (self, termUse, maxCnt):
+        """
+        Count the number of active terms entered by the user for a given
+        purpose.
+
+        Pass:
+            termUse - One of the TERM_USE constants - Req, Opt, etc.
+            maxCnt  - Max allowed of this type TERM_MAX_CRITERIA, or
+                      TERM_MAX_CHANGES.
+        Return:
+            Count of term ids entered for this usage.  May be 0.
+        """
+        count = 0
+        for i in range (maxCnt):
+            if self.ssVars.has_key ("trm%sId%d" % (termUse, i)):
+                count += 1
+        return count
+
+    def makeTempSelTable (self, cursor, tblName, termUse, maxCnt, opCode):
+        """
+        Create a temporary table of search results for a particular
+        type of usage - required, optional, or negated.
+
+        Pass:
+            cursor  - Database cursor, needed because caller may need
+                      multiple tables to be visible to each other.  Using
+                      a single cursor for multiple actions can achieve that.
+            tblName - Output goes to this table name.
+                      Caller should put '#' or '##' on front, as desired
+                        for SQL Server temporary table naming convention.
+            termUse - Terminology change constant (Req, Opt, Not, etc.)
+            maxCnt  - Max count of terms of this usage.
+            opCode  - SQL expression connector ("AND" or "OR").
+                      Note: For NOT, we pass OR to make the temp table
+                            Then we subtract these from from the other ids
+                            as a post process.
+
+        Return:
+            Count of records in table, may be 0
+        """
+        # Lists of names to put in table names and where clauses
+        tables = []
+        wheres = []
+        idNums = []
+
+        # Fill them in only for term ids actually supplied by the user
+        for i in range(maxCnt):
+            id = "trm%sId%d" % (termUse, i)
+            if self.ssVars.has_key (id):
+                fieldAbbrev = self.ssVars["trm%sField%d" % (termUse, i)]
+                wheres.append (TERM_FIELDS[fieldAbbrev])
+                tables.append ("qt%s%i" % (termUse, i))
+                idNums.append (cdr.exNormalize(self.ssVars[id])[1])
+
+        # Were there any?
+        termCount = len (tables)
+        if termCount == 0:
+            # User didn't select any of these
+            return 0
+
+        # Construct the query
+        # Selecting from query_term table with each self join
+        #   dynamically named in the tables list
+        # Select goes into a temporary table
+        qry = "SELECT DISTINCT %s.doc_id INTO %s FROM query_term %s\n" % \
+              (tables[0], tblName, tables[0])
+
+        # Self join to any remaining query_terms
+        i = 1
+        while i<termCount:
+            qry += " JOIN query_term %s ON %s.doc_id = %s.doc_id\n" % \
+                    (tables[i], tables[0], tables[i])
+            i += 1
+
+        # Add qualifcations to make path and value for terms match
+        qry += "\nWHERE\n"
+        for i in range(termCount):
+            # Add AND or OR if we're between two independent clauses
+            if i > 0 and i < maxCnt-1:
+                qry += " %s " % opCode
+
+            # Term id must be found in particular XML element
+            qry += "(%s.path = '%s' AND %s.int_val = %d)" % \
+                    (tables[i], wheres[i], tables[i], idNums[i])
+
+        # For debugging
+        cdr.logwrite ("\nterm change temp table query=\n" + qry, LF)
+
+        # Search the database, returning count of rows created
+        return _execUpdate (qry, args=None, cursor=cursor)
 
     def haveEnoughTermInfo (self):
         """
@@ -1986,6 +2302,17 @@ class TermChg (GlblChg):
         # We need at least one status value
         if not self.ssVars.has_key (TERM_STATVAL):
             return 0
+
+        # If user adds or deletes an InterventionNameLink, he must
+        #   identify the associated InterventionType
+        for i in range(TERM_MAX_CHANGES):
+            for use in (TERMADD, TERMDEL):
+                keyId = "trm%sId%d" % (use, i)
+                if self.ssVars.has_key(keyId):
+                    keyField = "trm%sField%d" % (use, i)
+                    if self.ssVars[keyField] == TERM_FLD_INTN:
+                        if not self.haveTermCriterion (TERMTYP):
+                            return 0
 
         # User must have entered at least one search criterion, a term
         #   that must be in the documents to change, and at least one
@@ -2030,6 +2357,7 @@ class TermChg (GlblChg):
         Pass:
             No parms needed.
         """
+        cdr.logwrite("Verifying term IDs", LF)
         # No bugs, no args, no pychecker warning
         if parms != []:
            return FuncReturn (RET_ERROR,
@@ -2046,18 +2374,22 @@ class TermChg (GlblChg):
                 keyVal = "trm%sVal%d" % (termUse, termRow)
 
                 # If the ID exists, validate it
+                cdr.logwrite("Looking: keyVal=%s keyId=%s"%(keyVal,keyId),LF)
                 if self.ssVars.has_key (keyId):
                     termId = self.ssVars[keyId]
+                    cdr.logwrite("Verifying keyVal=%s keyId=%s"%(keyVal,keyId),LF)
                     result = self.verifyId ((termId, docType, keyVal))
 
                     # If verify failed, result will be an error msg
                     # Bounce back to stage interpreter to give this to user
                     if result.getRetType == RET_ERROR:
+                        cdr.logwrite("Error in verifying ids")
                         return result
 
                 # Else no ID, if there's a value string, disambiguate it
                 # Constructs picklist and returns it to user
                 elif self.ssVars.has_key (keyVal):
+                    cdr.logwrite("About to get picklist")
                     return self.getPickList ((docType, self.ssVars[keyVal],
                                               "Select term string", keyId))
 
