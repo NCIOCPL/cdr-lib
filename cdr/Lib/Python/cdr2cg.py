@@ -1,15 +1,18 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.2 2002-05-09 14:06:08 bkline Exp $
+# $Id: cdr2cg.py,v 1.3 2002-05-14 12:56:05 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2002/05/09 14:06:08  bkline
+# Added removeDocuments() convenience function.
+#
 # Revision 1.1  2002/05/09 12:51:50  bkline
 # Module for communicating with Cancer.Gov SOAP server (GateKeeper).
 #
 #----------------------------------------------------------------------
-import httplib, re, sys, xml.dom.minidom
+import httplib, re, sys, time, xml.dom.minidom
 
 #----------------------------------------------------------------------
 # Namespaces we don't really need.
@@ -30,6 +33,17 @@ application         = "/GateKeeper.asmx"
 headers             = {
     'Content-type': 'text/xml; charset="utf-8"',
     'SOAPAction'  : 'http://gatekeeper.cancer.gov/Request'
+}
+
+#----------------------------------------------------------------------
+# Module data used by publishing.py and cdrpub.py.
+#----------------------------------------------------------------------
+PUBTYPES = {
+    'Full Load'       : 'Send all documents to Cancer.gov',
+    'Export'          : 'Send specified documents to Cancer.gov',
+    'Remove'          : 'Delete documents from Cancer.gov',
+    'Hotfix (Remove)' : 'Delete individual documents from Cancer.gov',
+    'Hotfix (Export)' : 'Send individual documents to Cancer.gov'
 }
 
 #----------------------------------------------------------------------
@@ -129,17 +143,23 @@ class PubEventResponse:
     """
 
     def __init__(self, node):
-        pubTypeElem       = getChildElement(node, "pubType", 1)
-        docTypeElem       = getChildElement(node, "docType", 1)
-        lastJobIdElem     = getChildElement(node, "lastJobID", 1)
-        docCountElem      = getChildElement(node, "docCount")
-        self.pubType      = getTextContent(pubTypeElem)
-        self.docType      = getTextContent(docTypeElem)
-        self.lastJobId    = int(getTextContent(lastJobIdElem))
-        if docCountElem is not None:
-            self.docCount = int(getTextContent(docCountElem))
+        pubTypeElem        = getChildElement(node, "pubType", 1)
+        docTypeElem        = getChildElement(node, "docType", 1)
+        lastJobIdElem      = getChildElement(node, "lastJobID", 1)
+        docCountElem       = getChildElement(node, "docCount")
+        self.pubType       = getTextContent(pubTypeElem)
+        self.docType       = getTextContent(docTypeElem)
+        if lastJobIdElem is not None:
+            try:
+                self.lastJobId = int(getTextContent(lastJobIdElem))
+            except:
+                self.lastJobId = None
         else:
-            self.codCount = None
+            self.lastJobId = None
+        if docCountElem is not None:
+            self.docCount  = int(getTextContent(docCountElem))
+        else:
+            self.docCount  = None
 
 class PubDataResponse:
     """
@@ -228,36 +248,53 @@ def extractBodyElement(xmlString):
     body    = getChildElement(docElem, "Body", 1)
     return body
 
+def logString(type, str):
+    open("cdr2cg.log", "a").write("==== %s %s ====\n%s\n" % 
+        (time.ctime(), type, re.sub("\r", "", str)))
+
 def sendRequest(body):
 
-    # Set up the connection and the request.
-    conn    = httplib.HTTPConnection(host, port)
-    request = requestWrapper % (soapNamespace, body)
-    if debuglevel:
-        open("cdr2cggk.log", "a").write("==== REQUEST:\n%s" % re.sub("\r", 
-                                                                     "",
-                                                                     request))
+    # Defensive programming.
+    tries = 3
+    while tries:
+        try:
 
-    # Submit the request and get the headers for the response.
-    conn.request("POST", "/GateKeeper.asmx", request, headers)
-    response = conn.getresponse()
+            # Set up the connection and the request.
+            conn    = httplib.HTTPConnection(host, port)
+            request = requestWrapper % (soapNamespace, body)
+            if debuglevel:
+                logString("REQUEST", request)
 
-    # Skip past any "Continue" responses.
-    while response.status == 100:
-        response.msg = None
-        response.begin()
+            # Submit the request and get the headers for the response.
+            conn.request("POST", "/GateKeeper.asmx", request, headers)
+            response = conn.getresponse()
+
+            # Skip past any "Continue" responses.
+            while response.status == 100:
+                response.msg = None
+                response.begin()
+
+            # We can stop trying now, we got it.
+            tries = 0
+        except:
+            if debuglevel:
+                sys.stderr.write("caught http exception; trying again...\n")
+            logString("RETRY", "%d retries left" % tries)
+            if not tries:
+                raise
+            time.sleep(.5)
+            tries -= 1
 
     # Check for failure.
     if response.status != 200:
+        logString("HTTP ERROR", response.read())
         raise StandardError("HTTP error: %d (%s)" % (response.status,
                                                      response.reason))
 
     # Get the response payload and return it.
     data = response.read()
     if debuglevel:
-        open("cdr2cggk.log", "a").write("==== RESPONSE:\n%s" % re.sub("\r",
-                                                                      "",
-                                                                      data))
+        logString("RESPONSE", data)
     return data
 
 def initiateRequest(pubType, docType, lastJobId):
