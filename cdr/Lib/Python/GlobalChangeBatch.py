@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.20 2004-01-30 02:25:27 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.21 2004-02-04 00:51:51 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,12 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.20  2004/01/30 02:25:27  ameyer
+# Now processing documents with ID's passed from the CGI portion, rather
+# than re-executing the selection statement.  This is needed because a
+# user can now individually select or deselect documents from the list
+# for processing.
+#
 # Revision 1.19  2003/12/24 18:17:07  ameyer
 # Added retrieval of warnings from the cdr.repDoc calls.  Any warnings are
 # included in the final output report.
@@ -102,7 +108,7 @@
 #
 #----------------------------------------------------------------------
 
-import sys, socket, time, string, cdr, cdrbatch, cdrglblchg, cdrcgi, traceback
+import sys, socket, time, string, re, cdr, cdrbatch, cdrglblchg, cdrcgi, traceback
 
 
 # Define log file
@@ -225,10 +231,14 @@ def runFilters (docId, docVerType, docVer):
         # Get document and messages
         filteredDoc = filtResp[0]
         if filtResp[1]:
+            # Transform XSLT message output format to simple html
+            filtMsgs = re.sub (r"<message>", "", filtResp[1])
+            filtMsgs = re.sub (r"</message>", "<br>", filtMsgs)
+
             if errs:
-                errs += "<br>" + filtResp[1]
+                errs += "<br>" + filtMsgs
             else:
-                errs = filtResp[1]
+                errs = filtMsgs
 
         # In next iteration (if any) we filter the results of
         #   the last filtering rather than the repository doc
@@ -316,7 +326,7 @@ chg.ssVars[cdrcgi.SESSION] = session
 
 # We'll build two lists of docs to report
 # Documents successfully changed, id + title tuples
-changedDocs = [("<b>CDR ID</b>", "<b>P</b>", "<b>Title</b>")]
+changedDocs = [("<b>CDR ID</b>", "<b>P</b>", "<b>Title</b>", "<b>Msgs</b>")]
 
 # Couldn't be changed, id +title + error text
 failedDocs  = [("<b>CDR ID</b>", "<b>P</b>", "<b>Title</b>", "<b>Reason</b>")]
@@ -370,6 +380,8 @@ for idTitle in originalDocs:
 
         # No problems yet
         failed     = None
+        cwdMsgs    = None
+        pubMsgs    = None
         checkedOut = 0
 
         # Assumption is that we will not save the filtered doc as a
@@ -413,6 +425,9 @@ for idTitle in originalDocs:
                 # No doc means errors only
                 if not chgCwdXml:
                     failed = errs
+                else:
+                    # Else any messages are warnings to be shown
+                    cwdMsgs = errs
 
         if not failed:
 
@@ -446,6 +461,9 @@ for idTitle in originalDocs:
                 # No doc means errors only
                 if not chgCwdXml:
                     failed = errs
+                else:
+                    # Else any messages are warnings to be shown
+                    pubMsgs = errs
 
         if not failed:
             # For debug
@@ -523,7 +541,19 @@ for idTitle in originalDocs:
 
         # If successful, add this document to the list of sucesses
         if not failed:
-            changedDocs.append ((docId, saveCWDPubVer, title))
+            # Gather up any messages produced, or keep column blankd
+            msgs = ""
+            if cwdMsgs or pubMsgs:
+                if cwdMsgs:
+                    msgs = "CWD:<br>" + cwdMsgs
+                if pubMsgs:
+                    if len(msgs) > 0:
+                        msgs += "<br>Pub Version:<br>"
+                    msgs += pubMsgs
+            else:
+                msgs = "&nbsp;"
+
+            changedDocs.append ((docId, saveCWDPubVer, title, msgs))
             goodCount += 1
         else:
             failedDocs.append ((docId, saveCWDPubVer, title, failed))
