@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.36 2002-07-01 21:39:59 bkline Exp $
+# $Id: cdr.py,v 1.37 2002-07-02 23:49:21 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.36  2002/07/01 21:39:59  bkline
+# Corrected filter to Filter in getDoctypes().
+#
 # Revision 1.35  2002/06/26 02:24:58  ameyer
 # Added lastVersions().
 #
@@ -148,6 +151,61 @@ def normalize(id):
         digits = re.sub('[^\d]', '', id)
         idNum  = string.atoi(digits)
     return "CDR%010d" % idNum
+
+#----------------------------------------------------------------------
+# Extended normalization of ids
+#----------------------------------------------------------------------
+def exNormalize(id):
+    """
+    An extended form of normalize.
+    Pass:
+        An id in any of the following forms:
+            12345
+            'CDR0000012345'
+            'CDR12345'
+            'CDR0000012345#F1'
+            '12345#F1'
+            etc.
+    Return:
+        Tuple of:
+            Full id string
+            id as an integer
+            Fragment as a string, or None if no fragment
+        e.g.,
+            'CDR0000012345#F1'
+            12345
+            'F1'
+    Raise:
+        StandardError if not a CDR ID.
+    """
+
+    if type(id) == type(9):
+        # Passed a number
+        idNum = id
+        frag  = None
+
+    else:
+        # Parse the string
+        pat = re.compile (r"(^(CDR0*)?)(?P<num>(\d+))\#?(?P<frag>(.*))$")
+        # pat = re.compile (r"(?P<num>(\d+))\#?(?P<frag>(.*))")
+        result = pat.search (id)
+
+        if not result:
+            raise StandardError ("Invalid CDR ID string: " + id)
+
+        idNum = string.atoi (result.group ('num'))
+        frag  = result.group ('frag')
+
+    # Sanity check on number
+    if idNum < 1:
+        raise StandardError ("Invalid CDR ID number: " + str (idNum))
+
+    # Construct full id
+    fullId = "CDR%010d" % idNum
+    if frag:
+        fullId += '#' + frag
+
+    return (fullId, idNum, frag)
 
 #----------------------------------------------------------------------
 # Send a set of commands to the CDR Server and return its response.
