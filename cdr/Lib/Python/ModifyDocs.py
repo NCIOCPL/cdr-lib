@@ -1,11 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.4 2004-03-31 13:46:04 bkline Exp $
+# $Id: ModifyDocs.py,v 1.5 2004-07-27 15:46:38 bkline Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2004/03/31 13:46:04  bkline
+# Fixed typo (lastp for lastv); added DEBUG flag, which if set will
+# re-throw any exceptions caught.
+#
 # Revision 1.3  2003/09/11 22:12:24  bkline
 # Suppressed debugging `raise' statement.
 #
@@ -60,6 +64,7 @@ class Job:
 
     def run(self):
         ids = self.filter.getDocIds()
+        self.log("%d documents selected" % len(ids))
         for id in ids:
             try:
                 self.log("Processing CDR%010d" % id)
