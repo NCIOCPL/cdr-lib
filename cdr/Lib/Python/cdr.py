@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.22 2002-02-19 23:16:51 ameyer Exp $
+# $Id: cdr.py,v 1.23 2002-02-27 20:27:08 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.22  2002/02/19 23:16:51  ameyer
+# Eliminated SCRIPTS.  Now using BASEDIR - pointing to a more generic place.
+#
 # Revision 1.21  2002/02/19 22:09:40  bkline
 # Added docVer parameter to filterDoc().
 #
@@ -207,13 +210,6 @@ def login(userId, passWord, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Extract the session ID.
     return extract("<SessionId[^>]*>(.+)</SessionId>", resp)
-
-#----------------------------------------------------------------------
-# Log out from the CDR.
-#----------------------------------------------------------------------
-def logout(session, host= DEFAULT_HOST, port = DEFAULT_PORT):
-
-    sendCommands(wrapCommand("<CdrLogoff/>", session), host, port)
 
 #----------------------------------------------------------------------
 # Extract the text content of a DOM element.
