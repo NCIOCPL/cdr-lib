@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.10 2004-02-10 14:19:30 bkline Exp $
+# $Id: CdrLongReports.py,v 1.11 2004-04-26 20:55:12 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2004/02/10 14:19:30  bkline
+# Modified date range for OSP report.
+#
 # Revision 1.9  2003/12/16 16:17:38  bkline
 # Added URL check report.
 #
@@ -1517,6 +1520,352 @@ The URL report you requested can be viewed at
         cdr.logwrite("Completed report", LOGFILE)
 
 #----------------------------------------------------------------------
+# Find phrases which match a specified glossary term.
+#----------------------------------------------------------------------
+class GlossaryTermSearch:
+
+    def __init__(self, id):
+        self.docId = id
+
+    class Word:
+        "Normalized token for one word in a phrase."
+        def __init__(self, matchObj):
+            self.match = matchObj
+            lowerWord  = matchObj.group().lower()
+            self.value = GlossaryTermSearch.squeeze.sub(u"", lowerWord)
+
+    class Phrase:
+        "Sequence of Word objects."
+        def __init__(self, text, id):
+            self.id    = id
+            self.text  = text
+            self.words = GlossaryTermSearch.getWords(text)
+
+    class MatchingPhrase:
+        "Remembers where a glossary term phrase was found."
+        def __init__(self, phrase, title, id, section):
+            self.phrase  = phrase
+            self.title   = title
+            self.docId   = id
+            self.section = section
+
+    class GlossaryNode:
+        "Node in the tree of known glossary terms and their variant phrases."
+        def __init__(self):
+            self.docId   = None
+            self.nodeMap = {}
+            self.seen    = 0
+        def clearFlags(self):
+            self.seen = 0
+            for node in self.nodeMap.values():
+                node.clearFlags()
+
+    class GlossaryTree(GlossaryNode):
+        "Known glossary terms and their variant phrases."
+        def __init__(self, phrases):
+            GlossaryTermSearch.GlossaryNode.__init__(self)
+            for phrase in phrases:
+                currentMap  = self.nodeMap
+                currentNode = None
+                for word in phrase.words:
+                    value = word.value
+                    if value:
+                        if currentMap.has_key(value):
+                            currentNode = currentMap[value]
+                        else:
+                            currentNode = GlossaryTermSearch.GlossaryNode()
+                            currentMap[value] = currentNode
+                        currentMap = currentNode.nodeMap
+                if currentNode:
+                    currentNode.docId = phrase.id
+        def findPhrases(self, text):
+            "Returns sequence of strings for matching phrases."
+            phrases     = []
+            words       = GlossaryTermSearch.getWords(text)
+            wordsLeft   = len(words)
+            currentMap  = self.nodeMap
+            currentWord = 0
+            self.clearFlags()
+            while wordsLeft > 0:
+                nodes = []
+                currentMap = self.nodeMap
+                startPos = words[currentWord].match.start()
+                endPos = startPos
+
+                # Find the longest chain of matching words from this point.
+                while len(nodes) < wordsLeft:
+                    word = words[currentWord + len(nodes)]
+                    node = currentMap.get(word.value)
+                    if not node:
+                        break
+                    nodes.append(node)
+                    currentMap = node.nodeMap
+
+                # See if the chain (or part of it) matches a glossary term.
+                while nodes:
+                    lastNode = nodes[-1]
+
+                    # A docId means this node is the end of a glossary term.
+                    if lastNode.docId and not lastNode.seen:
+                        start = words[currentWord].match.start()
+                        end = words[currentWord + len(nodes) - 1].match.end()
+                        phrase = text[start:end]
+                        phrase = GlossaryTermSearch.strip(phrase)
+                        phrases.append(phrase)
+                        lastNode.seen = 1
+                        break
+                    nodes.pop()
+
+                # Skip past the matched term (if any) or the current word.
+                wordsToMove  = nodes and len(nodes) or 1
+                wordsLeft   -= wordsToMove
+                currentWord += wordsToMove
+            return phrases
+
+    class GlossaryTerm:
+        "Glossary term and all phrases used for it."
+        def __init__(self, cursor, id):
+            cursor.execute("""\
+                SELECT value
+                  FROM query_term
+                 WHERE path = '/GlossaryTerm/TermName'
+                   AND doc_id = ?""", id)
+            rows = cursor.fetchall()
+            if not rows:
+                raise Exception("GlossaryTerm %d not found" % id)
+            self.id = id
+            self.name = rows[0][0]
+            cursor.execute("""\
+                SELECT m.value
+                  FROM external_map m
+                  JOIN external_map_usage u
+                    ON u.id = m.usage
+                 WHERE m.doc_id = ?""", id)
+            self.variants = []
+            for row in cursor.fetchall():
+                self.variants.append(row[0])
+                
+    def strip(s):
+        "Remove unused punctuation from glossary term."
+        #return s.strip(GlossaryTermSearch.punct) Not supported by 2.2.1?
+        while s and (s[0] in GlossaryTermSearch.punct):
+            s = s[1:]
+        while s and s[-1] in GlossaryTermSearch.punct:
+            s = s[:-1]
+        return s
+
+    def getWords(text):
+        "Extract Word tokens from phrase or text block."
+        words = []
+        for w in GlossaryTermSearch.nonBlanks.finditer(text):
+            words.append(GlossaryTermSearch.Word(w))
+        return words
+
+    def getTextContent(node):
+        "Concatentate the values of all TEXT_NODE children of this node."
+        text = ''
+        for n in node.childNodes:
+            if n.nodeType == xml.dom.minidom.Node.TEXT_NODE:
+                text = text + n.nodeValue
+            else:
+                text += GlossaryTermSearch.getTextContent(n)
+        return text
+
+    def protocolSorter(a, b):
+        "Protocols are sorted by the glossary term phrase used."
+        return cmp(a.phrase, b.phrase)
+
+    def summarySorter(a, b):
+        "Summaries are sorted by title, then by glossary term phrase."
+        if a.title < b.title: return -1
+        if a.title > b.title: return 1
+        return cmp(a.phrase, b.phrase)
+
+    def addMatchingPhrases(matches, sorter):
+        "Generate the HTML for the list of matches found."
+        html = u""
+        matches.sort(sorter)
+        for match in matches:
+            html += u"""\
+   <tr>
+    <td>%s</td>
+    <td>%s</td>
+    <td>%d</td>
+    <td>%s</td>
+   <tr>
+""" % (match.phrase, match.title, match.docId, match.section)
+        return html
+
+    #------------------------------------------------------------------
+    # Build a table for glossary phrases in one set of CDR documents.
+    #------------------------------------------------------------------
+    def addTable(self, tableTitle, col4Header, query, sorter):
+        if self.msg:
+            self.msg += "<br>"
+        html = u"""\
+  <br />
+  <br />
+  %s
+  <br />
+  <br />
+  <table border = '1' cellpadding = '2' cellspacing = '0'>
+   <tr>
+    <th>Matching phrase</th>
+    <th>DocTitle</th>
+    <th>DocId</th>
+    <th>%s</th>
+   </tr>
+""" % (tableTitle, col4Header)
+        matches = []
+        self.cursor.execute(query)
+        row = self.cursor.fetchone()
+        numRows = 0
+        while row:
+            docId, docXml, docTitle = row
+            title = cgi.escape(docTitle)
+            dom = xml.dom.minidom.parseString(docXml.encode('utf-8'))
+            for node in dom.documentElement.childNodes:
+                if node.nodeName == "SummarySection":
+                    text  = self.getTextContent(node).strip()
+                    sectionTitle = u"[None]"
+                    for child in node.childNodes:
+                        if child.nodeName == "Title":
+                            sectionTitle = self.getTextContent(child)
+                            sectionTitle = cgi.escape(sectionTitle)
+                            break
+                    for phrase in self.tree.findPhrases(text):
+                        phrase = cgi.escape(phrase)
+                        mp = self.MatchingPhrase(phrase, title, docId,
+                                                 sectionTitle)
+                        matches.append(mp)
+                elif node.nodeName == "ProtocolAbstract":
+                    for child in node.childNodes:
+                        if child.nodeName == "Patient":
+                            for gc in child.childNodes:
+                                if gc.nodeName in ('Rationale', 'Purpose',
+                                                   'EligibilityText',
+                                                   'TreatmentIntervention'):
+                                    text  = self.getTextContent(gc).strip()
+                                    for phrase in self.tree.findPhrases(text):
+                                        phrase = cgi.escape(phrase)
+                                        mp = self.MatchingPhrase(phrase,
+                                                                 title, docId,
+                                                                 gc.nodeName)
+                                        matches.append(mp)
+            row = self.cursor.fetchone()
+            numRows += 1
+            newMsg = u"Searched %d %s" % (numRows, tableTitle)
+            self.job.setProgressMsg(self.msg + newMsg)
+        self.msg += newMsg
+        return html + GlossaryTermSearch.addMatchingPhrases(matches,
+                                                            sorter) + u"""\
+  </table>
+"""
+
+    def report(self, job):
+        self.msg       = "Glossary tree built"
+        self.job       = job
+        self.conn      = cdrdb.connect('CdrGuest')
+        self.cursor    = self.conn.cursor()
+        self.term      = self.GlossaryTerm(self.cursor, self.docId)
+        phrases        = [self.Phrase(self.term.name, self.docId)]
+        for variant in self.term.variants:
+            phrases.append(self.Phrase(variant, self.docId))
+        self.tree      = self.GlossaryTree(phrases)
+        job.setProgressMsg(self.msg)
+        html           = u"""\
+<html>
+ <head>
+  <style type = 'text/css'>
+   body, tr, td { font-family: Arial; font-size: 12pt }
+   h1           { font-family: "Arial"; font-size: 18pt; font-weight: bold }
+  </style>
+  <title>%s (CDR %d) %s</title>
+ </head>
+ <body>
+  <center>
+   <h1>Glossary Term Search Report</h1>
+  </center>
+  <br />
+  <br />
+  Term: <b>%s</b>
+""" % (cgi.escape(self.term.name), self.docId, time.strftime("%B %d, %Y"),
+       cgi.escape(self.term.name))
+
+        tableTitles = (u"Cancer Information Health Professional Summaries",
+                       u"Cancer Information Patient Summaries",
+                       u"Patient Abstracts")
+
+        summaryQuery = """\
+    SELECT d.id, d.xml, d.title
+      FROM document d
+      JOIN query_term a
+        ON a.doc_id = d.id
+      JOIN query_term l
+        ON l.doc_id = d.id
+     WHERE l.path = '/Summary/SummaryMetaData/SummaryLanguage'
+       AND l.value <> 'Spanish'
+       AND a.path = '/Summary/SummaryMetaData/SummaryAudience'
+       AND a.value = '%s'
+       AND d.active_status = 'A'"""
+        protocolQuery = """\
+    SELECT d.id, d.xml, d.title
+      FROM document d
+      JOIN doc_type t
+        ON t.id = d.doc_type
+     WHERE t.name = 'InScopeProtocol'
+       AND d.active_status = 'A'"""
+        html += self.addTable(tableTitles[0], "SectionTitle",
+                              summaryQuery % 'Health professionals',
+                              self.summarySorter)
+        html += self.addTable(tableTitles[1], "SectionTitle",
+                              summaryQuery % 'Health professionals',
+                              self.summarySorter)
+        html += self.addTable(tableTitles[2], "Element Name",
+                              protocolQuery,
+                              self.protocolSorter)
+        html += u"""\
+ </body>
+</html>
+"""
+
+        #--------------------------------------------------------------
+        # Write out the report and tell the user where it is.
+        #--------------------------------------------------------------
+        name = "/GlossaryTermSearch-%d.html" % job.getJobId()
+        file = open(REPORTS_BASE + name, "wb")
+        file.write(cdrcgi.unicodeToLatin1(html))
+        file.close()
+        cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
+        url = "http://%s.nci.nih.gov/CdrReports%s" % (socket.gethostname(),
+                                                      name)
+        cdr.logwrite("url: %s" % url, LOGFILE)
+        self.msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (
+            url, url)
+
+        body = """\
+The Glossary Term report you requested can be viewed at
+%s.
+""" % (url)
+        sendMail(job, "Report results", body)
+        job.setProgressMsg(self.msg)
+        job.setStatus(cdrbatch.ST_COMPLETED)
+        cdr.logwrite("Completed report", LOGFILE)
+
+    # Class data.
+    punct              = u"]['.,?!:;\u201c\u201d(){}<>"
+    squeeze            = re.compile(u"[%s]" % punct)
+    nonBlanks          = re.compile(u"[^\\s_-]+")
+    
+    # Class methods.
+    protocolSorter     = staticmethod(protocolSorter)
+    summarySorter      = staticmethod(summarySorter)
+    getWords           = staticmethod(getWords)
+    getTextContent     = staticmethod(getTextContent)
+    strip              = staticmethod(strip)
+    addMatchingPhrases = staticmethod(addMatchingPhrases)
+
+#----------------------------------------------------------------------
 # Run a report of dead URLs.
 #----------------------------------------------------------------------
 def checkUrls(job):
@@ -1539,6 +1888,16 @@ def orgProtocolReview(job):
     report = OrgProtocolReview(docId)
     report.report(job)
     
+#----------------------------------------------------------------------
+# Report on phrases matching a specified glossary term.
+#----------------------------------------------------------------------
+def glossaryTermSearch(job):
+    docId  = job.getParm("id")
+    digits = re.sub(r"[^\d]", "", docId)
+    docId  = int(digits)
+    report = GlossaryTermSearch(docId)
+    report.report(job)
+
 ## class Job:
 ##     def setProgressMsg(self, m): print m
 ##     def getEmail(self): return "***REMOVED***"
@@ -1592,6 +1951,8 @@ if __name__ == "__main__":
             orgProtocolReview(job)
         elif jobName == "URL Check":
             checkUrls(job)
+        elif jobName == "Glossary Term Search":
+            glossaryTermSearch(job)
         # That's all we know how to do right now.
         else:
             job.fail("CdrLogReports: unknown job name '%s'" % jobName,
