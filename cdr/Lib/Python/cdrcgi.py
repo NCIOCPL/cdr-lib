@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.49 2004-09-13 19:38:43 venglisc Exp $
+# $Id: cdrcgi.py,v 1.50 2004-09-17 17:42:48 venglisc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.49  2004/09/13 19:38:43  venglisc
+# Implemented a hover font color for the table to visually "connect" the
+# text of the search result with the link created.
+#
 # Revision 1.48  2004/04/06 18:51:49  bkline
 # Expanded extra field support in advanced search screen to handle
 # more than one.
@@ -532,6 +536,18 @@ def glossaryAudienceList(conn, fName):
 SELECT DISTINCT value, value
            FROM query_term
           WHERE path = '/GlossaryTerm/TermDefinition/Audience'
+       ORDER BY value"""
+    pattern = "<option value='%s'>%s&nbsp;</option>"
+    return generateHtmlPicklist(conn, fName, query, pattern)
+
+#----------------------------------------------------------------------
+# Generate picklist for GlossaryTermStatus.
+#----------------------------------------------------------------------
+def glossaryTermStatusList(conn, fName):
+    query  = """\
+SELECT DISTINCT value, value
+           FROM query_term
+          WHERE path = '/GlossaryTerm/TermStatus'
        ORDER BY value"""
     pattern = "<option value='%s'>%s&nbsp;</option>"
     return generateHtmlPicklist(conn, fName, query, pattern)
