@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.48 2002-09-05 16:30:05 pzhang Exp $
+# $Id: cdr.py,v 1.49 2002-09-12 00:46:14 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.48  2002/09/05 16:30:05  pzhang
+# Added getPubPort().
+#
 # Revision 1.47  2002/09/02 00:37:22  bkline
 # Added CVSROOT and PROD_HOST.
 #
@@ -171,6 +174,7 @@ PROD_HOST     = 'bach.nci.nih.gov'
 CVSROOT       = "mmdb2.nci.nih.gov:/d//usr/local/cvsroot"
 DEFAULT_HOST  = 'localhost'
 DEFAULT_PORT  = 2019
+URDATE        = '2002-06-22'
 LOGON_STRING  = """<CdrCommandSet><CdrCommand><CdrLogon>
                    <UserName>%s</UserName><Password>%s</Password>
                    </CdrLogon></CdrCommand>"""
