@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.14 2002-06-26 20:05:25 bkline Exp $
+# $Id: cdrcgi.py,v 1.15 2002-06-27 20:22:54 ameyer Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.14  2002/06/26 20:05:25  bkline
+# Modified advanced Person search forms to use QcReport.py for doc display.
+#
 # Revision 1.13  2002/06/04 20:17:26  bkline
 # Added option for choosing between POST and GET requests.
 #
@@ -152,7 +155,7 @@ def getRequest(fields):
 def sendPage(page):
     print """\
 Content-type: text/html
-    
+
 """ + page
     sys.exit(0)
 
@@ -174,14 +177,14 @@ def encode(xml): return unicode(xml, 'latin-1').encode('utf-8')
 # Convert CDR Server's XML from utf-8 to latin-1 encoding.
 #----------------------------------------------------------------------
 decodePattern = re.compile(u"([\u0080-\uffff])")
-def decode(xml): 
-    return re.sub(decodePattern, 
-                  lambda match: u"&#x%X;" % ord(match.group(0)[0]), 
+def decode(xml):
+    return re.sub(decodePattern,
+                  lambda match: u"&#x%X;" % ord(match.group(0)[0]),
                   unicode(xml, 'utf-8')).encode('latin-1')
 
 def unicodeToLatin1(s):
-    return re.sub(decodePattern, 
-                  lambda match: u"&#x%X;" % ord(match.group(0)[0]), 
+    return re.sub(decodePattern,
+                  lambda match: u"&#x%X;" % ord(match.group(0)[0]),
                   s).encode('latin-1')
 
 #----------------------------------------------------------------------
@@ -205,8 +208,8 @@ def logout(session):
     # Put up the login screen.
     form = """\
         <H3>%s</H3>
-           <TABLE CELLSPACING='0' 
-                  CELLPADDING='0' 
+           <TABLE CELLSPACING='0'
+                  CELLPADDING='0'
                   BORDER='0'>
             <TR>
              <TD ALIGN='right'>
@@ -218,7 +221,7 @@ def logout(session):
              <TD ALIGN='right'>
               <B>CDR Password:&nbsp;</B>
              </TD>
-             <TD><INPUT NAME='Password' 
+             <TD><INPUT NAME='Password'
                         TYPE='password'>
              </TD>
             </TR>
@@ -383,7 +386,7 @@ ORDER BY d.title
       </SELECT>
 """
     return html
-        
+
 #----------------------------------------------------------------------
 # Generate picklist for states.
 #----------------------------------------------------------------------
@@ -611,7 +614,7 @@ def constructAdvancedSearchQuery(searchFields, boolOp, docType):
         where += "))"
         query = 'SELECT DISTINCT document.id, document.title, doc_type.name '\
                            'FROM document, doc_type'
-        
+
     if boolOp == " AND ":
         for a in range(aliases):
             query += ", query_term q%d" % (a + 1)
@@ -630,7 +633,7 @@ def advancedSearchResultsPageTop(docType, nRows, strings):
 <HTML>
  <HEAD>
   <TITLE>CDR %s Search Results</TITLE>
-  <META   HTTP-EQUIV = "Content-Type" 
+  <META   HTTP-EQUIV = "Content-Type"
              CONTENT = "text/html; charset=iso-8859-1">
   <STYLE        TYPE = "text/css">
    <!--
@@ -641,39 +644,39 @@ def advancedSearchResultsPageTop(docType, nRows, strings):
   </STYLE>
  </HEAD>
  <BODY       BGCOLOR = "#CCCCFF">
-  <TABLE       WIDTH = "100%%" 
-              BORDER = "0" 
-         CELLSPACING = "0" 
+  <TABLE       WIDTH = "100%%"
+              BORDER = "0"
+         CELLSPACING = "0"
                CLASS = "Page">
-   <TR       BGCOLOR = "#6699FF"> 
-    <TD       NOWRAP 
-              HEIGHT = "26" 
+   <TR       BGCOLOR = "#6699FF">
+    <TD       NOWRAP
+              HEIGHT = "26"
              COLSPAN = "4">
-     <FONT      SIZE = "+2" 
+     <FONT      SIZE = "+2"
                CLASS = "Page">CDR Advanced Search Results</FONT>
     </TD>
    </TR>
-   <TR       BGCOLOR = "#FFFFCC"> 
-    <TD       NOWRAP 
+   <TR       BGCOLOR = "#FFFFCC">
+    <TD       NOWRAP
              COLSPAN = "4">
      <SPAN     CLASS = "Page">
       <FONT     SIZE = "+1">%s</FONT>
      </SPAN>
     </TD>
    </TR>
-   <TR> 
-    <TD       NOWRAP 
+   <TR>
+    <TD       NOWRAP
              COLSPAN = "4"
               HEIGHT = "20">&nbsp;</TD>
    </TR>
-   <TR> 
+   <TR>
     <TD       NOWRAP
              COLSPAN = "4"
                CLASS = "Page">
      <FONT     COLOR = "#000000">%d documents match '%s'</FONT>
     </TD>
    </TR>
-   <TR> 
+   <TR>
     <TD       NOWRAP
              COLSPAN = "4"
                CLASS = "Page">&nbsp;</TD>
@@ -704,7 +707,7 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
         if docType == "Person":
             href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
         else:
-            href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId, filt, 
+            href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId, filt,
                                                           session)
         html += """\
    <TR>
@@ -720,14 +723,51 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
      <A         HREF = "%s">%s</A>
     </TD>
    </TR>
-""" % (i + 1, cgi.escape(unicodeToLatin1(title), 1), 
+""" % (i + 1, cgi.escape(unicodeToLatin1(title), 1),
        dtcol, href, docId)
 
         # Requested by LG, Issue #193.
         if docType == "Protocol":
             html += "<TR><TD COLWIDTH='3'>&nbsp;</TD></TR>\n"
-        
+
     return html + "  </TABLE>\n </BODY>\n</HTML>\n"
+
+#----------------------------------------------------------------------
+# Create an HTML table from a passed data
+#----------------------------------------------------------------------
+def tabularize (rows, tblAttrs=None):
+    """
+    Create an HTML table string from passed data.
+
+    Pass:
+        rows = Sequence of rows for the table, each containing
+               a sequence of columns.
+               If the number of columns is not the same in each row,
+               then the caller gets whatever he gets, so it may be
+               wise to add columns with content like "&nbsp;" if needed.
+               No entity conversions are performed.
+
+        tblAttrs = Optional string of attributes to put in table, e.g.,
+               "align='center' border='1' width=95%'"
+
+        We might add rowAttrs and colAttrs if this is worthwhile.
+    Return:
+        HTML as a string.
+    """
+    if not tblAttrs:
+        html = "<table>\n"
+    else:
+        html = "<table " + tblAttrs + ">\n"
+
+    for row in rows:
+        html += " <tr>\n"
+        for col in row:
+            html += "  <td>%s</td>\n" % col
+        html += " </tr>\n"
+    html += "</table>"
+
+    return html
+
 
 #----------------------------------------------------------------------
 # Borrowed from ActiveState's online Python cookbook.
@@ -779,7 +819,7 @@ def int_to_roman(input):
    if type(input) != type(1):
       raise TypeError, "expected integer, got %s" % type(input)
    if not 0 < input < 4000:
-      raise ValueError, "Argument must be between 1 and 3999"   
+      raise ValueError, "Argument must be between 1 and 3999"
    ints = (1000, 900,  500, 400, 100,  90, 50,  40, 10,  9,   5,  4,   1)
    nums = ('M',  'CM', 'D', 'CD','C', 'XC','L','XL','X','IX','V','IV','I')
    result = ""
