@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.50 2004-09-17 17:42:48 venglisc Exp $
+# $Id: cdrcgi.py,v 1.51 2004-10-22 09:36:56 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.50  2004/09/17 17:42:48  venglisc
+# Creating drop-down TermStatus list populated from the database (Bug 1335).
+#
 # Revision 1.49  2004/09/13 19:38:43  venglisc
 # Implemented a hover font color for the table to visually "connect" the
 # text of the search result with the link created.
@@ -989,7 +992,7 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
 """ % dt
 
         # XXX Consider using QcReport.py for all advanced search results pages.
-        if docType in ("Person", "Organization"):
+        if docType in ("Person", "Organization", "Glossary Term"):
             href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
         elif len(rows[i]) > 2 and dt == "CTGovProtocol":
             href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
