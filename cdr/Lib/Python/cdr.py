@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.2 2001-04-08 16:31:53 bkline Exp $
+# $Id: cdr.py,v 1.3 2001-04-08 22:50:06 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,13 +8,16 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2001/04/08 16:31:53  bkline
+# Added report, search, doctype, and term tree support.
+#
 #
 #----------------------------------------------------------------------
 
 #----------------------------------------------------------------------
 # Import required packages.
 #----------------------------------------------------------------------
-import socket, string, struct, sys, re, cgi, xml.dom.minidom
+import socket, string, struct, sys, re, cgi
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -369,80 +372,18 @@ def modDoctype(credentials, info, host = DEFAULT_HOST, port = DEFAULT_PORT):
         return dtinfo(error = err)
     return getDoctype(credentials, info.type, host, port)
 
-#----------------------------------------------------------------------
-# Class representing recursive tree context for CDR terminology document.
-#----------------------------------------------------------------------
-class TermTree:
-    def __init__(this, 
-                 id         = None, 
-                 name       = None, 
-                 parents    = None, 
-                 children   = None, 
-                 error      = None):
-        this.id             = id
-        this.name           = name
-        this.parents        = parents
-        this.children       = children
-        this.error          = error
-    def parentRep(this, level = 0):
-        if not this.parents: return ''
-        rep = ''
-        for p in this.parents:
-            rep = rep + ' ' * level + "%s (%s)\n%s" % (p.name, 
-                                                       p.id,
-                                                       p.parentRep(level + 1))
-        return rep
-    def childrenRep(this, level = 0):
-        if not this.children: return ''
-        rep = ''
-        for c in this.children:
-            rep = rep + ' ' * level + "%s (%s)\n%s" % (c.name, 
-                                                       c.id,
-                                                       c.childrenRep(level + 1))
-        return rep
-    def __repr__(this):
-        if this.error: return this.error
-        rep = """\
-[Term] %s (%s)
-[Parents]
-%s
-[Children]
-%s
-""" % (this.name, 
-       this.id, 
-       this.parentRep(),
-       this.childrenRep())
-        return rep
 
-#----------------------------------------------------------------------
-# Extract the text content of a DOM element.
-#----------------------------------------------------------------------
-def getTextContent(node):
-    text = ''
-    for n in node.childNodes:
-        if n.nodeType == xml.dom.minidom.Node.TEXT_NODE:
-            text = text + n.nodeValue
-    return text
-
-#----------------------------------------------------------------------
-# Recursively parse Term information from a DOM node.
-#----------------------------------------------------------------------
-def parseTermNode(node):
-    id       = ''
-    name     = ''
-    parents  = []
-    children = []
-    for n in node.childNodes:
-        if n.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
-            if n.nodeName == 'DocId': id = getTextContent(n)
-            elif n.nodeName == 'TermName': name = getTextContent(n)
-            elif n.nodeName == 'Parents':
-                for p in n.childNodes:
-                    parents.append(parseTermNode(p))
-            elif n.nodeName == 'Children':
-                for c in n.childNodes:
-                    children.append(parseTermNode(c))
-    return TermTree(id, name, parents, children)
+class Term:
+    def __init__(this, id, name):
+        this.id       = id
+        this.name     = name
+        this.parents  = []
+        this.children = []
+        
+class TermSet:
+    def __init__(this, error = None):
+        this.terms = {}
+        this.error = error
 
 #----------------------------------------------------------------------
 # Gets context information for term's position in terminology tree.
@@ -458,15 +399,30 @@ def getTree(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
         expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
         err = expr.search(resp)
         err = err and err.group(1) or "Unknown failure"
-        return TermTree(error = err)
+        return TermSet(error = err)
 
-    # Parse the tree
-    expr = re.compile("<CdrGetTreeResp>(.*)</CdrGetTreeResp>", re.DOTALL)
-    docString = expr.search(resp)
-    if not docString: return TermTree(error = "Response not found")
-    try:
-        dom = xml.dom.minidom.parseString(docString.group(1))
-        if not dom: return TermTree(error = "Failure parsing response")
-        return parseTermNode(dom.documentElement)
-    except:
-        return TermTree(error = "Failure parsing response")
+    # Parse the response.
+    respExpr = re.compile("<CdrGetTreeResp>\s*"
+                          "<Pairs>(.*)</Pairs>\s*"
+                          "<Terms>(.*)</Terms>\s*"
+                          "</CdrGetTreeResp>", re.DOTALL)
+    pairExpr = re.compile("<Pair><Child>(.*?)</Child>\s*"
+                          "<Parent>(.*?)</Parent></Pair>")
+    termExpr = re.compile("<Term><Id>(.*?)</Id>\s*"
+                          "<Name>(.*?)</Name></Term>")
+    groups   = respExpr.search(resp)
+    result   = TermSet()
+    terms    = result.terms
+
+    # Extract the names of all terms returned.
+    for term in termExpr.findall(groups.group(2)):
+        (id, name) = term
+        terms[id]  = Term(id = id, name = name)
+
+    # Extract the child-parent relationship pairs.
+    for pair in pairExpr.findall(groups.group(1)):
+        (child, parent) = pair
+        terms[child].parents.append(terms[parent])
+        terms[parent].children.append(terms[child])
+
+    return result
