@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.34 2002-06-18 22:19:16 ameyer Exp $
+# $Id: cdr.py,v 1.35 2002-06-26 02:24:58 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.34  2002/06/18 22:19:16  ameyer
+# Added canDo() to check authorization to do something.
+#
 # Revision 1.33  2002/06/08 02:02:35  bkline
 # Added getCssFiles() (and changed some .* patterns to .*?).
 #
@@ -270,6 +273,41 @@ def canDo (session, action, docType="",
     if resp.find ("<CdrCanDoResp>Y</CdrCanDoResp>") >= 0:
         return 1
     return 0
+
+#----------------------------------------------------------------------
+# Find information about the last versions of a document.
+# Returns tuple of:
+#   Last version number, or -1 if no versions
+#   Last publishable version number or -1, may be same as last version.
+#   Is changed information:
+#     'Y' = last version is different from current working doc.
+#     'N' = last version is not different.
+# These are pass throughs of the response from the CdrLastVersions command.
+# Single error string returned if errors.
+#----------------------------------------------------------------------
+def lastVersions (session, docId, host=DEFAULT_HOST, port=DEFAULT_PORT):
+
+    # Create the command
+    cmd = wrapCommand ("""
+ <CdrLastVersions>
+   <DocId>%s</DocId>
+ </CdrLastVersions>
+""" % docId, session)
+
+    # Submit it
+    resp = sendCommands (cmd, host, port)
+
+    # Failed?
+    errs = getErrors (resp, 0)
+    if len (errs) > 0:
+        return errs
+
+    # Else get the parts we want
+    lastAny   = extract ("<LastVersionNum>(.+)</LastVersionNum>", resp)
+    lastPub   = extract ("<LastPubVersionNum>(.+)</LastPubVersionNum>", resp)
+    isChanged = extract ("<IsChanged>(.+)</IsChanged>", resp)
+
+    return (int(lastAny), int(lastPub), isChanged)
 
 #----------------------------------------------------------------------
 # Extract the text content of a DOM element.
