@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.52 2002-09-12 20:59:26 bkline Exp $
+# $Id: cdr.py,v 1.53 2002-09-13 02:36:03 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.52  2002/09/12 20:59:26  bkline
+# Added missing import for tempfile package.
+#
 # Revision 1.51  2002/09/12 20:47:49  bkline
 # Added makeTempDir() function.
 #
@@ -206,7 +209,7 @@ def getPubPort():
         sock.close()
         return DEFAULT_PORT
     except:
-        return 2020    
+        return 2020
 
 #----------------------------------------------------------------------
 # Normalize a document id to form 'CDRnnnnnnnnnn'.
@@ -728,9 +731,9 @@ def valDoc(credentials, docType, docId = None, doc = None,
     else:
         raise StandardError("valDoc: no validation method specified")
     cmd     = "<CdrValidateDoc DocType='%s' "\
-              "ValidationType='%s'>%s</CdrValidateDoc>" % (docType,
-                                                           valTypes,
-                                                           doc)
+              "ValidationTypes='%s'>%s</CdrValidateDoc>" % (docType,
+                                                            valTypes,
+                                                            doc)
 
     # Submit the commands.
     return sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -2125,13 +2128,13 @@ def makeTempDir(basename = "tmp", chdir = 1):
         tempfile.tempdir = os.environ["TMP"]
     where = tempfile.mktemp(basename)
     abspath = os.path.abspath(where)
-    try: 
+    try:
         os.mkdir(abspath)
-    except: 
-        raise StandardError("makeTempDir", 
+    except:
+        raise StandardError("makeTempDir",
                             "Cannot create directory %s" % abspath)
     if chdir:
-        try: 
+        try:
             os.chdir(abspath)
         except:
             raise StandardError("makeTempDir",
