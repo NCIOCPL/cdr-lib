@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.7 2002-02-21 15:21:08 bkline Exp $
+# $Id: cdrcgi.py,v 1.8 2002-03-02 13:50:54 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2002/02/21 15:21:08  bkline
+# Added navigateTo() function.
+#
 # Revision 1.6  2002/02/14 19:33:21  bkline
 # Adjusted code for advanced search pulldown lists to match schema changes.
 #
@@ -154,6 +157,11 @@ def decode(xml):
     return re.sub(decodePattern, 
                   lambda match: u"&#x%X;" % ord(match.group(0)[0]), 
                   unicode(xml, 'utf-8')).encode('latin-1')
+
+def unicodeToLatin1(s):
+    return re.sub(decodePattern, 
+                  lambda match: u"&#x%X;" % ord(match.group(0)[0]), 
+                  s).encode('latin-1')
 
 #----------------------------------------------------------------------
 # Log out of the CDR session and put up a new login screen.
