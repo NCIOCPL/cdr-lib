@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.47 2002-09-02 00:37:22 bkline Exp $
+# $Id: cdr.py,v 1.48 2002-09-05 16:30:05 pzhang Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.47  2002/09/02 00:37:22  bkline
+# Added CVSROOT and PROD_HOST.
+#
 # Revision 1.46  2002/08/16 03:13:23  ameyer
 # Added comment parameter to addDoc and repDoc.
 # Added optional html formatting to sendMail.
@@ -178,6 +181,20 @@ BASEDIR       = "d:/cdr"
 SMTP_RELAY    = "MAILFWD.NIH.GOV"
 DEFAULT_LOGDIR  = "d:/cdr/Log"
 DEFAULT_LOGFILE = DEFAULT_LOGDIR + "/debug.log"
+
+#----------------------------------------------------------------------
+# Set DEFAULT_PORT for publishing to 2020 if 2019 is not open.
+#----------------------------------------------------------------------
+def getPubPort():
+    try:
+        # Connect to the CDR Server.
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((DEFAULT_HOST, DEFAULT_PORT))
+        sock.close()
+        return DEFAULT_PORT
+    except:
+        return 2020    
+
 #----------------------------------------------------------------------
 # Normalize a document id to form 'CDRnnnnnnnnnn'.
 #----------------------------------------------------------------------
