@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.1 2002-08-02 03:35:43 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.2 2002-08-08 18:05:18 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,10 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2002/08/02 03:35:43  ameyer
+# Batch/background portion of global protocol change.
+# More to come.  This is the first working version.
+#
 #
 #----------------------------------------------------------------------
 
@@ -163,175 +167,218 @@ cdr.logwrite ("Processing %d docs, changing %s to %s" % \
 
 # Process each one
 progressMsg = "No docs processed yet"
-for idTitle in originalDocs:
 
-    docId    = idTitle[0]
-    title    = idTitle[1]
-    docIdStr = cdr.exNormalize(docId)[0]
+try:
+    for idTitle in originalDocs:
 
-    # No problems yet
-    failed     = None
-    checkedOut = 0
+        docId    = idTitle[0]
+        title    = idTitle[1]
+        docIdStr = cdr.exNormalize(docId)[0]
 
-    # Attempt to check it out, getting a Doc object (in cdr.py)
-    cdr.logwrite ("Fetching doc %d for final processing" % docId, LF)
-    oldCwdDocObj = cdr.getDoc (session, docId=docId, checkout='Y',
-                               version='Current', getObject=1)
-    cdr.logwrite ("Finished fetch of doc %d for final processing" % docId, LF)
+        # No problems yet
+        failed     = None
+        checkedOut = 0
 
-    # Got a Doc object, or a string of errors
-    if type (oldCwdDocObj) == type (""):
-        failed = logDocErr (docId, "checking out document", oldCwdDocObj)
-    else:
-        oldCwdXml = oldCwdDocObj.xml
+        # Assumption is that we will not save the filtered doc as a
+        #   publishable version.  That changes if there is already
+        #   a publishable version exactly matching the CWD.
+        saveCWDPubVer = 'N'
 
-    # Filter current working document
-    # XXXX Check that Volker uses these same variables in all scripts
-    parms = [['changeFrom', fromId], ['changeTo', toId]]
+        # Attempt to check it out, getting a Doc object (in cdr.py)
+        cdr.logwrite ("Fetching doc %d for final processing" % docId, LF)
+        oldCwdDocObj = cdr.getDoc (session, docId=docId, checkout='Y',
+                                   version='Current', getObject=1)
+        cdr.logwrite ("Finished fetch of doc %d for final processing" % docId,
+                      LF)
 
-    if not failed:
-        # We need to check this back in at end
-        checkedOut = 1
-
-        # Get version info
-        cdr.logwrite ("Checking lastVersions", LF)
-        result = cdr.lastVersions (session, docIdStr)
-        cdr.logwrite ("Finished checking lastVersions", LF)
-        if type (result) == type ("") or type (result) == (u""):
-            failed = logDocErr (docId, "fetching last version information",
-                                result)
+        # Got a Doc object, or a string of errors
+        if type (oldCwdDocObj) == type (""):
+            failed = logDocErr (docId, "checking out document", oldCwdDocObj)
         else:
-            (lastVerNum, lastPubVerNum, isChanged) = result
+            oldCwdXml = oldCwdDocObj.xml
 
-            # Filter doc to get new, changed CWD
-            cdr.logwrite ("Filtering doc", LF)
-            filtResp = cdr.filterDoc (session, filter=chg.chgFilter, parm=parms,
-                                      docId=docId, docVer=None)
+        # Filter current working document
+        # XXXX Check that Volker uses these same variables in all scripts
+        parms = [['changeFrom', fromId], ['changeTo', toId]]
 
-            if type(filtResp) != type(()):
-                failed = logDocErr (docId, "filtering CWD", filtResp)
+        if not failed:
+            # We need to check this back in at end
+            checkedOut = 1
+
+            # Get version info
+            cdr.logwrite ("Checking lastVersions", LF)
+            result = cdr.lastVersions (session, docIdStr)
+            cdr.logwrite ("Finished checking lastVersions", LF)
+            if type (result) == type ("") or type (result) == (u""):
+                failed = logDocErr (docId, "fetching last version information",
+                                    result)
             else:
-                # Get document, ignore messages (filtResp[1])
-                chgCwdXml = filtResp[0]
-            cdr.logwrite ("Finished filtering doc", LF)
+                (lastVerNum, lastPubVerNum, isChanged) = result
 
-    if not failed:
-        # If there was a publishable version, and
-        # It's different from the CWD,
-        #   Filter the last publishable version too
-        if (lastVerNum == lastPubVerNum and isChanged):
+                # Filter doc to get new, changed CWD
+                cdr.logwrite ("Filtering doc", LF)
+                filtResp = cdr.filterDoc (session, filter=chg.chgFilter,
+                                          parm=parms, docId=docId, docVer=None)
 
-            cdr.logwrite ("Filtering last version", LF)
-            filtResp = cdr.filterDoc (session, filter=chg.chgFilter,
-                                      parm=parms, docId=docId,
-                                      docVer=lastPubVerNum)
-            if type(filtResp) != type(()):
-                failed = logDocErr(docId, "filtering last publishable version",
-                                   filtResp)
-            else:
-                chgPubVerXml = filtResp[0]
-            cdr.logwrite ("Finished filtering last version", LF)
+                if type(filtResp) != type(()):
+                    failed = logDocErr (docId, "filtering CWD", filtResp)
+                else:
+                    # Get document, ignore messages (filtResp[1])
+                    chgCwdXml = filtResp[0]
+                cdr.logwrite ("Finished filtering doc", LF)
 
-    if not failed:
-        # For debug
-        # willDo = ""
-        # if isChanged:
-        #     willDo = "<h1>Saved old working copy:</h1>" + oldCwdXml
-        # if chgPubVerXml:
-        #     willDo += "<h1>Changed published version:</h1>" + chgPubVerXml
-        # willDo += "<h1>New CWD version:</h1>" + chgCwdXml
+        if not failed:
 
-        # Store documents in the following order:
-        #    CWD before filtering - if it's not the same as last version
-        #    Filtered publishable version, if there is one
-        #    Filtered CWD
-        if isChanged:
-            cdr.logwrite ("Saving copy of working doc before change", LF)
-            repDocResp = cdr.repDoc (session, doc=str(oldCwdDocObj), ver='Y',
-                checkIn='N', verPublishable='N',
-                reason="Copy of working document from before global change "
+            # If there was a publishable version, we need to alter it
+            # This has to be done because the document may be published
+            #   again before a human ever reviews it and makes a publishable
+            #   version
+            if lastPubVerNum >= 0:
+
+                # If the publishable version is the same as the last
+                #   saved version, and the last saved version is the same
+                #   as the CWD, then we can just save the transformed
+                #   CWD with instructions to make a publishable version.
+                # This is better than retrieving the last publishable
+                #   version and filtering it not only because it's faster,
+                #   but also because it makes the last publishable version
+                #   and the CWD identical in the eyes of the version
+                #   control software.
+                if lastPubVerNum == lastPubVerNum and not isChanged:
+                    saveCWDPubVer = 'Y'
+                    cdr.logwrite ("Publishable version matches CWD, " \
+                                  "will save it as publisable version", LF)
+
+                else:
+                    # Last published version is different from the CWD
+                    # Fetch and filter it
+                    cdr.logwrite ("Filtering last version", LF)
+                    filtResp = cdr.filterDoc (session, filter=chg.chgFilter,
+                                              parm=parms, docId=docId,
+                                              docVer=lastPubVerNum)
+                    if type(filtResp) != type(()):
+                        failed = logDocErr(docId,
+                                 "filtering last publishable version", filtResp)
+                    else:
+                        chgPubVerXml = filtResp[0]
+                    cdr.logwrite ("Finished filtering last version", LF)
+
+        if not failed:
+            # For debug
+            # willDo = ""
+            # if isChanged:
+            #     willDo = "<h1>Saved old working copy:</h1>" + oldCwdXml
+            # if chgPubVerXml:
+            #     willDo += "<h1>Changed published version:</h1>" + chgPubVerXml
+            # willDo += "<h1>New CWD version:</h1>" + chgCwdXml
+
+            # Store documents in the following order:
+            #    CWD before filtering - if it's not the same as last version
+            #    Filtered publishable version, if there is one
+            #    Filtered CWD
+            if isChanged:
+                cdr.logwrite ("Saving copy of working doc before change", LF)
+                repDocResp = cdr.repDoc (session, doc=str(oldCwdDocObj),
+                    ver='Y', checkIn='N', verPublishable='N',
+                    reason="Copy of working document from before global change "
+                           "of %s to %s at %s" % (fromId, toId,
+                                                  time.ctime (time.time())))
+                if repDocResp.startswith ("<Errors"):
+                    failed = logDocErr (docId,
+                             "attempting to create version of pre-change doc",
+                             repDocResp)
+                    cdr.logwrite (("Creating pre-change doc", "Original CWD:",
+                                   oldCwdXml, "================"), LF)
+                cdr.logwrite (\
+                       "Finished saving copy of working doc before change", LF)
+
+        if not failed:
+            # If new publishable version was created, store it
+            if chgPubVerXml:
+                cdr.logwrite ("About to create Doc object for version", LF)
+                chgPubVerDocObj = cdr.Doc(id=docIdStr, type='InScopeProtocol',
+                                          x=chgPubVerXml)
+                cdr.logwrite ("About to replace published version in CDR", LF)
+                repDocResp = cdr.repDoc (session, doc=str(chgPubVerDocObj),
+                    ver='Y', val='Y', checkIn='N', verPublishable='Y',
+                    reason="Last publishable version, revised by global change "
+                           "of %s to %s at %s" % (fromId, toId,
+                                                  time.ctime (time.time())))
+                cdr.logwrite ("Replaced published version in CDR", LF)
+                if repDocResp.startswith ("<Errors"):
+                    failed = logDocErr (docId,
+                    "attempting to store last publishable version after change",
+                    repDocResp)
+
+        if not failed:
+            # Finally, the working document
+            chgCwdDocObj = cdr.Doc(id=docIdStr, type='InScopeProtocol',
+                                   x=chgCwdXml)
+            cdr.logwrite ("Saving CWD after change", LF)
+            repDocResp = cdr.repDoc (session, doc=str(chgCwdDocObj),
+                ver=saveCWDPubVer, verPublishable=saveCWDPubVer, checkIn='Y',
+                reason="Revised by global change " \
                        "of %s to %s at %s" % (fromId, toId,
                                               time.ctime (time.time())))
             if repDocResp.startswith ("<Errors"):
-                failed = logDocErr (docId,
-                         "attempting to create version of pre-change doc",
-                         repDocResp)
-                cdr.logwrite (("Creating pre-change doc", "Original CWD:",
-                               oldCwdXml, "================"), LF)
-            cdr.logwrite ("Finished saving copy of working doc before change",
-                           LF)
+                failed = logDocErr (docId, "attempting to store changed CWD",
+                                    repDocResp)
 
-    if not failed:
-        # If new publishable version was created, store it
-        if chgPubVerXml:
-            cdr.logwrite ("About to create Doc object for version", LF)
-            chgPubVerDocObj = cdr.Doc(id=docIdStr, type='InScopeProtocol',
-                                      x=chgPubVerXml)
-            cdr.logwrite ("About to replace published version in CDR", LF)
-            repDocResp = cdr.repDoc (session, doc=str(chgPubVerDocObj),
-                ver='Y', checkIn='N', verPublishable='Y',
-                reason="Last publishable version, revised by global change "
-                       "of %s to %s at %s" % (fromId, toId,
-                                              time.ctime (time.time())))
-            cdr.logwrite ("Replaced published version in CDR", LF)
-            if repDocResp.startswith ("<Errors"):
-                failed = logDocErr (docId,
-                  "attempting to store last publishable version after change",
-                  repDocResp)
+            else:
+                # Replace was successful.  Document checked in
+                checkedOut = 0
+            cdr.logwrite ("Finished saving CWD after change", LF)
 
-    if not failed:
-        # Finally, the working document
-        chgCwdDocObj = cdr.Doc(id=docIdStr, type='InScopeProtocol',
-                               x=chgCwdXml)
-        cdr.logwrite ("Saving CWD after change", LF)
-        repDocResp = cdr.repDoc (session, doc=str(chgCwdDocObj), ver='N',
-            checkIn='Y',
-            reason="Revised by global change " \
-                   "of %s to %s at %s" % (fromId, toId,
-                                          time.ctime (time.time())))
-        if repDocResp.startswith ("<Errors"):
-            failed = logDocErr (docId, "attempting to store changed CWD",
-                                repDocResp)
-
-        else:
-            # Replace was successful.  Document checked in
+        # If we did not complete all the way to check-in, have to unlock doc
+        if checkedOut:
+            cdr.unlock (session, docId)
+            cdr.logwrite ("Unlocking doc %d after failure" % docId, LF)
             checkedOut = 0
-        cdr.logwrite ("Finished saving CWD after change", LF)
 
-    # If we did not complete all the way to check-in, have to unlock doc
-    if checkedOut:
-        cdr.unlock (session, docId)
+        # If successful, add this document to the list of sucesses
+        if not failed:
+            changedDocs.append ((docId, title))
+            goodCount += 1
+        else:
+            failedDocs.append ((docId, title, failed))
+            failCount += 1
 
-    # If successful, add this document to the list of sucesses
-    if not failed:
-        changedDocs.append ((docId, title))
-        goodCount += 1
-    else:
-        failedDocs.append ((docId, title, failed))
-        failCount += 1
-
-    # Record progress for user
-    progressMsg = "Completed %d of %d changes, %d ok, %d failed" % \
-                  (goodCount + failCount, totalCount, goodCount, failCount)
-    jobObj.setProgressMsg (progressMsg)
-
-    # Has user cancelled job?
-    status = jobObj.getStatus()[0]
-    if status != cdrbatch.ST_IN_PROCESS:
-        progressMsg = "Stopped job after seeing status = %s" % status
-        cdr.logwrite (progressMsg, LF)
-        jobObj.setStatus (cdrbatch.ST_STOPPED)
+        # Record progress for user
+        progressMsg = "Completed %d of %d changes, %d ok, %d failed" % \
+                      (goodCount + failCount, totalCount, goodCount, failCount)
         jobObj.setProgressMsg (progressMsg)
-        sys.exit (1)
+
+        # Has user cancelled job?
+        status = jobObj.getStatus()[0]
+        if status != cdrbatch.ST_IN_PROCESS:
+            progressMsg += "<br>Stopped job after seeing status = %s" % status
+            cdr.logwrite (progressMsg, LF)
+            jobObj.setStatus (cdrbatch.ST_STOPPED)
+            jobObj.setProgressMsg (progressMsg)
+            break
+
+except Exception, ex:
+    progressMsg += \
+        "<br><h3>Exception halted processing doc %d:</h3>\n<p>%s</p>\n" % \
+                    (docId, str(ex))
+except StandardError, er:
+    progressMsg += \
+        "<br><h3>Error halted processing doc %d:</h3>\n<p>%s</p>\n" % \
+                    (docId, str(er))
 
 # Final report
 cdr.logwrite ("Finished processing", LF)
+cdr.logwrite ("Final status: %s" % progressMsg, LF)
+
 html = """
 <html><head><title>Global change report</title></head>
 <body>
 <h2>Final report on global change</h2>
 """
 html += chg.showSoFarHtml()
+
+html += "<h2>Final status:</h2>\n<p>" + progressMsg + "</p><hr>\n"
+
 if failCount:
     html += \
     "<h2>Documents that could <font color='red'>NOT</font> be changed</h2>\n"+\
