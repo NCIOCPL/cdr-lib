@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.1 2001-08-05 19:23:25 bkline Exp $
+# $Id: cdrdb.py,v 1.2 2001-08-05 20:25:03 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2001/08/05 19:23:25  bkline
+# Initial revision
+#
 #----------------------------------------------------------------------
 
 import win32com.client
@@ -607,12 +610,12 @@ ROWID    = Type(win32com.client.constants.adGUID,)
 def Date(year, month, day):
     return "%04d-%02d-%02d" % (year, month, day)
 
-def Time(hour, minute, second): pass
+def Time(hour, minute, second):
     return "%02d:%02d:%02d" % (hour, minute, second)
 
 def Timestamp(year, month, day, hour, minute, second):
-    return %04d-%02d-%02d %02d:%02d:%02d" % (year, month, day, 
-                                             hour, minute, second)
+    return "%04d-%02d-%02d %02d:%02d:%02d" % (year, month, day, 
+                                              hour, minute, second)
 
 def DateFromTicks(ticks):
     return "%04d-%02d-%02d" % time.localtime(ticks)[:3]
@@ -620,5 +623,5 @@ def DateFromTicks(ticks):
 def TimeFromTicks(ticks):
     return "%02d:%02d:%02d" % time.localtime(ticks)[3:6]
 
-def TimestampFromTicks(ticks): pass
-    return %04d-%02d-%02d %02d:%02d:%02d" % time.localtime(ticks)[:6]
+def TimestampFromTicks(ticks):
+    return "%04d-%02d-%02d %02d:%02d:%02d" % time.localtime(ticks)[:6]
