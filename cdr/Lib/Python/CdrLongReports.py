@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.9 2003-12-16 16:17:38 bkline Exp $
+# $Id: CdrLongReports.py,v 1.10 2004-02-10 14:19:30 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2003/12/16 16:17:38  bkline
+# Added URL check report.
+#
 # Revision 1.8  2003/09/11 12:40:30  bkline
 # Fixed email message for two of the report types.
 #
@@ -582,7 +585,7 @@ def ospReport(job):
         docXml = cursor.fetchone()[0]
         dom = xml.dom.minidom.parseString(docXml.encode('utf-8'))
         prot = Protocol(row[0], dom.documentElement)
-        if prot.wasActive("1998-01-31", "2002-12-31"):
+        if prot.wasActive("1998-01-01", "2003-12-31"):
             protocols.append(prot)
         done += 1
         now = time.time()
