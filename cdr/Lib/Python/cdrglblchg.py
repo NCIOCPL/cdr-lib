@@ -1,8 +1,11 @@
-# $Id: cdrglblchg.py,v 1.20 2003-11-14 02:17:21 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.21 2003-11-18 17:14:04 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.20  2003/11/14 02:17:21  ameyer
+# Completed changes for global terminology change.
+#
 # Revision 1.19  2003/11/05 01:45:44  ameyer
 # Extensive changes for handling global terminology changes.
 #
@@ -871,15 +874,14 @@ class GlblChg:
             html += "<td> %s (%s)</td></tr>\n" % \
                  (self.ssVars['restrPiId'], self.ssVars['restrPiTitle'])
             haveSoFar = 1
+        termHtml = self.showTermsSoFar()
+        if len (termHtml) > 0:
+            html += termHtml
+            haveSoFar = 1
         if self.ssVars.has_key ('chgCount'):
             html += \
               "<tr><td align='right'>Count of documents to change: </td>\n"
             html += "<td> %s</td></tr>\n" % self.ssVars['chgCount']
-            haveSoFar = 1
-
-        termHtml = self.showTermsSoFar()
-        if len (termHtml) > 0:
-            html += termHtml
             haveSoFar = 1
 
         if haveSoFar:
@@ -928,14 +930,21 @@ class GlblChg:
         for trmUse in TERM_USES:
             for i in range (TERM_MAX_CRITERIA):
                 # Only compose a row if we have all info for it
-                keyId  = "trm%sId%d" % (trmUse, i)
-                keyVal = "trm%sVal%d" % (trmUse, i)
+                keyId    = "trm%sId%d" % (trmUse, i)
+                keyVal   = "trm%sVal%d" % (trmUse, i)
+                keyField = "trm%sField%d" % (trmUse, i)
                 if self.ssVars.has_key(keyId) and self.ssVars.has_key(keyVal):
-                    keyField = "trm%sField%d" % (trmUse, i)
                     html += \
                  "<tr><td align='right'>%s %s: </td><td> %s (%s)</td></tr>\n"%\
                      (TERM_MSGS[trmUse], self.ssVars[keyField],
                       self.ssVars[keyVal], self.ssVars[keyId])
+                # Special case for StudyCategory - no trmTypId0 for it
+                if keyField == TERM_SCAT_FLD and self.ssVars.has_key(keyVal):
+                    html += \
+                 "<tr><td align='right'>%s %s: </td><td> %s</td></tr>\n"%\
+                     (TERM_MSGS[trmUse], self.ssVars[keyField],
+                      self.ssVars[keyVal])
+
 
         return html
 
