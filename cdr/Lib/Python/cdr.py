@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.66 2002-11-13 20:36:05 bkline Exp $
+# $Id: cdr.py,v 1.67 2002-11-22 14:40:48 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.66  2002/11/13 20:36:05  bkline
+# Plugged in filter set mechanism for filterDoc().
+#
 # Revision 1.65  2002/11/13 16:57:54  bkline
 # Added delFilterSet().
 #
@@ -1972,7 +1975,7 @@ Subject: %s
             message += "Content-type: text/html; charset=iso-8859-1\n"
 
         # Separator line + body
-        message += "\n %s" % body
+        message += "\n%s" % body
 
         # Send it
         server = smtplib.SMTP(SMTP_RELAY)
