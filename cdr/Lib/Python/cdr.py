@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.93 2004-08-27 13:47:46 bkline Exp $
+# $Id: cdr.py,v 1.94 2004-09-15 01:02:58 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.93  2004/08/27 13:47:46  bkline
+# Added document status functions.
+#
 # Revision 1.92  2004/08/11 17:54:07  bkline
 # Added new function addExternalMapping().
 #
@@ -307,7 +310,7 @@
 # Import required packages.
 #----------------------------------------------------------------------
 import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
-import os, smtplib, time, cdrdb, tempfile, traceback
+import os, smtplib, time, cdrdb, tempfile, traceback, difflib
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -3053,6 +3056,23 @@ class StringSink:
         self.s += s
 
 #----------------------------------------------------------------------
+# Remove all lines from a multi-line string (e.g., an XML doc)
+# that are empty or contain nothing but whitespace.
+#----------------------------------------------------------------------
+def stripBlankLines(s):
+    # Make a sequence
+    inSeq = s.split("\n")
+
+    # Copy non blank lines to new sequence
+    outSeq = []
+    for line in inSeq:
+        if len(string.lstrip(line)):
+            outSeq.append(line)
+
+    # Return them as a string with newlines at each line end
+    return "\n".join(outSeq);
+
+#----------------------------------------------------------------------
 # Takes a utf-8 string for an XML document and creates a utf-8 string
 # suitable for comparing two versions of XML documents by normalizing
 # non-essential differences away.  Used by compareDocs() (below).
@@ -3064,12 +3084,39 @@ def normalizeDoc(utf8DocString):
     return sFile.s
 
 #----------------------------------------------------------------------
+# Extract a CDATA section from a document.
+# Simple version, only gets first CDATA, but we never use
+#  more than one.
+#----------------------------------------------------------------------
+def getCDATA(utf8string):
+    return extract(r"<!\[CDATA\[(.*?)]]>", utf8string)
+
+#----------------------------------------------------------------------
 # Compares two XML documents by normalizing each.  Returns non-zero
 # if documents are different; otherwise zero.  Expects each document
 # to be passed as utf8-encoded documents.
 #----------------------------------------------------------------------
 def compareXmlDocs(utf8DocString1, utf8DocString2):
     return cmp(normalizeDoc(utf8DocString1), normalizeDoc(utf8DocString2))
+
+#----------------------------------------------------------------------
+# Compare two XML documents by normalizing each.
+# Returns the output of a textual differencer as a sequence of lines.
+# See Python difflib.Differ.compare().
+#----------------------------------------------------------------------
+def diffXmlDocs(utf8DocString1, utf8DocString2):
+    # Normalize
+    doc1 = stripBlankLines(
+       xml.dom.minidom.parseString(getCDATA(utf8DocString1)).toprettyxml("  "))
+    doc2 = stripBlankLines(
+       xml.dom.minidom.parseString(getCDATA(utf8DocString2)).toprettyxml("  "))
+
+    # Compare
+    diffObj = difflib.Differ()
+    diffSeq = diffObj.compare(doc1.splitlines(1),doc2.splitlines(1))
+
+    # Return the difference as a single string
+    return "".join(diffSeq)
 
 #----------------------------------------------------------------------
 # Tell the caller if we are on the development host.
