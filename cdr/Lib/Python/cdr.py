@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.82 2003-12-19 22:07:39 ameyer Exp $
+# $Id: cdr.py,v 1.83 2004-02-03 15:38:21 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.82  2003/12/19 22:07:39  ameyer
+# Added utf-8 encoding of filterDoc doc and parameters, in case of need.
+#
 # Revision 1.81  2003/11/04 17:00:18  bkline
 # Added check to getErrors() to make sure we were passed a string.
 #
@@ -2887,3 +2890,17 @@ def normalizeDoc(utf8DocString):
 #----------------------------------------------------------------------
 def compareXmlDocs(utf8DocString1, utf8DocString2):
     return cmp(normalizeDoc(utf8DocString1), normalizeDoc(utf8DocString2))
+
+#----------------------------------------------------------------------
+# Tell the caller if we are on the development host.
+#----------------------------------------------------------------------
+def isDevHost():
+    localhost = socket.gethostname()
+    return localhost.upper().startswith("MAHLER")
+
+#----------------------------------------------------------------------
+# Tell the caller if we are on the development host.
+#----------------------------------------------------------------------
+def isProdHost():
+    localhost = socket.gethostname()
+    return localhost.upper().startswith("BACH")
