@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.3 2003-03-27 15:20:19 ameyer Exp $
+# $Id: cdrbatch.py,v 1.4 2003-05-08 20:40:15 bkline Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,10 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2003/03/27 15:20:19  ameyer
+# Added activeCount function to support callers needing to know if
+# the job they want to start is already running.
+#
 # Revision 1.2  2002/09/19 18:02:21  ameyer
 # Fixed some bugs revealed by pychecker.
 # Add unicode->utf-8 conversion for parameters retrieved from the database.
@@ -314,7 +318,7 @@ class CdrBatch:
     # Constructor
     #------------------------------------------------------------------
     def __init__(self, jobId=None, jobName='Global Change', command=None,
-                 args=None, email=None, priority=None):
+                 args=None, email=None, priority=None, host='localhost'):
         """
         Constructor for base class of batch jobs.
 
@@ -338,7 +342,7 @@ class CdrBatch:
 
         # Need access to the database for anything we do
         try:
-            self.__conn   = cdrdb.connect ()
+            self.__conn   = cdrdb.connect (dataSource = host)
             self.__cursor = self.__conn.cursor()
         except cdrdb.Error, info:
             # Job must not try to run itself
