@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.75 2003-04-26 16:32:36 bkline Exp $
+# $Id: cdr.py,v 1.76 2003-07-29 13:02:03 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.75  2003/04/26 16:32:36  bkline
+# Eliminated assumptions about encoding for Doc class.
+#
 # Revision 1.74  2003/04/25 20:26:40  ameyer
 # Added line each to addDoc, repDoc to ensure unicode->utf-8 encoding.
 #
@@ -253,7 +256,7 @@ import os, smtplib, time, cdrdb, tempfile, traceback
 # Set some package constants
 #----------------------------------------------------------------------
 PROD_HOST     = 'bach.nci.nih.gov'
-CVSROOT       = "mahler.nci.nih.gov:/d//usr/local/cvsroot"
+CVSROOT       = "verdi.nci.nih.gov:/usr/local/cvsroot"
 DEFAULT_HOST  = 'localhost'
 DEFAULT_PORT  = 2019
 URDATE        = '2002-06-22'
@@ -1221,6 +1224,73 @@ class TermSet:
     def __init__(self, error = None):
         self.terms = {}
         self.error = error
+
+#----------------------------------------------------------------------
+# Retrieve a list of valid values defined in a schema for a doctype
+#----------------------------------------------------------------------
+def getVVList(credentials, docType, vvName, sorted=0, putFirst=None,
+              host=DEFAULT_HOST, port=DEFAULT_PORT):
+    """
+    Creates a list of valid values from a schema.
+
+    Pass:
+        credentials - Standard stuff.
+        doctype     - String name of the document type.
+        vvName      - Name of XML element for which valid vals are desired.
+        sorted      - True=sort the list alphabetically, else leave alone.
+        putFirst    - Optional of value(s) to move to the top of the
+                      list.  Used to get some particular ordering, move
+                      a default value to the top, etc.
+                      Can accept list, single value, or None.
+        host/port   - Standard stuff.
+
+    Raises:
+        Standard error if anything goes wrong.
+    """
+    # Get all info about this doctype
+    # It would be more efficient to get less, but is more robust
+    #   to use our standard getDoctype function for this.
+    dt = getDoctype (credentials, docType, host, port)
+    if type(dt)==type("") or type(dt)==type(u""):
+        raise ('Error getting doctype "%s" for valid values in "%s": %s' % \
+               (docType, vvName, dt))
+
+    # Extract the valid value list from the doctype info
+    vals = []
+    for vvList in dt.vvLists:
+        if vvList[0] == vvName:
+            vals = vvList[1]
+            break
+
+    # Should never happen
+    if vals == []:
+        raise ('No valid value list for "%s" in doctype %s' % \
+               (vvName, docType))
+
+    # If sorting
+    if sorted:
+        vals.sort()
+
+    # If user wants to put some special value(s) first
+    if putFirst:
+        # If scalar passed, convert it to a list
+        putVals = []
+        if type(putFirst) in (type(()), type([])):
+            putVals = putFirst
+        else:
+            putVals = [putFirst]
+
+        # Insert values at head and delete them from further on
+        pos = 0
+        for putVal in putVals:
+            vals.insert (pos, putVal)
+            pos += 1
+            for i in range(pos, len(vals)):
+                if vals[i] == putVal:
+                    del vals[i]
+                    break
+
+    return vals
 
 #----------------------------------------------------------------------
 # Gets context information for term's position in terminology tree.
@@ -2540,6 +2610,9 @@ def extractResponseNode(caller, responseString):
     if not errElems:
         raise StandardError(caller, 'call failed but Err elements missing')
     wrapException(caller, errElems)
+
+    # wrapException does not return, but add a return to silence pychecker
+    return None
 
 #----------------------------------------------------------------------
 # Get the list of filters in the CDR.
