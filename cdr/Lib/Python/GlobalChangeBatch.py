@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.3 2002-08-09 03:48:05 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.4 2002-08-13 21:15:36 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,9 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2002/08/09 03:48:05  ameyer
+# Changes for organization status protocol global change.
+#
 # Revision 1.2  2002/08/08 18:05:18  ameyer
 # Revised handling of filtering of publishable versions.
 # Increased reporting to users in emailed report.
@@ -136,6 +139,7 @@ chg.sessionVars[cdrcgi.SESSION] = session
 #----------------------------------------------------------------------
 # Get from/to change parameters
 if chgType == cdrglblchg.STATUS_CHG:
+    fromId  = jobObj.getParm ('fromId')
     fromVal = jobObj.getParm ('fromStatusName')
     toVal   = jobObj.getParm ('toStatusName')
 else:
@@ -205,13 +209,19 @@ try:
         else:
             oldCwdXml = oldCwdDocObj.xml
 
-        # Filter current working document
-        # XXXX Check that Volker uses these same variables in all scripts
-        parms = [['changeFrom', fromVal], ['changeTo', toVal]]
+            # Remember that we need to check this back in at end
+            checkedOut = 1
+
+        # Set list of filter parameters for modifying doc based on type
+        if chgType == cdrglblchg.STATUS_CHG:
+            parms = [['orgId', fromId],
+                     ['oldStatus', fromVal],
+                     ['newStatus', toVal]]
+        else:
+            parms = [['changeFrom', fromVal],
+                     ['changeTo', toVal]]
 
         if not failed:
-            # We need to check this back in at end
-            checkedOut = 1
 
             # Get version info
             cdr.logwrite ("Checking lastVersions", LF)

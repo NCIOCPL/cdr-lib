@@ -1,9 +1,12 @@
 #------------------------------------------------------------
-# $Id: cdrglblchg.py,v 1.3 2002-08-09 03:47:46 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.4 2002-08-13 21:16:12 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2002/08/09 03:47:46  ameyer
+# Changes for organization status protocol global change.
+#
 # Revision 1.2  2002/08/06 22:52:20  ameyer
 # Fixed SQL select statement for organizations.
 #
@@ -284,6 +287,9 @@ class GlblChg:
         # Put in a session variable to identify this screen
         html = "<input type='hidden' name='okToRun' value='Y'>\n"
 
+        # Remember the count
+        self.sessionVars['chgCount'] = len(rows)
+
         # Create the table
         html += cdr.tabularize (rows, " border='1'")
 
@@ -318,6 +324,11 @@ class GlblChg:
             html += \
               "<tr><td align='right'>Changing protocol status to: </td>\n"
             html += "<td> %s</td></tr>\n" % self.sessionVars['toStatusName']
+            haveSoFar = 1
+        if self.sessionVars.has_key ('chgCount'):
+            html += \
+              "<tr><td align='right'>Count of documents to change: </td>\n"
+            html += "<td> %s</td></tr>\n" % self.sessionVars['chgCount']
             haveSoFar = 1
 
         if haveSoFar:
@@ -489,7 +500,7 @@ class GlblChg:
     def getFromToStatus (self):
         """ Create a screen to get from and to OrgSiteStatus values
             Returns tuple ready for sendGlblChgPage """
-        html = """
+        html = self.showSoFarHtml() + """
 <table border='0'>
  <tr>
   <td align='right'>Select status to change from</td>
@@ -670,7 +681,7 @@ class OrgStatusChg (GlblChg):
 
     # Name of filter for OrgStatus global changes
     # There is no location picklist.  All locations are affected.
-    chgFilter = ['name:Global Change: XXXX - TO BE NAMED']
+    chgFilter = ['name:Global Change: Org Status']
 
     def __init__(self):
         GlblChg.__init__(self)
