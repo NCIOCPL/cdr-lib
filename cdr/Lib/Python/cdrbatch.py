@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.4 2003-05-08 20:40:15 bkline Exp $
+# $Id: cdrbatch.py,v 1.5 2003-09-17 02:53:22 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,9 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2003/05/08 20:40:15  bkline
+# Added ability to queue a batch job on a different server.
+#
 # Revision 1.3  2003/03/27 15:20:19  ameyer
 # Added activeCount function to support callers needing to know if
 # the job they want to start is already running.
@@ -369,13 +372,12 @@ class CdrBatch:
                         self.fail (\
                             "Individual job arguments must be tuples of " +\
                             "(argname, argvalue)")
-                    if type(argPair[0]) != type (""):
-                        self.fail ("Argument name must be string")
-                    if type(argPair[1]) != type (""):
-                        self.fail ("Argument value must be string")
+                    # Conversions
+                    argname  = str(argPair[0])
+                    argvalue = str(argPair[1])
 
                     # Store arguments in dictionary, by name
-                    self.__args[argPair[0]] = argPair[1]
+                    self.__args[argname] = argvalue
 
             # Others don't exist until job is queued and/or run
             self.__status      = None
