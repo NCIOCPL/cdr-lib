@@ -1,8 +1,11 @@
 #
 # Script for command line and CGI publishing.
 #
-#$Id: publish.py,v 1.3 2001-10-05 18:50:49 Pzhang Exp $
+#$Id: publish.py,v 1.4 2001-12-03 23:14:15 Pzhang Exp $
 #$Log: not supported by cvs2svn $
+#Revision 1.3  2001/10/05 18:50:49  Pzhang
+#Changed Publish.SUCCESS to SUCCEED, Fail to Failure, Wait to Waiting.
+#
 #Revision 1.2  2001/10/05 15:08:01  Pzhang
 #Added __invokePracessScript for Bob's Python Script.
 #Imported traceback to handle exceptions.
@@ -66,15 +69,17 @@ class Publish:
     __docIds = {}   # Dictionary to store non-duplicate docIds
     __userId = 0
     __userName = ""
+    __cdr_email = "cdr@mmdb2.nci.nih.gov"
 
     # Do nothing but set local variables.
     def __init__(self, strCtrlDocId, subsetName, credential,
-                docIds, params, jobId = 0):
+                docIds, params, email = None, jobId = 0, ):
         self.strCtrlDocId = strCtrlDocId      
         self.subsetName = subsetName
         self.credential = credential    
         self.docIds = docIds
-        self.params = params            
+        self.params = params  
+        self.email = email            
         self.jobId = jobId            
     
     # This is a CGI helper function.
@@ -257,20 +262,21 @@ class Publish:
         self.__getConn()        
         
         sql = """SELECT id, output_dir, CAST(started AS varchar(30)) as started, 
-            CAST(completed AS varchar(30)) as completed, status, messages 
+            CAST(completed AS varchar(30)) as completed, status, messages, email
             FROM pub_proc 
             WHERE id = %s""" % jobId
         rs = self.__execSQL(sql)
 
         row = ["id", "output_dir", "started", "completed", 
-            "status", "messages"]
+            "status", "messages", "email"]
         while not rs.EOF:
             row[0] = rs.Fields("id").Value
             row[1] = rs.Fields("output_dir").Value    
             row[2] = rs.Fields("started").Value    
             row[3] = rs.Fields("completed").Value
             row[4] = rs.Fields("status").Value
-            row[5] = rs.Fields("messages").Value            
+            row[5] = rs.Fields("messages").Value  
+            row[6] = rs.Fields("email").Value                
             rs.MoveNext()
         rs.Close()
         rs = None
@@ -403,27 +409,53 @@ class Publish:
                 #    Publishing_Process_Documents tables,
                 #    respectively.
                 self.__updateStatuses()
+
             elif status == Publish.FAIL: 
                 # Rename the destination dir to .FAIL
                 os.rename(dest, dest_base + ".FAIL")
             elif status == Publish.WAIT: 
                 # Rename the destination dir to .WAIT
-                os.rename(dest, dest_base + ".WAIT")            
+                os.rename(dest, dest_base + ".WAIT")  
+          
+            # Send email to notify user of job status.
+            self.__sendMail()
 
             # Disconnected from CDR.
             if not self.__cdrConn is None:
                 self.__cdrConn.Close()
                 self.__cdrConn = None
+              
+    #------------------------------------------------------------------
+    # Inform the user that the job has completed.
+    #------------------------------------------------------------------
+    def __sendMail(self):
+        try:
+            if self.email and self.email != "Do not notify":
+                if NCGI: print "Sending mail to %s, Job %d has completed" % (self.email, self.jobId)
+                sender  = self.__cdr_email
+                subject = "CDR Publishing Job Status"
+                receivers = string.split(self.email, ",")
+                message = """\
+Job %d has completed.  You can view a status report for this job at:
+
+    http://mmdb2.nci.nih.gov/cgi-bin/cdr/PubStatus.py?id=%d
+
+Please do not reply to this message.
+""" % (self.jobId, self.jobId)
+                cdr.sendMail(sender, receivers, subject, message)
+        except:
+            if NCGI: print "failure sending email to %s: %s" % (self.email,
+                                                          cdr.exceptionInfo())
 
     # This is the major helper function to reset input parameters:
-    #    strCtrlDocId, subsetName, credential, docIds, and params    
+    #    strCtrlDocId, subsetName, email, credential, docIds, and params    
     def __resetParamsByJobId(self):
 
         # Connect to CDR. Abort when failed. Cannot log status in this case.
         self.__getConn()
         
         # reset strCtrlDocId, subsetName
-        sql = """SELECT pub_system, pub_subset, usr 
+        sql = """SELECT pub_system, pub_subset, usr, email
                 FROM pub_proc
                 WHERE id = %d 
                     AND status = '%s'""" % (self.__procId, Publish.START)
@@ -435,6 +467,7 @@ class Publish:
             self.strCtrlDocId = str(rs.Fields("pub_system").Value)
             self.subsetName = rs.Fields("pub_subset").Value
             self.__userid = rs.Fields("usr").Value
+            self.email = rs.Fields("email").Value
             rs.MoveNext()
         rs.Close()
         if rows == 0 or rows > 1:
@@ -659,10 +692,11 @@ class Publish:
         if NCGI: print "in __createProcess\n"
 
         sql = """INSERT INTO pub_proc (pub_system, pub_subset, usr,
-            output_dir, started, completed, status, messages) 
-            VALUES (%s, '%s', %d, 'temp', GETDATE(), null, '%s', '%s')
+            output_dir, started, completed, status, messages, email) 
+            VALUES (%s, '%s', %d, 'temp', GETDATE(), null, '%s', '%s', '%s')
             """ % (self.strCtrlDocId, self.subsetName, self.__userId,
-                    Publish.INIT, 'This row has just been created.')
+                    Publish.INIT, 'This row has just been created.',
+                    self.email)
         self.__execSQL(sql)
 
         sql = """SELECT id FROM pub_proc WHERE pub_system = %s AND
@@ -1163,7 +1197,11 @@ class Publish:
     #     publishing_process and publishing_process_documents tables. 
     #----------------------------------------------------------------
     def __updateStatuses(self): 
-        if NCGI: print "in __updateStatuses\n"
+        if NCGI: print "in __updateStatuses, Disabled\n"
+
+        # No longer needed because pub_event is changed to a view of
+        #   pub_proc.
+        return
 
         # Copy a row with procId to insert into pub_event.        
         sql = "INSERT INTO pub_event SELECT p.pub_system, p.pub_subset, "
@@ -1291,7 +1329,7 @@ def main():
             if NCGI: print "*Error: Usage: pubmod.py jobId."
             sys.exit(1)
        
-        p = Publish("Fake", "Fake", "Fake", [], [], string.atoi(sys.argv[1]))
+        p = Publish("Fake", "Fake", "Fake", [], [], "Fake", string.atoi(sys.argv[1]))
         p.publish() 
 
     except:        
