@@ -1,8 +1,13 @@
-# $Id: cdrglblchg.py,v 1.24 2004-02-04 00:52:56 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.25 2004-02-06 02:36:23 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.24  2004/02/04 00:52:56  ameyer
+# Added invocation of a filter to check for InterventionType without
+# InterventionNameLink after a global terminology change.
+# Also added a bit of documentation.
+#
 # Revision 1.23  2004/01/30 02:26:31  ameyer
 # Added support for picking individual documents to process or not
 # by using checkboxes in the CGI.
@@ -2699,7 +2704,7 @@ WHERE path='/InScopeProtocol/ProtocolDetail/StudyCategory/StudyCategoryName'
             # Mark this one as done
             self.doneChgs[filterVer]["INLCheck"] = 1
             filterName = \
-                ["name:Global Change: Check Terminology InterventionNameLink"]
+                ["name:Global Change: Check for Missing Terminology Elements"]
             return (filterName, parms)
 
         # If we got here, all filters have been processed
