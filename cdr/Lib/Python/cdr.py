@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.26 2002-03-19 00:33:06 bkline Exp $
+# $Id: cdr.py,v 1.27 2002-04-02 14:30:13 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.26  2002/03/19 00:33:06  bkline
+# Added validateOnly parameter to valDoc().
+#
 # Revision 1.25  2002/03/04 15:04:53  bkline
 # Replaced verAttr with qual in filterDoc().
 #
@@ -1487,6 +1490,58 @@ def unlock(credentials, docId, abandon = 'Y', force = 'Y', reason = '',
     err = checkErr(resp)
     if err: return err
     return ""
+
+#----------------------------------------------------------------------
+# Create a new publishing job.
+#----------------------------------------------------------------------
+def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
+           email = '', noOutput = 'N',
+           host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Create the command.
+    pubSystem = "<PubSystem>%s</PubSystem>" % pubSystem
+    pubSubset = "<PubSubset>%s</PubSubset>" % pubSubset
+    email     = email and "<Email>%s</Email>" % email
+    noOutput  = noOutput and "<NoOutput>%s</NoOutput>" % noOutput
+    parmElem  = ''
+    docsElem  = ''
+    if parms:
+        parmElem = "<Parms>"
+        for parm in parms:
+            parmElem += "<Parm><Name>%s</Name><Value>%s</Value></Parm>" % (
+                        parm[0], parm[1])
+        parmElem += "</Parms>"
+    if docList:
+        expr = re.compile(r"CDR(\d+)(/(\d+))?")
+        docsElem += "<DocList>"
+        for doc in docList:
+            match = expr.search(doc)
+            if not match:
+                return (None, "<Errors><Err>Malformed docList member '%s'"\
+                              "</Err></Errors>")
+            id = normalize(match.group(1))
+            version = match.group(3) or "0"
+            docsElem += "<Doc Id='%s' Version='%s'/>" % (id, version)
+        docsElem += "</DocList>"
+        
+    cmd = "<CdrPublish>%s%s%s%s%s%s</CdrPublish>" % (pubSystem,
+                                                     pubSubset,
+                                                     parmElem,
+                                                     docsElem,
+                                                     email,
+                                                     noOutput)
+
+    # Submit the commands.
+    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+
+    # Return the job ID and any warnings/errors.
+    jobId  = None
+    errors = None
+    if resp.find("<JobId") != -1:
+        jobId  = extract(r"<JobId>([^<]*)</JobId>", resp)
+    if resp.find("<Errors") != -1:
+        errors = extract(r"(<Errors[\s>].*</Errors>)", resp)
+    return (jobId, errors)
 
 #----------------------------------------------------------------------
 # Log out from the CDR.
