@@ -142,11 +142,14 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: ExcelReader.py,v 1.5 2004-11-04 13:13:58 bkline Exp $
+# $Id: ExcelReader.py,v 1.6 2005-01-06 22:55:55 bkline Exp $
 #
 # Module for extracting cell values from Excel spreadsheets.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2004/11/04 13:13:58  bkline
+# Removed superfluous quote mark in doc string.
+#
 # Revision 1.4  2004/10/12 11:36:29  bkline
 # Fixed name of fileBuf argument to OleStorage constructor.
 #
@@ -426,8 +429,10 @@ class Workbook:
             # SST record (CONTINUE records make this ugly)
             elif record.id == 0x00FC:
                 (dummy, count) = struct.unpack("<2l", record.data[:8])
-                if DEBUG: sys.stderr.write("SST count=%d\n" % count)
                 i, pos, buf = 0, 0, record.data[8:]
+                if DEBUG: 
+                    sys.stderr.write("SST count=%d len(buf)=%d offset=%d\n" % 
+                                     (count, len(buf), offset))
                 while i < count:
                     if pos >= len(buf):
                         offset += record.size + 4
@@ -467,7 +472,8 @@ class Workbook:
                         pos += s.nbytes
                     if DEBUG:
                         try:
-                            msg = u"sst[%d] = %s\n" % (i, self.sst[i])
+                            msg = u"sst[%d] = %s pos=%d\n" % (i, self.sst[i],
+                                                              pos)
                             sys.stderr.write(msg.encode('latin-1', 'replace'))
                         except:
                             sys.stderr.write("type(self.sst[i]=%s\n"
@@ -902,6 +908,8 @@ class Cell:
             fontIndex, formatIndex = book.xf[xf]
             self.font = book.fonts[fontIndex]
             self.fmt  = book.formats[formatIndex]
+        if DEBUG:
+            sys.stderr.write("%s\n" % repr(self).encode('utf-8'))
 
     def __str__(self):
         """Implements the behavior of the builtin str() function,
@@ -1120,11 +1128,20 @@ class UnicodeString:
         self.farEast = (flags & 4) and True or False
         self.rtf = (flags & 8) and True or False
         self.nbytes = pos
+        if DEBUG and (self.rtf or self.farEast):
+            flagArray = []
+            if self.rtf: flagArray = ['rtf']
+            if self.farEast: flagArray.append('farEast')
+            if self.utf16: flagArray.append('utf16')
+            sys.stderr.write("unicode len: %d; lensize=%d; "
+                             "flags: %s; buf: %s\n" %
+                             (self.length, lenSize, "+".join(flagArray),
+                              OleStorage.showBytes(buf[:255])))
         if self.rtf:
-            self.nbytes += struct.unpack("<h", buf[pos:pos+2])[0] * 4
+            self.nbytes += struct.unpack("<h", buf[pos:pos+2])[0] * 4 + 2
             pos += 2
         if self.farEast:
-            self.nbytes += struct.unpack("<l", buf[pos:pos+4])[0]
+            self.nbytes += struct.unpack("<l", buf[pos:pos+4])[0] + 4
             pos += 4
         if self.utf16:
             self.value = unicode(buf[pos:pos+self.length*2], "utf-16-le")
@@ -1277,7 +1294,7 @@ class ExcelTimeFromNumber(ExcelTime):
             self.millis  = int(fraction)
 
 if __name__ == "__main__":
-    #DEBUG  = True
+    DEBUG  = True
     book   = Workbook(sys.argv[1])
     flag   = len(sys.argv) > 2 and sys.argv[2] != "rows"
     doc    = book.toXml(flag)
