@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.20 2002-08-13 23:07:50 pzhang Exp $
+# $Id: cdrpub.py,v 1.21 2002-08-15 17:39:16 pzhang Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.20  2002/08/13 23:07:50  pzhang
+# Added more filtering time messages.
+# Added getLastCgJob to match CG's definition of lastJob.
+#
 # Revision 1.19  2002/08/12 16:49:18  pzhang
 # Added updateMessage function to help trace publishing process.
 #
@@ -88,6 +92,7 @@ class Publish:
     # class private variables
     __cdrEmail = "cdr@%s.nci.nih.gov" % socket.gethostname()
     __pd2cg    = "Push_Documents_To_Cancer.Gov"
+    __cdrHttp  = "http://%s.nci.nih.gov/cgi-bin/cdr" % socket.gethostname()
 
     #---------------------------------------------------------------
     # Load the job settings from the database.  User-specified
@@ -343,8 +348,15 @@ class Publish:
 
             self.__updateMessage("""Finish filtering/validating all %d docs 
                                     at %s.<BR>""" % (numDocs, time.ctime())) 
-            numFailures = self.__getFailures()
-            self.__updateMessage("Total of %d docs failed.<BR>" % numFailures)   
+            numFailures = self.__getFailures() 
+            if numFailures > 0:
+                msg = """Total of %d docs failed. 
+                    <A href="%s/FilterFailures.py?id=%d">Check the failure
+                    details.</A><BR>""" % (numFailures, self.__cdrHttp, 
+                    self.__jobId)  
+                self.__updateMessage(msg)
+            else:
+                self.__updateMessage("Total of 0 docs failed.<BR>")                    
 
             if self.__publishIfWarnings == "Ask" and self.__warningCount:
                 self.__updateStatus(Publish.WAIT, "Warnings encountered")
@@ -623,7 +635,7 @@ class Publish:
                         self.__updateMessage(msg, jobId)
                         msg = ""  
                 msg += "%d documents sent to Cancer.gov.<BR>" % addCount
-                self.__updateMessage(msg, cg_job)
+                self.__updateMessage(msg, jobId)
                 msg = "" 
 
             # Remove all the removed documents. 
@@ -1440,10 +1452,10 @@ class Publish:
                 message   = """\
 Job %d has completed.  You can view a status report for this job at:
 
-    http://%s.nci.nih.gov/cgi-bin/cdr/PubStatus.py?id=%d
+    %s/PubStatus.py?id=%d
 
 Please do not reply to this message.
-""" % (jobId, socket.gethostname(), jobId)
+""" % (jobId, self.__cdrHttp, jobId)
                 cdr.sendMail(sender, receivers, subject, message)
         except:
             msg = "failure sending email to %s: %s" % \
@@ -1817,7 +1829,7 @@ Please do not reply to this message.
             if row and row[0]:           
                 return row[0]
             else:
-                msg = 'Failure getting failed docs for job %d.<BR>' % id            
+                msg = 'No failed docs found for job %d.<BR>' % id            
                 self.__updateMessage(msg)
                 return 0
                      
