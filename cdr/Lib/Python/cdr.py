@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.43 2002-07-25 17:21:30 bkline Exp $
+# $Id: cdr.py,v 1.44 2002-07-31 05:03:11 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.43  2002/07/25 17:21:30  bkline
+# Added comment about the reason argument in addDoc/repDoc.
+#
 # Revision 1.42  2002/07/24 02:40:38  bkline
 # Added PERL constant.
 #
@@ -143,7 +146,7 @@
 # Import required packages.
 #----------------------------------------------------------------------
 import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
-import os, smtplib, time
+import os, smtplib, time, cdrdb
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -332,6 +335,48 @@ def login(userId, passWord, host = DEFAULT_HOST, port = DEFAULT_PORT):
     return extract("<SessionId[^>]*>(.+)</SessionId>", resp)
 
 #----------------------------------------------------------------------
+# Identify the user associated with a session.
+# Essentially a reverse login, provides info needed to re-login
+# the same user with a new session.
+# Note: This is a quick and dirty insecure function, but anyone with
+#       access to it already has access to the same info via other means.
+#       Future version may use mySession to secure this function.
+# Pass:
+#   mySession  - session for user doing the lookup - currently unused.
+#   getSession - session to be looked up.
+#
+# Returns:
+#   Tuple of (userid, password)
+#   Or single error string.
+#----------------------------------------------------------------------
+def idSessionUser(mySession, session):
+
+    # Direct access to db.  May replace later with secure server function.
+    try:
+        conn   = cdrdb.connect()
+        cursor = conn.cursor()
+    except cdrdb.Error, info:
+        return "Unable to connect to database to get session info: %s" %\
+                info[1][0]
+
+    # Search user/session tables
+    try:
+        cursor.execute (\
+            "SELECT u.name, u.password " \
+            "  FROM usr u, session s " \
+            " WHERE u.id = s.usr " \
+            "   AND s.name = '%s'" % session)
+        usrRow = cursor.fetchone()
+        if type(usrRow)==type(()) or type(usrRow)==type([]):
+            return usrRow
+        else:
+            # return "User unknown for session %s" % session
+            return usrRow
+    except cdrdb.Error, info:
+        return "Error selecting usr for session: %s - %s" % \
+                (session, info[1][0])
+
+#----------------------------------------------------------------------
 # Determine whether a session is authorized to do something
 # Returns:
 #   True (1) = Is authorized
@@ -506,7 +551,7 @@ def addDoc(credentials, file = None, doc = None,
 # See documentation of addDoc above for explanation of showWarnings
 # argument.
 # Note that the 'reason' argument is used to set a value in the
-# audit table.  If you want to have the comment column in the 
+# audit table.  If you want to have the comment column in the
 # document and doc_version tables populated, you must supply a
 # DocComment child of the CdrDocCtl element inside the CdrDoc
 # of the doc argument.
@@ -1914,6 +1959,45 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE):
             f.close()
         except IOError:
             pass
+
+#----------------------------------------------------------------------
+# Create an HTML table from a passed data
+#----------------------------------------------------------------------
+def tabularize (rows, tblAttrs=None):
+    """
+    Create an HTML table string from passed data.
+    This looks like it should be in cdrcgi, but we also produce
+    HTML email in batch programs - which aren't searching the
+    cgi path.
+
+    Pass:
+        rows = Sequence of rows for the table, each containing
+               a sequence of columns.
+               If the number of columns is not the same in each row,
+               then the caller gets whatever he gets, so it may be
+               wise to add columns with content like "&nbsp;" if needed.
+               No entity conversions are performed.
+
+        tblAttrs = Optional string of attributes to put in table, e.g.,
+               "align='center' border='1' width=95%'"
+
+        We might add rowAttrs and colAttrs if this is worthwhile.
+    Return:
+        HTML as a string.
+    """
+    if not tblAttrs:
+        html = "<table>\n"
+    else:
+        html = "<table " + tblAttrs + ">\n"
+
+    for row in rows:
+        html += " <tr>\n"
+        for col in row:
+            html += "  <td>%s</td>\n" % col
+        html += " </tr>\n"
+    html += "</table>"
+
+    return html
 
 #----------------------------------------------------------------------
 # Log out from the CDR.
