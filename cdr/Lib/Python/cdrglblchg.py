@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.8 2002-10-03 19:38:32 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.9 2002-10-17 23:13:47 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2002/10/03 19:38:32  ameyer
+# Fixed sessionVar stored as integer that should have been string.
+# Fixed ugly error message.
+#
 # Revision 1.7  2002/09/24 23:38:05  ameyer
 # Fix problem discovered by Bob in using %s when I needed variable interpolation.
 #
@@ -637,6 +641,9 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
  ORDER BY doc.title
 """ % self.sessionVars['fromId']
 
+            # Return rows of id + title
+            return _execQry (qry)
+
         # Else restrict them by a particular lead organization
         else:
             qry = """
@@ -664,10 +671,9 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
    AND leadorg.value = ?
  ORDER BY doc.title
 """
-
-        # Call a common routine to get the rows corresponding to the query
-        return _execQry (qry, (self.sessionVars['fromId'],
-                               self.sessionVars['restrId']))
+            # Return rows of id + title
+            return _execQry (qry, (self.sessionVars['fromId'],
+                                   self.sessionVars['restrId']))
 
 #------------------------------------------------------------
 # Organization specific global change object
