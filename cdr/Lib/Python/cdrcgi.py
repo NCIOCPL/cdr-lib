@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.25 2002-07-25 18:22:14 ameyer Exp $
+# $Id: cdrcgi.py,v 1.26 2002-08-07 16:35:35 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.25  2002/07/25 18:22:14  ameyer
+# Added View Batch Job Status option.
+#
 # Revision 1.24  2002/07/17 18:52:28  bkline
 # New Admin menu item for CDR filter maintenance.
 #
@@ -188,7 +191,7 @@ def sendPage(page, textType = 'html'):
     print """\
 Content-type: text/%s
 
-%s""" % (textType, page)
+%s""" % (textType, unicodeToLatin1(page))
     sys.exit(0)
 
 #----------------------------------------------------------------------
