@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.3 2003-07-29 13:08:45 bkline Exp $
+# $Id: CdrLongReports.py,v 1.4 2003-08-21 19:25:45 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2003/07/29 13:08:45  bkline
+# Added NonRespondents report.
+#
 # Revision 1.2  2003/05/08 20:36:52  bkline
 # Added report for the Office of Science Policy.
 #
@@ -930,6 +933,428 @@ def nonRespondentsReport(job):
     report.createSpreadsheet(job)
 
 #----------------------------------------------------------------------
+# Used for report on protocols associated with a given organization.
+#----------------------------------------------------------------------
+class OrgProtocolReview:
+    def __init__(self, id, host = 'localhost'):
+        try:
+            self.id     = id
+            self.conn   = cdrdb.connect('CdrGuest', dataSource = host)
+            self.cursor = self.conn.cursor()
+        except cdrdb.Error, info:
+            reportFailure('Database connection failure: %s' % info[1][0])
+
+    #------------------------------------------------------------------
+    # Shorten role names (at Sheri's request 2003-07-01).
+    #------------------------------------------------------------------
+    def mapRole(self, role):
+        ucRole = role.upper()
+        if ucRole == "PRINCIPAL INVESTIGATOR":
+            return "PI"
+        elif ucRole == "STUDY COORDINATOR":
+            return "SC"
+        elif ucRole == "PROTOCOL CO-CHAIR":
+            return "CC"
+        elif ucRole == "PROTOCOL CHAIR":
+            return "PC"
+        elif ucRole == "UPDATE PERSON":
+            return "PUP"
+        elif ucRole == "RESEARCH COORDINATOR":
+            return "RC"
+        return role
+
+    #------------------------------------------------------------------
+    # This is the workhorse for the report.
+    #------------------------------------------------------------------
+    def report(self, job):
+        
+        #--------------------------------------------------------------
+        # Object for a protocol person.
+        #--------------------------------------------------------------
+        class ProtPerson:
+            def __init__(self, name):
+                self.name  = name
+                self.roles = []
+
+        #--------------------------------------------------------------
+        # Object type for representing a protocol link to our org document.
+        #--------------------------------------------------------------
+        class ProtLink:
+            def __init__(self, docId, protId, loStat):
+                self.docId              = docId
+                self.protId             = protId
+                self.orgStat            = None
+                self.loStat             = loStat
+                self.personnel          = {}
+                self.isLeadOrg          = 0
+                self.isOrgSite          = 0
+        
+        #--------------------------------------------------------------
+        # Build the base html for the report.
+        #--------------------------------------------------------------
+        filters  = ['name:Organization Protocol Review Report Filter 1',
+                    'name:Organization Protocol Review Report Filter 2']
+        job.setProgressMsg("Filtering organization document")
+        cdr.logwrite("Filtering organization document", LOGFILE)
+        response = cdr.filterDoc('guest', filters, self.id) #, host = 'mahler')
+        if type(response) in (type(''), type(u'')):
+            job.fail(response)
+        html = unicode(response[0], 'utf-8')
+
+        #--------------------------------------------------------------
+        # Get all the protocols which link to this organization.
+        #--------------------------------------------------------------
+        protLinks = {}
+        try:
+
+            #----------------------------------------------------------
+            # Links to this org as the lead organization.
+            #----------------------------------------------------------
+            msg = "Gathering links to CDR%010d as lead org" % self.id
+            job.setProgressMsg(msg)
+            cdr.logwrite(msg, LOGFILE)
+            self.cursor.execute("""\
+SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
+                person.title, person_role.value
+           FROM query_term org_id
+           JOIN query_term prot_id
+             ON prot_id.doc_id = org_id.doc_id
+            AND LEFT(prot_id.node_loc, 8) = LEFT(org_id.node_loc, 8)
+           JOIN query_term org_stat
+             ON org_stat.doc_id = org_id.doc_id
+            AND LEFT(org_stat.node_loc, 8) = LEFT(org_id.node_loc, 8)
+           JOIN query_term person_id
+             ON person_id.doc_id = org_id.doc_id
+            AND LEFT(person_id.node_loc, 8) = LEFT(org_id.node_loc, 8)
+           JOIN query_term person_role
+             ON person_role.doc_id = person_id.doc_id
+            AND LEFT(person_role.node_loc, 12) = LEFT(person_id.node_loc, 12)
+           JOIN document person
+             ON person.id = person_id.int_val
+          WHERE org_id.int_val   = ?
+            AND org_id.path      = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/LeadOrganizationID'
+                                 + '/@cdr:ref'
+            AND prot_id.path     = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/LeadOrgProtocolID'
+            AND org_stat.path    = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/LeadOrgProtocolStatuses'
+                                 + '/CurrentOrgStatus/StatusName'
+            AND person_id.path   = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/LeadOrgPersonnel'
+                                 + '/Person/@cdr:ref'
+            AND person_role.path = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/LeadOrgPersonnel'
+                                 + '/PersonRole'
+            /*
+            AND org_stat.value IN ('Active',
+                                   'Approved-not yet active',
+                                   'Temporarily closed') */""", self.id,
+                       timeout = 500)
+            rows = self.cursor.fetchall()
+            done = 0
+            for (protId, docId, orgStat, personName,
+                 role) in rows:
+                semicolon = personName.find(';')
+                if semicolon != -1:
+                    personName = personName[:semicolon]
+                    key = (protId, docId, orgStat)
+                    if not protLinks.has_key(key):
+                        protLinks[key] = protLink = ProtLink(docId, protId,
+                                                             orgStat)
+                else:
+                    protLink = protLinks[key]
+                protLink.isLeadOrg = 1
+                if personName:
+                    if personName not in protLink.personnel:
+                        person = ProtPerson(personName)
+                        protLink.personnel[personName] = person
+                    else:
+                        person = protLink.personnel[personName]
+                    role = self.mapRole(role)
+                    if role and role not in person.roles:
+                        person.roles.append(role)
+                done += 1
+                #job.setProgressMsg(msg + (" (%d of %d rows processed)"
+                #                       % (done, len(rows))))
+
+            #----------------------------------------------------------
+            # Links to this org as participating org with specific person.
+            #----------------------------------------------------------
+            msg = ("Gathering links to CDR%010d as "
+                   "participating org with specific person"
+                   % self.id)
+            job.setProgressMsg(msg)
+            cdr.logwrite(msg, LOGFILE)
+            done = 0
+            self.cursor.execute("""\
+SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
+                person.title, person_role.value, lo_stat.value
+           FROM query_term org_id
+           JOIN query_term prot_id
+             ON prot_id.doc_id = org_id.doc_id
+            AND LEFT(prot_id.node_loc, 8) = LEFT(org_id.node_loc, 8)
+           JOIN query_term org_stat
+             ON org_stat.doc_id = org_id.doc_id
+            AND LEFT(org_stat.node_loc, 16) = LEFT(org_id.node_loc, 16)
+           JOIN query_term person_id
+             ON person_id.doc_id = org_id.doc_id
+            AND LEFT(person_id.node_loc, 16) = LEFT(org_id.node_loc, 16)
+           JOIN query_term person_role
+             ON person_role.doc_id = person_id.doc_id
+            AND LEFT(person_role.node_loc, 20) = LEFT(person_id.node_loc, 20)
+           JOIN document person
+             ON person.id = person_id.int_val
+           JOIN query_term lo_stat
+             ON lo_stat.doc_id = org_stat.doc_id
+            AND LEFT(lo_stat.node_loc, 8) = LEFT(org_stat.node_loc, 8)
+          WHERE org_id.int_val   = ?
+            AND org_id.path      = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/ProtocolSites'
+                                 + '/OrgSite/OrgSiteID/@cdr:ref'
+            AND prot_id.path     = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/LeadOrgProtocolID'
+            AND org_stat.path    = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/ProtocolSites'
+                                 + '/OrgSite/OrgSiteStatus'
+            AND person_id.path   = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/ProtocolSites'
+                                 + '/OrgSite/OrgSiteContact'
+                                 + '/SpecificPerson/Person/@cdr:ref'
+            AND person_role.path = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/ProtocolSites'
+                                 + '/OrgSite/OrgSiteContact'
+                                 + '/SpecificPerson/Role'
+            AND lo_stat.path     = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/LeadOrgProtocolStatuses'
+                                 + '/CurrentOrgStatus/StatusName'
+/*
+            AND org_stat.value IN ('Active',
+                                   'Approved-not yet active',
+                                   'Temporarily closed')
+                                   */""", self.id, timeout = 500)
+            for (protId, docId, orgStat, personName, role,
+                 loStat) in self.cursor.fetchall():
+                semicolon = personName.find(';')
+                if semicolon != -1:
+                    personName = personName[:semicolon]
+                key = (protId, docId, loStat)
+                if not protLinks.has_key(key):
+                    protLinks[key] = protLink = ProtLink(docId, protId, loStat)
+                else:
+                    protLink = protLinks[key]
+                protLink.isOrgSite = 1
+                protLink.orgStat = orgStat
+                if personName:
+                    if personName not in protLink.personnel:
+                        person = ProtPerson(personName)
+                        protLink.personnel[personName] = person
+                    else:
+                        person = protLink.personnel[personName]
+                    role = self.mapRole(role)
+                    if role and role not in person.roles:
+                        person.roles.append(role)
+                done += 1
+                #job.setProgressMsg(msg + (" (%d of %d rows processed)"
+                #                       % (done, len(rows))))
+
+            #----------------------------------------------------------
+            # Links to this org as participating org with generic person.
+            #----------------------------------------------------------
+            msg = ("Gathering links to CDR%010d as "
+                   "participating org with generic person"
+                   % self.id)
+            job.setProgressMsg(msg)
+            cdr.logwrite(msg, LOGFILE)
+            done = 0
+            self.cursor.execute("""\
+SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
+                person.value, lo_stat.value
+           FROM query_term org_id
+           JOIN query_term prot_id
+             ON prot_id.doc_id = org_id.doc_id
+            AND LEFT(prot_id.node_loc, 8) = LEFT(org_id.node_loc, 8)
+           JOIN query_term org_stat
+             ON org_stat.doc_id = org_id.doc_id
+            AND LEFT(org_stat.node_loc, 16) = LEFT(org_id.node_loc, 16)
+           JOIN query_term person
+             ON person.doc_id = org_id.doc_id
+            AND LEFT(person.node_loc, 16) = LEFT(org_id.node_loc, 16)
+           JOIN query_term lo_stat
+             ON lo_stat.doc_id = org_stat.doc_id
+            AND LEFT(lo_stat.node_loc, 8) = LEFT(org_stat.node_loc, 8)
+          WHERE org_id.int_val   = ?
+            AND org_id.path      = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/ProtocolSites'
+                                 + '/OrgSite/OrgSiteID/@cdr:ref'
+            AND prot_id.path     = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/LeadOrgProtocolID'
+            AND org_stat.path    = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/ProtocolSites'
+                                 + '/OrgSite/OrgSiteStatus'
+            AND person.path      = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/ProtocolSites'
+                                 + '/OrgSite/OrgSiteContact'
+                                 + '/GenericPerson/PersonTitle'
+            AND lo_stat.path     = '/InScopeProtocol/ProtocolAdminInfo'
+                                 + '/ProtocolLeadOrg/LeadOrgProtocolStatuses'
+                                 + '/CurrentOrgStatus/StatusName'
+/*
+            AND org_stat.value IN ('Active',
+                                   'Approved-not yet active',
+                                   'Temporarily closed')
+                                   */ """, self.id, timeout = 500)
+            for (protId, docId, orgStat, personName,
+                 loStat) in self.cursor.fetchall():
+                key = (protId, docId, loStat)
+                if not protLinks.has_key(key):
+                    protLinks[key] = protLink = ProtLink(docId, protId, loStat)
+                else:
+                    protLink = protLinks[key]
+                protLink.isOrgSite = 1
+                protLink.orgStat = orgStat
+                if personName and personName not in protLink.personnel:
+                    protLink.personnel[personName] = ProtPerson(personName)
+                done += 1
+                #job.setProgressMsg(msg + (" (%d of %d rows processed)"
+                #                       % (done, len(rows))))
+
+        except cdrdb.Error, info:
+            job.fail('Failure fetching protocols: %s' % info[1][0])
+
+        #--------------------------------------------------------------
+        # Build the table.
+        #--------------------------------------------------------------
+        job.setProgressMsg("Building report table")
+        cdr.logwrite(msg, LOGFILE)
+        table = """\
+  <table border='1' cellpadding='2' cellspacing='0'>
+   <tr>
+    <th rowspan='2'>Protocol ID</th>
+    <th rowspan='2'>Doc ID</th>
+    <th rowspan='2'>Lead Org Status</th>
+    <th rowspan='2'>Org Status</th>
+    <th colspan='2'>Participation</th>
+    <th rowspan='2'>Person</th>
+   </tr>
+   <tr>
+    <th>Lead Org</th>
+    <th>Org Site</th>
+   </tr>
+"""
+
+        #--------------------------------------------------------------
+        # Sort by status, then by protocol id.
+        #--------------------------------------------------------------
+        msg = ""
+        keys = protLinks.keys()
+        statusOrder = {
+            'ACTIVE': 1,
+            'APPROVED-NOT YET ACTIVE': 2,
+            'TEMPORARILY CLOSED': 3,
+            'CLOSED': 4,
+            'COMPLETED': 5
+            }
+        def sorter(a, b):
+            # key[0] is protId; key[1] is docId; key[2] is lead org status
+            if a[2] == b[2]:
+                if a[0] == b[0]:
+                    return cmp(a[1], b[1])
+                return cmp(a[0], b[0])
+            return cmp(statusOrder.get(a[2].upper(), 999),
+                       statusOrder.get(b[2].upper(), 999))
+        keys.sort(sorter)
+        done = 0
+        for key in keys:
+            protLink = protLinks[key]
+            person = ""
+            for protPerson in protLink.personnel:
+                pp = protLink.personnel[protPerson]
+                if person:
+                    person += "<br>\n"
+                person += pp.name
+                if pp.roles:
+                    sep = " ("
+                    for role in pp.roles:
+                        person += sep + role
+                        sep = ", "
+                    person += ")"
+            if not person:
+                person = "&nbsp;"
+            leadOrg = protLink.isLeadOrg and "X" or "&nbsp;"
+            orgSite = protLink.isOrgSite and "X" or "&nbsp;"
+            if not protLink.orgStat:
+                protLink.orgStat = protLink.loStat
+            table += """\
+   <tr>
+    <td valign='top'>%s</td>
+    <td valign='top' align='center'>%d</td>
+    <td valign='top'>%s</td>
+    <td valign='top'>%s</td>
+    <td valign='top' align='center'>%s</td>
+    <td valign='top' align='center'>%s</td>
+    <td valign='top'>%s</td>
+   </tr>
+""" % (protLink.protId, protLink.docId, protLink.loStat, protLink.orgStat,
+       leadOrg, orgSite, person)
+            done += 1
+            msg = "Processed %d of %d rows" % (done, len(keys))
+            job.setProgressMsg(msg)
+
+        html = html.replace("@@DOC-ID@@", "CDR%010d" % self.id) \
+                   .replace("@@TABLE@@", table)
+        # Save the report.
+        name = "/OrgProtocolReview-%d.html" % job.getJobId()
+        file = open(REPORTS_BASE + name, "wb")
+        file.write(cdrcgi.unicodeToLatin1(html))
+        file.close()
+        cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
+        url = "http://%s.nci.nih.gov/CdrReports%s" % (socket.gethostname(),
+                                                      name)
+        cdr.logwrite("url: %s" % url, LOGFILE)
+        msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (
+            url, url)
+
+        # Tell the user where to find it.
+        body = """\
+The report you requested on Protocols associated with CDR%d
+can be viewed at
+%s.
+""" % (self.id, url)
+        sendMail(job, "Report results", body)
+        job.setProgressMsg(msg)
+        job.setStatus(cdrbatch.ST_COMPLETED)
+        cdr.logwrite("Completed report", LOGFILE)
+
+#----------------------------------------------------------------------
+# Run a report of protocols connected with a specific organization.
+#----------------------------------------------------------------------
+def nonRespondentsReport(job):
+    age         = job.getParm("Age")
+    baseDocType = job.getParm("BaseDocType")
+    host        = job.getParm("Host")
+    report      = NonRespondentsReport(age, baseDocType, host)
+    report.createSpreadsheet(job)
+def orgProtocolReview(job):
+    docId  = job.getParm("id")
+    digits = re.sub(r"[^\d]", "", docId)
+    docId  = int(digits)
+    report = OrgProtocolReview(docId)
+    report.report(job)
+    
+## class Job:
+##     def setProgressMsg(self, m): print m
+##     def getEmail(self): return "***REMOVED***"
+##     def getJobId(self): return 1111
+##     def setStatus(self, status): print "setting status %s" % str(status)
+##     def getArgs(self): return { "id": 29500 } # 36354
+##     def fail(self, msg): print "FAIL: %s" % msg; sys.exit(1)
+## job = Job()
+## opr = OrgProtocolReview(29500, 'mahler')
+## #opr = OrgProtocolReview(36354)
+## opr.report(job)
+
+#----------------------------------------------------------------------
 # Top level entry point.
 #----------------------------------------------------------------------
 if __name__ == "__main__":
@@ -966,6 +1391,8 @@ if __name__ == "__main__":
             ospReport(job)
         elif jobName == "Mailer Non-Respondents":
             nonRespondentsReport(job)
+        elif jobName == "Organization Protocol Review":
+            orgProtocolReview(job)
         # That's all we know how to do right now.
         else:
             job.fail("CdrLogReports: unknown job name '%s'" % jobName,
@@ -974,4 +1401,3 @@ if __name__ == "__main__":
         cdr.logwrite("Failure executing job %d: %s" % (jobId, str(info)),
                      LOGFILE, 1)
         job.fail("Caught exception: %s" % str(info), logfile = LOGFILE)
-        
