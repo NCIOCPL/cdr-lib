@@ -2,8 +2,11 @@
 #
 # Script for command line and CGI publishing.
 #
-# $Id: publish.py,v 1.9 2002-02-20 15:23:19 pzhang Exp $
+# $Id: publish.py,v 1.10 2002-02-20 19:40:36 pzhang Exp $
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2002/02/20 15:23:19  pzhang
+# Changed SCRIPTS to BASEDIR due to changes in cdr directory.
+#
 # Revision 1.8  2002/02/14 21:43:26  mruben
 # Fixed log comment; changed no_output to self.no_output [bkline for mruben].
 #
@@ -490,7 +493,7 @@ Please do not reply to this message.
             rows += 1
             self.strCtrlDocId = str(rs.Fields("pub_system").Value)
             self.subsetName = rs.Fields("pub_subset").Value
-            self.__userid = rs.Fields("usr").Value
+            self.__userId = rs.Fields("usr").Value
             self.email = rs.Fields("email").Value
             self.no_output = rs.Fields("no_output").Value
             rs.MoveNext()
@@ -533,20 +536,20 @@ Please do not reply to this message.
         # reset credential.
         sql = """SELECT name, password
                 FROM usr
-                WHERE id = %s """ % self.__userid
+                WHERE id = %d """ % self.__userId
         rs = self.__execSQL(sql)
         rows = 0
         while not rs.EOF:
             rows += 1
-            self.__username = rs.Fields("name").Value
-            self.__password = rs.Fields("password").Value
+            self.__userName = rs.Fields("name").Value
+            self.__passWord = rs.Fields("password").Value
             rs.MoveNext()
         rs.Close()
         if rows == 0 or rows > 1:
             if NCGI: print "*Error: resetParamsByJobId failed in access to usr:"
             if NCGI: print "      Not a unique record returned."
             sys.exit(1)
-        self.credential = cdr.login(self.__username, self.__password)
+        self.credential = cdr.login(self.__userName, self.__passWord)
 
         # change status??
         # Ready to publish.
@@ -849,8 +852,8 @@ Please do not reply to this message.
               "ON a.id = ga.action " \
               "JOIN grp_usr gu " \
               "ON ga.grp = gu.grp " \
-              "WHERE a.name = " + action + " " \
-              "AND gu.usr = " + self.__userid
+              "WHERE a.name = '" + action + "' " \
+              "AND gu.usr = %d" % self.__userId
         rs = self.__execSQL(sql)
         rc = 0
         if not rs.EOF :
