@@ -1,11 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.6 2004-09-23 21:29:23 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.7 2004-11-22 20:58:46 bkline Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2004/09/23 21:29:23  ameyer
+# Added ability to write output to file system or to database, depending
+# on whether we are in test mode or regular run mode.
+# Changed save routine to save CWD before modifications.
+#
 # Revision 1.5  2004/07/27 15:46:38  bkline
 # Added log entry to say how many documents were selected.
 #
@@ -189,7 +194,7 @@ class Doc:
         If LPV(t) <> LPV:
             Create new PV using LPV(t)
         If LV(t) <> LV:
-            Create new NPV from LPV(t)
+            Create new NPV from LV(t)
         If CWD(t) <> LS:
             Create new CWD using CWD(t)
         """
@@ -219,6 +224,20 @@ class Doc:
                 # Save new last pub version
                 self.lastp.xml = lastSavedXml = self.newLastp
                 self.__saveDoc(str(self.lastp), ver='Y', pub='Y', job=job)
+
+        #--------------------------------------------------------------
+        # Note that in the very common case in which the last created
+        # version and the most recent publishable version are the same
+        # version, the test below will report no differences between
+        # self.lastv.xml and self.newLastv.  This is because in this
+        # case self.lastv and self.lastp are references to the same
+        # cdr.Doc object, and the assignment above of self.newLastp
+        # to self.lastp.xml also changes self.lastv.xml.  This is
+        # almost too clever and tricky (it has confused the author
+        # of this code on at least one occasion -- hence this comment),
+        # but it's more efficient than doing deep copies of the cdr.Doc
+        # objects, and (equally important) it does the Right Thing.
+        #--------------------------------------------------------------
         if self.lastv and self.compare(self.lastv.xml, self.newLastv):
             if _testMode:
                 # Write new/original last non-pub version
