@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.61 2002-10-23 02:32:12 ameyer Exp $
+# $Id: cdr.py,v 1.62 2002-10-24 19:57:19 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.61  2002/10/23 02:32:12  ameyer
+# Made getQueryTermValueForId() return single sequence.
+#
 # Revision 1.60  2002/10/23 02:21:55  ameyer
 # Added getQueryTermValueForId()
 #
@@ -542,7 +545,7 @@ def getQueryTermValueForId (path, docId, conn = None):
         # Using % substitution because it should be completely safe and faster
         cursor = conn.cursor()
         cursor.execute (
-          "SELECT value FROM query_term WHERE path = '%s' AND doc_id = %d",
+          "SELECT value FROM query_term WHERE path = '%s' AND doc_id = %d" %
           (path, id))
         rows = cursor.fetchall()
         if len(rows) == 0:
