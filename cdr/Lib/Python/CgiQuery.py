@@ -1,11 +1,14 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
 #
-# $Id: CgiQuery.py,v 1.1 2002-12-10 13:35:58 bkline Exp $
+# $Id: CgiQuery.py,v 1.2 2003-03-04 22:52:36 bkline Exp $
 #
 # Base class for CGI database query interface.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2002/12/10 13:35:58  bkline
+# Base class for ad-hoc SQL query tool with WEB interface.
+#
 #----------------------------------------------------------------------
 import cgi, re, sys, time
 
@@ -73,7 +76,10 @@ Cache-control: no-cache, must-revalidate
         html = ""
         for q in queries.keys():
             key = q.replace("\r", "").replace("\n", "\\n")
-            val = queries[q].replace("\r", "").replace("\n", "\\n")
+            if queries[q]:
+                val = queries[q].replace("\r", "").replace("\n", "\\n")
+            else:
+                val = ""
             html += 'queries["%s"] = "%s";\n' % (key, val)
         return html
 
