@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.88 2004-05-17 15:21:11 bkline Exp $
+# $Id: cdr.py,v 1.89 2004-05-17 16:17:37 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.88  2004/05/17 15:21:11  bkline
+# Added function getEmail().
+#
 # Revision 1.87  2004/05/06 18:40:47  ameyer
 # Changed getPubPort to check for env var first, then default and batch
 # pub ports.  Also checking to be sure there is a CdrServer listening on
@@ -690,9 +693,9 @@ def getQueryTermValueForId (path, docId, conn = None):
 #----------------------------------------------------------------------
 def getTextContent(node):
     text = ''
-    for n in node.childNodes:
-        if n.nodeType == xml.dom.minidom.Node.TEXT_NODE:
-            text = text + n.nodeValue
+    for child in node.childNodes:
+        if child.nodeType in (child.TEXT_NODE, child.CDATA_SECTION_NODE):
+            text = text + child.nodeValue
     return text
 
 #----------------------------------------------------------------------
