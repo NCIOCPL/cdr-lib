@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.4 2002-08-13 21:15:36 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.5 2002-08-16 03:15:11 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,10 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2002/08/13 21:15:36  ameyer
+# Finished the third type of global change.
+# Ready for production unless further testing reveals some problem.
+#
 # Revision 1.3  2002/08/09 03:48:05  ameyer
 # Changes for organization status protocol global change.
 #
@@ -37,7 +41,7 @@
 #
 #----------------------------------------------------------------------
 
-import sys, socket, time, cdr, cdrbatch, cdrglblchg, cdrcgi
+import sys, socket, time, cdr, cdrbatch, cdrglblchg, cdrcgi, traceback
 
 
 # Define log file
@@ -147,17 +151,12 @@ else:
     toVal   = jobObj.getParm ('toId')
 cdr.logwrite ("GlobalChangeBatch: fromVal=%s, toVal=%s" % (fromVal, toVal), LF)
 
-# We'll store up to 3 versions of doc
-oldCwdXml = None    # Original current working document
-chgCwdXml = None    # Transformed CWD
-chgPubVerXml = None # Transformed version of last pub version
-
 # We'll build two lists of docs to report
 # Documents successfully changed, id + title tuples
-changedDocs = [("<b>CDR ID</b>", "<b>Title</b>")]
+changedDocs = [("<b>CDR ID</b>", "<b>P</b>", "<b>Title</b>")]
 
-# Couldn't be changed, id + title + error text
-failedDocs  = [("<b>CDR ID</b>", "<b>Title</b>", "<b>Reason</b>")]
+# Couldn't be changed, id +title + error text
+failedDocs  = [("<b>CDR ID</b>", "<b>P</b>", "<b>Title</b>", "<b>Reason</b>")]
 
 # Get the list of documents - different for each type of change
 # Gets list of tuples of id + title
@@ -183,9 +182,15 @@ progressMsg = "No docs processed yet"
 try:
     for idTitle in originalDocs:
 
+        # Identify doc
         docId    = idTitle[0]
         title    = idTitle[1]
         docIdStr = cdr.exNormalize(docId)[0]
+
+        # We'll store up to 3 versions of doc
+        oldCwdXml    = None     # Original current working document
+        chgCwdXml    = None     # Transformed CWD
+        chgPubVerXml = None     # Transformed version of last pub version
 
         # No problems yet
         failed     = None
@@ -298,8 +303,8 @@ try:
                 cdr.logwrite ("Saving copy of working doc before change", LF)
                 repDocResp = cdr.repDoc (session, doc=str(oldCwdDocObj),
                     ver='Y', checkIn='N', verPublishable='N',
-                    reason="Copy of working document from before global change "
-                           "of %s to %s at %s" % (fromVal, toVal,
+                    comment="Copy of working document before global change "
+                           "of %s to %s on %s" % (fromVal, toVal,
                                                   time.ctime (time.time())))
                 if repDocResp.startswith ("<Errors"):
                     failed = logDocErr (docId,
@@ -319,8 +324,8 @@ try:
                 cdr.logwrite ("About to replace published version in CDR", LF)
                 repDocResp = cdr.repDoc (session, doc=str(chgPubVerDocObj),
                     ver='Y', val='Y', checkIn='N', verPublishable='Y',
-                    reason="Last publishable version, revised by global change "
-                           "of %s to %s at %s" % (fromVal, toVal,
+                    comment="Last publishable version, revised by global "
+                           "change of %s to %s on %s" % (fromVal, toVal,
                                                   time.ctime (time.time())))
                 cdr.logwrite ("Replaced published version in CDR", LF)
                 if repDocResp.startswith ("<Errors"):
@@ -335,8 +340,8 @@ try:
             cdr.logwrite ("Saving CWD after change", LF)
             repDocResp = cdr.repDoc (session, doc=str(chgCwdDocObj),
                 ver=saveCWDPubVer, verPublishable=saveCWDPubVer, checkIn='Y',
-                reason="Revised by global change " \
-                       "of %s to %s at %s" % (fromVal, toVal,
+                comment="Revised by global change " \
+                       "of %s to %s on %s" % (fromVal, toVal,
                                               time.ctime (time.time())))
             if repDocResp.startswith ("<Errors"):
                 failed = logDocErr (docId, "attempting to store changed CWD",
@@ -355,10 +360,10 @@ try:
 
         # If successful, add this document to the list of sucesses
         if not failed:
-            changedDocs.append ((docId, title))
+            changedDocs.append ((docId, saveCWDPubVer, title))
             goodCount += 1
         else:
-            failedDocs.append ((docId, title, failed))
+            failedDocs.append ((docId, saveCWDPubVer, title, failed))
             failCount += 1
 
         # Record progress for user
@@ -379,6 +384,7 @@ except Exception, ex:
     progressMsg += \
         "<br><h3>Exception halted processing doc %d:</h3>\n<p>%s</p>\n" % \
                     (docId, str(ex))
+    traceback.print_tb(sys.exc_info()[2])
 
 # Final report
 cdr.logwrite ("Finished processing", LF)
