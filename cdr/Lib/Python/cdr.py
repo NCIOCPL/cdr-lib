@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.21 2002-02-19 22:09:40 bkline Exp $
+# $Id: cdr.py,v 1.22 2002-02-19 23:16:51 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.21  2002/02/19 22:09:40  bkline
+# Added docVer parameter to filterDoc().
+#
 # Revision 1.20  2002/02/19 18:37:50  bkline
 # Preserved docId passed to filterDoc if string.
 #
@@ -88,7 +91,7 @@ LOGON_STRING  = """<CdrCommandSet><CdrCommand><CdrLogon>
                    </CdrLogon></CdrCommand>"""
 LOGOFF_STRING = "<CdrCommand><CdrLogoff/></CdrCommand></CdrCommandSet>"
 PYTHON        = "d:\\python\\python.exe"
-SCRIPTS       = "d:/cdr/Scripts"
+BASEDIR       = "d:/cdr"
 SMTP_RELAY    = "MAILFWD.NIH.GOV"
 
 #----------------------------------------------------------------------
@@ -410,7 +413,7 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
     # Create the command.
     if docId:
         verAttr = ''
-        if docVer: 
+        if docVer:
             if type(docVer) == type(9): verAttr = " version='%d'" % docVer
             else: verAttr = " version='%s'" % docVer
         docElem = "<Document href='%s'%s/>" % (normalize(docId), verAttr)
