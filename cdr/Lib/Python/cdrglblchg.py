@@ -1,8 +1,13 @@
-# $Id: cdrglblchg.py,v 1.29 2004-10-07 20:02:14 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.30 2005-04-08 21:12:15 bkline Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.29  2004/10/07 20:02:14  ameyer
+# Added node_loc qualifications to Person and Org site changes to ensure
+# that only those protocols with requested persons or orgs under the
+# specified lead org are selected.
+#
 # Revision 1.28  2004/09/23 21:43:50  ameyer
 # In writeDocs(), if there are no differences between two files, write
 # a user friendly message instead of a zero-length file.
@@ -534,8 +539,9 @@ def writeDocs (dirName, docId, oldDoc, newDoc, verType):
         fp = open(diffName, "w")
         fp.write(diff)
         fp.close()
-    except:
-        raise StandardError("Error writing global change output files")
+    except Exception, e:
+        raise Exception("Error writing global change output files: %s" %
+                        str(e))
 
 #------------------------------------------------------------
 # Function return object contains information returned by a
