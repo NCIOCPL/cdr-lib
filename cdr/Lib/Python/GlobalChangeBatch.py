@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.25 2004-09-23 21:44:32 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.26 2005-04-12 16:04:28 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,9 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.25  2004/09/23 21:44:32  ameyer
+# Added name of output directory to final report when running in test mode.
+#
 # Revision 1.24  2004/09/21 20:31:54  ameyer
 # Added ability to output to files instead of to database - for test.
 # Added ability to run a filter for validation only, discarding any output.
@@ -156,7 +159,9 @@ def logDocErr (docId, where, msg):
         Error message suitable for display.
     """
     # If the error message is in XML, extract error portion from it
-    msg = cdr.getErrors (msg, False)
+    xmlPat = re.compile("<Err.*</Err", re.DOTALL)
+    if xmlPat.findall(msg):
+        msg = cdr.getErrors (msg, True)
 
     # Put it together for log file
     cdr.logwrite (("Error on doc %d %s:" % (docId, where), msg), LF)
@@ -172,6 +177,30 @@ def logDocProgress (jobObj, goodCount, failCount, totalCount):
     G_progressMsg = "Completed %d of %d changes, %d ok, %d failed" % \
                   (goodCount + failCount, totalCount, goodCount, failCount)
     jobObj.setProgressMsg (G_progressMsg)
+
+#----------------------------------------------------------------------
+# Utility function to append error messages together
+#----------------------------------------------------------------------
+def appendErr (initialErrs, addErr):
+    """
+    Append an error message to an existing message, separated by
+    HTML <br> tag.
+
+    Pass:
+        initialErrs - What to append to, may be None.
+        addErr      - Append this.
+
+    Return:
+        New error string.
+    """
+
+    # Append to errs or create new error msg
+    if initialErrs:
+        errs = initialErrs + "<br>" + addErr
+    else:
+        errs = addErr
+
+    return errs
 
 #----------------------------------------------------------------------
 # Utility function to filter a document
@@ -251,11 +280,11 @@ def runFilters (docId, docVerType, docVer):
 
         # Did it fail?
         if type(filtResp) != type(()):
-            logDocErr (docId, "filter failure, pass=%d" % passNumber, filtResp)
-
             # Setup error return to caller
             filteredDoc = None
-            errs        = filtResp
+            errs        = appendErr (errs, logDocErr (docId,
+                             "filter failure, pass=%d" % passNumber,
+                             filtResp))
             break
 
         # Success. Save output to use as input to next round, or final result
@@ -278,21 +307,17 @@ def runFilters (docId, docVerType, docVer):
             # Transform XSLT message output format to simple html
             filtMsgs = re.sub (r"<message>", "", filtResp[1])
             filtMsgs = re.sub (r"</message>", "<br>", filtMsgs)
-
-            if errs:
-                errs += "<br>" + filtMsgs
-            else:
-                errs = filtMsgs
+            errs = appendErr (errs, filtMsgs)
 
     # Did we fail to find any filters at all?
     if passNumber == 0:
-        errs = logDocErr (docId, "Filtering",
-                          "No filters found via getFilterInfo()");
+        errs = appendErr (errs, logDocErr (docId, "Filtering",
+                         "No filters found via getFilterInfo()"));
 
     # Did we fail to produce any output?
     if not filteredDoc:
-        errs = logDocErr (docId, "Filtering",
-                          "No output produced by filtering");
+        errs = appendErr (errs, logDocErr (docId, "Filtering",
+                         "No output produced by filtering"));
 
     cdr.logwrite ("Finished filtering %s" % docVerName, LF)
 
