@@ -1,8 +1,11 @@
-# $Id: cdrglblchg.py,v 1.30 2005-04-08 21:12:15 bkline Exp $
+# $Id: cdrglblchg.py,v 1.31 2005-04-12 15:45:45 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.30  2005/04/08 21:12:15  bkline
+# Added more information to Exception thrown while writing files.
+#
 # Revision 1.29  2004/10/07 20:02:14  ameyer
 # Added node_loc qualifications to Person and Org site changes to ensure
 # that only those protocols with requested persons or orgs under the
@@ -144,6 +147,7 @@ ORG_CHG     = "Organization"
 STATUS_CHG  = "OrgProtStatus"
 TERM_CHG    = "Term"
 INS_ORG_CHG = "InsertOrg"
+DEL_ORG_CHG = "DeleteOrg"
 
 # Protocol document types for terminology change
 TYPE_CDR_DOC = "typeCDR"
@@ -257,6 +261,12 @@ TERM_MAX_CHANGES = 2
 # Max qualifiers we may require
 TERM_MAX_QUALS = 2
 
+# Temporary table names for intermediate selection results
+TTBL_RES0 = "#gcRes0"
+TTBL_RES1 = "#gcRes1"
+TTBL_RES2 = "#gcRes2"
+TTBL_RES3 = "#gcRes3"
+
 # Kinds of filtering
 FLTR_CWD = 0    # Filtering current working document
 FLTR_PUB = 1    # Filtering last publishable version
@@ -294,6 +304,9 @@ def createChg (ssVars):
         ssVars['docType'] = 'Term'
     if chgType == INS_ORG_CHG:
         chg = InsertOrgChg()
+        ssVars['docType'] = 'Organization'
+    if chgType == DEL_ORG_CHG:
+        chg = DeleteOrgChg()
         ssVars['docType'] = 'Organization'
 
     # Can't happen unless there's a bug
@@ -679,7 +692,6 @@ class GlblChg:
             If a serious error arises, we return the error to caller
             who must eventually inform the user.
         """
-
         # First check to see if the condition is okay
         if stage.condition and not eval (stage.condition):
             return FuncReturn (RET_NONE)
@@ -1056,10 +1068,15 @@ class GlblChg:
               "<tr><td align='right'>Changing protocol status from: </td>\n"
             html += "<td> %s</td></tr>\n" % self.ssVars['fromStatusName']
             haveSoFar = 1
-        if self.ssVars.has_key ('insertOrgTitle'):
+        if self.ssVars.has_key ('chgOrgTitle'):
             html += \
               "<tr><td align='right'>Inserting organization site: </td>\n"
-            html += "<td> %s</td></tr>\n" % self.ssVars['insertOrgTitle']
+            html += "<td> %s</td></tr>\n" % self.ssVars['chgOrgTitle']
+            haveSoFar = 1
+        if self.ssVars.has_key ('delOrgTitle'):
+            html += \
+              "<tr><td align='right'>Deleting organization site: </td>\n"
+            html += "<td> %s</td></tr>\n" % self.ssVars['delOrgTitle']
             haveSoFar = 1
         if self.ssVars.has_key ('coopTitle'):
             html += \
@@ -1100,6 +1117,25 @@ class GlblChg:
             html += "<td> %s (%s)</td></tr>\n" % \
                  (self.ssVars['restrPiId'], self.ssVars['restrPiTitle'])
             haveSoFar = 1
+
+        # When multiply selected status values are possible
+        # Terms and delete orgsites
+        statusKey = None
+        if self.ssVars.has_key (TERM_STATVAL):
+            statusKey = TERM_STATVAL
+        elif self.ssVars.has_key ('statusName'):
+            statusKey = 'statusName'
+        if statusKey:
+            pattern = \
+              "<tr><td align='right'>Protocol status: </td><td> %s</td></tr>\n"
+            stvals = self.ssVars[statusKey]
+
+            # May be one or more of these
+            if type(stvals) == type([]) or type(stvals)==type(()):
+                for st in stvals:
+                    html += pattern % st
+            else:
+                html += pattern % stvals
 
         # Terms are complicated, get them from a subroutine
         termHtml = self.showTermsSoFar()
@@ -1143,19 +1179,6 @@ class GlblChg:
         # If we're not the right type of change, there's nothing to do
         if self.ssVars["chgType"] != TERM_CHG:
             return html
-
-        # Selected status values
-        if self.ssVars.has_key (TERM_STATVAL):
-            pattern = \
-              "<tr><td align='right'>Protocol status: </td><td> %s</td></tr>\n"
-            stvals = self.ssVars[TERM_STATVAL]
-
-            # May be one or more of these
-            if type(stvals) == type([]) or type(stvals)==type(()):
-                for st in stvals:
-                    html += pattern % st
-            else:
-                html += pattern % stvals
 
         # Search for every type of saved term criterion
         for trmUse in TERM_USES:
@@ -1358,7 +1381,7 @@ class GlblChg:
         """
         # Silence pychecker warning about unused parms
         if parms != []:
-           return FuncReturn (RET_ERROR, "Too many parms to getFromToStatus")
+           return FuncReturn (RET_ERROR, "Too many parms to genTermInputHtml")
 
         # Header information
         html = self.showSoFarHtml() + """
@@ -1642,6 +1665,67 @@ class GlblChg:
         result.setPageHtml (html)
         return result
 
+    def getStatusVals (self, parms):
+        """
+        Create an HTML form block to get one or more status values.
+
+        Pass:
+          Uses the Stage.subr interface, all parameters in a sequence:
+            Title for the HTML, may include HTML tags, or maybe None
+            Name of the form select box, e.g., "statusName"
+          May also be called as a separate function, not as a stage.
+
+        Return:
+            FuncReturn object.
+            FuncReturn.retType tells what's inside.
+        """
+        # Parms
+        blockTitle = parms[0]
+        blockName  = parms[1]
+
+        # Create HTML option selection list with requested name
+        html = """
+<span class='termblock'>Choose one or more protocol status values</span>
+<br /><br />
+<select name="%s" size="6" multiple="multiple">""" % blockName
+
+        # If coming back here from elsewhere, find already selected values
+        #   and delete them from the session, they'll be replaced with
+        #   whatever is selected here
+        selectedStatus = None
+        if self.ssVars.has_key (blockName):
+            selectedStatus = self.ssVars[blockName]
+            del (self.ssVars[blockName])
+
+        # Possible status values come from protocol schema valid values list
+        # Status values are the same for both protocol doc types
+        session = self.ssVars[cdrcgi.SESSION]
+        for status in cdr.getVVList (session, 'InScopeProtocol', "StatusName"):
+
+            # Protocol status with any previous selections
+            alreadySelected=""
+            if selectedStatus:
+                # Status may be scalar or array of multiple selections
+                if type(selectedStatus) == type([]):
+                    if status in selectedStatus:
+                        alreadySelected=" selected='selected'"
+                else:
+                    if status == selectedStatus:
+                        alreadySelected=" selected='selected'"
+            html += "  <option%s>%s</option>\n" % (alreadySelected, status)
+        html += "</select>\n"
+
+        # Prepare results to return
+        result = FuncReturn (RET_HTML)
+
+        # Title for list
+        if blockTitle:
+            result.setPageTitle (blockTitle)
+
+        # Selection form widget
+        result.setPageHtml (html)
+
+        return result
 
     def getCoopAttribute (self, parms):
         """
@@ -1783,7 +1867,7 @@ class PersonChg (GlblChg):
             subr      = self.genInputHtml,
             parms     = ('Person', 'Change Person links from', 'from', 0),
             excpMsg   = 'Generating form for getting the "from" person'),
-          Stage(
+          Stage (
             # If name entered rather than ID, resolve it
             condition = 'self.ssVars.has_key("fromName") and ' +
                         'not self.ssVars.has_key("fromId")',
@@ -1812,7 +1896,7 @@ class PersonChg (GlblChg):
             subr      = self.genInputHtml,
             parms     = ('Person', 'Change Person links to', 'to', 0),
             excpMsg   = 'Generating form for getting the "to" person'),
-          Stage(
+          Stage (
             # If name entered rather than ID, resolve it
             condition = 'self.ssVars.has_key("toName") and ' +
                         'not self.ssVars.has_key("toId")',
@@ -1982,7 +2066,7 @@ class OrgChg (GlblChg):
             parms     = ('Organization', 'Change Organization links from',
                          'from', 0),
             excpMsg   = 'Generating form for getting the "from" organization'),
-          Stage(
+          Stage (
             # If name entered rather than ID, resolve it
             condition = 'self.ssVars.has_key("fromName") and ' +
                         'not self.ssVars.has_key("fromId")',
@@ -2013,7 +2097,7 @@ class OrgChg (GlblChg):
             parms     = ('Organization', 'Change Organization links to',
                          'to', 0),
             excpMsg   = 'Generating form for getting the "to" organization'),
-          Stage(
+          Stage (
             # If name entered rather than ID, resolve it
             condition = 'self.ssVars.has_key("toName") and ' +
                         'not self.ssVars.has_key("toId")',
@@ -2165,7 +2249,7 @@ class OrgStatusChg (GlblChg):
             parms     = ('Organization', 'Change status for which Organization',
                          'from', 0),
             excpMsg   = 'Generating form for getting the "from" organization'),
-          Stage(
+          Stage (
             # If name entered rather than ID, resolve it
             condition = 'self.ssVars.has_key("fromName") and ' +
                         'not self.ssVars.has_key("fromId")',
@@ -2224,7 +2308,7 @@ class OrgStatusChg (GlblChg):
           'Restrict changes to protocols with org site Principal Investigator',
                          'restrPi', 1),
             excpMsg   = 'Generating form for getting the "from" person'),
-          Stage(
+          Stage (
             # If name entered rather than ID, resolve it
             condition = 'self.ssVars.has_key("restrPiName") and ' +
                         'not self.ssVars.has_key("restrPiId")',
@@ -2400,31 +2484,31 @@ class InsertOrgChg (GlblChg):
     def __init__(self):
         GlblChg.__init__(self)
 
-        # Stages for organization status changes
+        # Stages for inserting an organization
         self.stages = (\
           Stage (
             # Get org id for org to be inserted
-            condition = 'not (self.ssVars.has_key("insertOrgId") or ' +
-                        'self.ssVars.has_key("insertOrgName"))',
+            condition = 'not (self.ssVars.has_key("chgOrgId") or ' +
+                        'self.ssVars.has_key("chgOrgName"))',
             subr      = self.genInputHtml,
             parms     = ('Organization', 'Insert Organization Link',
-                         'insertOrg', 0),
+                         'chgOrg', 0),
             excpMsg   = 'Generating form for getting "insert" organization'),
-          Stage(
+          Stage (
             # If name entered rather than ID, resolve it
-            condition = 'self.ssVars.has_key("insertOrgName") and ' +
-                        'not self.ssVars.has_key("insertOrgId")',
+            condition = 'self.ssVars.has_key("chgOrgName") and ' +
+                        'not self.ssVars.has_key("chgOrgId")',
             subr      = self.getPickList,
-            parms     = ('Organization', 'eval:self.ssVars["insertOrgName"]',
-                         'Choose Organization to be inserted', 'insertOrgId'),
+            parms     = ('Organization', 'eval:self.ssVars["chgOrgName"]',
+                         'Choose Organization to be inserted', 'chgOrgId'),
             excpMsg   = 'Generating picklist for name'),
           Stage (
             # Verify that this is an org document, not something else
-            condition = 'self.ssVars.has_key("insertOrgId") and ' +
-                        'not self.ssVars.has_key("insertOrgTitle")',
+            condition = 'self.ssVars.has_key("chgOrgId") and ' +
+                        'not self.ssVars.has_key("chgOrgTitle")',
             subr      = self.verifyId,
-            parms     = ('eval:self.ssVars["insertOrgId"]', 'Organization',
-                         'insertOrgTitle'),
+            parms     = ('eval:self.ssVars["chgOrgId"]', 'Organization',
+                         'chgOrgTitle'),
             excpMsg   = 'Verifying document type for inserted organization"'),
           Stage (
             # Get coop group affiliation for this org, if not tried yet
@@ -2440,7 +2524,7 @@ class InsertOrgChg (GlblChg):
             subr      = self.genInputHtml,
             parms     = ('Person', 'Insert Person Link', 'insertPers', 0),
             excpMsg   = 'Generating form for getting the "insertPers" person'),
-          Stage(
+          Stage (
             # If name entered rather than ID, resolve it
             condition = 'self.ssVars.has_key("insertPersName") and ' +
                         'not self.ssVars.has_key("insertPersId")',
@@ -2532,7 +2616,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
         """
         if not self.description:
             self.description = "global insert of orgsite %s on %s" % \
-                              (self.ssVars['insertOrgId'],
+                              (self.ssVars['chgOrgId'],
                                 time.ctime (time.time()))
 
         # Only one pass
@@ -2540,7 +2624,7 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
             filterName    = ['name:Global Change: Insert Participating Org']
             parms         = []
             parms.append (['leadOrgID', self.ssVars['restrId']])
-            parms.append (['newOrgSiteID', self.ssVars['insertOrgId']])
+            parms.append (['newOrgSiteID', self.ssVars['chgOrgId']])
             parms.append (['newPersonID', self.ssVars['insertPersId']])
             if self.ssVars.has_key ('coopType'):
                 parms.append (['coop', self.ssVars['coopType']])
@@ -2554,6 +2638,205 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
         return None
 
 
+#------------------------------------------------------------
+# Delete an organization site from protocols
+#------------------------------------------------------------
+class DeleteOrgChg (GlblChg):
+
+    # Picklist filter not needed?
+
+    def __init__(self):
+        GlblChg.__init__(self)
+
+        # Stages for deleting an organization site
+        self.stages = (\
+          Stage (
+            # Get legal status values
+            condition = 'not self.ssVars.has_key("statusName")',
+            subr      = self.getStatusVals,
+            parms     = ('Select status values for org sites to delete',
+                         'statusName'),
+            excpMsg   = 'Generating form to get status values for protocols'),
+          Stage (
+            # Get org id for org to be deleted
+            condition = 'not (self.ssVars.has_key("delOrgId") or ' +
+                        'self.ssVars.has_key("delOrgName"))',
+            subr      = self.genInputHtml,
+            parms     = ('Organization', 'Delete participating site',
+                         'delOrg', 0),
+            excpMsg   = 'Generating form for getting "delete" organization'),
+          Stage (
+            # If name entered rather than ID, resolve it
+            condition = 'self.ssVars.has_key("delOrgName") and ' +
+                        'not self.ssVars.has_key("delOrgId")',
+            subr      = self.getPickList,
+            parms     = ('Organization', 'eval:self.ssVars["delOrgName"]',
+                         'Choose Organization to be deleted', 'delOrgId'),
+            excpMsg   = 'Generating picklist for name'),
+          Stage (
+            # Verify that this is an org document, not something else
+            condition = 'self.ssVars.has_key("delOrgId") and ' +
+                        'not self.ssVars.has_key("delOrgTitle")',
+            subr      = self.verifyId,
+            parms     = ('eval:self.ssVars["delOrgId"]', 'Organization',
+                         'delOrgTitle'),
+            excpMsg   = 'Verifying document type for deleted organization"'),
+          Stage (
+            # Ask for optional principal investigator (PI)
+            condition = 'not self.ssVars.has_key("restrPiId") and ' +
+                        'not self.ssVars.has_key("restrPiName")',
+            subr      = self.genInputHtml,
+            parms     = ('Person',
+                         'Restrict change to sites with specific PI,' +
+                         ' or leave blank', 'restrPi', 1),
+            excpMsg   = 'Generating form for getting the PI person'),
+          Stage (
+            # If name entered rather than ID, resolve it
+            condition = 'self.ssVars.has_key("restrPiName") and ' +
+                        'not self.ssVars.has_key("restrPiId")',
+            subr      = self.getPickList,
+            parms     = ('Person', 'eval:self.ssVars["restrPiName"]',
+                         'Choose Principal Investigator', 'restrPiId'),
+            excpMsg   = 'Generating picklist for deletion restrPi name'),
+          Stage (
+            # Verify that this is a Person document, not something else
+            condition = 'self.ssVars.has_key("restrPiId") and ' +
+                        'not self.ssVars.has_key("restrPiTitle")',
+            subr      = self.verifyId,
+            parms     = ('eval:self.ssVars["restrPiId"]', 'Person',
+                         'restrPiTitle'),
+            excpMsg   = 'Verifying doctype for deletion "restrPi" person"'),
+          Stage (
+            # Optional restriction by lead organization
+            # genInputHtml() knows how to ask for optional info only once
+            condition = None,
+            subr      = self.genInputHtml,
+            parms     = ('Organization',
+                         'Restrict deletions to protocols with particular ' +\
+                         'lead org, or leave blank', 'restr', 1),
+            excpMsg   = 'Generating form for getting the del restriction org'),
+          Stage (
+            # If name entered rather than ID, resolve it
+            condition = 'self.ssVars.has_key("restrName") and ' +
+                        'not self.ssVars.has_key("restrId")',
+            subr      = self.getPickList,
+            parms     = ('Organization', 'eval:self.ssVars["restrName"]',
+                         'Restrict change to protocols with this lead org,' +
+                         ' or leave blank', 'restrId'),
+            excpMsg   = 'Generating picklist for del restricting org name'),
+          Stage (
+            # Verify that restricting doc is an Organization
+            condition = 'self.ssVars.has_key("restrId") and '
+                        'not self.ssVars.has_key("restrTitle")',
+            subr      = self.verifyId,
+            parms     = ('eval:self.ssVars["restrId"]', 'Organization',
+                         'restrTitle'),
+            excpMsg   = 'Verifying document type for del restricting org'),
+          # Returns to standard processing here
+        )
+
+    def selDocs (self):
+        """
+        See PersonChg.selDocs()
+        """
+        # There many options and a potentially very complex selection
+        #   strategy
+        # To simplify and speed selections, we do them in stages, using
+        #   temporary tables to hold intermediate results
+
+        # First stage finds all protocols with the organization site we
+        #   want to delete
+
+        # Construct base query, we'll add clauses as needed
+        selQry = """
+SELECT DISTINCT doc.id, doc.title FROM document doc
+  JOIN query_term protorg
+    ON protorg.doc_id = doc.id
+"""
+        # Will add to select and where clauses separately
+        whereQry = """
+ WHERE protorg.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteID/@cdr:ref'
+   AND protorg.int_val = %s""" % cdr.exNormalize(self.ssVars['delOrgId'])[1]
+
+        # If restricting by status
+        if self.ssVars.has_key('statusName'):
+
+            # List of one or more statuses
+            statVals = str(self.ssVars['statusName'])
+            if (statVals[0] == '['):
+                statVals = statVals[1:-1]
+            else:
+                statVals = "'%s'" % statVals
+            cdr.logwrite("Type of statusNames=%s" % str(type(statVals)), LF)
+            cdr.logwrite('Status values="%s"' % statVals, LF)
+
+            # Query
+            selQry += """
+  JOIN query_term protstat
+    ON protstat.doc_id = doc.id"""
+            whereQry += """
+   AND protstat.path='/InScopeProtocol/ProtocolAdminInfo/CurrentProtocolStatus'
+   AND protstat.value IN (%s)""" % statVals
+
+        # Restriction by lead org XXX Check this ssVar is right
+        if self.ssVars.has_key('restrId'):
+            selQry += """
+  JOIN query_term leadorg
+    ON leadorg.doc_id = doc.id"""
+            whereQry += """
+   AND leadorg.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/LeadOrganizationID/@cdr:ref'
+   AND leadorg.value = '%s'
+   AND LEFT(leadorg.node_loc, 8) = LEFT(protorg.node_loc, 8)""" % \
+            self.ssVars['restrId']
+
+        # Restriction by principal investigator
+        if self.ssVars.has_key('restrPiId'):
+            selQry += """
+  JOIN query_term protpi
+    ON protpi.doc_id = doc.id
+  JOIN query_term pirole
+    ON pirole.doc_id = doc.id"""
+            whereQry += """
+   AND protpi.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteContact/SpecificPerson/Person/@cdr:ref'
+   AND protpi.int_val = %d
+   AND LEFT(protorg.node_loc, 16) = LEFT(protpi.node_loc, 16)
+   AND pirole.path = '/InScopeProtocol/ProtocolAdminInfo/ProtocolLeadOrg/ProtocolSites/OrgSite/OrgSiteContact/SpecificPerson/Role'
+   AND pirole.value = 'Principal investigator'
+   AND LEFT(protpi.node_loc, 16) = LEFT(pirole.node_loc, 16)""" % \
+            cdr.exNormalize(self.ssVars['restrPiId'])[1]
+
+        qry = selQry + whereQry
+
+        # XXX DEBUG
+        cdr.logwrite ("DelOrgQry====%s====" % qry, LF)
+
+        # Execute
+        return _execQry (qry)
+
+    def getFilterInfo (self, filterVer):
+        """
+        See class GlblChg.getFilterInfo for description.
+        """
+        if not self.description:
+            self.description = "global change deleting OrgSite %s at %s" % \
+                               (self.ssVars['delOrgId'],
+                                time.ctime (time.time()))
+
+        # Only one pass
+        if not self.chkFiltered (filterVer):
+            filterName    = ['name:Global Change: Delete Participating Org']
+            parms         = []
+
+            # Setup parameters
+            parms.append (['orgSiteId', self.ssVars['delOrgId']])
+            if self.ssVars.has_key('restrId'):
+                parms.append (['leadOrgId', self.ssVars['restrId']])
+            if self.ssVars.has_key('restrPiId'):
+                parms.append (['piId', self.ssVars['restrPiId']])
+
+            return (filterName, parms, True)
+
+        return None
 
 #------------------------------------------------------------
 # Modify terminology in a protocol
@@ -2644,10 +2927,6 @@ class TermChg (GlblChg):
         TTBL_DEL  = "#gcTermDel"
         TTBL_STAT = "#gcTermStat"
         TTBL_SCAT = "#gcTermScat"
-        TTBL_RES0 = "#gcTermRes0" # Temp results of merging above
-        TTBL_RES1 = "#gcTermRes1" #   "     "     "    "      "
-        TTBL_RES2 = "#gcTermRes2" #   "     "     "    "      "
-        TTBL_RES3 = "#gcTermRes3" #   "     "     "    "      "
 
         # All temporary tables have to use a single connection/cursor
         #  so they are visible to each other
