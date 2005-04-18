@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.2 2005-03-30 14:35:53 bkline Exp $
+# $Id: SiteImporter.py,v 1.3 2005-04-18 13:07:56 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2005/03/30 14:35:53  bkline
+# Increased timeout for first database query; added 'source' parameter
+# to invocation of filter to insert external sites into the protocol
+# document.
+#
 # Revision 1.1  2005/03/15 21:12:32  bkline
 # Base class for jobs that import protocol site information from outside.
 #
@@ -144,7 +149,7 @@ class ImportJob(ModifyDocs.Job):
 
     def sendRequest(self, host, app, body = None, method = "POST"):
 
-        header = {}
+        headers = {}
         if body:
             if TEST_MODE:
                 f = file('soap-request.xml', 'a')
