@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.103 2005-03-03 14:03:22 bkline Exp $
+# $Id: cdr.py,v 1.104 2005-04-18 22:13:37 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.103  2005/03/03 14:03:22  bkline
+# New function emailerCgi() added.
+#
 # Revision 1.102  2005/03/03 13:57:10  bkline
 # Moved determination of emailer host to cdr module.
 #
@@ -350,29 +353,32 @@ import os, smtplib, time, cdrdb, tempfile, traceback, difflib
 #----------------------------------------------------------------------
 # Set some package constants
 #----------------------------------------------------------------------
-DOMAIN_NAME   = 'nci.nih.gov'
-PROD_NAME     = 'bach'
-DEV_NAME      = 'mahler'
-PROD_HOST     = '%s.%s' % (PROD_NAME, DOMAIN_NAME)
-DEV_HOST      = '%s.%s' % (DEV_NAME, DOMAIN_NAME)
-EMAILER_PROD  = 'pdqupdate.cancer.gov'
-EMAILER_DEV   = 'verdi.nci.nih.gov'
-EMAILER_CGI   = '/PDQUpdate/cgi-bin'
-CVSROOT       = "verdi.nci.nih.gov:/usr/local/cvsroot"
-DEFAULT_HOST  = 'localhost'
-DEFAULT_PORT  = 2019
-BATCHPUB_PORT = 2020
-URDATE        = '2002-06-22'
-LOGON_STRING  = """<CdrCommandSet><CdrCommand><CdrLogon>
-                   <UserName>%s</UserName><Password>%s</Password>
-                   </CdrLogon></CdrCommand>"""
-LOGOFF_STRING = "<CdrCommand><CdrLogoff/></CdrCommand></CdrCommandSet>"
-PYTHON        = "d:\\python\\python.exe"
-PERL          = "d:\\bin\\Perl.exe"
-BASEDIR       = "d:/cdr"
-SMTP_RELAY    = "MAILFWD.NIH.GOV"
-DEFAULT_LOGDIR  = "d:/cdr/Log"
-DEFAULT_LOGFILE = DEFAULT_LOGDIR + "/debug.log"
+DOMAIN_NAME      = 'nci.nih.gov'
+PROD_NAME        = 'bach'
+DEV_NAME         = 'mahler'
+PROD_HOST        = '%s.%s' % (PROD_NAME, DOMAIN_NAME)
+DEV_HOST         = '%s.%s' % (DEV_NAME, DOMAIN_NAME)
+EMAILER_PROD     = 'pdqupdate.cancer.gov'
+EMAILER_DEV      = 'verdi.nci.nih.gov'
+EMAILER_CGI      = '/PDQUpdate/cgi-bin'
+CVSROOT          = "verdi.nci.nih.gov:/usr/local/cvsroot"
+DEFAULT_HOST     = 'localhost'
+DEFAULT_PORT     = 2019
+BATCHPUB_PORT    = 2020
+URDATE           = '2002-06-22'
+LOGON_STRING     = ("<CdrCommandSet><CdrCommand><CdrLogon>"
+                    "<UserName>%s</UserName><Password>%s</Password>"
+                    "</CdrLogon></CdrCommand>")
+LOGOFF_STRING    = "<CdrCommand><CdrLogoff/></CdrCommand></CdrCommandSet>"
+PYTHON           = "d:\\python\\python.exe"
+PERL             = "d:\\bin\\Perl.exe"
+BASEDIR          = "d:/cdr"
+SMTP_RELAY       = "MAILFWD.NIH.GOV"
+DEFAULT_LOGDIR   = BASEDIR + "/Log"
+DEFAULT_LOGFILE  = DEFAULT_LOGDIR + "/debug.log"
+MANIFEST_NAME    = 'CDR_MANIFEST.XML'
+CLIENT_FILES_DIR = BASEDIR + '/ClientFiles'
+MANIFEST_PATH    = "%s/%s" % (CLIENT_FILES_DIR, MANIFEST_NAME)
 
 #----------------------------------------------------------------------
 # Find a port to the CdrServer, searching port numbers in the following
