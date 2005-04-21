@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.51 2004-10-22 09:36:56 bkline Exp $
+# $Id: cdrcgi.py,v 1.52 2005-04-21 21:21:49 venglisc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.51  2004/10/22 09:36:56  bkline
+# Changed display method for Glossary Term QC report.
+#
 # Revision 1.50  2004/09/17 17:42:48  venglisc
 # Creating drop-down TermStatus list populated from the database (Bug 1335).
 #
@@ -419,15 +422,23 @@ def mainMenu(session, news = None):
 </html>""")
 
 #----------------------------------------------------------------------
-# Navigate to menu location.
+# Navigate to menu location or publish preview.
 #----------------------------------------------------------------------
-def navigateTo(where, session):
-    print "Location:http://%s%s/%s?%s=%s\n" % (WEBSERVER,
-                                               BASE,
-                                               where,
-                                               SESSION,
-                                               session)
+def navigateTo(where, session, **params):
+    url = "http://%s%s/%s?%s=%s" % (WEBSERVER,
+                                      BASE,   
+                                      where,  
+                                      SESSION,
+                                      session)
+
+    # Concatenate additional Parameters to URL for PublishPreview
+    # -----------------------------------------------------------
+    for param in params.keys():
+        url += "&%s=%s" % (cgi.escape(param), cgi.escape(params[param]))
+
+    print "Location:%s\n\n" % (url)
     sys.exit(0)
+
 
 #----------------------------------------------------------------------
 # Determine whether query contains unescaped wildcards.
