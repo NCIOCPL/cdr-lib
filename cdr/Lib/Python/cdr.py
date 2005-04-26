@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.104 2005-04-18 22:13:37 bkline Exp $
+# $Id: cdr.py,v 1.105 2005-04-26 21:42:31 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.104  2005/04/18 22:13:37  bkline
+# Added named strings for client file location and manifest.
+#
 # Revision 1.103  2005/03/03 14:03:22  bkline
 # New function emailerCgi() added.
 #
@@ -2716,6 +2719,9 @@ Subject: %s
 #----------------------------------------------------------------------
 def unlock(credentials, docId, abandon = 'Y', force = 'Y', reason = '',
            host = DEFAULT_HOST, port = DEFAULT_PORT):
+
+    # Normalize doc id
+    docId = exNormalize(docId)[0]
 
     # Create the command.
     attrs   = "Abandon='%s' ForceCheckIn='%s'" % (abandon, force)
