@@ -1,8 +1,11 @@
-# $Id: cdrglblchg.py,v 1.32 2005-04-22 03:46:26 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.33 2005-04-26 21:00:31 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.32  2005/04/22 03:46:26  ameyer
+# Added statusVals filter parameter when deleting organization.
+#
 # Revision 1.31  2005/04/12 15:45:45  ameyer
 # Multiple changes for deleting organization sites from protocols.
 #
@@ -2836,8 +2839,6 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
                 parms.append (['leadOrgId', self.ssVars['restrId']])
             if self.ssVars.has_key('restrPiId'):
                 parms.append (['piId', self.ssVars['restrPiId']])
-            if self.ssVars.has_key('statusName'):
-                parms.append (['statusVals', str(self.ssVars['statusName'])])
 
             return (filterName, parms, True)
 
