@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.3 2005-04-18 13:07:56 bkline Exp $
+# $Id: SiteImporter.py,v 1.4 2005-04-28 12:52:32 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2005/04/18 13:07:56  bkline
+# Fixed typo (header for headers in sendRequest() method).
+#
 # Revision 1.2  2005/03/30 14:35:53  bkline
 # Increased timeout for first database query; added 'source' parameter
 # to invocation of filter to insert external sites into the protocol
@@ -251,7 +254,7 @@ class ImportJob(ModifyDocs.Job):
     def __loadManifest(self):
         manifest = {}
         try:
-            for line in self.__file.read('manifest.txt'):
+            for line in self.__file.read('manifest.txt').splitlines():
                 try:
                     id, status = line.strip().split(' , ', 1)
                 except:
