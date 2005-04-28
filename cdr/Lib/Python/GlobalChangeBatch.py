@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.26 2005-04-12 16:04:28 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.27 2005-04-28 14:02:45 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,9 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.26  2005/04/12 16:04:28  ameyer
+# Added some more complete and robust error reporting.
+#
 # Revision 1.25  2004/09/23 21:44:32  ameyer
 # Added name of output directory to final report when running in test mode.
 #
@@ -641,12 +644,20 @@ for idTitle in originalDocs:
         # If we did not complete all the way to check-in, have to unlock doc
         # This always happens in testOnly mode
         if checkedOut:
-            cdr.unlock (session, docId)
             if testOnly:
-                cdr.logwrite ("Unlocked doc %d after test change" % docId, LF)
+                unlockReason = "test change"
             else:
-                cdr.logwrite ("Unlocked doc %d after failure" % docId, LF)
-            checkedOut = 0
+                unlockReason = "failure"
+            unlockMsg = "Unlocking doc %d after %s" % (docId, unlockReason)
+
+            # Try to unlock
+            unlockResult = cdr.unlock (session, docId)
+            if unlockResult:
+                unlockMsg += " - FAILED: %s" % unlockResult
+            else:
+                checkedOut = 0
+
+            cdr.logwrite (unlockMsg, LF)
 
         # If successful, add this document to the list of sucesses
         if not failed:
