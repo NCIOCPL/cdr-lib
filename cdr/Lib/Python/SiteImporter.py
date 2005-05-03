@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.4 2005-04-28 12:52:32 bkline Exp $
+# $Id: SiteImporter.py,v 1.5 2005-05-03 12:13:48 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2005/04/28 12:52:32  bkline
+# Added splitlines() to loop that walks through lines in manifest file.
+#
 # Revision 1.3  2005/04/18 13:07:56  bkline
 # Fixed typo (header for headers in sendRequest() method).
 #
@@ -137,7 +140,16 @@ class ImportJob(ModifyDocs.Job):
             self.__setJobStatus('Success')
 
     def lookupCdrId(self, sourceId):
-        return self.__sourceIds.get(ImportJob.normalizeSourceId(sourceId))
+        key = ImportJob.normalizeSourceId(sourceId)
+        cdrIds = self.__sourceIds.get(key)
+        if cdrIds:
+            if len(cdrIds) > 1:
+                idStrings = [("CDR%d" % cdrId) for cdrId in cdrIds]
+                idsString = "; ".join(idStrings)
+                self.log("ambiguous source id %s: %s" % (key, idsString))
+                return None
+            return cdrIds[0]
+        return None
 
     def getFileName(self):     return self.__fileName
     def getSiteFilter(self):   return self.__siteFilter
@@ -279,7 +291,13 @@ class ImportJob(ModifyDocs.Job):
                         AND t.value = ?""", self.getSourceIdType(),
                               timeout = 300)
         for cdrId, sourceId in self.__cursor.fetchall():
-            idMap[ImportJob.normalizeSourceId(sourceId)] = cdrId
+            key = ImportJob.normalizeSourceId(sourceId)
+            if key in idMap:
+                cdrIds = idMap[key]
+                if cdrId not in cdrIds:
+                    cdrIds.append(cdrId)
+            else:
+                idMap[key] = [cdrId]
         if TEST_MODE:
             sys.stderr.write("ID map loaded with %d IDs\n" % len(idMap))
         return idMap
