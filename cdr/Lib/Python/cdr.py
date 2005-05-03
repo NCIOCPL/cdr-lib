@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.105 2005-04-26 21:42:31 ameyer Exp $
+# $Id: cdr.py,v 1.106 2005-05-03 23:32:20 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.105  2005/04/26 21:42:31  ameyer
+# Modified unlock to normalize its doc id input.  It now accepts ids
+# in any form and converts them to canonical "CDR##########".
+#
 # Revision 1.104  2005/04/18 22:13:37  bkline
 # Added named strings for client file location and manifest.
 #
@@ -3418,6 +3422,9 @@ def compareXmlDocs(utf8DocString1, utf8DocString2):
 #     2 utf8 strings to compare
 #     chgOnly  - True=only show changed lines, else show all.
 #     useCDATA - True=call getCDATA on each string before compare.
+#   Returns:
+#     Difference, with or without context, as utf-8 string.
+#     Context, if present, is pretty-printed with indentation.
 #----------------------------------------------------------------------
 def diffXmlDocs(utf8DocString1, utf8DocString2, chgOnly=True, useCDATA=False):
     # Extract data if needed
@@ -3443,10 +3450,17 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, chgOnly=True, useCDATA=False):
             if line[0] != ' ':
                 chgSeq.append (line)
         # Return them as a (possibly empty) string
-        return "".join(chgSeq)
+        diffText = "".join(chgSeq)
 
     # Else return entire document as a string
-    return "".join(diffSeq)
+    else:
+        diffText = "".join(diffSeq)
+
+    # Convert output back to utf-8.  toprettyxml made it unicode
+    if type(diffText) == type(u''):
+        diffText = diffText.encode('utf-8')
+
+    return diffText
 
 #----------------------------------------------------------------------
 # Tell the caller if we are on the development host.
