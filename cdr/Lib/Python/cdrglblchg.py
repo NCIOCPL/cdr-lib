@@ -1,8 +1,13 @@
-# $Id: cdrglblchg.py,v 1.34 2005-05-03 19:19:46 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.35 2005-05-03 23:35:37 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.34  2005/05/03 19:19:46  ameyer
+# Modified writeDocs to convert xml from utf-8 to ascii for writing to
+# the file system.  Otherwise the write() function attempts an inappropriate
+# conversion.
+#
 # Revision 1.33  2005/04/26 21:00:31  ameyer
 # statusVals was a mistake.  Handling them in the SQL.
 # Deleted them from the filter.
@@ -542,10 +547,6 @@ def writeDocs (dirName, docId, oldDoc, newDoc, verType):
     diffName = "%s/%s.%s.diff" % (dirName, idStr, verType)
 
     try:
-        # Convert docs from default utf-8 to ascii for writing
-        oldDoc = oldDoc.decode('utf-8').encode('ascii', 'ignore')
-        newDoc = newDoc.decode('utf-8').encode('ascii', 'ignore')
-
         # Write two docs as XML, not CDATA
         fp = open(oldName, "w")
         fp.write(oldDoc)
