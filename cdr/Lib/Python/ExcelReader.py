@@ -144,11 +144,14 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: ExcelReader.py,v 1.10 2005-03-10 20:33:30 bkline Exp $
+# $Id: ExcelReader.py,v 1.11 2005-05-04 17:48:58 bkline Exp $
 #
 # Module for extracting cell values from Excel spreadsheets.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2005/03/10 20:33:30  bkline
+# Fixed fontIndex adjustment (need to subtract instead of add).
+#
 # Revision 1.9  2005/03/05 05:54:13  bkline
 # "The font with index 4 is omitted in all BIFF versions.  This means the
 # first four fonts have zero-based indexes, and the fifth font and all
@@ -705,8 +708,7 @@ class Worksheet:
             if record.id == 0x027E:
                 (row, col, xf, val) = struct.unpack("<3hl", record.data)
                 val = self.parseRk(val)
-                self.cells[(row,col)] = Cell(row, col, book,
-                                                      xf, val)
+                self.cells[(row,col)] = Cell(row, col, book, xf, val)
 
             # MULRK record
             elif record.id == 0x00BD:
@@ -731,6 +733,9 @@ class Worksheet:
                         s = book.sst[idx]
                     except:
                         s = u"*** SST INDEX VALUE %d OUT OF RANGE" % idx
+                if DEBUG:
+                    msg = u"LABELSST idx=%d s=%s\n" % (idx, s)
+                    sys.stderr.write(msg.encode('utf-8'))
                 self.cells[(row,col)] = Cell(row, col, book, 
                                                       xf, s)
                 s = OleStorage.showUnicode(s)
@@ -738,6 +743,8 @@ class Worksheet:
             # NUMBER record
             elif record.id == 0x0203:
                 (r, c, xf, v) = struct.unpack("<3hd", record.data)
+                if DEBUG:
+                    sys.stderr.write("NUMBER v=%s\n" % v)
                 self.cells[(r, c)] = Cell(r, c, book, xf, v)
 
             # FORMULA record
@@ -760,6 +767,9 @@ class Worksheet:
                 else:
                     v = struct.unpack("<d", result)[0]
                 if v != None:
+                    if DEBUG:
+                        msg = u"FORMULA: type(v)=%s v=%s\n" % (type(v), v)
+                        sys.stderr.write(msg.encode('utf-8'))
                     self.cells[(r, c)] = Cell(r, c, book, xf, v)
 
             # HLINK record
@@ -825,7 +835,9 @@ class Worksheet:
                              1=signed 30-bit integer value
            31-2  FFFFFFFCH   Encoded value
         """
-        
+
+        if DEBUG:
+            sys.stderr.write("RK value %04X (%d)\n" % (v, v))
         cents = v & 1 and True or False
         if v & 2:
             v >>= 2
@@ -931,6 +943,8 @@ class Cell:
             self.fmt  = book.formats[formatIndex]
         if DEBUG:
             sys.stderr.write("%s\n" % repr(self).encode('utf-8'))
+            sys.stderr.write("%s\n" % repr(self.fmt).encode('utf-8'))
+            sys.stderr.write("type(self.val)=%s\n" % type(self.val))
 
     def __str__(self):
         """Implements the behavior of the builtin str() function,
@@ -964,9 +978,18 @@ class Cell:
         if (self.fmt.type == 'datetime' and
             type(self.val) in (type(9), type(9.9))):
             return ExcelTimeFromNumber(self.val).format()
-        # Strip superfluous decimal portion.
-        elif type(self.val) == type(9.9) and not self.val % 1:
-            return u"%d" % self.val
+        elif type(self.val) in (float, int):
+            if self.fmt.pattern == '00000':
+                try:
+                    return u"%05d" % int(self.val)
+                except:
+                    if DEBUG:
+                        msg = u"Cell.format(%s): not an integer\n" % self.val
+                        sys.stderr.write(msg.encode('utf-8'))
+                    return u"%s" % self.val
+            # Strip superfluous decimal portion.
+            elif type(self.val) == float and not self.val % 1:
+                return u"%d" % self.val
         else:
             return u"%s" % self.val
 
@@ -1062,6 +1085,12 @@ class Format:
             self.type = 'number'
         else:
             self.type = 'datetime'
+
+    def __repr__(self):
+        """Creates a Unicode representation of the Format object, suitable
+        for debugging output."""
+        return u"[Format: id=%d pattern=%s type=%s]" % (self.id, self.pattern,
+                                                        self.type)
 
 class Hyperlink:
 
