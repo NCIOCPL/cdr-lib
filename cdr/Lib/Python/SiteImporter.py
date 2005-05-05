@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.5 2005-05-03 12:13:48 bkline Exp $
+# $Id: SiteImporter.py,v 1.6 2005-05-05 13:06:35 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2005/05/03 12:13:48  bkline
+# Added check for ambiguous source IDs.
+#
 # Revision 1.4  2005/04/28 12:52:32  bkline
 # Added splitlines() to loop that walks through lines in manifest file.
 #
@@ -117,25 +120,9 @@ class ImportJob(ModifyDocs.Job):
 
     def run(self):
         for doc in self.__docs:
-            if doc.cdrId:
-                if doc.locked:
-                    self.log("Doc %s locked for %s" % (doc.cdrId,
-                                                       doc.sourceId))
-                    if not TEST_MODE:
-                        doc.recordEvent()
-                elif doc.cdrDoc:
-                    if doc.new or doc.changed or doc.newCdrId:
-                        self.log("Updating %s from %s" % (doc.cdrId,
-                                                          doc.sourceId))
-                        doc.cdrDoc.saveChanges(self)
-                        if not TEST_MODE:
-                            doc.recordEvent()
-                    else:
-                        self.log("No changes for %s" % doc.sourceId)
-                    cdr.unlock(self.session, "CDR%010d" % doc.cdrDoc.id)
-            else:
-                self.log("No match for %s" % doc.sourceId)
+            self.__processDoc(doc)
         if not TEST_MODE:
+            self.__processPendingDocs()
             self.__markDroppedDocs()
             self.__setJobStatus('Success')
 
@@ -334,6 +321,35 @@ class ImportJob(ModifyDocs.Job):
                      WHERE id = ?""", id)
                 self.__conn.commit()
 
+    def __processPendingDocs(self):
+        self.__cursor.execute("""\
+            SELECT id, source_id, cdr_id, downloaded, changed
+              FROM import_doc
+             WHERE disposition = %d
+               AND id NOT IN (SELECT doc
+                                FROM import_event
+                               WHERE locked = 'Y'
+                                 AND job = %d)
+               AND dropped IS NULL""" % (self.getDispId('pending'),
+                                         self.__id))
+        rows = self.__cursor.fetchall()
+        docs = []
+        savedComment = self.comment
+        for importDocId, sourceId, cdrId, downloaded, changed in rows:
+            when = changed or downloaded
+            self.comment = ("%s (delayed import from sites document "
+                            "downloaded %s)" % (savedComment, when))
+            docs.append(ImportDoc(self,
+                                  sourceId = sourceId,
+                                  importDocId = importDocId,
+                                  oldCdrId = cdrId))
+        self.comment = savedComment
+        if docs:
+            self.log("Processing %d docs left over from previous jobs" %
+                     len(docs))
+            for doc in docs:
+                self.__processDoc(doc)
+        
     def __loadSourceId(self):
         self.__cursor.execute("""\
             SELECT id
@@ -348,12 +364,40 @@ class ImportJob(ModifyDocs.Job):
             dispositions[name.lower()] = id
         return dispositions
 
+    def __processDoc(self, doc):
+        if not doc.cdrId:
+            self.log("No match for %s" % doc.sourceId)
+        else:
+            try:
+                if doc.locked:
+                    self.log("Doc %s locked for %s" % (doc.cdrId,
+                                                       doc.sourceId))
+                    if not TEST_MODE:
+                        doc.recordEvent()
+                elif doc.cdrDoc:
+                    if doc.new or doc.changed or doc.newCdrId or doc.pending:
+                        self.log("Updating %s from %s" % (doc.cdrId,
+                                                          doc.sourceId))
+                        doc.cdrDoc.saveChanges(self)
+                        if not TEST_MODE:
+                            doc.recordEvent()
+                    else:
+                        self.log("No changes for %s" % doc.sourceId)
+            except Exception, e:
+                self.log("__processDoc(): %s" % str(e))
+            if not doc.locked and doc.cdrDoc:
+                try:
+                    cdr.unlock(self.session, "CDR%010d" % doc.cdrDoc.id)
+                except:
+                    pass
+
 class ImportDoc:
     
-    def __init__(self, importJob, name):
+    def __init__(self, importJob, name = None, sourceId = None,
+                 importDocId = None, oldCdrId = None):
         self.impJob   = importJob
         self.name     = name
-        self.sourceId = name[:-4]
+        self.sourceId = sourceId or name and name[:-4] or None
         self.new      = False  # Never seen this external protocol ID before
         self.newCdrId = False  # External ID mapped to a different CDR doc
         self.changed  = False
@@ -361,8 +405,9 @@ class ImportDoc:
         self.locked   = False
         self.errMsg   = None
         self.cdrId    = importJob.lookupCdrId(self.sourceId)
-        self.siteXml  = self.loadSiteDocXml(name)
         self.cdrDoc   = None
+        self.pending  = importDocId and True or False
+        self.siteXml  = self.loadSiteDocXml(name, importDocId)
         if self.cdrId:
             self.sites = self.filterSiteXml()
             if TEST_MODE:
@@ -379,7 +424,7 @@ class ImportDoc:
             if self.errMsg:
                 importJob.log("CDR %s: %s" % (self.cdrId, self.errMsg))
         if not TEST_MODE:
-            self.importDocId = self.getImportDocId()
+            self.importDocId = self.getImportDocId(importDocId, oldCdrId)
 
     def run(self, docObj):
         parms = (('source', self.impJob.getSource()),)
@@ -392,12 +437,21 @@ class ImportDoc:
             self.impJob.log("CDR%d: %s" % (self.cdrId, newXml[1]))
         return newXml[0].replace("@@EXTERNALSITES@@", self.sites)
     
-    def loadSiteDocXml(self, name):
-        self.rawXml = self.impJob.getArchiveFile().read(name)
-        lines = self.rawXml.split("\n")
-        if lines[1].find('DOCTYPE') != -1 and lines[1].find(".dtd") != -1:
-            lines[1:2] = []
-        doc = "\n".join(lines)
+    def loadSiteDocXml(self, name = None, importDocId = None):
+        if name:
+            self.rawXml = self.impJob.getArchiveFile().read(name)
+            lines = self.rawXml.split("\n")
+            if lines[1].find('DOCTYPE') != -1 and lines[1].find(".dtd") != -1:
+                lines[1:2] = []
+            doc = "\n".join(lines)
+        else:
+            cursor = self.impJob.getCursor()
+            conn   = self.impJob.getConnection()
+            cursor.execute("""\
+                SELECT xml
+                  FROM import_doc
+                 WHERE id = ?""", importDocId)
+            doc = cursor.fetchall()[0][0]
         return doc
 
     def filterSiteXml(self):
@@ -446,64 +500,106 @@ class ImportDoc:
             docXml = docXml[:pos] + replacement + docXml[end:]
             pos = docXml.find(openDelim)
         return docXml.encode('utf-8')
-    
-    def getImportDocId(self):
+
+    #------------------------------------------------------------------
+    # Create or update a row in the import_doc table, returning the
+    # primary key for the row.  For the loop through the documents
+    # contained in the downloaded archive, the importDocId and
+    # oldCdrId parameters will be None.  For the pass to process
+    # documents left hanging from previous jobs (disposition left
+    # as 'pending' and dropped column NULL), the parameters will
+    # be populated with real values.
+    #------------------------------------------------------------------
+    def getImportDocId(self, importDocId = None, oldCdrId = None):
         
         cursor = self.impJob.getCursor()
         conn   = self.impJob.getConnection()
-        cursor.execute("""\
-            SELECT id, xml, cdr_id, dropped
-              FROM import_doc
-             WHERE source = ?
-               AND source_id = ?""", (self.impJob.getSourceId(),
-                                      self.sourceId))
-        rows   = cursor.fetchall()
         disp   = self.cdrId and 'pending' or 'unmatched'
         dispId = self.impJob.getDispId(disp)
-        if rows:
-            (id, siteXml, cdrId, dropped) = rows[0]
-            self.changed                  = siteXml != self.rawXml
-            if self.cdrId and self.cdrId != cdrId:
-                self.newCdrId = True
-            if self.changed:
-                cursor.execute("""\
-                    UPDATE import_doc
-                       SET xml = ?,
-                           changed = GETDATE(),
-                           disposition = ?,
-                           disp_dt = GETDATE()
-                     WHERE id = ?""", (self.rawXml, dispId, id))
-                conn.commit()
-            if self.newCdrId:
-                if cdrId:
-                    self.impJob.log("New CDR ID %d for %s; old ID was %d" %
-                                    (self.cdrId, self.sourceId, cdrId))
-                cursor.execute("""\
-                    UPDATE import_doc
-                       SET cdr_id = ?,
-                           disposition = ?,
-                           disp_dt = GETDATE()
-                     WHERE id = ?""", (self.cdrId, dispId, id))
-                conn.commit()
-            if dropped:
-                cursor.execute("""\
-                    UPDATE import_doc
-                       SET dropped = NULL
-                     WHERE id = ?""", id)
-                conn.commit()
-        else:
-            self.new = True
+
+        # Handle documents just pulled from the downloaded file here.
+        if not importDocId:
+
+            # Have we seen this document before?
             cursor.execute("""\
-                INSERT INTO import_doc (source, source_id, xml, downloaded,
-                                        disposition, disp_dt, cdr_id)
-                     VALUES (?, ?, ?, GETDATE(), ?, GETDATE(), ?)""",
-                           (self.impJob.getSourceId(),
-                            self.sourceId, self.rawXml, dispId, self.cdrId))
+                SELECT id, xml, cdr_id, dropped
+                  FROM import_doc
+                 WHERE source = ?
+                   AND source_id = ?""", (self.impJob.getSourceId(),
+                                          self.sourceId))
+            rows = cursor.fetchall()
+
+            # No: create new row in import_doc table.
+            if not rows:
+                self.new = True
+                cursor.execute("""\
+        INSERT INTO import_doc (source, source_id, xml, downloaded,
+                                disposition, disp_dt, cdr_id)
+             VALUES (?, ?, ?, GETDATE(), ?, GETDATE(), ?)""",
+                               (self.impJob.getSourceId(),
+                                self.sourceId, self.rawXml, dispId,
+                                self.cdrId))
+                conn.commit()
+                cursor.execute("SELECT @@IDENTITY")
+                importDocId = cursor.fetchall()[0][0]
+
+            # Yes: update the row as appropriate.
+            else:
+                (importDocId, siteXml, oldCdrId, dropped) = rows[0]
+                self.changed = siteXml != self.rawXml
+                if self.cdrId and self.cdrId != oldCdrId:
+                    self.newCdrId = True
+
+                # Was a formerly dropped document re-sent?
+                if dropped:
+                    cursor.execute("""\
+                        UPDATE import_doc
+                           SET dropped = NULL
+                         WHERE id = ?""", importDocId)
+                    conn.commit()
+
+                # If the XML changed, store the new information.
+                if self.changed:
+                    cursor.execute("""\
+                        UPDATE import_doc
+                           SET xml = ?,
+                               changed = GETDATE(),
+                               disposition = ?,
+                               disp_dt = GETDATE()
+                         WHERE id = ?""", (self.rawXml, dispId, importDocId))
+                    conn.commit()
+
+        # We already have the importDocId (pending doc from previous job).
+        else:
+            # Do we still have a matching CDR document?
+            if self.cdrId:
+                if self.cdrId != oldCdrId:
+                    self.newCdrId = True
+
+            # No: replace 'pending' disposition with 'unmatched'.
+            else:
+                cursor.execute("""\
+                    UPDATE import_doc
+                       SET disposition = ?
+                     WHERE id = ?""", (dispId, importDocId))
+                conn.commit()
+
+        # Handle case where CDR ID changed.
+        if self.newCdrId:
+            if cdrId:
+                self.impJob.log("New CDR ID %d for %s; old ID was %d" %
+                                (self.cdrId, self.sourceId, cdrId))
+            cursor.execute("""\
+                UPDATE import_doc
+                   SET cdr_id = ?,
+                       disposition = ?,
+                       disp_dt = GETDATE()
+                 WHERE id = ?""", (self.cdrId, dispId, importDocId))
             conn.commit()
-            cursor.execute("SELECT @@IDENTITY")
-            id = cursor.fetchall()[0][0]
-        return id
-                       
+
+        # Give the caller the primary key for the import_doc row.
+        return importDocId
+
     def recordEvent(self):
         cursor     = self.impJob.getCursor()
         conn       = self.impJob.getConnection()
@@ -517,12 +613,13 @@ class ImportDoc:
             INSERT INTO import_event (job, doc, locked, new, pub_version)
                  VALUES (?, ?, ?, ?, ?)""", (self.impJob.getId(),
                                              self.importDocId,
-                                             locked, new, pubVersion))
+                                             locked, new, pubVersion),
+                       timeout = 300)
         conn.commit()
         if not self.locked:
             cursor.execute("""\
                 UPDATE import_doc
                    SET disposition = ?,
                        disp_dt = GETDATE()
-                 WHERE id = ?""", (dispId, self.importDocId))
+                 WHERE id = ?""", (dispId, self.importDocId), timeout = 300)
             conn.commit()
