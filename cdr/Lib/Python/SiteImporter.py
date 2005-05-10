@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.6 2005-05-05 13:06:35 bkline Exp $
+# $Id: SiteImporter.py,v 1.7 2005-05-10 21:21:47 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2005/05/05 13:06:35  bkline
+# Added sweep to process pending trials left by previous jobs; added more
+# robust failure handling.
+#
 # Revision 1.5  2005/05/03 12:13:48  bkline
 # Added check for ambiguous source IDs.
 #
@@ -216,7 +220,7 @@ class ImportJob(ModifyDocs.Job):
                      VALUES (GETDATE(), ?, 'In progress')""", self.__sourceId)
             self.__conn.commit()
             self.__cursor.execute("SELECT @@IDENTITY")
-            return self.__cursor.fetchall()[0][0]
+            return int(self.__cursor.fetchall()[0][0])
 
     def __setJobStatus(self, status):
         if not TEST_MODE and self.__id:
@@ -440,10 +444,6 @@ class ImportDoc:
     def loadSiteDocXml(self, name = None, importDocId = None):
         if name:
             self.rawXml = self.impJob.getArchiveFile().read(name)
-            lines = self.rawXml.split("\n")
-            if lines[1].find('DOCTYPE') != -1 and lines[1].find(".dtd") != -1:
-                lines[1:2] = []
-            doc = "\n".join(lines)
         else:
             cursor = self.impJob.getCursor()
             conn   = self.impJob.getConnection()
@@ -451,8 +451,11 @@ class ImportDoc:
                 SELECT xml
                   FROM import_doc
                  WHERE id = ?""", importDocId)
-            doc = cursor.fetchall()[0][0]
-        return doc
+            self.rawXml = cursor.fetchall()[0][0]
+        lines = self.rawXml.split("\n")
+        if lines[1].find('DOCTYPE') != -1 and lines[1].find(".dtd") != -1:
+            lines[1:2] = []
+        return "\n".join(lines)
 
     def filterSiteXml(self):
         resp = cdr.filterDoc('guest', self.impJob.getSiteFilter(),
