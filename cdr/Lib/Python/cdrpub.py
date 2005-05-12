@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.70 2005-03-09 16:15:06 bkline Exp $
+# $Id: cdrpub.py,v 1.71 2005-05-12 15:54:56 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.70  2005/03/09 16:15:06  bkline
+# Fixed a bug in a call to __debugLog() (wrong parameters).
+#
 # Revision 1.69  2005/02/08 20:29:42  bkline
 # Initialized dest and dest_base earlier in publish() method.
 #
@@ -3304,6 +3307,8 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.stderr.write("usage: cdrpub.py job-id\n")
         sys.exit(1)
+    if len(sys.argv) > 2 and sys.argv[2] == "--debug":
+        cdr2cg.loglevel = 1
     LOG = ""
     p = Publish(int(sys.argv[1]))
     p.publish()
