@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.71 2005-05-12 15:54:56 bkline Exp $
+# $Id: cdrpub.py,v 1.72 2005-05-12 18:47:04 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.71  2005/05/12 15:54:56  bkline
+# Added new command-line argument for turning on cdr2cg debugging.
+#
 # Revision 1.70  2005/03/09 16:15:06  bkline
 # Fixed a bug in a call to __debugLog() (wrong parameters).
 #
@@ -3308,7 +3311,7 @@ if __name__ == "__main__":
         sys.stderr.write("usage: cdrpub.py job-id\n")
         sys.exit(1)
     if len(sys.argv) > 2 and sys.argv[2] == "--debug":
-        cdr2cg.loglevel = 1
+        cdr2cg.debuglevel = 1
     LOG = ""
     p = Publish(int(sys.argv[1]))
     p.publish()
