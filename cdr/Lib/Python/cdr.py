@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.106 2005-05-03 23:32:20 ameyer Exp $
+# $Id: cdr.py,v 1.107 2005-05-13 22:45:59 venglisc Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.106  2005/05/03 23:32:20  ameyer
+# Converted output of diffXmlDocs to utf-8.
+#
 # Revision 1.105  2005/04/26 21:42:31  ameyer
 # Modified unlock to normalize its doc id input.  It now accepts ids
 # in any form and converts them to canonical "CDR##########".
@@ -646,6 +649,46 @@ def idSessionUser(mySession, getSession):
             return usrRow
     except cdrdb.Error, info:
         return "Error selecting usr for session: %s - %s" % \
+                (getSession, info[1][0])
+
+#----------------------------------------------------------------------
+# Select the email address for the user.
+# Pass:
+#   mySession  - session for user doing the lookup - currently unused.
+#   getSession - session to be looked up.
+#
+# Returns:
+#   Tuple of (userid, password)
+#   Or single error string.
+#----------------------------------------------------------------------
+def getEmail(mySession):
+    try:
+        conn   = cdrdb.connect()
+        cursor = conn.cursor()
+    except cdrdb.Error, info:
+        return "Unable to connect to database to get email info: %s" %\
+                info[1][0]
+
+    # Search user/session tables
+    try:
+        query = """\    
+           SELECT u.email  
+             FROM session s
+             JOIN usr u
+               ON u.id   = s.usr 
+            WHERE s.name = '%s'  
+              AND ended   IS NULL
+              AND expired IS NULL""" % mySession 
+        cursor.execute (query)
+        usrRow = cursor.fetchall()
+        if len(rows) < 1:
+           cdrcgi.bail("ERROR: User not authorized to run this report!")
+        elif len(rows) > 1:
+           cdrcgi.bail("ERROR: User session not unique!")
+        else:
+           return rows[0][0]
+    except cdrdb.Error, info:
+        return "Error selecting email for session: %s - %s" % \
                 (getSession, info[1][0])
 
 #----------------------------------------------------------------------
