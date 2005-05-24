@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.7 2005-05-10 21:21:47 bkline Exp $
+# $Id: SiteImporter.py,v 1.8 2005-05-24 21:10:27 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2005/05/10 21:21:47  bkline
+# Converted @@IDENTITY value from string to integer (for some reason the
+# ADO interface converts it from an integer to a string); added code to
+# strip the doctype declaration from the stored RSS XML document.
+#
 # Revision 1.6  2005/05/05 13:06:35  bkline
 # Added sweep to process pending trials left by previous jobs; added more
 # robust failure handling.
@@ -27,11 +32,13 @@
 # Base class for jobs that import protocol site information from outside.
 #
 #----------------------------------------------------------------------
-import cdr, cdrdb, httplib, sys, time, zipfile, ModifyDocs
+import cdr, cdrdb, httplib, sys, time, zipfile, ModifyDocs, socket
 
-TEST_MODE = False
-UID       = "ExternalImporter"
-PWD       = "***REMOVED***"
+TEST_MODE  = False
+UID        = "ExternalImporter"
+PWD        = "***REMOVED***"
+DEVELOPER  = '***REMOVED***' # for error reports
+TEST_LIMIT = 10
 
 #----------------------------------------------------------------------
 # Extracts XML elements from a SOAP server's response, or the zipfile
@@ -81,6 +88,14 @@ class ImportJob(ModifyDocs.Job):
         self.__file       = self.__loadArchiveFile()
         self.__manifest   = self.__loadManifest()
         self.__id         = self.__createJob()
+        self.__dropped    = {}
+        self.__numTrials  = 0
+        self.__newTrials  = 0
+        self.__updTrials  = 0
+        self.__unchanged  = 0
+        self.__duplicates = {}
+        self.__unmapped   = {}
+        self.__locked     = {}
         docsWithCdrId     = 0
         for name in self.__file.namelist():
             if name.lower().endswith('.xml'):
@@ -88,7 +103,7 @@ class ImportJob(ModifyDocs.Job):
                 self.__docs.append(doc)
                 if doc.cdrId:
                     docsWithCdrId += 1
-                    if TEST_MODE and docsWithCdrId >= 10: break
+                    if TEST_MODE and docsWithCdrId >= TEST_LIMIT: break
         self.log("found %d matches with CDR protocols" % docsWithCdrId)
 
     #------------------------------------------------------------------
@@ -138,8 +153,10 @@ class ImportJob(ModifyDocs.Job):
                 idStrings = [("CDR%d" % cdrId) for cdrId in cdrIds]
                 idsString = "; ".join(idStrings)
                 self.log("ambiguous source id %s: %s" % (key, idsString))
+                self.__duplicates[sourceId] = idsString
                 return None
             return cdrIds[0]
+        self.__unmapped[sourceId] = True
         return None
 
     def getFileName(self):     return self.__fileName
@@ -213,6 +230,99 @@ class ImportJob(ModifyDocs.Job):
         return sourceId.strip().upper()
     normalizeSourceId = staticmethod(normalizeSourceId)
     
+    #----------------------------------------------------------------------
+    # Mail a report to the specified recipient list.
+    #----------------------------------------------------------------------
+    def sendReport(self, includeDeveloper = False):
+        group   = 'ProtocolImportReviewers'
+        recips  = self.__getEmailRecipients(group, includeDeveloper)
+        server  = socket.gethostname()
+        source  = self.__source
+        pattern = "%s sites downloaded %%Y-%%m-%%d on %s" % (source, server)
+        subject = time.strftime(pattern)
+        sender  = "cdr@%s.nci.nih.gov" % server
+        body    = self.__getEmailReportBody()
+        cdr.sendMail(sender, recips, subject, body)
+
+    #----------------------------------------------------------------------
+    # Build the report email message body.
+    #----------------------------------------------------------------------
+    def __getEmailReportBody(self):
+        body = """\
+Trials in manifest file: %d
+
+Trials with initial external sites imported: %d
+Updated trials: %d
+Total trials imported/updated: %d
+
+Skipped unchanged trials: %d
+Skipped duplicate trials: %d
+Skipped unmapped trials: %d
+Skipped locked trials: %d
+Total trials skipped: %d
+
+Trials dropped: %d
+
+""" % (len(self.__manifest),
+       self.__newTrials,
+       self.__updTrials,
+       self.__newTrials + self.__updTrials,
+       self.__unchanged,
+       len(self.__duplicates),
+       len(self.__unmapped),
+       len(self.__locked),
+       self.__unchanged + len(self.__unmapped) + len(self.__duplicates) +
+       len(self.__locked),
+       len(self.__dropped))
+        if self.__dropped:
+            for trialId in self.__dropped:
+                body += """\
+Trial %s was dropped by %s
+""" % (trialId, self.__source)
+            body += "\n"
+        if self.__duplicates:
+            for duplicate in self.__duplicates:
+                body += """\
+Trial ID %s matched by %s
+""" % (duplicate, self.__duplicates[duplicate])
+            body += "\n"
+        if self.__locked:
+            for locked in self.__locked:
+                body += """\
+CDR%d locked by %s
+""" % (locked, self.__locked[locked])
+            body += "\n"
+        if self.__unmapped:
+            for unmapped in self.__unmapped:
+                body += """\
+Trial ID %s not matched by any CDR document
+""" % unmapped
+        return body
+       
+    #----------------------------------------------------------------------
+    # Gather a list of email recipients for reports.
+    #----------------------------------------------------------------------
+    def __getEmailRecipients(self, recipGroup, includeDeveloper = False):
+        try:
+            self.__cursor.execute("""\
+                SELECT u.email
+                  FROM usr u
+                  JOIN grp_usr gu
+                    ON gu.usr = u.id
+                  JOIN grp g
+                    ON g.id = gu.grp
+                 WHERE g.name = ?
+                   AND u.expired IS NULL
+                   AND u.email IS NOT NULL
+                   AND u.email <> ''""", recipGroup)
+            recips = [row[0] for row in self.__cursor.fetchall()]
+            if includeDeveloper and DEVELOPER not in recips:
+                recips.append(DEVELOPER)
+            return recips
+        except:
+            if includeDeveloper:
+                return [DEVELOPER]
+
     def __createJob(self):
         if not TEST_MODE:
             self.__cursor.execute("""\
@@ -315,10 +425,11 @@ class ImportJob(ModifyDocs.Job):
             SELECT id, source_id
               FROM import_doc
              WHERE source = ?
-               AND dropped IS NOT NULL""", self.__sourceId)
+               AND dropped IS NULL""", self.__sourceId)
         rows = self.__cursor.fetchall()
         for id, sourceId in rows:
             if sourceId not in self.__manifest:
+                self.__dropped[sourceId] = True
                 self.__cursor.execute("""\
                     UPDATE import_doc
                        SET dropped = GETDATE()
@@ -368,12 +479,26 @@ class ImportJob(ModifyDocs.Job):
             dispositions[name.lower()] = id
         return dispositions
 
+    def __findLocker(self, cdrId):
+        self.__cursor.execute("""\
+            SELECT u.name
+              FROM usr u
+              JOIN checkout c
+                ON c.usr = u.id
+             WHERE c.id = ?
+               AND c.dt_in IS NULL""", cdrId)
+        rows = self.__cursor.fetchall()
+        if rows:
+            return rows[0][0]
+        return "unidentified user"
+
     def __processDoc(self, doc):
         if not doc.cdrId:
             self.log("No match for %s" % doc.sourceId)
         else:
             try:
                 if doc.locked:
+                    self.__locked[doc.cdrId] = self.__findLocker(doc.cdrId)
                     self.log("Doc %s locked for %s" % (doc.cdrId,
                                                        doc.sourceId))
                     if not TEST_MODE:
@@ -385,7 +510,12 @@ class ImportJob(ModifyDocs.Job):
                         doc.cdrDoc.saveChanges(self)
                         if not TEST_MODE:
                             doc.recordEvent()
+                        if doc.new:
+                            self.__newTrials += 1
+                        else:
+                            self.__updTrials += 1
                     else:
+                        self.__unchanged += 1
                         self.log("No changes for %s" % doc.sourceId)
             except Exception, e:
                 self.log("__processDoc(): %s" % str(e))
