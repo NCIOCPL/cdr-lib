@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.8 2005-05-24 21:10:27 bkline Exp $
+# $Id: SiteImporter.py,v 1.9 2005-05-26 23:45:07 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2005/05/24 21:10:27  bkline
+# Added email report at end of job.
+#
 # Revision 1.7  2005/05/10 21:21:47  bkline
 # Converted @@IDENTITY value from string to integer (for some reason the
 # ADO interface converts it from an integer to a string); added code to
@@ -74,6 +77,8 @@ class ImportJob(ModifyDocs.Job):
         ModifyDocs.Job.__init__(self, UID, PWD, None, None, comment,
                                 testMode = TEST_MODE)
         
+        self.log("SiteImporter: source=%s" % source)
+        
         self.__conn       = cdrdb.connect()
         self.__cursor     = self.__conn.cursor()
         self.__source     = source
@@ -138,6 +143,10 @@ class ImportJob(ModifyDocs.Job):
         return ImportDoc(self, name)
 
     def run(self):
+        if TEST_MODE:
+            self.createOutputDir()
+        else:
+            self.log("SiteImporter running in real mode")
         for doc in self.__docs:
             self.__processDoc(doc)
         if not TEST_MODE:

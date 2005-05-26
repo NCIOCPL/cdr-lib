@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.10 2005-03-04 19:19:45 bkline Exp $
+# $Id: ModifyDocs.py,v 1.11 2005-05-26 23:45:07 bkline Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2005/03/04 19:19:45  bkline
+# Suppressed logging of everValidated setting.
+#
 # Revision 1.9  2005/01/26 23:43:21  bkline
 # Added custom exception DocumentLocked.
 #
@@ -102,13 +105,17 @@ class Job:
         if error:
             raise Exception("Failure logging into CDR: %s" % error)
 
+    def createOutputDir(self):
+        global _outputDir
+
+        # Raises exception to exit program if fails
+        _outputDir = cdrglblchg.createOutputDir()
+        self.log("Running in test mode.  Output to: %s" % _outputDir)
+        
     def run(self):
         # In test mode, create output directory for files
-        global _testMode, _outputDir
         if _testMode:
-            # Raises exception to exit program if fails
-            _outputDir = cdrglblchg.createOutputDir()
-            self.log("Running in test mode.  Output to: %s" % _outputDir)
+            self.createOutputDir()
         else:
             self.log("Running in real mode.  Updating the database")
 
