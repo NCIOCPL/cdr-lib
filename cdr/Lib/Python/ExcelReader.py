@@ -144,11 +144,14 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: ExcelReader.py,v 1.11 2005-05-04 17:48:58 bkline Exp $
+# $Id: ExcelReader.py,v 1.12 2005-05-26 15:08:20 bkline Exp $
 #
 # Module for extracting cell values from Excel spreadsheets.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.11  2005/05/04 17:48:58  bkline
+# Added more debug logging; added support for 5-digit zipcode formats.
+#
 # Revision 1.10  2005/03/10 20:33:30  bkline
 # Fixed fontIndex adjustment (need to subtract instead of add).
 #
@@ -990,6 +993,8 @@ class Cell:
             # Strip superfluous decimal portion.
             elif type(self.val) == float and not self.val % 1:
                 return u"%d" % self.val
+            else:
+                return u"%s" % self.val
         else:
             return u"%s" % self.val
 
