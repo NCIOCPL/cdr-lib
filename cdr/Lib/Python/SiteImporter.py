@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.9 2005-05-26 23:45:07 bkline Exp $
+# $Id: SiteImporter.py,v 1.10 2005-06-01 04:18:17 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2005/05/26 23:45:07  bkline
+# Fix to create output directory in test mode for SiteImporter subclass.
+#
 # Revision 1.8  2005/05/24 21:10:27  bkline
 # Added email report at end of job.
 #
@@ -243,7 +246,7 @@ class ImportJob(ModifyDocs.Job):
     # Mail a report to the specified recipient list.
     #----------------------------------------------------------------------
     def sendReport(self, includeDeveloper = False):
-        group   = 'ProtocolImportReviewers'
+        group   = 'Protocol Import Reviewers'
         recips  = self.__getEmailRecipients(group, includeDeveloper)
         server  = socket.gethostname()
         source  = self.__source
@@ -513,7 +516,9 @@ Trial ID %s not matched by any CDR document
                     if not TEST_MODE:
                         doc.recordEvent()
                 elif doc.cdrDoc:
-                    if doc.new or doc.changed or doc.newCdrId or doc.pending:
+                    if (TEST_MODE or doc.new or doc.changed or
+                        doc.newCdrId or doc.pending):
+                        
                         self.log("Updating %s from %s" % (doc.cdrId,
                                                           doc.sourceId))
                         doc.cdrDoc.saveChanges(self)
