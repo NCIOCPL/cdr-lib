@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.107 2005-05-13 22:45:59 venglisc Exp $
+# $Id: cdr.py,v 1.108 2005-06-02 21:55:03 venglisc Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.107  2005/05/13 22:45:59  venglisc
+# Added module to select the email address based on the session ID.
+#
 # Revision 1.106  2005/05/03 23:32:20  ameyer
 # Converted output of diffXmlDocs to utf-8.
 #
@@ -654,11 +657,10 @@ def idSessionUser(mySession, getSession):
 #----------------------------------------------------------------------
 # Select the email address for the user.
 # Pass:
-#   mySession  - session for user doing the lookup - currently unused.
-#   getSession - session to be looked up.
+#   mySession  - session for user doing the lookup
 #
 # Returns:
-#   Tuple of (userid, password)
+#   Email address
 #   Or single error string.
 #----------------------------------------------------------------------
 def getEmail(mySession):
@@ -671,7 +673,7 @@ def getEmail(mySession):
 
     # Search user/session tables
     try:
-        query = """\    
+        query = """\
            SELECT u.email  
              FROM session s
              JOIN usr u
@@ -680,16 +682,16 @@ def getEmail(mySession):
               AND ended   IS NULL
               AND expired IS NULL""" % mySession 
         cursor.execute (query)
-        usrRow = cursor.fetchall()
+        rows = cursor.fetchall()
         if len(rows) < 1:
-           cdrcgi.bail("ERROR: User not authorized to run this report!")
+           return("ERROR: User not authorized to run this report!")
         elif len(rows) > 1:
-           cdrcgi.bail("ERROR: User session not unique!")
+           return("ERROR: User session not unique!")
         else:
            return rows[0][0]
     except cdrdb.Error, info:
         return "Error selecting email for session: %s - %s" % \
-                (getSession, info[1][0])
+                (mySession, info[1][0])
 
 #----------------------------------------------------------------------
 # Determine whether a session is authorized to do something
@@ -3518,25 +3520,6 @@ def isDevHost():
 def isProdHost():
     localhost = socket.gethostname()
     return localhost.upper().startswith(PROD_NAME.upper())
-
-#----------------------------------------------------------------------
-# Get the email address for the current session (if any).
-#----------------------------------------------------------------------
-def getEmail(session):
-    if not session:
-        return None
-    conn = cdrdb.connect()
-    cursor = conn.cursor()
-    cursor.execute("""\
-        SELECT u.email
-          FROM usr u
-          JOIN session s
-            ON s.usr = u.id
-         WHERE s.name = ?""", session)
-    rows = cursor.fetchall()
-    if not rows:
-        return None
-    return rows[0][0]
 
 #----------------------------------------------------------------------
 # Add a row to the external_map table.
