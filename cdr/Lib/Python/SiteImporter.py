@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.10 2005-06-01 04:18:17 bkline Exp $
+# $Id: SiteImporter.py,v 1.11 2005-06-03 15:14:09 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2005/06/01 04:18:17  bkline
+# Fixed spacing in email report group name.  Adjusted processing logic for
+# test mode.
+#
 # Revision 1.9  2005/05/26 23:45:07  bkline
 # Fix to create output directory in test mode for SiteImporter subclass.
 #
@@ -143,7 +147,12 @@ class ImportJob(ModifyDocs.Job):
     # by overriding this method.
     #------------------------------------------------------------------
     def loadImportDoc(self, name):
-        return ImportDoc(self, name)
+        try:
+            return ImportDoc(self, name)
+        except Exception, e:
+            self.log("loadImportDoc(%s): %s" % (name, str(e)))
+            self.log("job aborting")
+            raise
 
     def run(self):
         if TEST_MODE:
@@ -733,9 +742,9 @@ class ImportDoc:
 
         # Handle case where CDR ID changed.
         if self.newCdrId:
-            if cdrId:
+            if oldCdrId:
                 self.impJob.log("New CDR ID %d for %s; old ID was %d" %
-                                (self.cdrId, self.sourceId, cdrId))
+                                (self.cdrId, self.sourceId, oldCdrId))
             cursor.execute("""\
                 UPDATE import_doc
                    SET cdr_id = ?,
