@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.11 2005-06-03 15:14:09 bkline Exp $
+# $Id: SiteImporter.py,v 1.12 2005-06-03 15:18:08 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.11  2005/06/03 15:14:09  bkline
+# Fixed typo in variable name; add more exception handling.
+#
 # Revision 1.10  2005/06/01 04:18:17  bkline
 # Fixed spacing in email report group name.  Adjusted processing logic for
 # test mode.
@@ -152,7 +155,7 @@ class ImportJob(ModifyDocs.Job):
         except Exception, e:
             self.log("loadImportDoc(%s): %s" % (name, str(e)))
             self.log("job aborting")
-            raise
+            sys.exit(1)
 
     def run(self):
         if TEST_MODE:
@@ -343,6 +346,8 @@ Trial ID %s not matched by any CDR document
         except:
             if includeDeveloper:
                 return [DEVELOPER]
+            else:
+                return []
 
     def __createJob(self):
         if not TEST_MODE:
@@ -352,6 +357,7 @@ Trial ID %s not matched by any CDR document
             self.__conn.commit()
             self.__cursor.execute("SELECT @@IDENTITY")
             return int(self.__cursor.fetchall()[0][0])
+        return None
 
     def __setJobStatus(self, status):
         if not TEST_MODE and self.__id:
@@ -599,7 +605,6 @@ class ImportDoc:
             self.rawXml = self.impJob.getArchiveFile().read(name)
         else:
             cursor = self.impJob.getCursor()
-            conn   = self.impJob.getConnection()
             cursor.execute("""\
                 SELECT xml
                   FROM import_doc
