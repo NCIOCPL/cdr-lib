@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.12 2005-06-03 15:18:08 bkline Exp $
+# $Id: SiteImporter.py,v 1.13 2005-06-10 12:34:29 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.12  2005/06/03 15:18:08  bkline
+# Fixed pychecker warnings.
+#
 # Revision 1.11  2005/06/03 15:14:09  bkline
 # Fixed typo in variable name; add more exception handling.
 #
@@ -88,7 +91,8 @@ class ImportJob(ModifyDocs.Job):
                                 testMode = TEST_MODE)
         
         self.log("SiteImporter: source=%s" % source)
-        
+
+        self.__id         = None
         self.__conn       = cdrdb.connect()
         self.__cursor     = self.__conn.cursor()
         self.__source     = source
