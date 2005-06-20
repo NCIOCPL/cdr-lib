@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.13 2005-06-10 12:34:29 bkline Exp $
+# $Id: SiteImporter.py,v 1.14 2005-06-20 16:44:14 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.13  2005/06/10 12:34:29  bkline
+# Set job's __id member to None at top of constructor.
+#
 # Revision 1.12  2005/06/03 15:18:08  bkline
 # Fixed pychecker warnings.
 #
@@ -397,15 +400,19 @@ Trial ID %s not matched by any CDR document
 
     def __loadManifest(self):
         manifest = {}
+        manifestName = 'manifest.txt'
+        for name in self.__file.namelist():
+            if name.lower() == 'manifest.txt':
+                manifestName = name
         try:
-            for line in self.__file.read('manifest.txt').splitlines():
+            for line in self.__file.read(manifestName).splitlines():
                 try:
                     id, status = line.strip().split(' , ', 1)
                 except:
                     id, status = line.strip(), None
                 manifest[id] = status
-        except:
-            pass
+        except Exception, e:
+            self.log("__loadManifest(%s) failure: %s" % (manifestName, str(e)))
         return manifest
 
     def __loadSourceIdMap(self):
@@ -576,10 +583,10 @@ class ImportDoc:
         self.pending  = importDocId and True or False
         self.siteXml  = self.loadSiteDocXml(name, importDocId)
         if self.cdrId:
-            self.sites = self.filterSiteXml()
             if TEST_MODE:
                 sys.stderr.write("matched %s with %s\n" % (self.sourceId,
                                                            self.cdrId))
+            self.sites = self.filterSiteXml()
             try:
                 self.cdrDoc = ModifyDocs.Doc(self.cdrId, importJob.session,
                                              self, importJob.comment)
@@ -638,7 +645,8 @@ class ImportDoc:
             if end == -1:
                 raise Exception("addContact(): missing terminating delimiter")
             id = docXml[pos + len(openDelim) : end]
-            self.impJob.getCursor().execute("""\
+            try:
+                self.impJob.getCursor().execute("""\
                 SELECT r.element, r.value
                   FROM external_map_rule r
                   JOIN external_map m
@@ -647,7 +655,12 @@ class ImportDoc:
                     ON u.id = m.usage
                  WHERE u.name = 'CTEP_Institution_Code'
                    AND m.value = ?""", id)
-            rows = self.impJob.getCursor().fetchall()
+                rows = self.impJob.getCursor().fetchall()
+            except Exception, e:
+                print "addContact(): %s" % str(e)
+                print "id=[%s]" % repr(id)
+                #print "pos=%d end=%d len(id)=%d" % (pos, end, len(id))
+                rows = []
             title = u""
             phone = u""
             for row in rows:
