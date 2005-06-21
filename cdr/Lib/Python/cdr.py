@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.108 2005-06-02 21:55:03 venglisc Exp $
+# $Id: cdr.py,v 1.109 2005-06-21 23:48:11 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,11 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.108  2005/06/02 21:55:03  venglisc
+# Removed getEmail module that was added in previous version since it did
+# already exist.  Corrected the existing getEmail() module to work
+# as designed. (Bug 1664)
+#
 # Revision 1.107  2005/05/13 22:45:59  venglisc
 # Added module to select the email address based on the session ID.
 #
@@ -674,13 +679,13 @@ def getEmail(mySession):
     # Search user/session tables
     try:
         query = """\
-           SELECT u.email  
+           SELECT u.email
              FROM session s
              JOIN usr u
-               ON u.id   = s.usr 
-            WHERE s.name = '%s'  
+               ON u.id   = s.usr
+            WHERE s.name = '%s'
               AND ended   IS NULL
-              AND expired IS NULL""" % mySession 
+              AND expired IS NULL""" % mySession
         cursor.execute (query)
         rows = cursor.fetchall()
         if len(rows) < 1:
@@ -1422,6 +1427,56 @@ def valDoc(credentials, docType, docId = None, doc = None,
 
     # Submit the commands.
     return sendCommands(wrapCommand(cmd, credentials), host, port)
+
+#----------------------------------------------------------------------
+# Validate new and old docs
+#----------------------------------------------------------------------
+def valPair(session, docType, oldDoc, newDoc, host=DEFAULT_HOST,
+            port=DEFAULT_PORT):
+    """
+    Validate the old and new versions of a document.
+    If the old version is invalid, don't bother with the new.
+
+    Used to ensure that a global change has not invalidated a
+    previously valid doc.
+
+    Pass:
+        Logon credentials - must be authorized to validate this doctype.
+        Document type.
+        Old version of doc.
+        New version of doc.
+        Host.
+        Connection port.
+
+    Return:
+        If oldDoc is valid and newDoc is not:
+            Return list of de-duped errors, with multiples indicated.
+        Else:
+            Return None.
+    """
+    # Validate first document
+    result = valDoc(session, docType, doc=oldDoc, host=host, port=port)
+
+    # If no errors, check the new version
+    if not result:
+        result = valDoc(session, docType, doc=newDoc, host=host, port=port)
+        if result:
+            # De-dup any errors
+            errs = {}
+            dom = xml.dom.minidom.parseString(result)
+            for err in dom.getElementsByTagName('Err'):
+                errString = getTextContent(err)
+                errs[errString] = errs.get(errString, 0) + 1
+
+            # Prepare results list
+            result = []
+            for err in errs:
+                errString = errs
+                if errs[err] > 1:
+                    errString += " (%d)" % errs[err]
+
+    # Return list or None
+    return result
 
 #----------------------------------------------------------------------
 # Retrieve a specified document from the CDR Server using a filter.
