@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.109 2005-06-21 23:48:11 ameyer Exp $
+# $Id: cdr.py,v 1.110 2005-06-30 23:12:32 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.109  2005/06/21 23:48:11  ameyer
+# Added valPair for future use in global change.
+#
 # Revision 1.108  2005/06/02 21:55:03  venglisc
 # Removed getEmail module that was added in previous version since it did
 # already exist.  Corrected the existing getEmail() module to work
@@ -366,7 +369,7 @@
 # Import required packages.
 #----------------------------------------------------------------------
 import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
-import os, smtplib, time, cdrdb, tempfile, traceback, difflib
+import os, smtplib, time, atexit, cdrdb, tempfile, traceback, difflib
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -3678,3 +3681,60 @@ def emailerHost():
 #----------------------------------------------------------------------
 def emailerCgi():
     return "http://%s%s" % (emailerHost(), EMAILER_CGI)
+
+#----------------------------------------------------------------------
+# Create a file to use as an interprocess lockfile.
+#----------------------------------------------------------------------
+def createLockFile(fname):
+    """
+    Create a named lock file to use in synchronizing processes.
+
+    Tried msvcrt.locking() but couldn't get it to work reliably
+    and the posix fnctl functions aren't available on Win32.  So
+    this hack is a substitute.
+
+    The caller may call removeLockFile when locking is done, but
+    he can just ignore it and it will be called for him if he
+    exits normally without doing it.
+
+    An abnormal exit may not call deleteLockFile().  My tests of
+    interrupting a function with Ctrl-C worked fine.  The atexit
+    was called, but the Python docs don't guarantee this for
+    every possible case.
+
+    Pass:
+        fname - Path to lock file, should be unique to the particular
+                locking desired.
+
+    Return:
+        True  = Success, lock file created.
+        False = Lock file already exists.  If the process that created it
+                is no longer running, it has to be removed manually.
+    """
+    if os.path.exists(fname):
+        return False
+
+    # Create the file, raises IOError if failed
+    f = open(fname, "w")
+
+    # Register a function to remove the file when the program exits
+    atexit.register(removeLockFile, fname)
+
+    return True
+
+#----------------------------------------------------------------------
+# Delete a lockfile.
+#----------------------------------------------------------------------
+def removeLockFile(fname):
+    """
+    Remove a file created by createLockFile.
+
+    Need only be called if the caller wants to release the resource
+    before ending his program.
+
+    If already removed, no problem.
+    """
+    try:
+        os.remove(fname)
+    except Exception:
+        pass
