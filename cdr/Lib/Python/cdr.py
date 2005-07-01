@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.110 2005-06-30 23:12:32 ameyer Exp $
+# $Id: cdr.py,v 1.111 2005-07-01 00:33:36 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.110  2005/06/30 23:12:32  ameyer
+# Added createLockFile / removeLockFile.
+#
 # Revision 1.109  2005/06/21 23:48:11  ameyer
 # Added valPair for future use in global change.
 #
@@ -3685,40 +3688,66 @@ def emailerCgi():
 #----------------------------------------------------------------------
 # Create a file to use as an interprocess lockfile.
 #----------------------------------------------------------------------
+# Static dictionary of locked files
+_lockedFiles = {}
 def createLockFile(fname):
     """
     Create a named lock file to use in synchronizing processes.
 
     Tried msvcrt.locking() but couldn't get it to work reliably
     and the posix fnctl functions aren't available on Win32.  So
-    this hack is a substitute.
+    this is a substitute in the spirit of Berkeley UNIX fcntl
+    file locking functions.
+
+    As in the UNIX world, everything is done by convention.
+    Creating a lock file only locks something if another process
+    also calls createLockFile() with the same filename.
 
     The caller may call removeLockFile when locking is done, but
     he can just ignore it and it will be called for him if he
     exits normally without doing it.
 
     An abnormal exit may not call deleteLockFile().  My tests of
-    interrupting a function with Ctrl-C worked fine.  The atexit
-    was called, but the Python docs don't guarantee this for
-    every possible case.
+    various exceptional exits worked fine.  The atexit was called.
+    However the Python docs don't guarantee this for every
+    possible case.
+
+    Calls to createLockFile may NOT be nested for the same lockfile.
+    Calling twice without an intervening call to removeLockFile, or
+    a program exit, will raise an exception.
 
     Pass:
         fname - Path to lock file, should be unique to the particular
-                locking desired.
+                  locking desired.
+                The name of the file is arbitrary, but it must be a
+                  legal file path and it must NOT be a file created for
+                  other purposes.
+                A good example of a lock file name might be something
+                  like "/cdr/log/FileSweeper.lock".
 
     Return:
         True  = Success, lock file created.
         False = Lock file already exists.  If the process that created it
                 is no longer running, it has to be removed manually.
     """
+    # Nested calls are not allowed
+    if _lockedFiles.has_key(fname):
+        raise StandardError(\
+         'File "%s" locked twice without intervening unlock' % fname)
+
+    # If another process locked the file, caller loses
     if os.path.exists(fname):
         return False
 
     # Create the file, raises IOError if failed
     f = open(fname, "w")
+    f.close()
+
+    # Remember that we locked this file in this process
+    _lockedFiles[fname] = True
 
     # Register a function to remove the file when the program exits
-    atexit.register(removeLockFile, fname)
+    atexit.register(removeAllLockFiles)
 
     return True
 
@@ -3731,10 +3760,23 @@ def removeLockFile(fname):
 
     Need only be called if the caller wants to release the resource
     before ending his program.
-
-    If already removed, no problem.
     """
-    try:
-        os.remove(fname)
-    except Exception:
-        pass
+    # Only remove the file if we created it.
+    # It is illegal to remove a lock created by another process
+    if not _lockedFiles.has_key(fname):
+        raise StandardError('File "%s" not locked in this process' % fname)
+    del(_lockedFiles[fname])
+
+    # If we got here, this ought to work, propagate exception if it fails
+    os.remove(fname)
+
+#----------------------------------------------------------------------
+# Remove any outstanding lockfiles for this process.
+#----------------------------------------------------------------------
+def removeAllLockFiles():
+    """
+    Remove any files that were created by createLockFile() for which
+    removeLockFile() was not called.
+    """
+    for fname in _lockedFiles.keys():
+        removeLockFile(fname)
