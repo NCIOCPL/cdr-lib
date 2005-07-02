@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.111 2005-07-01 00:33:36 ameyer Exp $
+# $Id: cdr.py,v 1.112 2005-07-02 12:20:06 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.111  2005/07/01 00:33:36  ameyer
+# Enhanced create/remove lock files to avoid possible conflicts.
+#
 # Revision 1.110  2005/06/30 23:12:32  ameyer
 # Added createLockFile / removeLockFile.
 #
@@ -3464,11 +3467,15 @@ def mailerCleanup(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 class StringSink:
     def __init__(self, s = ""):
-        self.s = s
+        self.__pieces = s and [s] or []
     def __repr__(self):
-        return self.s
+        return "".join(self.__pieces)
     def write(self, s):
-        self.s += s
+        self.__pieces.append(s)
+    def __getattr__(self, name):
+        if name == 's':
+            return "".join(self.__pieces)
+        raise AttributeError
 
 #----------------------------------------------------------------------
 # Remove all lines from a multi-line string (e.g., an XML doc)
