@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.52 2005-04-21 21:21:49 venglisc Exp $
+# $Id: cdrcgi.py,v 1.53 2005-07-13 19:50:48 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.52  2005/04/21 21:21:49  venglisc
+# Modified module navigateTo to allow passing of additional parameters needed
+# for PublishPreview. (Bug 1531)
+#
 # Revision 1.51  2004/10/22 09:36:56  bkline
 # Changed display method for Glossary Term QC report.
 #
@@ -192,8 +196,11 @@ FILTER   = "Filter"
 FORMBG   = '/images/back.jpg'
 BASE     = '/cgi-bin/cdr'
 MAINMENU = 'Admin Menu'
-WEBSERVER= socket.gethostbyaddr(socket.gethostname())[0] #'mmdb2.nci.nih.gov'
-DAY_ONE  = '2002-06-24'
+THISHOST = socket.gethostbyaddr(socket.gethostname())[0].lower()
+ISPLAIN  = "." not in THISHOST
+DOMAIN   = ".nci.nih.gov"
+WEBSERVER= THISHOST + (ISPLAIN and DOMAIN or "")
+DAY_ONE  = cdr.URDATE
 HEADER   = """\
 <!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
 <HTML>
@@ -426,10 +433,10 @@ def mainMenu(session, news = None):
 #----------------------------------------------------------------------
 def navigateTo(where, session, **params):
     url = "http://%s%s/%s?%s=%s" % (WEBSERVER,
-                                      BASE,   
-                                      where,  
-                                      SESSION,
-                                      session)
+                                    BASE,   
+                                    where,  
+                                    SESSION,
+                                    session)
 
     # Concatenate additional Parameters to URL for PublishPreview
     # -----------------------------------------------------------
