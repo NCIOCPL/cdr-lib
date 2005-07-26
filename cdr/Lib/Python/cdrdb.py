@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.16 2004-10-22 12:20:50 bkline Exp $
+# $Id: cdrdb.py,v 1.17 2005-07-26 20:11:16 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.16  2004/10/22 12:20:50  bkline
+# Fixed BLOB handling.
+#
 # Revision 1.15  2003/02/14 20:30:37  bkline
 # Added extension helper function strftime().
 #
@@ -199,7 +202,7 @@ threadsafety = 1
 paramstyle   = 'qmark'
 
 #----------------------------------------------------------------------
-# Statndard exception classes.
+# Standard exception classes.
 #----------------------------------------------------------------------
 class Warning(StandardError):           pass
 class Error(StandardError):             pass
@@ -404,11 +407,14 @@ class Cursor:
                 self.rowcount = rowsAffected
 
         except:
+            queryStr  = ' Query: "' + query + '"'
+            if(params):
+                queryStr += ' Params: ' + str(params)
             errorList = buildErrorList(self.__conn)
             if errorList:
-                raise Error, ("Cursor.execute", errorList)
+                raise Error, ("Cursor.execute:%s" % queryStr, errorList)
             raise InternalError, ("Cursor.execute",
-                    ((u"unexpected failure for query '%s'" % query),))
+                    ((u"unexpected failure for query:%s" % queryStr),))
 
     def executemany(self, query, paramSets):
         """
