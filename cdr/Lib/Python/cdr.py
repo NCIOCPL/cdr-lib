@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.112 2005-07-02 12:20:06 bkline Exp $
+# $Id: cdr.py,v 1.113 2005-08-02 20:14:40 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.112  2005/07/02 12:20:06  bkline
+# Sped up StringSink class by two orders of magnitude.
+#
 # Revision 1.111  2005/07/01 00:33:36  ameyer
 # Enhanced create/remove lock files to avoid possible conflicts.
 #
@@ -1483,6 +1486,7 @@ def valPair(session, docType, oldDoc, newDoc, host=DEFAULT_HOST,
                 errString = errs
                 if errs[err] > 1:
                     errString += " (%d)" % errs[err]
+                result.append(errString)
 
     # Return list or None
     return result
