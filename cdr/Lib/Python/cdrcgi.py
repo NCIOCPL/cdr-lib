@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.53 2005-07-13 19:50:48 bkline Exp $
+# $Id: cdrcgi.py,v 1.54 2005-08-02 21:53:38 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.53  2005/07/13 19:50:48  bkline
+# Fixed WEBSERVER to include fully qualified DNS name.
+#
 # Revision 1.52  2005/04/21 21:21:49  venglisc
 # Modified module navigateTo to allow passing of additional parameters needed
 # for PublishPreview. (Bug 1531)
@@ -175,7 +178,7 @@
 #----------------------------------------------------------------------
 # Import external modules needed.
 #----------------------------------------------------------------------
-import cgi, cdr, cdrdb, sys, codecs, re, socket
+import cgi, cdr, cdrdb, sys, codecs, re, socket, xml.sax.saxutils
 
 #----------------------------------------------------------------------
 # Get some help tracking down CGI problems.
@@ -737,7 +740,17 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
 """
 
     for button in buttons:
-        html += """\
+        if button[0].lower() == 'button':
+            html += """\
+     <TD        WIDTH       = "13%%"
+                ALIGN       = "center">
+      <INPUT    TYPE        = "button"
+                ONCLICK     = %s
+                VALUE       = "%s">
+     </TD>
+""" % (xml.sax.saxutils.quoteattr(button[1]), button[2])
+        else:
+            html += """\
      <TD        WIDTH       = "13%%"
                 ALIGN       = "center">
       <INPUT    TYPE        = "%s"
