@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.113 2005-08-02 20:14:40 ameyer Exp $
+# $Id: cdr.py,v 1.114 2005-08-03 03:48:11 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.113  2005/08/02 20:14:40  ameyer
+# Fixed bug in still unused valPair() function.
+#
 # Revision 1.112  2005/07/02 12:20:06  bkline
 # Sped up StringSink class by two orders of magnitude.
 #
@@ -1037,6 +1040,38 @@ class Doc:
         raise Exception("Media type not yet supported")
 
 #----------------------------------------------------------------------
+# Wrap an XML document in CdrDoc wrappers.
+#----------------------------------------------------------------------
+def makeCdrDoc(xml, docType, docId=None):
+    """
+    Make XML suitable for sending to server functions expecting
+    a CdrDocCtl wrapper.
+
+    Pass:
+        xml     - Serialized XML for document - unicode or utf-8.
+        docType - Document type string.
+        docId   - CDR doc ID, or None.
+
+    Return:
+        New XML string with passed xml as CDATA section, coded in utf-8.
+    """
+    # Check and set encoding
+    if type(xml) == type(u""):
+        xml = xml.encode("utf-8")
+
+    # Create ID portion of header, if there is an id
+    idHeader = ""
+    if docId:
+        idHeader = " Id='%s'" % exNormalize(docId)[0]
+
+    # Construct the entire document
+    newXml = """<CdrDoc Type='%s'%s>
+<CdrDocXml><![CDATA[%s]]></CdrDocXml>
+</CdrDoc>""" % (docType, idHeader, xml)
+
+    return newXml
+
+#----------------------------------------------------------------------
 # Internal subroutine to add or replace DocComment element in CdrDocCtl.
 #----------------------------------------------------------------------
 def _addRepDocComment(doc, comment):
@@ -1472,23 +1507,49 @@ def valPair(session, docType, oldDoc, newDoc, host=DEFAULT_HOST,
     # If no errors, check the new version
     if not result:
         result = valDoc(session, docType, doc=newDoc, host=host, port=port)
-        if result:
-            # De-dup any errors
-            errs = {}
-            dom = xml.dom.minidom.parseString(result)
-            for err in dom.getElementsByTagName('Err'):
-                errString = getTextContent(err)
-                errs[errString] = errs.get(errString, 0) + 1
+        return deDupErrs(result)
 
-            # Prepare results list
-            result = []
-            for err in errs:
-                errString = errs
-                if errs[err] > 1:
-                    errString += " (%d)" % errs[err]
-                result.append(errString)
+    # Else return empty list
+    return []
 
-    # Return list or None
+#----------------------------------------------------------------------
+# De-duplicate and list a sequence of error messages
+#----------------------------------------------------------------------
+def deDupErrs(errXml):
+    """
+    Parse an error XML string returned by valDoc, de-duplicate the
+    errors, and return them in a sequence of strings.
+
+    Each error string is followed by optional number of occurrences
+    in parens, e.g.:
+
+        "An error" - Occurred once
+        "Another error (3 times)" - Occurred three times
+
+    Pass:
+        errXml - Error XML string.
+    Return:
+        Sequence of error strings, may be empty
+    """
+    # If nothing passed, or empty string passed, then no errors
+    if not errXml:
+        return []
+
+    # De-dup any errors
+    errs = {}
+    dom = xml.dom.minidom.parseString(errXml)
+    for err in dom.getElementsByTagName('Err'):
+        errString = getTextContent(err)
+        errs[errString] = errs.get(errString, 0) + 1
+
+    # Prepare results list
+    result = []
+    for err in errs.keys():
+        errString = err
+        if errs[err] > 1:
+            errString += " (%d times)" % errs[err]
+        result.append(errString)
+
     return result
 
 #----------------------------------------------------------------------
