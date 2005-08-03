@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.27 2005-04-28 14:02:45 ameyer Exp $
+# $Id: GlobalChangeBatch.py,v 1.28 2005-08-03 03:49:58 ameyer Exp $
 #
 # Perform a global change
 #
@@ -23,6 +23,9 @@
 #                   Identifies row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.27  2005/04/28 14:02:45  ameyer
+# Added correct error handling for cdr.unlock() call.
+#
 # Revision 1.26  2005/04/12 16:04:28  ameyer
 # Added some more complete and robust error reporting.
 #
@@ -485,13 +488,14 @@ for idTitle in originalDocs:
             failed = logDocErr (docId, "checking out document", oldCwdDocObj)
         else:
             oldCwdXml = oldCwdDocObj.xml
+            docType   = oldCwdDocObj.type
 
             # Remember that we need to check this back in at end
             checkedOut = 1
 
         if not failed:
 
-            cdr.logwrite ("Doctype='%s'" % oldCwdDocObj.type, LF)
+            cdr.logwrite ("Doctype='%s'" % docType, LF)
 
             # Get version info
             cdr.logwrite ("Checking lastVersions", LF)
@@ -515,10 +519,22 @@ for idTitle in originalDocs:
                     # Else any messages are warnings to be shown
                     cwdMsgs = errs
 
-                    # If in test mode, write out the old, new and diff files
+                    # Make sure that filtering did not invalidate a
+                    #   valid document
+                    valErrs = cdr.valPair(session, docType,
+                                          oldCwdXml, chgCwdXml)
+                    if valErrs:
+                        failed = "<font color='red'>Change introduced " +\
+                         "validation errors in CWD!</font>"
+                        for msg in result:
+                            failed += "<br>%s" % msg
+
+                    # If test mode, write out the old, new and diff files
+                    # We do this even if valPair shows that filtering
+                    #   created new errors
                     if testOnly:
-                        cdrglblchg.writeDocs (outputDir, docId,
-                                              oldCwdXml, chgCwdXml, "cwd")
+                        cdrglblchg.writeDocs (outputDir, docId, oldCwdXml,
+                                              chgCwdXml, "cwd", valErrs)
 
         if not failed:
 
@@ -550,6 +566,7 @@ for idTitle in originalDocs:
                                         checkout='N', version=lastPubVerNum,
                                         getObject=1)
                         oldPubVerXml = oldPubVerDocObj.xml
+
                     # Fetch changed/filtered form
                     (chgPubVerXml, errs) = runFilters (docId,
                                                        cdrglblchg.FLTR_PUB,
@@ -562,11 +579,25 @@ for idTitle in originalDocs:
                         # Else any messages are warnings to be shown
                         pubMsgs = errs
 
-                        # If in test mode, write out the old, new and diff files
+                        # Validate the publishable version, don't try to
+                        #   store it if there are validation errors
+                        result = cdr.valDoc(session,
+                                  docType,
+                                  doc=cdr.makeCdrDoc(chgPubVerXml, docType))
+                        valErrs = cdr.deDupErrs(result)
+
+                        # Don't try to store it if there are validation errors
+                        if valErrs:
+                            failed = "<font color='red'>Change introduced " +\
+                             "validation errors in publishable version!</font>"
+                            for msg in valErrs:
+                                failed += "<br>%s" % msg
+
+                        # If in test mode, write out old, new and diff files
                         if testOnly:
                             cdrglblchg.writeDocs (outputDir, docId,
                                                   oldPubVerXml, chgPubVerXml,
-                                                  "pub")
+                                                  "pub", valErrs)
 
         if not failed and not testOnly:
             # For debug
@@ -601,7 +632,7 @@ for idTitle in originalDocs:
         if not failed and not testOnly:
             if chgPubVerXml:
                 cdr.logwrite ("About to create Doc object for version", LF)
-                chgPubVerDocObj = cdr.Doc(id=docIdStr, type=oldCwdDocObj.type,
+                chgPubVerDocObj = cdr.Doc(id=docIdStr, type=docType,
                                           x=chgPubVerXml, encoding='utf-8')
                 cdr.logwrite ("About to replace published version in CDR", LF)
                 (repId, repErrs) = cdr.repDoc(session,doc=str(chgPubVerDocObj),
@@ -622,7 +653,7 @@ for idTitle in originalDocs:
             #   but still be stored as a non-publishable version.  If we
             #   don't go on to save the modified CWD, the last publishable
             #   version will replace it, without our wanting it to.
-            chgCwdDocObj = cdr.Doc(id=docIdStr, type=oldCwdDocObj.type,
+            chgCwdDocObj = cdr.Doc(id=docIdStr, type=docType,
                                    x=chgCwdXml, encoding='utf-8')
             cdr.logwrite ("Saving CWD after change", LF)
             (repId, repErrs) = cdr.repDoc (session, doc=str(chgCwdDocObj),
