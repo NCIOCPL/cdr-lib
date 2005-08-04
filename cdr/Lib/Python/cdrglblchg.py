@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.35 2005-05-03 23:35:37 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.36 2005-08-04 14:18:45 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.35  2005/05/03 23:35:37  ameyer
+# Reverting to previous version after Bob showed me a better way and
+# a better place to handle unicode to utf-8 conversion.
+#
 # Revision 1.34  2005/05/03 19:19:46  ameyer
 # Modified writeDocs to convert xml from utf-8 to ascii for writing to
 # the file system.  Otherwise the write() function attempts an inappropriate
@@ -523,7 +527,7 @@ def createOutputDir():
 # Write a pair of document files plus a diff file to the file
 # system.
 #------------------------------------------------------------
-def writeDocs (dirName, docId, oldDoc, newDoc, verType):
+def writeDocs (dirName, docId, oldDoc, newDoc, verType, valErrs=None):
     """
     Writes documents before and after global change.
     Used in test mode to output everything to the file
@@ -539,12 +543,15 @@ def writeDocs (dirName, docId, oldDoc, newDoc, verType):
                    Has to be the real XML, not CdrDoc with embedded CDATA.
         verType - "cwd" for current working doc, "pub" for last
                    publishable version.
+        valErrs - Sequence of validation errors, or None.
+                   If present & non-empty write them to a NEW_ERRORS.txt file.
     """
     # Construct filenames.  exNormalize() can raise StandardError
     idStr = cdr.exNormalize(docId)[0]
     oldName = "%s/%s.%sold.xml" % (dirName, idStr, verType)
     newName = "%s/%s.%snew.xml" % (dirName, idStr, verType)
     diffName = "%s/%s.%s.diff" % (dirName, idStr, verType)
+    errsName = "%s/%s.%s.NEW_ERRORS.txt" % (dirName, idStr, verType)
 
     try:
         # Write two docs as XML, not CDATA
@@ -567,6 +574,14 @@ def writeDocs (dirName, docId, oldDoc, newDoc, verType):
         fp = open(diffName, "w")
         fp.write(diff)
         fp.close()
+
+        # If there are errors to report, write them out
+        if valErrs:
+            fp = open(errsName, "w")
+            for err in valErrs:
+                fp.write("%s\n" % err)
+            fp.close()
+
     except Exception, e:
         raise Exception("Error writing global change output files: %s" %
                         str(e))
