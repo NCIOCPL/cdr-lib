@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.114 2005-08-03 03:48:11 ameyer Exp $
+# $Id: cdr.py,v 1.115 2005-08-05 03:09:20 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.114  2005/08/03 03:48:11  ameyer
+# Added new functions: makeCdrDocXml(), deDupErrs().
+# Made previously untested valPair() function work.
+#
 # Revision 1.113  2005/08/02 20:14:40  ameyer
 # Fixed bug in still unused valPair() function.
 #
@@ -1452,6 +1456,36 @@ def delDoc(credentials, docId, val = 'N', reason = '',
 def valDoc(credentials, docType, docId = None, doc = None,
            valLinks = 'Y', valSchema = 'Y', validateOnly = 'Y',
            host = DEFAULT_HOST, port = DEFAULT_PORT):
+    """
+    Validate a document, either in the database or passed to here.
+
+    Pass:
+        credentials - Login.
+        docType     - of the doc to be validated.
+        docId       - CDR ID if validating in the database.
+        doc         - Document string.
+                      Either of two forms okay:
+                        Actual XML document with no CdrDoc wrapper.
+                        XML as CDATA section in CdrDoc wrapper.
+                      Must pass either doc or docId.
+                      If docId passed, doc is ignored.
+        valLinks    - validate links.
+        valSchema   - validate against schema.
+        validateOnly- False = update the val_status column in the document
+                        table.
+                      Only usable if docId passed.
+                      Default is to leave val_status alone.
+        host/port   - The usual.
+
+    Return:
+        Results of server validation - may be list of error messages.
+    """
+    # Need to find out if this is a doc inside CDATA or not
+    if doc:
+        pat = re.compile(r"<CdrDoc.*<!\[CDATA\[", re.DOTALL)
+        if not pat.search(doc):
+            # It's naked XML.  Wrap it in a CdrDoc.
+            doc = makeCdrDoc(doc, docType)
 
     # Create the command.
     if docId:
