@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.11 2005-05-26 23:45:07 bkline Exp $
+# $Id: ModifyDocs.py,v 1.12 2005-08-15 21:05:07 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.11  2005/05/26 23:45:07  bkline
+# Fix to create output directory in test mode for SiteImporter subclass.
+#
 # Revision 1.10  2005/03/04 19:19:45  bkline
 # Suppressed logging of everValidated setting.
 #
@@ -63,6 +66,8 @@ class DocumentLocked(Exception): pass
 #----------------------------------------------------------------------
 _testMode  = True   # True=Output to files only, not database
 _outputDir = None   # Files go in this directory
+_validate  = False  # True=Check that change didn't invalidate valid doc
+_haltOnErr = False  # True=Don't save any doc if change invalidate a version
 
 #----------------------------------------------------------------------
 # Class for one modification job.
@@ -70,7 +75,7 @@ _outputDir = None   # Files go in this directory
 class Job:
 
     def __init__(self, uid, pwd, filter, transform, comment, testMode=True,
-                 logFile = LOGFILE):
+                 logFile=LOGFILE, validate=False, haltOnValErr=False):
         """
         Create a new one-off job to apply a custom modification to
         a group of CDR documents.
@@ -90,6 +95,8 @@ class Job:
             logFile    - optional path for logfile
         """
         global _testMode
+        global _validate
+        global _haltOnErr
 
         self.logFile   = open(logFile, 'a')
         self.uid       = uid
@@ -101,6 +108,8 @@ class Job:
         self.cursor    = self.conn.cursor()
         self.session   = cdr.login(uid, pwd)
         _testMode      = testMode
+        _validate      = validate
+        _haltOnErr     = haltOnValErr
         error          = cdr.checkErr(self.session)
         if error:
             raise Exception("Failure logging into CDR: %s" % error)
@@ -111,7 +120,7 @@ class Job:
         # Raises exception to exit program if fails
         _outputDir = cdrglblchg.createOutputDir()
         self.log("Running in test mode.  Output to: %s" % _outputDir)
-        
+
     def run(self):
         # In test mode, create output directory for files
         if _testMode:
@@ -159,6 +168,10 @@ class Doc:
         self.versions  = cdr.lastVersions('guest', "CDR%010d" % id)
         self.loadAndTransform()
 
+        global _testMode
+        global _validate
+        global _haltOnErr
+
     #------------------------------------------------------------------
     # Uses xml comparator from cdr module.
     #------------------------------------------------------------------
@@ -170,18 +183,37 @@ class Doc:
     # and run them through the transformation for this job.
     #------------------------------------------------------------------
     def loadAndTransform(self):
+        # Current working document
         self.cwd       = cdr.getDoc(self.session, self.id, 'Y', getObject = 1)
         if type(self.cwd) in (type(""), type(u"")):
             err = cdr.checkErr(self.cwd) or self.cwd
             raise DocumentLocked("Unable to check out CWD for CDR%010d: %s" %
                                  (self.id, err))
+
+        # Run the transformation filter
         self.newCwd    = self.transform.run(self.cwd)
+
+        # Stored versions
         self.lastv     = None
         self.lastp     = None
         self.newLastv  = None
         self.newLastp  = None
+        self.cwdVals   = None
+        self.lastvVals = None
+        self.lastpVals = None
         (lastAny, lastPub, isChanged) = self.versions
+
+
+        # If (and only if) old version was valid, validate new version
+        # cwdVal is array of error messages or empty array
+        if (_validate):
+            self.cwdVals = cdr.valPair(self.session, self.cwd.type,
+                                       self.cwd.xml, self.newCwd)
+
+        # If there is a last version
         if lastAny > 0:
+
+            # And it's not the same as the CWD
             if isChanged == 'Y':
                 self.lastv = cdr.getDoc(self.session, self.id, 'Y',
                                         str(lastAny),
@@ -192,14 +224,20 @@ class Doc:
                                     "for CDR%010d: %s" % (lastAny,
                                                        self.id, err))
                 self.newLastv = self.transform.run(self.lastv)
+                if _validate:
+                    self.lastvVals= cdr.valPair(self.session, self.lastv.type,
+                                                self.lastv.xml, self.newLastv)
             else:
-                self.lastv    = self.cwd
-                self.newLastv = self.newCwd
+                # Copy references lastv is now cwd
+                self.lastv     = self.cwd
+                self.newLastv  = self.newCwd
+                self.lastvVals = self.cwdVals
+
+        # If there is a last publishable version
         if lastPub > 0:
-            if lastPub == lastAny:
-                self.lastp    = self.lastv
-                self.newLastp = self.newLastv
-            else:
+
+            # If it's not the same as the last version
+            if lastPub != lastAny:
                 self.lastp = cdr.getDoc(self.session, self.id, 'Y',
                                         str(lastPub),
                                         getObject = 1)
@@ -209,10 +247,27 @@ class Doc:
                                     "for CDR%010d: %s" % (lastPub,
                                                        self.id, err))
                 self.newLastp = self.transform.run(self.lastp)
+                if _validate:
+                    # Original plan was to validate pub version even if
+                    #   last pub was invalid, but this is safe since
+                    #   attempt to save an invalid pub version will cause
+                    #   it to be marked non-publishable
+                    self.lastpVals= cdr.valPair(self.session, self.lastp.type,
+                                                self.lastp.xml, self.newLastp)
+
+            else:
+                # Copy references lastp is lastv, and maybe also cwd
+                self.lastp     = self.lastv
+                self.newLastp  = self.newLastv
+                self.lastpVals = self.lastvVals
+
 
     def saveChanges(self, job):
         """
-        Saves versions for a document according to the following logic:
+        In run mode, saves all versions of a document needing to be saved.
+        In test mode, writes to output files, leaving the database alone.
+
+        Uses the following logic:
 
         Let PV     = publishable version
         Let LPV    = latest publishable version
@@ -226,43 +281,76 @@ class Doc:
 
         If CWD <> LV:
             Create new NPV from unmodified CWD
+            Preserves the original CWD which otherwise would be lost.
         If LPV(t) <> LPV:
             Create new PV using LPV(t)
         If LV(t) <> LV:
             Create new NPV from LV(t)
         If CWD(t) <> LS:
             Create new CWD using CWD(t)
+
+        Often, one or more of the following is true:
+            CWD==LV, CWD==LPV, LV==LPV
+
+        BEWARE! If versions are equivalent, references to objects are
+        manipulated in tricky ways to ensure that the Right Thing is done.
         """
+
         global _testMode, _outputDir
+
         lastSavedXml  = None
         docId         = self.cwd.id
         everValidated = self.lastp and True or self.__everValidated(job.cursor)
         #job.log("everValidated = %s" % everValidated)
 
-        # Only save to database in run mode
-        # Only write to output files in test mode
+        # If change made a valid doc invalid, report it to console & log
+        # Note this only happens if _validate caused one of the Vals
+        #   msg arrays to be created and validation populated it with err msgs
+        vals = self.lastpVals or self.cwdVals or self.lastvVals
+        if vals:
+            msg = "Doc %s made invalid by change - will NOT store it" % docId
+            if self.cwdVals:
+                msg += "\nCurrent working document would become invalid"
+            if self.lastpVals:
+                msg += "\nNew pub version would become invalid"
+            if self.lastvVals:
+                msg += "\nNew last version would become invalid"
+
+            # Just appending one set of messages, others should be similar
+            for val in vals:
+                msg += "\n%s" % val
+            job.log(msg)
 
         if _testMode:
             # Write new/original CWDs
             cdrglblchg.writeDocs(_outputDir, docId,
-                                 self.cwd.xml, self.newCwd, 'cwd')
+                                 self.cwd.xml, self.newCwd, 'cwd',
+                                 self.cwdVals)
+
+        # If last version is not cwd, save cwd so it won't be lost
         if self.lastv and self.compare(self.cwd.xml, self.lastv.xml):
-            if not _testMode:
+            # Don't save if test mode or validation failure
+            if not _testMode and not vals:
                 # Save old CWD as new version
                 self.__saveDoc(str(self.cwd), ver='Y', pub='N', job=job,
                                val = (everValidated and 'Y' or 'N'),
                                logWarnings = False)
             lastSavedXml = self.lastv.xml
+
+        # If publishable version changed ...
         if self.lastp and self.compare(self.lastp.xml, self.newLastp):
             if _testMode:
                 # Write new/original last pub version
                 cdrglblchg.writeDocs(_outputDir, docId,
-                                     self.lastp.xml, self.newLastp, 'pub')
+                                     self.lastp.xml, self.newLastp, 'pub',
+                                     self.lastpVals)
             else:
-                # Save new last pub version
                 self.lastp.xml = lastSavedXml = self.newLastp
-                self.__saveDoc(str(self.lastp), ver='Y', pub='Y', job=job,
-                               val = (everValidated and 'Y' or 'N'))
+                # If not validating or passed validation,
+                #   save new last pub version
+                if not (vals and _haltOnErr):
+                    self.__saveDoc(str(self.lastp), ver='Y', pub='Y', job=job,
+                                   val = (everValidated and 'Y' or 'N'))
 
         #--------------------------------------------------------------
         # Note that in the very common case in which the last created
@@ -279,20 +367,26 @@ class Doc:
         #--------------------------------------------------------------
         if self.lastv and self.compare(self.lastv.xml, self.newLastv):
             if _testMode:
-                # Write new/original last non-pub version
+                # Write new/original last non-pub version results
                 cdrglblchg.writeDocs(_outputDir, docId,
-                                     self.lastv.xml, self.newLastv, 'lastv')
-            else:
+                                     self.lastv.xml, self.newLastv, 'lastv',
+                                     self.lastvVals)
+            # Reflect the changes
+            self.lastv.xml = lastSavedXml = self.newLastv
+
+            if not _testMode:
                 # Save new last non-pub version
-                self.lastv.xml = lastSavedXml = self.newLastv
-                self.__saveDoc(str(self.lastv), ver='Y', pub='N', job=job,
-                               val = (everValidated and 'Y' or 'N'))
+                if not (vals and _haltOnErr):
+                    self.__saveDoc(str(self.lastv), ver='Y', pub='N', job=job,
+                                   val = (everValidated and 'Y' or 'N'))
+
         if lastSavedXml and self.compare(self.newCwd, lastSavedXml):
             if not _testMode:
                 # Save new CWD
                 self.cwd.xml = self.newCwd
-                self.__saveDoc(str(self.cwd), ver='N', pub='N', job=job,
-                               val = (everValidated and 'Y' or 'N'))
+                if not (vals and _haltOnErr):
+                    self.__saveDoc(str(self.cwd), ver='N', pub='N', job=job,
+                                   val = (everValidated and 'Y' or 'N'))
 
     #------------------------------------------------------------------
     # Find out whether the document has ever been validated.
@@ -323,7 +417,7 @@ class Doc:
     # Invoke the CdrRepDoc command.
     #------------------------------------------------------------------
     def __saveDoc(self, docStr, ver, pub, job, val = 'Y', logWarnings = True):
-        job.log("saveDoc(%d, ver='%s' pub='%s' val='%s')" % (self.id, ver, 
+        job.log("saveDoc(%d, ver='%s' pub='%s' val='%s')" % (self.id, ver,
                                                              pub, val))
         # return 1
 
