@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.115 2005-08-05 03:09:20 ameyer Exp $
+# $Id: cdr.py,v 1.116 2005-08-15 21:03:03 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.115  2005/08/05 03:09:20  ameyer
+# Modified valDoc to accept naked XML, or XML as CDATA wrapped in a CdrDoc.
+#
 # Revision 1.114  2005/08/03 03:48:11  ameyer
 # Added new functions: makeCdrDocXml(), deDupErrs().
 # Made previously untested valPair() function work.
@@ -1539,7 +1542,7 @@ def valPair(session, docType, oldDoc, newDoc, host=DEFAULT_HOST,
     result = valDoc(session, docType, doc=oldDoc, host=host, port=port)
 
     # If no errors, check the new version
-    if not result:
+    if not getErrors(result, errorsExpected=0):
         result = valDoc(session, docType, doc=newDoc, host=host, port=port)
         return deDupErrs(result)
 
