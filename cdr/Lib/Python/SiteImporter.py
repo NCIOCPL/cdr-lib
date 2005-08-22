@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.14 2005-06-20 16:44:14 bkline Exp $
+# $Id: SiteImporter.py,v 1.15 2005-08-22 16:10:06 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.14  2005/06/20 16:44:14  bkline
+# Added more flexibility with the name of the manifest file; added more
+# robust handling of database code.
+#
 # Revision 1.13  2005/06/10 12:34:29  bkline
 # Set job's __id member to None at top of constructor.
 #
@@ -88,10 +92,10 @@ class SoapResponse:
 
 class ImportJob(ModifyDocs.Job):
 
-    def __init__(self, source, comment, fileName = None):
+    def __init__(self, source, comment, fileName = None, validate = False):
 
         ModifyDocs.Job.__init__(self, UID, PWD, None, None, comment,
-                                testMode = TEST_MODE)
+                                testMode = TEST_MODE, validate = validate)
         
         self.log("SiteImporter: source=%s" % source)
 
