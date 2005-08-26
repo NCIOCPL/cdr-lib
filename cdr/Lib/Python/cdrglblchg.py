@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.36 2005-08-04 14:18:45 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.37 2005-08-26 02:03:44 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.36  2005/08/04 14:18:45  ameyer
+# Updated writeDocs to also write a file of validation error messages,
+# if there is one.
+#
 # Revision 1.35  2005/05/03 23:35:37  ameyer
 # Reverting to previous version after Bob showed me a better way and
 # a better place to handle unicode to utf-8 conversion.
@@ -286,12 +290,16 @@ TTBL_RES1 = "#gcRes1"
 TTBL_RES2 = "#gcRes2"
 TTBL_RES3 = "#gcRes3"
 
-# Kinds of filtering
+# Kinds of filtering, used as indexes into TermChg.doneChgs
 FLTR_CWD = 0    # Filtering current working document
 FLTR_PUB = 1    # Filtering last publishable version
 
 # Logfile
 LF = cdr.DEFAULT_LOGDIR + "/GlobalChange.log"
+
+# Today's date (YYYY-MM-DD) passed to filters to update DateLastModified
+tDate = time.localtime()
+TODAY = "%4d-%02d-%02d" % (tDate[0], tDate[1], tDate[2])
 
 #------------------------------------------------------------
 # Factory for creating global change objects
@@ -2484,9 +2492,11 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
                               (self.ssVars['fromStatusName'],
                                self.ssVars['toStatusName'],
                                 time.ctime (time.time()))
-        # Only one pass
-        cdr.logwrite ("about to call chkFiltered(%d)" % filterVer, LF)
-        if not self.chkFiltered (filterVer):
+
+        if self.filtered[filterVer] == 0:
+            self.filtered[filterVer] += 1;
+
+            # First pass performs the global change
             cdr.logwrite ("will return filter parms", LF)
             filterName    = ['name:Global Change: Org Status']
             parms         = []
@@ -2499,6 +2509,14 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
                     parms.append (['personId', self.ssVars['restrPiId']])
 
             return (filterName, parms, True)
+
+        elif self.filtered[filterVer] == 1:
+            self.filtered[filterVer] += 1;
+
+            # Next pass checks for and updates DateLastModified
+            return (\
+              ['name:Global Change: Manage InScopeProtocol DateLastModified'],
+              [['today', TODAY],], True)
 
         return None
 
@@ -2649,8 +2667,10 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
                               (self.ssVars['chgOrgId'],
                                 time.ctime (time.time()))
 
-        # Only one pass
-        if not self.chkFiltered (filterVer):
+        if self.filtered[filterVer] == 0:
+            self.filtered[filterVer] += 1;
+
+            # First pass inserts the new org
             filterName    = ['name:Global Change: Insert Participating Org']
             parms         = []
             parms.append (['leadOrgID', self.ssVars['restrId']])
@@ -2664,6 +2684,14 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
                 parms.append (['setSpecificPhone',self.ssVars['specificPhone']])
 
             return (filterName, parms, True)
+
+        elif self.filtered[filterVer] == 1:
+            self.filtered[filterVer] += 1;
+
+            # Next pass checks for and updates DateLastModified
+            return (\
+              ['name:Global Change: Manage InScopeProtocol DateLastModified'],
+              [['today', TODAY],], True)
 
         return None
 
@@ -2852,8 +2880,10 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
                                (self.ssVars['delOrgId'],
                                 time.ctime (time.time()))
 
-        # Only one pass
-        if not self.chkFiltered (filterVer):
+        if self.filtered[filterVer] == 0:
+            self.filtered[filterVer] += 1;
+
+            # First pass deletes org
             filterName    = ['name:Global Change: Delete Participating Org']
             parms         = []
 
@@ -2865,6 +2895,14 @@ SELECT DISTINCT doc.id, doc.title FROM document doc
                 parms.append (['piId', self.ssVars['restrPiId']])
 
             return (filterName, parms, True)
+
+        elif self.filtered[filterVer] == 1:
+            self.filtered[filterVer] += 1;
+
+            # Next pass checks for and updates DateLastModified
+            return (\
+              ['name:Global Change: Manage InScopeProtocol DateLastModified'],
+              [['today', TODAY],], True)
 
         return None
 
@@ -2879,11 +2917,11 @@ class TermChg (GlblChg):
     def __init__(self):
         GlblChg.__init__(self)
 
-        # Need a dictionary of all changes done
-        # Simple self.filtered boolean isn't enough
-        self.doneChgs = []
-        self.doneChgs.append({})
-        self.doneChgs.append({})
+        # Need two dictionaries of all filters already executed
+        # One dictionary used for processing CWD, one for PUB version
+        # Simple self.filtered boolean isn't always enough because
+        #   there may be multiple filters for one global change
+        self.doneChgs = [{},{}]
 
         # Stages for organization status changes
         self.stages = (\
