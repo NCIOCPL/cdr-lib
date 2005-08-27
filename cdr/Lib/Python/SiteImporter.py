@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.15 2005-08-22 16:10:06 bkline Exp $
+# $Id: SiteImporter.py,v 1.16 2005-08-27 22:09:04 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.15  2005/08/22 16:10:06  bkline
+# Added parameter for invoking validation in test mode.
+#
 # Revision 1.14  2005/06/20 16:44:14  bkline
 # Added more flexibility with the name of the manifest file; added more
 # robust handling of database code.
@@ -104,6 +107,7 @@ class ImportJob(ModifyDocs.Job):
         self.__cursor     = self.__conn.cursor()
         self.__source     = source
         self.__sourceId   = self.__loadSourceId()
+        self.__loMatches  = self.__getTrialsWithMatchingLeadOrgs()
         self.__dispIds    = self.__loadDispositionIds()
         self.__fileName   = fileName
         self.__docs       = []
@@ -122,6 +126,7 @@ class ImportJob(ModifyDocs.Job):
         self.__duplicates = {}
         self.__unmapped   = {}
         self.__locked     = {}
+        self.__noLoMatch  = {}
         docsWithCdrId     = 0
         for name in self.__file.namelist():
             if name.lower().endswith('.xml'):
@@ -280,11 +285,51 @@ class ImportJob(ModifyDocs.Job):
         cdr.sendMail(sender, recips, subject, body)
 
     #----------------------------------------------------------------------
+    # Determine whether the protocol has a lead org with an UpdateMode
+    # matching the job's source.
+    #----------------------------------------------------------------------
+    def hasMatchingLeadOrg(self, docId):
+        if docId in self.__loMatches:
+            return True
+        if docId:
+            self.log("no matching lead org for %s" % docId)
+        return False
+
+    #----------------------------------------------------------------------
+    # Build a list of lead orgs wih UpdateMode matching source.
+    #----------------------------------------------------------------------
+    def __getTrialsWithMatchingLeadOrgs(self):
+        self.__cursor.execute("""\
+    SELECT m.doc_id, s.value
+      FROM query_term m
+      JOIN query_term t
+        ON m.doc_id = t.doc_id
+       AND LEFT(m.node_loc, 12) = LEFT(t.node_loc, 12)
+      JOIN query_term s
+        ON s.doc_id = m.doc_id
+     WHERE m.path  = '/InScopeProtocol/ProtocolAdminInfo'
+                   + '/ProtocolLeadOrg/UpdateMode'
+       AND t.path  = '/InScopeProtocol/ProtocolAdminInfo'
+                   + '/ProtocolLeadOrg/UpdateMode/@MailerType'
+       AND t.value = 'Protocol_SandP'
+       AND m.value = ?
+       AND s.path  = '/InScopeProtocol/ProtocolAdminInfo'
+                   + '/CurrentProtocolStatus'""", self.__source,
+                              timeout = 500)
+        trials = {}
+        for docId, status in self.__cursor.fetchall():
+            trials[docId] = status
+        self.log("%d active trials found with UpdateMode of %s" %
+                 (len(trials), self.__source))
+        return trials
+    
+    #----------------------------------------------------------------------
     # Build the report email message body.
     #----------------------------------------------------------------------
     def __getEmailReportBody(self):
+        testText = TEST_MODE and "*** TEST RUN ***\n\n" or ""
         body = """\
-Trials in manifest file: %d
+%sTrials in manifest file: %d
 
 Trials with initial external sites imported: %d
 Updated trials: %d
@@ -294,11 +339,13 @@ Skipped unchanged trials: %d
 Skipped duplicate trials: %d
 Skipped unmapped trials: %d
 Skipped locked trials: %d
+Skipped trials with no lead orgs having update mode of %s: %d
 Total trials skipped: %d
 
 Trials dropped: %d
 
-""" % (len(self.__manifest),
+""" % (testText,
+       len(self.__manifest),
        self.__newTrials,
        self.__updTrials,
        self.__newTrials + self.__updTrials,
@@ -306,8 +353,9 @@ Trials dropped: %d
        len(self.__duplicates),
        len(self.__unmapped),
        len(self.__locked),
+       self.__source, len(self.__noLoMatch),
        self.__unchanged + len(self.__unmapped) + len(self.__duplicates) +
-       len(self.__locked),
+       len(self.__locked) + len(self.__noLoMatch),
        len(self.__dropped))
         if self.__dropped:
             for trialId in self.__dropped:
@@ -327,13 +375,47 @@ Trial ID %s matched by %s
 CDR%d locked by %s
 """ % (locked, self.__locked[locked])
             body += "\n"
+        if self.__noLoMatch:
+            for noLoMatch in self.__noLoMatch:
+                body += """\
+CDR%d has no lead org with update mode of %s
+""" % (noLoMatch, self.__source)
+            body += "\n"
         if self.__unmapped:
             for unmapped in self.__unmapped:
                 body += """\
 Trial ID %s not matched by any CDR document
 """ % unmapped
+            body += "\n"
+        for cdrId in self.__getMissingDocs():
+            body += """\
+CDR%d has lead org(s) with UpdateMode of %s but no info received
+""" % (cdrId, self.__source)
         return body
        
+    #----------------------------------------------------------------------
+    # Compile a list of documents we should have gotten but didn't.
+    #----------------------------------------------------------------------
+    def __getMissingDocs(self):
+        self.__cursor.execute("""\
+            SELECT cdr_id
+              FROM import_doc
+             WHERE source = ?
+               AND cdr_id IS NOT NULL
+               AND dropped IS NULL""", self.__sourceId)
+        receivedDocs = {}
+        for row in self.__cursor.fetchall():
+            receivedDocs[row[0]] = True
+        missingDocs = []
+        for cdrId in self.__loMatches:
+            #if self.__loMatches[cdrId] in ('Active',
+            #                               'Approved-not yet active'):
+            if self.__loMatches[cdrId].upper() == 'ACTIVE':
+                if cdrId not in receivedDocs:
+                    missingDocs.append(cdrId)
+        missingDocs.sort()
+        return missingDocs
+
     #----------------------------------------------------------------------
     # Gather a list of email recipients for reports.
     #----------------------------------------------------------------------
@@ -459,7 +541,7 @@ Trial ID %s not matched by any CDR document
             return ""
         dt = str(rows[0][0])
         cutoff = dt[:10]
-        self.log("cutoff is %s" % cutoff)
+        self.log("cutoff from database is %s" % cutoff)
         return cutoff
 
     def __markDroppedDocs(self):    
@@ -545,6 +627,12 @@ Trial ID %s not matched by any CDR document
                                                        doc.sourceId))
                     if not TEST_MODE:
                         doc.recordEvent()
+                elif not doc.loMatch:
+                    self.__noLoMatch[doc.cdrId] = doc
+                    self.log("Doc %s has no lead org with %s update mode" %
+                             (doc.cdrId, self.__source))
+                    if not TEST_MODE:
+                        doc.recordEvent()
                 elif doc.cdrDoc:
                     if (TEST_MODE or doc.new or doc.changed or
                         doc.newCdrId or doc.pending):
@@ -583,6 +671,7 @@ class ImportDoc:
         self.locked   = False
         self.errMsg   = None
         self.cdrId    = importJob.lookupCdrId(self.sourceId)
+        self.loMatch  = importJob.hasMatchingLeadOrg(self.cdrId)
         self.cdrDoc   = None
         self.pending  = importDocId and True or False
         self.siteXml  = self.loadSiteDocXml(name, importDocId)
@@ -605,7 +694,8 @@ class ImportDoc:
             self.importDocId = self.getImportDocId(importDocId, oldCdrId)
 
     def run(self, docObj):
-        parms = (('source', self.impJob.getSource()),)
+        parms = (('source', self.impJob.getSource()),
+                 ('lastModified', time.strftime("%Y-%m-%d")))
         newXml = cdr.filterDoc('guest', ['name:Insert External Sites'],
                                doc = docObj.xml, parm = parms)
         if type(newXml) in (type(""), type(u"")):
@@ -798,7 +888,7 @@ class ImportDoc:
                                              locked, new, pubVersion),
                        timeout = 300)
         conn.commit()
-        if not self.locked:
+        if self.loMatch and not self.locked:
             cursor.execute("""\
                 UPDATE import_doc
                    SET disposition = ?,
