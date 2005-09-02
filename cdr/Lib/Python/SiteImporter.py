@@ -1,10 +1,17 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.16 2005-08-27 22:09:04 bkline Exp $
+# $Id: SiteImporter.py,v 1.17 2005-09-02 17:41:12 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.16  2005/08/27 22:09:04  bkline
+# Added code to block import of trials which don't have at least one lead
+# organization with a matching UpdateMode.  Modified email report so that
+# it now is sent out even with test reports (but with an extra header
+# identifying the test nature of the job).  Added parameter for new
+# DateLastModified value.
+#
 # Revision 1.15  2005/08/22 16:10:06  bkline
 # Added parameter for invoking validation in test mode.
 #
@@ -387,9 +394,19 @@ CDR%d has no lead org with update mode of %s
 Trial ID %s not matched by any CDR document
 """ % unmapped
             body += "\n"
-        for cdrId in self.__getMissingDocs():
-            body += """\
-CDR%d has lead org(s) with UpdateMode of %s but no info received
+        newLine = ""
+        missingDocs = self.__getMissingDocs()
+        for cdrId in missingDocs:
+            if not missingDocs[cdrId]:
+                newLine = "\n"
+                body += """\
+CDR%d has lead org(s) with UpdateMode of %s but no site info ever received
+""" % (cdrId, self.__source)
+        body += newLine
+        for cdrId in missingDocs:
+            if missingDocs[cdrId]:
+                body += """\
+CDR%d has lead org(s) with UpdateMode of %s but trial has been dropped
 """ % (cdrId, self.__source)
         return body
        
@@ -398,21 +415,20 @@ CDR%d has lead org(s) with UpdateMode of %s but no info received
     #----------------------------------------------------------------------
     def __getMissingDocs(self):
         self.__cursor.execute("""\
-            SELECT cdr_id
+            SELECT cdr_id, dropped
               FROM import_doc
              WHERE source = ?
-               AND cdr_id IS NOT NULL
-               AND dropped IS NULL""", self.__sourceId)
+               AND cdr_id IS NOT NULL""", self.__sourceId)
         receivedDocs = {}
         for row in self.__cursor.fetchall():
-            receivedDocs[row[0]] = True
+            receivedDocs[row[0]] = row[1]
         missingDocs = []
         for cdrId in self.__loMatches:
-            #if self.__loMatches[cdrId] in ('Active',
-            #                               'Approved-not yet active'):
             if self.__loMatches[cdrId].upper() == 'ACTIVE':
                 if cdrId not in receivedDocs:
-                    missingDocs.append(cdrId)
+                    missingDocs.append((cdrId, False))
+                elif receivedDocs[cdrId]:
+                    missingDocs.append((cdrId, True))
         missingDocs.sort()
         return missingDocs
 
