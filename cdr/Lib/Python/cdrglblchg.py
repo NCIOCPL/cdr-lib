@@ -1,8 +1,12 @@
-# $Id: cdrglblchg.py,v 1.37 2005-08-26 02:03:44 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.38 2005-09-30 03:54:02 ameyer Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.37  2005/08/26 02:03:44  ameyer
+# Added second pass filter to some global changes to update DateLastModified,
+# or warn user if there isn't one.
+#
 # Revision 1.36  2005/08/04 14:18:45  ameyer
 # Updated writeDocs to also write a file of validation error messages,
 # if there is one.
@@ -3256,6 +3260,14 @@ WHERE path='%s/StudyCategory/StudyCategoryName'
                     #   qualifier parms (StudyCategory, InterventionType)
                     return (filterName, self.addQualifierParms(parms), True)
 
+        if not self.doneChgs[filterVer].has_key ("DateLastModified"):
+            self.doneChgs[filterVer]["DateLastModified"] = 1
+
+            # Update DateLastModified
+            return (\
+              ['name:Global Change: Manage InScopeProtocol DateLastModified'],
+              [['today', TODAY],], True)
+
         # Finally, run the filter that checks for missing
         #   InterventionNameLink elements
         if not self.doneChgs[filterVer].has_key ("INLCheck"):
@@ -3266,7 +3278,6 @@ WHERE path='%s/StudyCategory/StudyCategoryName'
             # Output of this one should not be stored (3rd arg indicates this)
             return (filterName, parms, False)
 
-        # If we got here, all filters have been processed
         return None
 
     def addQualifierParms (self, parms):
