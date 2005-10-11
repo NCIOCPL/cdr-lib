@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.54 2005-08-02 21:53:38 bkline Exp $
+# $Id: cdrcgi.py,v 1.55 2005-10-11 17:57:27 ameyer Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.54  2005/08/02 21:53:38  bkline
+# Added support for buttons connected to javascript in the advanced
+# search form.
+#
 # Revision 1.53  2005/07/13 19:50:48  bkline
 # Fixed WEBSERVER to include fully qualified DNS name.
 #
@@ -178,7 +182,7 @@
 #----------------------------------------------------------------------
 # Import external modules needed.
 #----------------------------------------------------------------------
-import cgi, cdr, cdrdb, sys, codecs, re, socket, xml.sax.saxutils
+import cgi, cdr, cdrdb, sys, re, socket, xml.sax.saxutils, textwrap
 
 #----------------------------------------------------------------------
 # Get some help tracking down CGI problems.
@@ -436,8 +440,8 @@ def mainMenu(session, news = None):
 #----------------------------------------------------------------------
 def navigateTo(where, session, **params):
     url = "http://%s%s/%s?%s=%s" % (WEBSERVER,
-                                    BASE,   
-                                    where,  
+                                    BASE,
+                                    where,
                                     SESSION,
                                     session)
 
@@ -606,7 +610,7 @@ def generateHtmlPicklist(conn, fieldName, query, pattern):
       </select>
 """
     return html
-    
+
 #----------------------------------------------------------------------
 # Generate the top portion of an advanced search form.
 #----------------------------------------------------------------------
@@ -1169,4 +1173,38 @@ def int_to_roman(input):
       result += nums[i] * count
       input -= ints[i] * count
    return result
+
+#--------------------------------------------------------------------
+# Colorize differences in the report.
+# Adapted from Bob's EmailerReports.py on the Electronic mailer server.
+#--------------------------------------------------------------------
+def colorDiffs(report, subColor='#FAFAD2', addColor='#F0E68C',
+                       atColor='#87CEFA'):
+    """
+    Colorizes the output of the GNU diff utility based on whether
+    lines begin with a '-', '+' or '@'.
+
+    Pass:
+        Text of report to colorize.
+        Color for '-' lines, default = Light goldenrod yellow
+        Color for '+' lines, default = Khaki
+        Color for '@' lines, default = Light sky blue
+    """
+    wrapper = textwrap.TextWrapper(subsequent_indent=' ', width=90)
+    lines = report.splitlines()
+    for i in xrange(len(lines)):
+        color = None
+        if lines[i].startswith('-'):
+            color = subColor
+        elif lines[i].startswith('+'):
+            color = addColor
+        elif lines[i].startswith('@'):
+            color = atColor
+
+        if color:
+            lines[i] = "<span style='background-color: %s'>%s</span>" % \
+                        (color, wrapper.fill(lines[i]))
+        else:
+            lines[i] = wrapper.fill(lines[i])
+    return "\n".join(lines)
 
