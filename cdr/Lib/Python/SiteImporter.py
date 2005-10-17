@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.17 2005-09-02 17:41:12 bkline Exp $
+# $Id: SiteImporter.py,v 1.18 2005-10-17 21:09:42 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.17  2005/09/02 17:41:12  bkline
+# Split out missing trials for which we've never received any site
+# information from those which have been unexpectedly dropped.
+#
 # Revision 1.16  2005/08/27 22:09:04  bkline
 # Added code to block import of trials which don't have at least one lead
 # organization with a matching UpdateMode.  Modified email report so that
@@ -396,15 +400,15 @@ Trial ID %s not matched by any CDR document
             body += "\n"
         newLine = ""
         missingDocs = self.__getMissingDocs()
-        for cdrId in missingDocs:
-            if not missingDocs[cdrId]:
+        for cdrId, dropped in missingDocs:
+            if not dropped:
                 newLine = "\n"
                 body += """\
 CDR%d has lead org(s) with UpdateMode of %s but no site info ever received
 """ % (cdrId, self.__source)
         body += newLine
-        for cdrId in missingDocs:
-            if missingDocs[cdrId]:
+        for cdrId, dropped in missingDocs:
+            if dropped:
                 body += """\
 CDR%d has lead org(s) with UpdateMode of %s but trial has been dropped
 """ % (cdrId, self.__source)
