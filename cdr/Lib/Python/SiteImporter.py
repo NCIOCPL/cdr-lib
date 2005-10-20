@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.18 2005-10-17 21:09:42 bkline Exp $
+# $Id: SiteImporter.py,v 1.19 2005-10-20 14:24:59 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.18  2005/10/17 21:09:42  bkline
+# Modified logic for reporting on missing docs.
+#
 # Revision 1.17  2005/09/02 17:41:12  bkline
 # Split out missing trials for which we've never received any site
 # information from those which have been unexpectedly dropped.
@@ -585,11 +588,13 @@ CDR%d has lead org(s) with UpdateMode of %s but trial has been dropped
             SELECT id, source_id, cdr_id, downloaded, changed
               FROM import_doc
              WHERE disposition = %d
+               AND source = %d
                AND id NOT IN (SELECT doc
                                 FROM import_event
                                WHERE locked = 'Y'
                                  AND job = %d)
                AND dropped IS NULL""" % (self.getDispId('pending'),
+                                         self.__sourceId,
                                          self.__id))
         rows = self.__cursor.fetchall()
         docs = []
