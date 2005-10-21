@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.11 2004-02-26 22:04:01 ameyer Exp $
+# $Id: cdrbatch.py,v 1.12 2005-10-21 03:55:49 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,10 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.11  2004/02/26 22:04:01  ameyer
+# Modified argument accessor to convert list values to utf-8, not
+# assuming the argument value is a simple string as before.
+#
 # Revision 1.10  2004/02/25 02:25:46  ameyer
 # Removed another unneeded commit.
 #
@@ -369,6 +373,7 @@ class CdrBatch:
         self.__failure = None
 
         # Need access to the database for anything we do
+        self.__conn = None
         try:
             self.__conn   = cdrdb.connect (dataSource = host)
             self.__cursor = self.__conn.cursor()
