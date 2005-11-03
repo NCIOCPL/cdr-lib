@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.116 2005-08-15 21:03:03 ameyer Exp $
+# $Id: cdr.py,v 1.117 2005-11-03 15:25:55 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.116  2005/08/15 21:03:03  ameyer
+# Bug fix in valPair.
+#
 # Revision 1.115  2005/08/05 03:09:20  ameyer
 # Modified valDoc to accept naked XML, or XML as CDATA wrapped in a CdrDoc.
 #
@@ -416,7 +419,7 @@ BASEDIR          = "d:/cdr"
 SMTP_RELAY       = "MAILFWD.NIH.GOV"
 DEFAULT_LOGDIR   = BASEDIR + "/Log"
 DEFAULT_LOGFILE  = DEFAULT_LOGDIR + "/debug.log"
-MANIFEST_NAME    = 'CDR_MANIFEST.XML'
+MANIFEST_NAME    = 'CdrManifest.xml'
 CLIENT_FILES_DIR = BASEDIR + '/ClientFiles'
 MANIFEST_PATH    = "%s/%s" % (CLIENT_FILES_DIR, MANIFEST_NAME)
 
