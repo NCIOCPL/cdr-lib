@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.21 2005-03-10 14:18:20 bkline Exp $
+# $Id: CdrLongReports.py,v 1.22 2005-11-10 14:56:21 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.21  2005/03/10 14:18:20  bkline
+# Fixed bugs, changed algorithm for determining protocol statuses
+# in OSP report.
+#
 # Revision 1.20  2005/03/01 21:10:22  bkline
 # Made active date range controlled by parameters.
 #
@@ -79,6 +83,7 @@
 #----------------------------------------------------------------------
 import cdr, cdrdb, xml.dom.minidom, time, cdrcgi, cgi, sys, socket, cdrbatch
 import string, re, win32com.client, urlparse, httplib, traceback
+import ExcelWriter
 
 #----------------------------------------------------------------------
 # Module values.
@@ -341,18 +346,6 @@ The report you requested on Protocol Sites Without Phones can be viewed at
 #----------------------------------------------------------------------
 def ospReport(job):
 
-    def setBorders(range):
-        "Add borders to all the cells in a row."
-        for edge in (win32com.client.constants.xlEdgeLeft,
-                     win32com.client.constants.xlEdgeTop,
-                     win32com.client.constants.xlEdgeBottom,
-                     win32com.client.constants.xlEdgeRight,
-                     win32com.client.constants.xlInsideVertical):
-            border            = range.Borders(edge)
-            border.LineStyle  = win32com.client.constants.xlContinuous
-            border.Weight     = win32com.client.constants.xlThin
-            border.ColorIndex = win32com.client.constants.xlAutomatic
-
     class Status:
         "Protocol status for a given range of dates."
         def __init__(self, name, startDate, endDate = None):
@@ -390,21 +383,22 @@ def ospReport(job):
         
         def __init__(self, id, node):
             "Create a protocol object from the XML document."
-            self.id       = id
-            self.leadOrgs = []
-            self.statuses = []
-            self.status   = ""
-            self.firstId  = ""
-            self.otherIds = []
-            self.firstPub = ""
-            self.closed   = ""
-            self.types    = []
-            self.ageRange = ""
-            self.sponsors = []
-            self.title    = ""
-            profTitle     = ""
-            patientTitle  = ""
-            originalTitle = ""
+            self.id        = id
+            self.leadOrgs  = []
+            self.statuses  = []
+            self.status    = ""
+            self.firstId   = ""
+            self.otherIds  = []
+            self.firstPub  = ""
+            self.closed    = ""
+            self.completed = ""
+            self.types     = []
+            self.ageRange  = ""
+            self.sponsors  = []
+            self.title     = ""
+            profTitle      = ""
+            patientTitle   = ""
+            originalTitle  = ""
             for child in node.childNodes:
                 if child.nodeName == "ProtocolSponsors":
                     for grandchild in child.childNodes:
@@ -484,6 +478,10 @@ def ospReport(job):
                     self.closed = ""
                 elif not self.closed:
                     self.closed = startDate
+                if protStatus == 'Completed':
+                    self.completed = startDate
+                else:
+                    self.completed = ""
                 if self.statuses:
                     self.statuses[-1].endDate = startDate
                 self.statuses.append(Status(protStatus, startDate))
@@ -524,6 +522,9 @@ def ospReport(job):
     start = time.time()
     #print "milestone 1"
     termIds = []
+    phaseJoin = ''
+    phaseWhere = ''
+    yearType = 'calendar'
     args = job.getArgs()
     for key in args:
         if key.upper().startswith("TERMID"):
@@ -532,8 +533,13 @@ def ospReport(job):
             except Exception, e:
                 cdr.logwrite("Invalid term ID %s: %s" % (args[key], str(e)),
                              LOGFILE)
+        elif key == 'Phases':
+            phaseJoin = 'JOIN query_term p ON p.doc_id = t.doc_id'
+            phaseWhere = 'AND p.value %s' % args[key]
+        elif key == 'year':
+            yearType = args[key]
     try:
-        conn = cdrdb.connect('CdrGuest', dataSource = 'bach.nci.nih.gov')
+        conn = cdrdb.connect('CdrGuest', dataSource = 'bach')
         cursor = conn.cursor()
         cursor.execute("CREATE TABLE #terms(id INTEGER)")
         conn.commit()
@@ -558,8 +564,9 @@ def ospReport(job):
             if not cursor.rowcount:
                 break
             conn.commit()
+        
         cursor.execute("""\
-                 SELECT t.doc_id, MAX(v.num)
+                 SELECT DISTINCT t.doc_id, MAX(v.num)
                    FROM query_term t
                    JOIN query_term s
                      ON s.doc_id = t.doc_id
@@ -567,6 +574,7 @@ def ospReport(job):
                      ON d.id = s.doc_id
                    JOIN doc_version v
                      ON v.id = d.id
+                   %s
                   WHERE t.path in ('/InScopeProtocol/ProtocolDetail' +
                                    '/Condition/@cdr:ref',
                                    '/InScopeProtocol/Eligibility' +
@@ -577,41 +585,60 @@ def ospReport(job):
                     AND s.value = 'NCI'
                     AND d.active_status = 'A'
                     AND v.publishable = 'Y'
+                    %s
                GROUP BY t.doc_id
-               ORDER BY t.doc_id""", timeout = 360)
+               ORDER BY t.doc_id""" % (phaseJoin, phaseWhere), timeout = 360)
         rows = cursor.fetchall()
     except:
         job.fail("Database failure getting list of protocols.",
                  logfile = LOGFILE)
-    xl = win32com.client.Dispatch("Excel.Application")
-    xl.Visible = 0
-    wb = xl.Workbooks.Add()
-    sheet = xl.ActiveSheet
+
+    # Create the spreadsheet.
+    wb = ExcelWriter.Workbook()
+    b = ExcelWriter.Border()
+    borders = ExcelWriter.Borders(b, b, b, b)
+    font = ExcelWriter.Font(name = 'Times New Roman', size = 10)
+    align = ExcelWriter.Alignment('Left', 'Top', wrap = True)
+    style1 = wb.addStyle(alignment = align, font = font, borders = borders)
+    urlFont = ExcelWriter.Font('blue', None, 'Times New Roman', size = 10)
+    style4 = wb.addStyle(alignment = align, font = urlFont, borders = borders)
+    ws = wb.addWorksheet("PDQ Clinical Trials", style1, 40, 1)
+    style2 = wb.addStyle(alignment = align, font = font, borders = borders,
+                         numFormat = 'YYYY-mm-dd')
+    
+    # Set the column widths to match the sample provided by OSP.
+    ws.addCol( 1, 232.5)
+    ws.addCol( 2, 100)
+    ws.addCol( 3, 127.5)
+    ws.addCol( 4, 104.25)
+    ws.addCol( 5, 104.25)
+    ws.addCol( 6, 104.25)
+    ws.addCol( 7, 91.5)
+    ws.addCol( 8, 84.75)
+    ws.addCol( 9, 85.5)
+    ws.addCol(10, 123)
 
     # Set up the header cells in the spreadsheet's top row.
+    font = ExcelWriter.Font(name = 'Times New Roman', bold = True, size = 10)
+    align = ExcelWriter.Alignment('Center', 'Center', wrap = True)
+    interior = ExcelWriter.Interior('#CCFFCC')
+    style3 = wb.addStyle(alignment = align, font = font, borders = borders,
+                         interior = interior)
+    row = ws.addRow(1, style3, 40)
     headings = (
         'PDQ Clinical Trials',
         'Primary ID',
         'Additional IDs',
         'Date First Activated',
         'Date Moved to Closed List',
+        'Date Completed',
+        'Current Status',
         'Type of Trial',
-        'Status',
         'Age Range',
         'Sponsor of Trial'
         )
     for i in range(len(headings)):
-        sheet.Cells(1, i + 1).Value = headings[i]
-    cells = sheet.Cells.Range("1:1")
-    cells.Font.Bold = 1
-    cells.Font.Name = 'Times New Roman'
-    cells.Font.Size = 10
-    cells.WrapText = 1
-    cells.RowHeight = 40
-    cells.Interior.ColorIndex = 35
-    cells.VerticalAlignment = win32com.client.constants.xlCenter
-    cells.HorizontalAlignment = win32com.client.constants.xlCenter
-    setBorders(cells)
+        row.addCell(i + 1, headings[i])
 
     #------------------------------------------------------------------
     # Process all candidate protocols.
@@ -629,7 +656,14 @@ def ospReport(job):
         prot = Protocol(row[0], dom.documentElement)
         startYear = job.getParm('begin') or '1999'
         endYear   = job.getParm('end')   or '2004'
-        if prot.wasActive("%s-01-01" % startYear, "%s-12-31" % endYear):
+        if yearType == 'fiscal':
+            firstYear = int(startYear) - 1
+            startDate = "%s-10-01" % firstYear
+            endDate = "%s-09-30" % endYear
+        else:
+            startDate = "%s-01-01" % startYear
+            endDate   = "%s-12-31" % endYear
+        if prot.wasActive(startDate, endDate):
             protocols.append(prot)
         done += 1
         now = time.time()
@@ -648,76 +682,47 @@ def ospReport(job):
         # Change requested by Lakshmi 2005-02-25 (request #1567).
         if prot.status in ('Closed', 'Completed'):
             closedDate = prot.closed
+            if prot.status == 'Completed':
+                completedDate = prot.completed
+            else:
+                completedDate = ''
         else:
             closedDate = ''
+            completedDate = ''
 
         rowNum += 1
-        cell = sheet.Cells(rowNum, 1)
+        row = ws.addRow(rowNum, style1, 40)
+        tip = ("Left-click cell with mouse to view the protocol document.  "
+               "Left-click and hold to select the cell.")
         url = ("http://www.cancer.gov/clinicaltrials/"
                "view_clinicaltrials.aspx?version=healthprofessional&"
                "cdrid=%d" % prot.id)
-        hLink = sheet.Hyperlinks.Add(cell, url, "")
-        wb.Styles("Hyperlink").Font.ColorIndex = 1
-        hLink.TextToDisplay = prot.title
-        hLink.ScreenTip = ("Left-click cell with mouse to view the "
-                           "protocol document.  Left-click and hold to "
-                           "select the cell.")
-        sheet.Cells(rowNum, 2).Value = prot.firstId
-        sheet.Cells(rowNum, 3).Value = "; ".join(prot.otherIds)
-        sheet.Cells(rowNum, 4).Value = prot.firstPub
-        sheet.Cells(rowNum, 5).Value = closedDate
-        sheet.Cells(rowNum, 6).Value = "; ".join(prot.types)
-        sheet.Cells(rowNum, 7).Value = prot.status
-        sheet.Cells(rowNum, 8).Value = prot.ageRange
-        sheet.Cells(rowNum, 9).Value = "; ".join(prot.sponsors)
+        row.addCell(1, prot.title)
+        #cell = sheet.Cells(rowNum, 1)
+        #hLink = sheet.Hyperlinks.Add(cell, url, "")
+        #wb.Styles("Hyperlink").Font.ColorIndex = 1
+        row.addCell(2, prot.firstId, href = url, tooltip = tip, style = style4)
+        row.addCell(3, "; ".join(prot.otherIds))
+        row.addCell(4, prot.firstPub, style = style2)
+        row.addCell(5, closedDate, style = style2)
+        row.addCell(6, completedDate, style = style2)
+        row.addCell(7, prot.status)
+        row.addCell(8, "; ". join(prot.types))
+        row.addCell(9, prot.ageRange)
+        row.addCell(10, "; ".join(prot.sponsors))
         row = cursor.fetchone()
-        cells = sheet.Cells.Range("%d:%d" % (rowNum, rowNum))
-        cells.Font.Name = 'Times New Roman'
-        cells.Font.Size = 10
-        cells.WrapText = 1
-        cells.VerticalAlignment = win32com.client.constants.xlTop
-        cells.HorizontalAlignment = win32com.client.constants.xlLeft
-        cells.RowHeight = 40
-        setBorders(cells)
-
-    # Set the column widths to match the sample provided by OSP.
-    sheet.Columns.Range("A:A").ColumnWidth = 43.57
-    sheet.Columns.Range("B:B").ColumnWidth = 17.14
-    sheet.Columns.Range("C:C").ColumnWidth = 23.57
-    sheet.Columns.Range("D:D").ColumnWidth = 19.14
-    sheet.Columns.Range("E:E").ColumnWidth = 19.14
-    sheet.Columns.Range("F:F").ColumnWidth = 15.43
-    sheet.Columns.Range("G:G").ColumnWidth = 16.71
-    sheet.Columns.Range("H:H").ColumnWidth = 15.57
-    sheet.Columns.Range("I:I").ColumnWidth = 22.71
-
-    # Make the top row (the one with column labels) always visible.
-    sheet.Rows.Range("2:2").Select()
-    xl.ActiveWindow.FreezePanes = 1
-
-    # Make the row heights match the sample provided by OSP.
-    sheet.Cells.Select()
-    xl.Selection.RowHeight = 40
-
-    # Get rid of unwanted sheets, and rename the one we're keeping.
-    xl.DisplayAlerts = 0
-    xl.Sheets("Sheet1").Name = "PDQ Clinical Trials"
-    xl.Sheets("Sheet2").Select()
-    xl.ActiveWindow.SelectedSheets.Delete()
-    xl.Sheets("Sheet3").Select()
-    xl.ActiveWindow.SelectedSheets.Delete()
-
-    # Move to the first protocol's title.
-    xl.Range("A2").Select()
 
     # Save the report.
     name = "/OSPReport-Job%d.xls" % job.getJobId()
-    wb.SaveAs(Filename = REPORTS_BASE + name)
-    cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
-    url = "http://mahler.nci.nih.gov/CdrReports%s" % name
+    fullname = REPORTS_BASE + name
+    fobj = file(fullname, "w")
+    wb.write(fobj)
+    fobj.close()
+    cdr.logwrite("saving %s" % fullname, LOGFILE)
+    url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+                                                        cdrcgi.BASE, name)
     cdr.logwrite("url: %s" % url, LOGFILE)
     msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (url, url)
-    wb.Close(SaveChanges = 0)
     
     # Tell the user where to find it.
     body = """\
