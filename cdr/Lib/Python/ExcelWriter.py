@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: ExcelWriter.py,v 1.1 2005-10-27 21:31:13 bkline Exp $
+# $Id: ExcelWriter.py,v 1.2 2005-11-10 14:55:50 bkline Exp $
 #
 # Generates Excel workbooks using 2003 XML format.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2005/10/27 21:31:13  bkline
+# Module to generate Excel workbooks using 2002/2003 XML format.
+#
 #----------------------------------------------------------------------
 import xml.sax.saxutils, sys, time
 
@@ -143,7 +146,7 @@ class Borders:
             self.right.write(fobj, 'Right')
         if self.top:
             self.top.write(fobj, 'Top')
-        fobj.write('</Borders>\n')
+        fobj.write('   </Borders>\n')
 
 class Border:
     def __init__(self, lineStyle = 'Continuous', weight = '1'):
