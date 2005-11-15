@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.55 2005-10-11 17:57:27 ameyer Exp $
+# $Id: cdrcgi.py,v 1.56 2005-11-15 15:55:01 venglisc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.55  2005/10/11 17:57:27  ameyer
+# Added colorDiffs.
+#
 # Revision 1.54  2005/08/02 21:53:38  bkline
 # Added support for buttons connected to javascript in the advanced
 # search form.
@@ -182,7 +185,7 @@
 #----------------------------------------------------------------------
 # Import external modules needed.
 #----------------------------------------------------------------------
-import cgi, cdr, cdrdb, sys, re, socket, xml.sax.saxutils, textwrap
+import cgi, cdr, cdrdb, sys, re, string, socket, xml.sax.saxutils, textwrap
 
 #----------------------------------------------------------------------
 # Get some help tracking down CGI problems.
@@ -959,10 +962,10 @@ def advancedSearchResultsPageTop(docType, nRows, strings):
   <STYLE        TYPE = "text/css">
    <!--
     .Page { font-family: Arial, Helvetica, sans-serif; color: #000066 }
-    :link { color: navy }
-    :link:visited { color: navy }
-    :link:hover   { background: #FFFFCC; }
-    tr.rowitem:hover { color: #FFFFCC; } /* Does not work for IE */
+    :link            { color: navy }
+    :link:visited    { color: navy }
+    :link:hover      { background: #FFFFCC; }
+    tr.rowitem:hover { background: #DDDDDD; } /* Does not work for IE */
    -->
   </STYLE>
  </HEAD>
@@ -1023,7 +1026,8 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
             if filter:
                 filt = filter[dt]
             dtcol = """\
-    <TD       VALIGN = "top">%s</TD>
+    <TD        WIDTH = "10%%"
+              VALIGN = "top">%s</TD>
 """ % dt
 
         # XXX Consider using QcReport.py for all advanced search results pages.
@@ -1040,18 +1044,18 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
         html += u"""\
    <TR CLASS="rowitem">
     <TD       NOWRAP
-               WIDTH = "10"
+               WIDTH = "5%%"
               VALIGN = "top">
      <DIV      ALIGN = "right">%d.</DIV>
     </TD>
-    <TD        WIDTH = "75%%">%s</TD>
+    <TD        WIDTH = "65%%">%s</TD>
 %s
-    <TD        WIDTH = "20"
+    <TD        WIDTH = "10%%"
               VALIGN = "top">
      <A         HREF = "%s">%s</A>
     </TD>
    </TR>
-""" % (i + 1, title, dtcol, href, docId)
+""" % (i + 1, string.replace(title, ";", "; "), dtcol, href, docId)
 
         # Requested by LG, Issue #193.
         if docType == "Protocol":
