@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.19 2005-10-20 14:24:59 bkline Exp $
+# $Id: SiteImporter.py,v 1.20 2005-11-17 14:06:01 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.19  2005/10/20 14:24:59  bkline
+# Restricted processing of pending docs to the ones for this source.
+#
 # Revision 1.18  2005/10/17 21:09:42  bkline
 # Modified logic for reporting on missing docs.
 #
@@ -112,7 +115,8 @@ class ImportJob(ModifyDocs.Job):
     def __init__(self, source, comment, fileName = None, validate = False):
 
         ModifyDocs.Job.__init__(self, UID, PWD, None, None, comment,
-                                testMode = TEST_MODE, validate = validate)
+                                testMode = TEST_MODE, validate = validate,
+                                logFile = "d:/cdr/log/%sImport.log" % source)
         
         self.log("SiteImporter: source=%s" % source)
 
