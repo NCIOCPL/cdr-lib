@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrmailcommon.py,v 1.9 2005-03-03 13:57:10 bkline Exp $
+# $Id: cdrmailcommon.py,v 1.10 2005-11-18 20:47:46 bkline Exp $
 #
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2005/03/03 13:57:10  bkline
+# Moved determination of emailer host to cdr module.
+#
 # Revision 1.8  2004/07/08 19:02:21  bkline
 # Added emailerConn() function.
 #
@@ -175,7 +178,8 @@ class RemailSelector:
                     AND document.active_status = 'A'
                  GROUP BY mailer.doc_id, mailer_sent.value
                  ORDER BY mailer_sent.value DESC""" % (singleId,
-                        singleId, singleId, originalMailType))
+                        singleId, singleId, originalMailType),
+                                       timeout = 300)
             except cdrdb.Error, info:
                 raise 'db error creating temp table #remail_temp for %d: %s'\
                       % (singleId, str(info[1][0]))
@@ -209,7 +213,8 @@ class RemailSelector:
                 AND mailer_sent.value
             BETWEEN CONVERT(CHAR(10), DATEADD(DAY, -%d, GETDATE()), 121)
                 AND CONVERT(CHAR(10), DATEADD(DAY, -%d,  GETDATE()), 121)
-            """ % (originalMailType, earlyDays, lateDays))
+            """ % (originalMailType, earlyDays, lateDays),
+                                   timeout = 300)
         except cdrdb.Error, info:
             raise 'db error creating temporary table #orig_mailers %s'\
                   % str(info[1][0])
@@ -227,7 +232,7 @@ class RemailSelector:
               WHERE query_term.path = '/Mailer/Response/Received'
                 AND query_term.value IS NOT NULL
                 AND query_term.value <> ''
-            """)
+            """, timeout = 300)
         except cdrdb.Error, info:
             raise 'db error creating temporary table #got_response %s'\
                   % str(info[1][0])
@@ -281,7 +286,7 @@ class RemailSelector:
                           FROM #already_remailed
                         )
                GROUP BY document.id, #orig_mailers.doc_id
-            """ % maxMailers)
+            """ % maxMailers, timeout = 300)
             cdr.logwrite ("Completed all remail selection", LOGFILE)
 
             # Tell user how many hits there were
@@ -320,7 +325,7 @@ class RemailSelector:
             self.__cursor.execute(
               """INSERT INTO remailer_ids (job, doc, tracker)
                      SELECT %d, doc, tracker
-                       FROM #remail_temp""" % jobId)
+                       FROM #remail_temp""" % jobId, timeout = 300)
 
             # self.__conn.commit()
 
@@ -336,7 +341,8 @@ class RemailSelector:
             self.__cursor.execute (
                 "SELECT tracker "
                 "  FROM remailer_ids "
-                " WHERE job=? AND doc=?", (self.__jobId, docId))
+                " WHERE job=? AND doc=?", (self.__jobId, docId),
+                timeout = 300)
 
             row = self.__cursor.fetchone()
             if row:
@@ -356,7 +362,8 @@ class RemailSelector:
         """
         try:
             self.__cursor.execute(
-                "DELETE FROM remailer_ids WHERE job=?", self.__jobId)
+                "DELETE FROM remailer_ids WHERE job=?", self.__jobId,
+                timeout = 300)
 
             # Make object unusable
             self.__conn  = None
