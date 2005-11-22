@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ExcelWriter.py,v 1.3 2005-11-22 14:06:35 bkline Exp $
+# $Id: ExcelWriter.py,v 1.4 2005-11-22 14:43:11 bkline Exp $
 #
 # Generates Excel workbooks using 2003 XML format.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2005/11/22 14:06:35  bkline
+# Changed test of cell value from if cell.value to if ... is not None
+# for output.
+#
 # Revision 1.2  2005/11/10 14:55:50  bkline
 # Fixed indentation bug in output.
 #
@@ -372,7 +376,7 @@ class Cell:
             u.append(u' ss:MergeDown="%d"' % self.mergeDown)
         if self.formula:
             u.append(u" ss:Formula=%s" % quoteattr(self.formula))
-        if self.value is not None:
+        if self.value or self.value == 0:
             u.append(u'><Data ss:Type="%s">%s</Data></Cell>\n' %
                      (self.dataType, fix(self.value)))
         else:
