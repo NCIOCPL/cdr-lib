@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.22 2005-11-10 14:56:21 bkline Exp $
+# $Id: CdrLongReports.py,v 1.23 2005-11-22 13:32:26 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.22  2005/11/10 14:56:21  bkline
+# Rewrote OSP report to use new ExcelWriter module.  Added column
+# to report for date trials completed.
+#
 # Revision 1.21  2005/03/10 14:18:20  bkline
 # Fixed bugs, changed algorithm for determining protocol statuses
 # in OSP report.
@@ -539,7 +543,7 @@ def ospReport(job):
         elif key == 'year':
             yearType = args[key]
     try:
-        conn = cdrdb.connect('CdrGuest', dataSource = 'bach')
+        conn = cdrdb.connect('CdrGuest')
         cursor = conn.cursor()
         cursor.execute("CREATE TABLE #terms(id INTEGER)")
         conn.commit()
@@ -698,9 +702,6 @@ def ospReport(job):
                "view_clinicaltrials.aspx?version=healthprofessional&"
                "cdrid=%d" % prot.id)
         row.addCell(1, prot.title)
-        #cell = sheet.Cells(rowNum, 1)
-        #hLink = sheet.Hyperlinks.Add(cell, url, "")
-        #wb.Styles("Hyperlink").Font.ColorIndex = 1
         row.addCell(2, prot.firstId, href = url, tooltip = tip, style = style4)
         row.addCell(3, "; ".join(prot.otherIds))
         row.addCell(4, prot.firstPub, style = style2)
@@ -713,7 +714,7 @@ def ospReport(job):
         row = cursor.fetchone()
 
     # Save the report.
-    name = "/OSPReport-Job%d.xls" % job.getJobId()
+    name = "/OSPReport-Job%d.xml" % job.getJobId()
     fullname = REPORTS_BASE + name
     fobj = file(fullname, "w")
     wb.write(fobj)
