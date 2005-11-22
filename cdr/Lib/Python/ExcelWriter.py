@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: ExcelWriter.py,v 1.2 2005-11-10 14:55:50 bkline Exp $
+# $Id: ExcelWriter.py,v 1.3 2005-11-22 14:06:35 bkline Exp $
 #
 # Generates Excel workbooks using 2003 XML format.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2005/11/10 14:55:50  bkline
+# Fixed indentation bug in output.
+#
 # Revision 1.1  2005/10/27 21:31:13  bkline
 # Module to generate Excel workbooks using 2002/2003 XML format.
 #
@@ -369,7 +372,7 @@ class Cell:
             u.append(u' ss:MergeDown="%d"' % self.mergeDown)
         if self.formula:
             u.append(u" ss:Formula=%s" % quoteattr(self.formula))
-        if self.value:
+        if self.value is not None:
             u.append(u'><Data ss:Type="%s">%s</Data></Cell>\n' %
                      (self.dataType, fix(self.value)))
         else:
