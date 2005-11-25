@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.72 2005-05-12 18:47:04 bkline Exp $
+# $Id: cdrpub.py,v 1.73 2005-11-25 16:40:03 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.72  2005/05/12 18:47:04  bkline
+# Fixed typo in last change (loglevel for debuglevel).
+#
 # Revision 1.71  2005/05/12 15:54:56  bkline
 # Added new command-line argument for turning on cdr2cg debugging.
 #
@@ -2548,7 +2551,7 @@ has started</B>).<BR>""" % cgWorkLink
                             if threshold != -1:
                                 if self.__errorCount > threshold:
                                     raise
-                            self.__addJobMessages(arg)
+                            self.__addJobMessages(unicode(arg))
 
                             # XXX Why are we falling through to the following
                             #     code if the call to get doc fails???
