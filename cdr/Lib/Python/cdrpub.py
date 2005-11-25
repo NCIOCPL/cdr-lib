@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.73 2005-11-25 16:40:03 bkline Exp $
+# $Id: cdrpub.py,v 1.74 2005-11-25 18:06:19 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.73  2005/11/25 16:40:03  bkline
+# Fixed message handling bug.
+#
 # Revision 1.72  2005/05/12 18:47:04  bkline
 # Fixed typo in last change (loglevel for debuglevel).
 #
@@ -2634,7 +2637,7 @@ has started</B>).<BR>""" % cgWorkLink
                 if version:
                     raise StandardError("Version %d for document CDR%010d "
                                         "is not publishable or does not "
-                                        "exist" % (id, version))
+                                        "exist" % (version, id))
                 else:
                     raise StandardError("Unable to find publishable version "
                                         "for document CDR%010d" % id)
