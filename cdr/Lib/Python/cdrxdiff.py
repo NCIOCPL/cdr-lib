@@ -29,9 +29,12 @@
 # parameter list to be invoked in pre-filtering documents before diff'ing
 # them.
 #
-# $Id: cdrxdiff.py,v 1.1 2005-11-11 00:31:09 ameyer Exp $
+# $Id: cdrxdiff.py,v 1.2 2005-11-30 04:56:55 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2005/11/11 00:31:09  ameyer
+# Differencing module for XML docs.
+#
 #
 #---------------------------------------------------------
 import os, sys, cgi, re, difflib, textwrap, cdr, cdrcgi
@@ -154,6 +157,9 @@ class _Diff:
        _TT_DELTEXT, self.__delStyle,
        _TT_DBGTEXT, _DBGSTYLE)
 
+    #-----------------------------------------------------------
+    # Get style info.
+    #-----------------------------------------------------------
     def getStyleHtml(self):
         """
         Retrieve html style information for inclusion in a report
@@ -163,6 +169,24 @@ class _Diff:
         """
         return self.__style
 
+    #-----------------------------------------------------------
+    # Get the contents of the difference buffer.
+    #-----------------------------------------------------------
+    def getDiffText(self, clearBuf=True):
+        """
+        Retrieve the contents of the difference buffer.
+        Clear it after retrieval if requested.
+
+        Pass:
+            clearBuf = True = Reset buffer to empty.
+
+        Return:
+            Whatever text is in the buffer.
+        """
+        text = self.buf
+        if (clearBuf):
+            self.buf = ""
+        return text
 
     #-----------------------------------------------------------
     # Add to the report buffer
@@ -430,7 +454,7 @@ class XDiff(_Diff):
                         self._show(tagText, _TT_TAG, True, True)
                         tagText = ""
                     else:
-                        pass
+                        # No actual span output, just newline
                         self._show("", _TT_TAG, True, False)
 
                 # DEBUG
