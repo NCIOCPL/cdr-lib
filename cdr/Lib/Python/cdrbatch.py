@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.12 2005-10-21 03:55:49 ameyer Exp $
+# $Id: cdrbatch.py,v 1.13 2005-11-30 04:15:12 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,11 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.12  2005/10/21 03:55:49  ameyer
+# Pre-declared self.__conn in class CdrBatch so that if the connection
+# cannot be created, the fail() routine will not crash trying to reference
+# self.__conn to find out if it needs to be closed.
+#
 # Revision 1.11  2004/02/26 22:04:01  ameyer
 # Modified argument accessor to convert list values to utf-8, not
 # assuming the argument value is a simple string as before.
@@ -51,7 +56,7 @@
 #
 #----------------------------------------------------------------------
 
-import sys, cdr, cdrdb
+import sys, string, cdr, cdrdb
 
 #----------------------------------------------------------------------
 # Module level constants
@@ -555,6 +560,35 @@ class CdrBatch:
     def getArgs(self):      return self.__args
     def getEmail(self):     return self.__email
     def getCursor(self):    return self.__cursor
+
+    #------------------------------------------------------------------
+    # Get the email addresses as a list
+    #------------------------------------------------------------------
+    def getEmailList(self):
+        """
+        Converts a string of email addresses of any of the forms:
+            "addr1 addr2"
+            "addr1, addr2"
+            "addr1; addr2"
+            "addr1"
+        to a list of addresses, without separators.
+
+        Return:
+            List of zero or more addresses, encoded as ASCII.
+
+        Raises:
+            UnicodeError if non-ASCII in email address.
+        """
+        # Get emails, in ASCII, raises exception on error
+        emails = self.__email.encode("ascii")
+
+        # Convert alternative separators to spaces
+        trTbl  = string.maketrans(",;", "  ")
+        emails = string.translate(emails, trTbl)
+
+        # Return them as a list
+        return string.split (emails)
+
 
     #------------------------------------------------------------------
     # Complex accessor for args
