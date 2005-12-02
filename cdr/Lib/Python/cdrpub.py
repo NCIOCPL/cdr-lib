@@ -1,19 +1,10 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.74 2005-11-25 18:06:19 bkline Exp $
+# $Id: cdrpub.py,v 1.75 2005-12-02 22:56:09 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
-# Revision 1.73  2005/11/25 16:40:03  bkline
-# Fixed message handling bug.
-#
-# Revision 1.72  2005/05/12 18:47:04  bkline
-# Fixed typo in last change (loglevel for debuglevel).
-#
-# Revision 1.71  2005/05/12 15:54:56  bkline
-# Added new command-line argument for turning on cdr2cg debugging.
-#
 # Revision 1.70  2005/03/09 16:15:06  bkline
 # Fixed a bug in a call to __debugLog() (wrong parameters).
 #
@@ -273,7 +264,7 @@ LOG = "d:/cdr/log/publish.log"
 
 # Number of publishing threads to use
 # Later, we may find a better way to get this into the program
-PUB_THREADS = 5
+PUB_THREADS = 2
 
 # Publish this many docs of one doctype between reports
 LOG_MODULUS = 1000
@@ -389,7 +380,7 @@ class Publish:
 
     # Rows to be written to the image manifest file.
     __mediaManifest = []
-    
+
     #---------------------------------------------------------------
     # Hash __dateFirstPub is specifically designed to solve the issue
     # that DateFirstPublished element in vendor documents must be
@@ -453,12 +444,14 @@ class Publish:
             cursor.execute(sql, (self.__jobId, Publish.START))
             row = cursor.fetchone()
             if not row:
-                msg = "Unable to retrieve information for job %d" % self.__jobId
+                msg = "%s: Unable to retrieve information for job %d" % (
+                                                               time.ctime(),
+                                                               self.__jobId)
                 self.__debugLog(msg)
                 raise StandardError(msg)
         except cdrdb.Error, info:
-            msg = "Database failure retrieving information for job %d: %s" % \
-                (self.__jobId, info[1][0])
+            msg  = "%s: Database failure retrieving information " % time.ctime()
+            msg += "for job %d: %s" % (self.__jobId, info[1][0])
             self.__debugLog(msg)
             raise StandardError(msg)
 
@@ -496,8 +489,8 @@ class Publish:
                                           recorded=True))
                 row = cursor.fetchone()
         except cdrdb.Error, info:
-            msg = 'Failure retrieving documents for job %d: %s' % \
-                  (self.__jobId, info[1][0])
+            msg  = "%s: Failure retrieving documents for " % time.ctime()
+            msg += "job %d: %s" % (self.__jobId, info[1][0])
             self.__updateStatus(Publish.FAILURE, msg)
             raise StandardError(msg)
 
@@ -518,8 +511,8 @@ class Publish:
                 self.__debugLog("Parameter %s='%s'." % (row[0], row[1]))
                 row = cursor.fetchone()
         except cdrdb.Error, info:
-            msg = 'Failure retrieving parameters for job %d: %s' % \
-                  (self.__jobId, info[1][0])
+            msg  = "Failure retrieving parameters for " % time.ctime()
+            msg += "job %d: %s" % (self.__jobId, info[1][0])
             self.__updateStatus(Publish.FAILURE, msg)
             raise StandardError(msg)
 
@@ -551,8 +544,8 @@ class Publish:
                 row = cursor.fetchone()
 
         except cdrdb.Error, info:
-            msg = 'Failure building hash __dateFirstPub for job %d: %s' % \
-                  (self.__jobId, info[1][0])
+            msg  = "%s: Failure building hash __dateFirstPub for " % time.ctime
+            msg += "job %d: %s" % (self.__jobId, info[1][0])
             self.__updateStatus(Publish.FAILURE, msg)
             raise StandardError(msg)
 
@@ -653,7 +646,7 @@ class Publish:
             # Number of documents have been filtered and validated.
             numDocs = 0
             self.__updateMessage(
-                "Start filtering/validating at %s.<BR>" % time.ctime())
+                "%s: Start filtering/validating<BR>" % time.ctime())
 
             for spec in self.__specs.childNodes:
 
@@ -697,12 +690,13 @@ class Publish:
                         self.__publishDoc(doc, filters, destType, dest)
                         numDocs += 1
                         if numDocs % self.__logDocModulus == 0:
-                            self.__updateMessage(
-                                "Filtered/validated %d docs at %s.<BR>" % (
-                                            numDocs, time.ctime()))
+                            msg = "%s: Filtered/validated %d docs<BR>" % (
+                                                                 time.ctime(), 
+                                                                 numDocs)
+                            self.__updateMessage(msg)
                             numFailures = self.__getFailures()
-                            self.__updateMessage("%d docs failed so far.<BR>"
-                                                  % numFailures)
+                            msg = "%d docs failed so far.<BR>" % numFailures
+                            self.__updateMessage(msg)
 
                         self.__alreadyPublished[doc.getDocId()] = 1
                         userListedDocsRemaining -= 1
@@ -746,18 +740,23 @@ class Publish:
                             self.__addPubProcDocRows(specSubdirs[i])
                     i += 1
 
-            self.__updateMessage("""Finish filtering/validating all %d docs
-                                    at %s.<BR>""" % (numDocs, time.ctime()))
+            msg = "%s: Finish filtering/validating all %d docs<BR>" % (
+                                                               time.ctime(), 
+                                                               numDocs)
+            self.__updateMessage(msg)
             numFailures = self.__getFailures()
             if numFailures > 0:
-                msg = """Total of %d docs failed.
+                msg = """%s: Total of %d docs failed.
                     <A style='text-decoration: underline;'
                     href="%s/PubStatus.py?id=%d&type=FilterFailure">Check
-                    the failure details.</A><BR>""" % (numFailures,
-                    self.__cdrHttp, self.__jobId)
+                    the failure details.</A><BR>""" % (time.ctime(), 
+                                                       numFailures,
+                                                       self.__cdrHttp, 
+                                                       self.__jobId)
                 self.__updateMessage(msg)
             else:
-                self.__updateMessage("Total of 0 docs failed.<BR>")
+                msg = "%s: Total of 0 docs failed<BR>" % time.ctime()
+                self.__updateMessage(msg)
 
             # XXX How do we get back in to finish?  [RMK 2004-11-08]
             if self.__publishIfWarnings == "Ask" and self.__warningCount:
@@ -833,14 +832,16 @@ class Publish:
                                 noOutput = 'Y',
                                 port = self.__pubPort)
                             if not resp[0]:
-                                msg += "<B>Failed:</B> %s\n" % resp[1]
-                                msg += """<BR>Please run job %s
-                                    separately.<BR>""" % pushSubsetName
+                                msg += "%s: <B>Failed:</B><BR>" % time.ctime() 
+                                msg += "<I>%s</I><BR>"          % resp[1]
+                                msg += "%s: Please run job "    % time.ctime()
+                                msg += "%s separately.<BR>"     % pushSubsetName
                             else:
-                                msg += """Pushing filtered documents to
-                                    Cancer.gov is in progress with job
-                                    %s. You will receive a second email
-                                    when it is done.<BR>""" % resp[0]
+                                msg += "%s: Pushing filtered "    % time.ctime()
+                                msg += "documents to Cancer.gov is in "
+                                msg += "progress with job %s<BR>" % resp[0]
+                                msg += "%s: You will receive a "  % time.ctime()
+                                msg += "second email when it is done.<BR>"
 
                             self.__updateMessage(msg)
                 else:
@@ -886,7 +887,7 @@ class Publish:
 
         # Update first_pub in all_docs table.
         self.__updateFirstPub()
-        
+
         # If any images were published, write out a manifest file.
         if self.__outputDir and os.path.isdir(self.__outputDir):
 
@@ -977,7 +978,9 @@ class Publish:
                            )
             rowsAffected = cursor.rowcount
             self.__updateMessage(
-                "<BR>Updated first_pub for %d documents.<BR>" % rowsAffected)
+                "<BR>%s: Updated first_pub for %d documents.<BR>" % (
+		                                                time.ctime(), 
+								rowsAffected))
         except cdrdb.Error, info:
             self.__updateMessage("Failure updating first_pub for job %d: %s" \
                 % (self.__jobId, info[1][0]))
@@ -1003,8 +1006,8 @@ class Publish:
                            )
             row = cursor.fetchone()
             if row:
-                msg = """Pushing job %d is pending. Please push again
-                         later.<BR>""" % row[0]
+                msg  = "%s: Pushing job %d is pending. Please " % time.ctime()
+                msg += "push again later.<BR>" % row[0]
                 self.__updateMessage(msg)
                 return 0
 
@@ -1018,7 +1021,7 @@ class Publish:
     #------------------------------------------------------------------
     def __isCgPushJob(self):
         return self.__subsetName.startswith(self.__pd2cg)
-        
+
     #------------------------------------------------------------------
     # Determine whether this is a primary publication job.
     #------------------------------------------------------------------
@@ -1090,7 +1093,7 @@ class Publish:
 
             # If pubType is "Full Load", clean up pub_proc_cg table.
             if pubType == "Full Load":
-                msg = "Deleting pub_proc_cg at %s.<BR>" % time.ctime()
+                msg = "%s: Deleting pub_proc_cg<BR>" % time.ctime()
                 self.__updateMessage(msg)
                 try: cursor.execute("DELETE pub_proc_cg",
                                     timeout = self.__timeOut)
@@ -1100,13 +1103,14 @@ class Publish:
 
             # Create a working table pub_proc_cg_work to hold information
             # on transactions to Cancer.gov.
-            msg = "Creating pub_proc_cg_work at %s.<BR>" % time.ctime()
+            msg = "%s: Creating pub_proc_cg_work<BR>" % time.ctime()
             self.__updateMessage(msg)
             cgWorkLink = self.__cdrHttp + "/PubStatus.py?id=1&type=CgWork"
             link = \
-"""<A style='text-decoration: underline;' href='%s'>
-Check pushed docs</A> (<B>accurate only until a new publishing job
-has started</B>).<BR>""" % cgWorkLink
+"""%s: <A style='text-decoration: underline;' href='%s'>
+Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
+                                                                 cgWorkLink)
+                                                                 
 
             if pubType == "Full Load" or pubType == "Export":
                 self.__createWorkPPC(vendor_job, vendor_dest)
@@ -1143,7 +1147,7 @@ has started</B>).<BR>""" % cgWorkLink
                 numDocs = row[0]
 
             if numDocs == 0:
-                msg = "No documents to be pushed to Cancer.gov.<BR>"
+                msg = "%s: No documents to be pushed to Cancer.gov.<BR>" % time.ctime()
                 self.__updateStatus(Publish.SUCCESS, msg)
                 return
 
@@ -1152,7 +1156,7 @@ has started</B>).<BR>""" % cgWorkLink
                 cursor.execute("""\
                    INSERT INTO ctgov_export (pub_proc)
                         VALUES (?)""", self.__jobId)
-                
+
             # Get last successful cg_jobId. GateKeeper does not
             # care which subset it belongs to.
             # Returns 0 if there is no previous success.
@@ -1166,8 +1170,8 @@ has started</B>).<BR>""" % cgWorkLink
                 raise StandardError("<BR>Missing required job description.")
 
             # See if the GateKeeper is awake.
-            msg = "Initiating request with pubType=%s, \
-                   lastJobId=%d ...<BR>" % (pubTypeCG, lastJobId)
+            msg = "%s: Initiating request with pubType=%s, \
+                   lastJobId=%d ...<BR>" % (time.ctime(), pubTypeCG, lastJobId)
             response = cdr2cg.initiateRequest(cgJobDesc, pubTypeCG, lastJobId)
             if response.type != "OK":
                 msg += "%s: %s<BR>" % (response.type, response.message)
@@ -1183,16 +1187,19 @@ has started</B>).<BR>""" % cgWorkLink
                     msg += "Last job ID from server: %d<BR>" % lastJobId
 
             # Prepare the server for a list of documents to send.
-            msg += """Sending data prolog with jobId=%d, pubType=%s,
-                    lastJobId=%d, numDocs=%d ...<BR>""" % (self.__jobId,
-                    pubTypeCG, lastJobId, numDocs)
+            msg += """%s: Sending data prolog with jobId=%d, pubType=%s,
+                    lastJobId=%d, numDocs=%d ...<BR>""" % (time.ctime(), 
+                                                           self.__jobId, 
+                                                           pubTypeCG, 
+							   lastJobId, 
+							   numDocs)
             response = cdr2cg.sendDataProlog(cgJobDesc, self.__jobId,
                                              pubTypeCG, lastJobId, numDocs)
             if response.type != "OK":
                 msg += "%s: %s<BR>" % (response.type, response.message)
                 raise StandardError(msg)
 
-            msg += "Pushing documents starts at %s.<BR>" % time.ctime()
+            msg += "%s: Pushing documents starts<BR>" % time.ctime()
             self.__updateMessage(msg)
             msg = ""
 
@@ -1224,13 +1231,15 @@ has started</B>).<BR>""" % cgWorkLink
                     raise StandardError(msg)
                 docNum  = docNum + 1
                 if docNum % 1000 == 0:
-                    msg += "Pushed %d documents at %s.<BR>" % (docNum,
-                                                               time.ctime())
+                    msg += "%s: Pushed %d documents<BR>" % (time.ctime(),
+                                                            docNum)
                     self.__updateMessage(msg)
                     msg = ""
                 addCount += 1
                 row = cursor.fetchone()
-            msg += "%d documents pushed to Cancer.gov.<BR>" % addCount
+            msg += "%s: %d documents pushed to Cancer.gov.<BR>" % (
+	                                                      time.ctime(), 
+							      addCount)
             self.__updateMessage(msg)
             msg = ""
 
@@ -1255,12 +1264,14 @@ has started</B>).<BR>""" % cgWorkLink
                     raise StandardError(msg)
                 docNum  = docNum + 1
                 if docNum % 1000 == 0:
-                    msg += "Pushed %d documents at %s.<BR>" % (docNum,
-                            time.ctime())
+                    msg += "%s: Pushed %d documents<BR>" % (time.ctime(), 
+                                                            docNum)
                     self.__updateMessage(msg)
                     msg = ""
-            msg += "%d documents removed from Cancer.gov.<BR>" % len(rows)
-            msg += "Pushing done at %s.<BR>" % time.ctime()
+            msg += "%s: %d documents removed from Cancer.gov.<BR>" % (
+	                                                    time.ctime(),
+							    len(rows))
+            msg += "%s: Pushing done<BR>" % time.ctime()
             self.__updateMessage(msg)
             msg = ""
 
@@ -1277,7 +1288,7 @@ has started</B>).<BR>""" % cgWorkLink
             else:
                 raise StandardError("pubType %s not supported." % pubType)
 
-            msg += "Updating PPC/PPD tables done at %s.<BR>" % time.ctime()
+            msg += "%s: Updating PPC/PPD tables done<BR>" % time.ctime()
             self.__updateMessage(msg)
             msg = ""
 
@@ -1314,7 +1325,7 @@ has started</B>).<BR>""" % cgWorkLink
         except cdrdb.Error, info:
             raise StandardError(
                 "Deleting pub_proc_cg_work failed: %s<BR>" % info[1][0])
-        msg = "Finished deleting pub_proc_cg_work at %s.<BR>" % time.ctime()
+        msg = "%s: Finished deleting pub_proc_cg_work<BR>" % time.ctime()
         self.__updateMessage(msg)
 
         # Insert updated documents into pub_proc_cg_work. Updated documents
@@ -1385,7 +1396,7 @@ has started</B>).<BR>""" % cgWorkLink
         except:
             raise StandardError(
                 "Unexpected failure in setting U to pub_proc_cg_work.")
-        msg = "Finished insertion for updating at %s.<BR>" % time.ctime()
+        msg = "%s: Finished insertion for updating<BR>" % time.ctime()
         self.__updateMessage(msg)
 
         # Insert new documents into pub_proc_cg_work. New documents are
@@ -1442,7 +1453,7 @@ has started</B>).<BR>""" % cgWorkLink
         except:
             raise StandardError(
                 "Unexpected failure in setting A to pub_proc_cg_work.")
-        msg = "Finished insertion for adding at %s.<BR>" % time.ctime()
+        msg = "%s: Finished insertion for adding<BR>" % time.ctime()
         self.__updateMessage(msg)
 
         # Insert removed documents into pub_proc_cg_work.
@@ -1488,7 +1499,7 @@ has started</B>).<BR>""" % cgWorkLink
         except cdrdb.Error, info:
             raise StandardError(
                 "Setting D to pub_proc_cg_work failed: %s<BR>" % info[1][0])
-        msg = "Finished insertion for deleting at %s.<BR>" % time.ctime()
+        msg = "%s: Finished insertion for deleting<BR>" % time.ctime()
         self.__updateMessage(msg)
 
     #------------------------------------------------------------------
@@ -1539,7 +1550,7 @@ has started</B>).<BR>""" % cgWorkLink
 <Media Type='%s' Size='%d' Encoding='base64'>
 %s</Media>
 """ % (mediaType, len(bytes), base64.encodestring(bytes))
-        
+
 
     #------------------------------------------------------------------
     # Different version of __createWorkPPC for Hotfix (Remove)
@@ -1559,7 +1570,7 @@ has started</B>).<BR>""" % cgWorkLink
         except cdrdb.Error, info:
             raise StandardError(
                 "Deleting pub_proc_cg_work failed: %s<BR>" % info[1][0])
-        msg = "Finished deleting pub_proc_cg_work at %s.<BR>" % time.ctime()
+        msg = "%s: Finished deleting pub_proc_cg_work<BR>" % time.ctime()
         self.__updateMessage(msg)
 
         # Insert removed documents into pub_proc_cg_work.
@@ -1581,7 +1592,7 @@ has started</B>).<BR>""" % cgWorkLink
         except cdrdb.Error, info:
             raise StandardError(
                 "Setting D to pub_proc_cg_work failed: %s<BR>" % info[1][0])
-        msg = "Finished inserting D to PPCW at %s.<BR>" % time.ctime()
+        msg = "%s: Finished inserting D to PPCW<BR>" % time.ctime()
         self.__updateMessage(msg)
 
     #------------------------------------------------------------------
@@ -1666,7 +1677,7 @@ has started</B>).<BR>""" % cgWorkLink
         except:
             raise StandardError(
                 "Unexpected failure in setting U to pub_proc_cg_work.")
-        msg = "Finished insertion for updating at %s.<BR>" % time.ctime()
+        msg = "%s: Finished insertion for updating.<BR>" % time.ctime()
         self.__updateMessage(msg)
 
         # Insert new documents into pub_proc_cg_work. New documents are
@@ -1697,7 +1708,13 @@ has started</B>).<BR>""" % cgWorkLink
                 if dType == 'Media':
                     xml = self.__getCgMediaDoc(vendor_dest, subdir, docId)
                 else:
-                    path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
+                    # the open method fails if the subdir does not exist
+                    # --------------------------------------------------
+                    if subdir == '':
+                       path   = "%s/CDR%d.xml" % (vendor_dest, docId)
+                    else:
+                       path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
+
                     xml    = open(path, "rb").read()
                     xml    = unicode(xml, 'utf-8')
                 cursor2.execute("""
@@ -1716,7 +1733,7 @@ has started</B>).<BR>""" % cgWorkLink
         except:
             raise StandardError(
                 "Unexpected failure in setting A to pub_proc_cg_work.")
-        msg = "Finished insertion for adding at %s.<BR>" % time.ctime()
+        msg = "%s: Finished insertion for adding<BR>" % time.ctime()
         self.__updateMessage(msg)
 
     #------------------------------------------------------------------
@@ -1999,7 +2016,8 @@ has started</B>).<BR>""" % cgWorkLink
             match = msgExpr.search(msg)
             if match:
                 CgJobDesc = match.group(1)
-                savedJobDesc = "<B>JobDesc:</B> %s<BR>" % CgJobDesc
+                savedJobDesc = "%s: <B>JobDesc:</B> %s<BR>" % (time.ctime(),
+                                                               CgJobDesc)
                 message = msgExpr.sub(savedJobDesc, msg)
                 cursor.execute("""
                     UPDATE pub_proc
@@ -2197,10 +2215,13 @@ has started</B>).<BR>""" % cgWorkLink
                 if self.__totalPubDocs % self.__logDocModulus == 0:
                     try:
                         numFailures = self.__getFailures()
-                        self.__updateMessage("""Filtered/validated
-                            %d docs at %s, and %d docs failed so
-                            far.<BR>""" % (self.__totalPubDocs,
-                                           time.ctime(), numFailures))
+
+			msg = "%s: Filtered/validated %d docs. %d docs " % (
+                                                           time.ctime(), 
+							   self.__totalPubDocs,
+                                                           numFailures)
+			msg += "failed so far.<BR>" 
+                        self.__updateMessage(msg)
                     except:
                         pass
             else:
@@ -2285,10 +2306,10 @@ has started</B>).<BR>""" % cgWorkLink
                 errors = "Failure writing %s: %s" % (name, str(e))
             except:
                 errors = "Failure writing %s" % name
-            
+
         # Standard processing for non-Media documents.
         else:
-            
+
             # Apply each filter set to the document.
             filteredDoc = None
             for filterSet in filters:
@@ -3085,10 +3106,13 @@ Please do not reply to this message.
 
         # Put a stop there.
         status = Publish.WAIT
-        msg = "Job is waiting for user's approval at %s.<BR>" % time.ctime()
-        msg += ("Change the publishing job status using the menu item <BR>"
-                "<B>Manage Publishing Job Status</B> "
-                "under the Publishing Menu. <BR>")
+        now = time.ctime()
+        msg =  "%s: Job is waiting for user's approval<BR>" % now
+        msg += "%s: Change the publishing job status using the " % now
+        msg += "menu item <BR>"
+        msg += "%s: &nbsp;&nbsp;&nbsp;&nbsp;<I>Manage " % now
+        msg += "Publishing Job Status</I><BR>"
+        msg += "%s: from the Publishing Menu<BR>" % now
         self.__updateStatus(status, msg)
         msg += "<BR>"
         self.__sendMail()
@@ -3122,11 +3146,11 @@ Please do not reply to this message.
                 time.sleep(10)
             elif status == Publish.RUN:
                 self.__updateMessage(
-                    "Job is resumed by user at %s.<BR>" % now)
+                    "<BR>%s: Job is resumed by user<BR>" % now)
                 return
             elif status == Publish.FAILURE:
-                raise StandardError("Job %d is killed by user at %s.<BR>" \
-                    % (self.__jobId, now))
+                raise StandardError("%s: Job %d is killed by user<BR>" \
+                    % (now, self.__jobId))
             else:
                 msg = "Unexpected status: %s for job %d.<BR>" \
                     % (status, self.__jobId)
@@ -3243,7 +3267,7 @@ def validateDoc(filteredDoc, docId = 0, dtd = cdr2cg.PDQDTD):
 def findLinkedDocs(docPairList):
 
     try:
-        msg = "Starting building link_net hash at %s.<BR>" % time.ctime()
+        msg = "%s: Starting building link_net hash<BR>" % time.ctime()
         conn = cdrdb.connect('CdrGuest')
         cursor = conn.cursor()
         cursor.execute("""
@@ -3274,8 +3298,9 @@ def findLinkedDocs(docPairList):
             links[row[0]].append(row[1:])
             row = cursor.fetchone()
             nRows += 1
-        msg += "Finishing link_net hash for %d linking docs at %s.<BR>" % (
-                        len(links), time.ctime())
+        msg += "%s: Finishing link_net hash for %d linking docs<BR>" % (
+                                                             time.ctime(), 
+                                                             len(links))
 
         # Seed the hash with documents passed in.
         linkedDocHash = {}
@@ -3300,8 +3325,10 @@ def findLinkedDocs(docPairList):
         for key in docPairList.keys():
             del linkedDocHash[key]
 
-        msg += "Found all %d linked documents in %d passes at %s.<BR>" % (
-                        len(linkedDocHash), passNum, time.ctime())
+        msg += "%s: Found all %d linked documents in %d passes<BR>" % (
+                                                          time.ctime(), 
+                                                          len(linkedDocHash), 
+                                                          passNum)
 
         # Return what we have got.
         return [msg, linkedDocHash]
@@ -3316,8 +3343,6 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.stderr.write("usage: cdrpub.py job-id\n")
         sys.exit(1)
-    if len(sys.argv) > 2 and sys.argv[2] == "--debug":
-        cdr2cg.debuglevel = 1
     LOG = ""
     p = Publish(int(sys.argv[1]))
     p.publish()
