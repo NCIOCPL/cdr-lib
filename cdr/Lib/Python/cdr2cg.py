@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.18 2005-03-09 16:04:51 bkline Exp $
+# $Id: cdr2cg.py,v 1.19 2005-12-02 22:43:51 venglisc Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.18  2005/03/09 16:04:51  bkline
+# Switch CG development server from dev1 to test4 (per Olga Rosenbaum).
+#
 # Revision 1.17  2004/12/23 01:36:28  bkline
 # Juggled some servers at the request of Cancer.gov (Chen Ling).
 #
@@ -69,11 +72,15 @@ debuglevel          = 0
 localhost           = socket.gethostname()
 source              = "CDR Staging"
 host                = "gatekeeper.cancer.gov"
+testhost            = "test4.cancer.gov"
 if string.upper(localhost) == "BACH":
     source = "CDR Production"
 elif string.upper(localhost) == "MAHLER":
     source = "CDR Development"
-    host   = "test4.cancer.gov"
+    host   = testhost
+elif string.upper(localhost) == "FRANCK":
+    source = "CDR Testing"
+    host   = testhost
 port                = 80
 soapNamespace       = "http://schemas.xmlsoap.org/soap/envelope/"
 application         = "/GateKeeper/GateKeeper.asmx"
