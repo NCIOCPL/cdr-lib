@@ -29,9 +29,12 @@
 # parameter list to be invoked in pre-filtering documents before diff'ing
 # them.
 #
-# $Id: cdrxdiff.py,v 1.2 2005-11-30 04:56:55 ameyer Exp $
+# $Id: cdrxdiff.py,v 1.3 2005-12-16 05:22:52 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2005/11/30 04:56:55  ameyer
+# Added getDiffText() to retrieve buffer contents whenever.
+#
 # Revision 1.1  2005/11/11 00:31:09  ameyer
 # Differencing module for XML docs.
 #
@@ -120,7 +123,7 @@ class _Diff:
             self.__delStyle = "-- "
 
         # Construct difference here
-        self.buf = ""
+        self.buf = []
 
 
     def setStyleHtml(self, tagS=None, addS=None, delS=None, bodyS=None):
@@ -183,9 +186,9 @@ class _Diff:
         Return:
             Whatever text is in the buffer.
         """
-        text = self.buf
+        text = "".join(self.buf)
         if (clearBuf):
-            self.buf = ""
+            self.buf = []
         return text
 
     #-----------------------------------------------------------
@@ -204,20 +207,20 @@ class _Diff:
         """
         if self._format == "html":
             if startNew:
-                self.buf += "<br />\n"
+                self.buf.append("<br />\n")
             # Only if text is not empty
             if txt:
-                self.buf += "<span class='%s'>%s</span>" % \
-                            (txtType, cgi.escape(txt))
+                self.buf.append("<span class='%s'>%s</span>" % \
+                            (txtType, cgi.escape(txt)))
             if endNew:
-                self.buf += "<br />\n"
+                self.buf.append("<br />\n")
         else:
             if startNew:
-                self.buf += "\n"
+                self.buf.append("\n")
             if txt:
-                self.buf += "%s%s" % (self._format[txtType], txt)
+                self.buf.append("%s%s" % (self._format[txtType], txt))
             if endNew:
-                self.buf += "\n"
+                self.buf.append("\n")
 
     #-----------------------------------------------------------
     # Interpret color for a difference report
@@ -365,7 +368,7 @@ class XDiff(_Diff):
             String of text or html.
         """
         # Delete previous diff text, if any
-        self.buf = ""
+        self.buf = []
 
         # Get the two documents to compare
         self._get2Docs(doc1, doc1Id, doc1Ver, doc2, doc2Ver,
@@ -486,7 +489,8 @@ class XDiff(_Diff):
                 addText = self._xml2[j1:j2]
 
         # Return it to caller
-        return self.buf.encode('Latin-1', 'replace')
+        text = "".join(self.buf)
+        return text.encode('Latin-1', 'replace')
 
 
 #---------------------------------------------------------
