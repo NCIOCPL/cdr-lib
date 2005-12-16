@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.117 2005-11-03 15:25:55 bkline Exp $
+# $Id: cdr.py,v 1.118 2005-12-16 04:50:44 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.117  2005/11/03 15:25:55  bkline
+# Renamed manifest file.
+#
 # Revision 1.116  2005/08/15 21:03:03  ameyer
 # Bug fix in valPair.
 #
@@ -782,6 +785,49 @@ def lastVersions (session, docId, host=DEFAULT_HOST, port=DEFAULT_PORT):
     isChanged = extract ("<IsChanged>(.+)</IsChanged>", resp)
 
     return (int(lastAny), int(lastPub), isChanged)
+
+#----------------------------------------------------------------------
+# Find the date that a current working document was created or modified.
+#----------------------------------------------------------------------
+def getCWDDate (docId, conn=None):
+    """
+    Find the latest date/time in the audit trail for a document.
+    This is the date on the current working document.
+
+    Pass:
+        docId - Doc to process.
+        conn  - Optional database connection.  Else create one.
+
+    Return:
+        Audit_trail date_time as a string.
+
+    Raises:
+        cdrdb.Error if database error.
+        StandardError if doc ID not found.
+    """
+    # If no connection, create one
+    if not conn:
+        conn   = cdrdb.connect('CdrGuest')
+        cursor = conn.cursor()
+
+    # Normalize passed docId to a plain integer
+    idNum = exNormalize(docId)[1]
+
+    # Get date from audit trail
+    cursor.execute("""
+        SELECT max(at.dt)
+          FROM audit_trail at, action act
+         WHERE act.name in ('ADD DOCUMENT', 'MODIFY DOCUMENT')
+           AND at.action = act.id
+           AND at.document = %d""" % idNum)
+    row = cursor.fetchone()
+
+    # Caller should only pass docId for a real document
+    if not row:
+        raise StandardError("cdr.getCWDDate: No document found for id=%d" % \
+                             idNum)
+
+    return row[0]
 
 #----------------------------------------------------------------------
 # Search the query term table for values
