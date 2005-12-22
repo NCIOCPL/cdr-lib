@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.23 2005-11-22 13:32:26 bkline Exp $
+# $Id: CdrLongReports.py,v 1.24 2005-12-22 16:31:17 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.23  2005/11/22 13:32:26  bkline
+# Removed hardwiring of OSP report to Bach data.
+#
 # Revision 1.22  2005/11/10 14:56:21  bkline
 # Rewrote OSP report to use new ExcelWriter module.  Added column
 # to report for date trials completed.
@@ -1089,6 +1092,8 @@ class OrgProtocolReview:
     # Shorten role names (at Sheri's request 2003-07-01).
     #------------------------------------------------------------------
     def mapRole(self, role):
+        if not role:
+            return None
         ucRole = role.upper()
         if ucRole == "PRINCIPAL INVESTIGATOR":
             return "PI"
@@ -1127,20 +1132,18 @@ class OrgProtocolReview:
                 self.orgStat            = None
                 self.loStat             = loStat
                 self.personnel          = {}
-                self.isLeadOrg          = 0
-                self.isOrgSite          = 0
+                self.isLeadOrg          = False
+                self.isOrgSite          = False
         
         #--------------------------------------------------------------
         # Build the base html for the report.
         #--------------------------------------------------------------
         filters  = ['set:Denormalization Organization Set',
                     'name:Organization Protocol Review']
-#        filters  = ['name:Organization Protocol Review Report Filter 1',
-#                    'name:Organization Protocol Review Report Filter 2']
         job.setProgressMsg("Filtering organization document")
         cdr.logwrite("Filtering organization document", LOGFILE)
-        response = cdr.filterDoc('guest', filters, self.id) #, host = 'mahler')
-        if type(response) in (type(''), type(u'')):
+        response = cdr.filterDoc('guest', filters, self.id)
+        if type(response) in (str, unicode):
             job.fail(response, logfile = LOGFILE)
         html = unicode(response[0], 'utf-8')
 
@@ -1188,26 +1191,18 @@ SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
                                  + '/Person/@cdr:ref'
             AND person_role.path = '/InScopeProtocol/ProtocolAdminInfo'
                                  + '/ProtocolLeadOrg/LeadOrgPersonnel'
-                                 + '/PersonRole'
-            /*
-            AND org_stat.value IN ('Active',
-                                   'Approved-not yet active',
-                                   'Temporarily closed') */""", self.id,
-                       timeout = 500)
+                                 + '/PersonRole'""", self.id, timeout = 500)
             rows = self.cursor.fetchall()
             done = 0
-            for (protId, docId, orgStat, personName,
-                 role) in rows:
-                semicolon = personName.find(';')
-                if semicolon != -1:
-                    personName = personName[:semicolon]
-                    key = (protId, docId, orgStat)
-                    if not protLinks.has_key(key):
-                        protLinks[key] = protLink = ProtLink(docId, protId,
-                                                             orgStat)
+            for (protId, docId, orgStat, personName, role) in rows:
+                personName = personName.strip().split(u';')[0]
+                key = (protId, docId, orgStat)
+                if key not in protLinks:
+                    protLink = ProtLink(docId, protId, orgStat)
+                    protLinks[key] = protLink
                 else:
                     protLink = protLinks[key]
-                protLink.isLeadOrg = 1
+                protLink.isLeadOrg = True
                 if personName:
                     if personName not in protLink.personnel:
                         person = ProtPerson(personName)
@@ -1270,23 +1265,17 @@ SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
                                  + '/SpecificPerson/Role'
             AND lo_stat.path     = '/InScopeProtocol/ProtocolAdminInfo'
                                  + '/ProtocolLeadOrg/LeadOrgProtocolStatuses'
-                                 + '/CurrentOrgStatus/StatusName'
-/*
-            AND org_stat.value IN ('Active',
-                                   'Approved-not yet active',
-                                   'Temporarily closed')
-                                   */""", self.id, timeout = 500)
-            for (protId, docId, orgStat, personName, role,
-                 loStat) in self.cursor.fetchall():
-                semicolon = personName.find(';')
-                if semicolon != -1:
-                    personName = personName[:semicolon]
+                                 + '/CurrentOrgStatus/StatusName'""",
+                                self.id, timeout = 500)
+            rows = self.cursor.fetchall()
+            for (protId, docId, orgStat, personName, role, loStat) in rows:
+                personName = personName.strip().split(u';')[0]
                 key = (protId, docId, loStat)
-                if not protLinks.has_key(key):
+                if key not in protLinks:
                     protLinks[key] = protLink = ProtLink(docId, protId, loStat)
                 else:
                     protLink = protLinks[key]
-                protLink.isOrgSite = 1
+                protLink.isOrgSite = True
                 protLink.orgStat = orgStat
                 if personName:
                     if personName not in protLink.personnel:
@@ -1341,20 +1330,16 @@ SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
                                  + '/GenericPerson/PersonTitle'
             AND lo_stat.path     = '/InScopeProtocol/ProtocolAdminInfo'
                                  + '/ProtocolLeadOrg/LeadOrgProtocolStatuses'
-                                 + '/CurrentOrgStatus/StatusName'
-/*
-            AND org_stat.value IN ('Active',
-                                   'Approved-not yet active',
-                                   'Temporarily closed')
-                                   */ """, self.id, timeout = 500)
-            for (protId, docId, orgStat, personName,
-                 loStat) in self.cursor.fetchall():
+                                 + '/CurrentOrgStatus/StatusName'""",
+                                self.id, timeout = 500)
+            rows = self.cursor.fetchall()
+            for (protId, docId, orgStat, personName, loStat) in rows:
                 key = (protId, docId, loStat)
-                if not protLinks.has_key(key):
+                if key not in protLinks:
                     protLinks[key] = protLink = ProtLink(docId, protId, loStat)
                 else:
                     protLink = protLinks[key]
-                protLink.isOrgSite = 1
+                protLink.isOrgSite = True
                 protLink.orgStat = orgStat
                 if personName and personName not in protLink.personnel:
                     protLink.personnel[personName] = ProtPerson(personName)
@@ -1403,16 +1388,16 @@ SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
                                  + '/ClinicalTrialOffice/@cdr:ref'
             AND lo_stat.path     = '/InScopeProtocol/ProtocolAdminInfo'
                                  + '/ProtocolLeadOrg/LeadOrgProtocolStatuses'
-                                 + '/CurrentOrgStatus/StatusName'
-                                   """, self.id, timeout = 500)
-            for (protId, docId, orgStat, personName,
-                 loStat) in self.cursor.fetchall():
+                                 + '/CurrentOrgStatus/StatusName'""",
+                                self.id, timeout = 500)
+            rows = self.cursor.fetchall()
+            for (protId, docId, orgStat, personName, loStat) in rows:
                 key = (protId, docId, loStat)
-                if not protLinks.has_key(key):
+                if key not in protLinks:
                     protLinks[key] = protLink = ProtLink(docId, protId, loStat)
                 else:
                     protLink = protLinks[key]
-                protLink.isOrgSite = 1
+                protLink.isOrgSite = True
                 protLink.orgStat = orgStat
                 if personName and personName not in protLink.personnel:
                     protLink.personnel[personName] = ProtPerson(personName)
@@ -1429,7 +1414,7 @@ SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
         #--------------------------------------------------------------
         job.setProgressMsg("Building report table")
         cdr.logwrite(msg, LOGFILE)
-        table = """\
+        table = u"""\
   <table border='1' cellpadding='2' cellspacing='0'>
    <tr>
     <th rowspan='2'>Protocol ID</th>
@@ -1487,7 +1472,7 @@ SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
             orgSite = protLink.isOrgSite and "X" or "&nbsp;"
             if not protLink.orgStat:
                 protLink.orgStat = protLink.loStat
-            table += """\
+            table += u"""\
    <tr>
     <td valign='top'>%s</td>
     <td valign='top' align='center'>%d</td>
@@ -1497,12 +1482,16 @@ SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
     <td valign='top' align='center'>%s</td>
     <td valign='top'>%s</td>
    </tr>
-""" % (protLink.protId, protLink.docId, protLink.loStat, protLink.orgStat,
+""" % (protLink.protId, protLink.docId, protLink.loStat,
+       protLink.orgStat or u"&nbsp;",
        leadOrg, orgSite, person)
             done += 1
             msg = "Processed %d of %d rows" % (done, len(keys))
             job.setProgressMsg(msg)
 
+        msg = "Extracting external site links"
+        job.setProgressMsg(msg)
+        table += u"\n  </table>\n" + self.makeExternalSiteLinksTable()
         html = html.replace("@@DOC-ID@@", "CDR%010d" % self.id) \
                    .replace("@@TABLE@@", table)
         # Save the report.
@@ -1528,6 +1517,63 @@ can be viewed at
         job.setStatus(cdrbatch.ST_COMPLETED)
         cdr.logwrite("Completed report", LOGFILE)
 
+    def makeExternalSiteLinksTable(self):
+        self.cursor.execute("""\
+            SELECT prot_id.value, prot_id.doc_id, person.title, status.value
+              FROM query_term prot_id
+              JOIN query_term org
+                ON org.doc_id = prot_id.doc_id
+              JOIN query_term status
+                ON status.doc_id = prot_id.doc_id
+   LEFT OUTER JOIN query_term pi
+                ON pi.doc_id = prot_id.doc_id
+               AND pi.path = '/InScopeProtocol/ProtocolAdminInfo'
+                           + '/ExternalSites/ExternalSite/ExternalSitePI'
+                           + '/ExternalSitePIID/@cdr:ref'
+               AND LEFT(pi.node_loc, 12) = LEFT(org.node_loc, 12)
+   LEFT OUTER JOIN document person
+                ON person.id = pi.int_val
+             WHERE org.int_val = ?
+               AND org.path = '/InScopeProtocol/ProtocolAdminInfo'
+                            + '/ExternalSites/ExternalSite/ExternalSiteOrg'
+                            + '/ExternalSiteOrgID/@cdr:ref'
+               AND prot_id.path = '/InScopeProtocol/ProtocolIDs/PrimaryID'
+                                + '/IDString'
+               AND status.path = '/InScopeProtocol/ProtocolAdminInfo'
+                               + '/CurrentProtocolStatus'
+          ORDER BY prot_id.value, prot_id.doc_id""", self.id, timeout = 300)
+        rows = self.cursor.fetchall()
+        if not rows:
+            return u""
+        table = u"""\
+  <br><br>
+  <b><font size='4'>External Sites</font></b>
+  <br><br>
+  <table border='1' cellpadding='2' cellspacing='0'>
+   <tr>
+    <th>Protocol ID</th>
+    <th>Doc ID</th>
+    <th>Current Protocol Status</th>
+    <th>Person</th>
+   </tr>
+"""
+        for row in rows:
+            if row[2]:
+                person = cgi.escape(row[2].strip().split(u';')[0])
+            else:
+                person = u"&nbsp;"
+            table += u"""\
+   <tr>
+    <td>%s</td>
+    <td>%d</td>
+    <td>%s</td>
+    <td>%s</td>
+   </tr>
+""" % (cgi.escape(row[0]), row[1], row[3] or u"&nsbp;", person)
+        return table + u"""\
+  </table>
+"""
+        
 #----------------------------------------------------------------------
 # Class for finding URLs which are not alive.
 #----------------------------------------------------------------------
@@ -2031,6 +2077,528 @@ The Glossary Term report you requested can be viewed at
     addMatchingPhrases = staticmethod(addMatchingPhrases)
 
 #----------------------------------------------------------------------
+# Processing Status Report for Protocols (Request #1897).
+#----------------------------------------------------------------------
+class ProtocolProcessingStatusReport:
+
+    def __init__(self, job):
+        self.job    = job
+        self.conn   = cdrdb.connect('CdrGuest')
+        self.cursor = self.conn.cursor()
+        self.msg    = ""
+
+    def getCreationDate(self, cdrId):
+        self.cursor.execute("""\
+            SELECT MIN(dt)
+              FROM audit_trail
+             WHERE document = ?""", cdrId)
+        rows = self.cursor.fetchall()
+        return rows and rows[0][0] or None
+
+    def getPrimaryId(self, protocolIdsNode):
+        for child in protocolIdsNode.childNodes:
+            if child.nodeName == 'PrimaryID':
+                for gc in child.childNodes:
+                    if gc.nodeName == 'IDString':
+                        return cdr.getTextContent(gc)
+        return None
+
+    class ProtocolSource:
+        def __init__(self, node):
+            self.name                   = None
+            self.receiptDate            = None
+            self.mergeByDate            = None
+            self.dateSubmissionComplete = None
+            for child in node.childNodes:
+                if child.nodeName == 'SourceName':
+                    self.name = cdr.getTextContent(child)
+                elif child.nodeName == 'DateReceived':
+                    self.receiptDate = cdr.getTextContent(child)
+                elif child.nodeName == 'MergeByDate':
+                    self.mergeByDate = cdr.getTextContent(child)
+                elif child.nodeName == 'DateSubmissionComplete':
+                    self.dateSubmissionComplete = cdr.getTextContent(child)
+
+    class OutOfScopeProtocol:
+
+        def __init__(self, report, cdrId, node):
+            self.cdrId         = cdrId
+            self.primaryId     = None
+            self.sources       = []
+            self.recordEntered = report.getCreationDate(cdrId)
+            self.originalTitle = None
+            for child in node.childNodes:
+                if child.nodeName == 'ProtocolIDs':
+                    self.primaryId = report.getPrimaryId(child)
+                elif child.nodeName == 'ProtocolTitle':
+                    titleType = None
+                    titleText = None
+                    for gc in child.childNodes:
+                        if gc.nodeName == 'TitleType':
+                            titleType = cdr.getTextContent(gc)
+                        elif gc.nodeName == 'TitleText':
+                            titleText = cdr.getTextContent(gc)
+                    if titleType == 'Original':
+                        self.originalTitle = titleText
+                elif child.nodeName == 'ProtocolSources':
+                    for gc in child.childNodes:
+                        if gc.nodeName == 'ProtocolSource':
+                            source = report.ProtocolSource(gc)
+                            self.sources.append(source)
+
+    class CTGovProtocol:
+        def __init__(self, report, cdrId, node):
+            self.cdrId       = cdrId
+            self.dateCreated = report.getCreationDate(cdrId)
+            self.orgStudyId  = None
+            self.nctId       = None
+            for child in node.childNodes:
+                if child.nodeName == 'IDInfo':
+                    for gc in child.childNodes:
+                        if gc.nodeName == 'OrgStudyID':
+                            self.orgStudyId = cdr.getTextContent(gc)
+                        elif gc.nodeName == 'NCTID':
+                            self.nctId = cdr.getTextContent(gc)
+
+    class InScopeProtocol:
+        def __init__(self, report, cdrId, node, publishable):
+            self.inScopeId          = cdrId
+            self.publishable        = publishable
+            self.scientificId       = None
+            self.protocolId         = None
+            self.protocolSources    = []
+            self.adminStatuses      = []
+            self.adminUser          = None
+            self.scientificStatuses = []
+            self.scientificUser     = None
+            self.statusKeys         = {}
+            for child in node.childNodes:
+                if child.nodeName == 'ProtocolIDs':
+                    self.protocolId = report.getPrimaryId(child)
+                elif child.nodeName == 'ProtocolSources':
+                    for gc in child.childNodes:
+                        if gc.nodeName == 'ProtocolSource':
+                            source = report.ProtocolSource(gc)
+                            self.protocolSources.append(source)
+                elif child.nodeName == 'ProtocolProcessingDetails':
+                    for gc in child.childNodes:
+                        if gc.nodeName == 'ProcessingStatus':
+                            status = cdr.getTextContent(gc).strip()
+                            self.adminStatuses.append(status)
+                            self.statusKeys[status.upper()] = status
+                        elif gc.nodeName == 'EnteredBy':
+                            self.adminUser = cdr.getTextContent(gc)
+            report.cursor.execute("""\
+                SELECT doc_id
+                  FROM query_term
+                 WHERE path = '/ScientificProtocolInfo/InScopeDocID/@cdr:ref'
+                   AND int_val = ?""", cdrId)
+            rows = report.cursor.fetchall()
+            if rows:
+                self.scientificId = rows[0][0]
+                report.cursor.execute("SELECT xml FROM document WHERE id = ?",
+                                      self.scientificId)
+                rows = report.cursor.fetchall()
+                if rows:
+                    xmlDoc = rows[0][0]
+                    dom = xml.dom.minidom.parseString(xmlDoc.encode('utf-8'))
+                    for node in dom.documentElement.childNodes:
+                        if node.nodeName == 'ProtocolProcessingDetails':
+                            for child in node.childNodes:
+                                if child.nodeName == 'ProcessingStatus':
+                                    status = cdr.getTextContent(child).strip()
+                                    self.scientificStatuses.append(status)
+                                elif child.nodeName == 'EnteredBy':
+                                    user = cdr.getTextContent(child)
+                                    self.scientificUser = user
+
+        def isResearch(self):
+            return not self.publishable and "RESEARCH STUDY" in self.statusKeys
+        def isDisapproved(self):
+            if "DISAPPROVED BY PDQ EDITORIAL BOARD" in self.statusKeys:
+                return True
+            return "WITHDRAWN" in self.statusKeys
+        def isDuplicate(self):
+            return not self.publishable and "DUPLICATE" in self.statusKeys
+        
+    def run(self):
+
+        #--------------------------------------------------------------
+        # Local variables.
+        #--------------------------------------------------------------
+        totalInScope     = 0
+        totalCtGov       = 0
+        totalResearch    = 0
+        totalDisapproved = 0
+        totalOutOfScope  = 0
+        totalDuplicate   = 0
+        rowInScope       = 2
+        rowCtGov         = 2
+        rowResearch      = 2
+        rowDisapproved   = 2
+        rowOutOfScope    = 2
+        rowDuplicate     = 2
+
+        #--------------------------------------------------------------
+        # Create the Excel workbook and the styles we need.
+        #--------------------------------------------------------------
+        wb = ExcelWriter.Workbook()
+        b = ExcelWriter.Border()
+        borders = ExcelWriter.Borders(b, b, b, b)
+        font = ExcelWriter.Font(name = 'Arial', size = 10)
+        align = ExcelWriter.Alignment('Left', 'Top', wrap = True)
+        self.normalStyle = wb.addStyle(alignment = align, font = font,
+                                       borders = borders)
+        self.dateStyle = wb.addStyle(alignment = align, font = font,
+                                     borders = borders,
+                                     numFormat = 'YYYY-mm-dd')
+        font = ExcelWriter.Font(name = 'Arial', size = 10, bold = True)
+        labelStyle = wb.addStyle(alignment = align, font = font,
+                                 borders = borders)
+        
+        #--------------------------------------------------------------
+        # Create the book's sheets.
+        #--------------------------------------------------------------
+        wsInScope     = wb.addWorksheet("InScope", self.normalStyle)
+        wsCtGov       = wb.addWorksheet("CTGov", self.normalStyle)
+        wsResearch    = wb.addWorksheet("Research", self.normalStyle)
+        wsDisapproved = wb.addWorksheet("Disapproved_Withdrawn",
+                                        self.normalStyle)
+        wsOutOfScope  = wb.addWorksheet("Out of Scope", self.normalStyle)
+        wsDuplicate   = wb.addWorksheet("Duplicate", self.normalStyle)
+
+        #--------------------------------------------------------------
+        # Set the column widths.
+        #--------------------------------------------------------------
+        colNum = 1
+        for w in (60, 60, 120, 100, 100, 100, 100, 80, 100, 80):
+            wsInScope.addCol(colNum, w)
+            wsResearch.addCol(colNum, w)
+            wsDisapproved.addCol(colNum, w)
+            wsDuplicate.addCol(colNum, w)
+            colNum += 1
+        colNum = 1
+        for w in (120, 60, 100, 100, 100, 400):
+            wsOutOfScope.addCol(colNum, w)
+            colNum += 1
+        colNum = 1
+        for w in (60, 150, 80, 80):
+            wsCtGov.addCol(colNum, w)
+            colNum += 1
+        
+        #--------------------------------------------------------------
+        # Create the label rows.
+        #--------------------------------------------------------------
+        headerRows   = (wsInScope.addRow(1, labelStyle),
+                        wsResearch.addRow(1, labelStyle),
+                        wsDisapproved.addRow(1, labelStyle),
+                        wsDuplicate.addRow(1, labelStyle))
+        colNum        = 1
+        for label in ("CDR InScope ID", "CDR Scientific ID", "Protocol ID",
+                      "Date Received", "Submission Complete", "Merge Date",
+                      "Admin Processing Status", "Admin User",
+                      "Scientific Processing Status", "Scientific User"):
+            for row in headerRows:
+                row.addCell(colNum, label)
+            colNum += 1
+        row = wsCtGov.addRow(1, labelStyle)
+        colNum = 1
+        for label in ("Doc ID", "OrgStudyID", "NCTID", "Date Created"):
+            row.addCell(colNum, label)
+            colNum += 1
+        row = wsOutOfScope.addRow(1, labelStyle)
+        colNum = 1
+        for label in ("Primary ID", "Doc ID", "Date Received", "Source",
+                      "Record Entered", "Original Title"):
+            row.addCell(colNum, label)
+            colNum += 1
+
+        #--------------------------------------------------------------
+        # Remember which documents are publishable so we can skip them.
+        #--------------------------------------------------------------
+        self.cursor.execute("CREATE TABLE #publishable (doc_id INTEGER)")
+        self.conn.commit()
+        self.cursor.execute("""\
+            INSERT INTO #publishable
+                 SELECT DISTINCT v.id
+                   FROM doc_version v
+                   JOIN doc_type t
+                     ON v.doc_type = t.id
+                  WHERE t.name IN ('InScopeProtocol', 'CTGovProtocol')
+                    AND v.publishable = 'Y'""", timeout = 300)
+        self.conn.commit()
+        self.msg = "publishable protocols identified"
+        self.cursor.execute("SELECT doc_id FROM #publishable")
+        publishableDocs = {}
+        for row in self.cursor.fetchall():
+            publishableDocs[row[0]] = True
+        self.job.setProgressMsg(self.msg)
+
+        #--------------------------------------------------------------
+        # Process the In-Scope Protocol documents.
+        #--------------------------------------------------------------
+        self.cursor.execute("""\
+            SELECT d.id
+              FROM document d
+              JOIN doc_type t
+                ON t.id = d.doc_type
+             WHERE t.name = 'InScopeProtocol'
+          ORDER BY d.id""", timeout = 300)
+        inScopeProtocolIds = [row[0] for row in self.cursor.fetchall()]
+        n = len(inScopeProtocolIds)
+        self.msg += "<br>%d InScopeProtocol documents selected" % n
+        self.job.setProgressMsg(self.msg)
+        i = 0
+        msg = ''
+        for cdrId in inScopeProtocolIds:
+            docXml   = self.getDocXml(cdrId)
+            dom      = xml.dom.minidom.parseString(docXml.encode('utf-8'))
+            docElem  = dom.documentElement
+            pub      = cdrId in publishableDocs
+            protocol = self.InScopeProtocol(self, cdrId, docElem, pub)
+            used = False
+            if protocol.isResearch():
+                used = True
+                rowResearch += self.addInScopeProtocol(wsResearch,
+                                                       rowResearch,
+                                                       protocol)
+                totalResearch += 1
+            if protocol.isDisapproved():
+                used = True
+                rowDisapproved += self.addInScopeProtocol(wsDisapproved,
+                                                          rowDisapproved,
+                                                          protocol)
+                totalDisapproved += 1
+            if protocol.isDuplicate():
+                used = True
+                rowDuplicate += self.addInScopeProtocol(wsDuplicate,
+                                                        rowDuplicate,
+                                                        protocol)
+                totalDuplicate += 1
+            if not used and not protocol.publishable:
+                rowInScope += self.addInScopeProtocol(wsInScope,
+                                                      rowInScope,
+                                                      protocol)
+                totalInScope += 1
+            i += 1
+            msg = "<br>loaded %d of %d InScopeProtocol documents" % (i, n)
+            self.job.setProgressMsg(self.msg + msg)
+        self.msg += msg
+        self.addTotal(wsResearch, totalResearch, rowResearch)
+        self.addTotal(wsDisapproved, totalDisapproved, rowDisapproved)
+        self.addTotal(wsDuplicate, totalDuplicate, rowDuplicate)
+        self.addTotal(wsInScope, totalInScope, rowInScope)
+
+        #--------------------------------------------------------------
+        # Process the CTGov Protocol documents.
+        #--------------------------------------------------------------
+        self.cursor.execute("""\
+            SELECT d.id
+              FROM document d
+              JOIN doc_type t
+                ON t.id = d.doc_type
+             WHERE t.name = 'CTGovProtocol'
+               AND d.id NOT IN (SELECT doc_id FROM #publishable)
+               AND d.active_status = 'A'
+          ORDER BY d.id""", timeout = 300)
+        ctGovProtocolIds = [row[0] for row in self.cursor.fetchall()]
+        n = len(ctGovProtocolIds)
+        i = 0
+        self.msg += "<br>%d CTGovProtocol documents selected" % n
+        self.job.setProgressMsg(self.msg)
+        msg = ''
+        for cdrId in ctGovProtocolIds:
+            docXml  = self.getDocXml(cdrId)
+            dom     = xml.dom.minidom.parseString(docXml.encode('utf-8'))
+            docElem = dom.documentElement
+            protocol = self.CTGovProtocol(self, cdrId, docElem)
+            rowCtGov += self.addCtGovProtocol(wsCtGov, rowCtGov, protocol)
+            i += 1
+            msg = "<br>loaded %d of %d CTGovProtocol documents" % (i, n)
+            self.job.setProgressMsg(self.msg + msg)
+            totalCtGov += 1
+        self.msg += msg
+        self.addTotal(wsCtGov, totalCtGov, rowCtGov)
+
+        #--------------------------------------------------------------
+        # Process the Out-Of-Scope Protocol documents.
+        #--------------------------------------------------------------
+        self.cursor.execute("""\
+            SELECT d.id
+              FROM document d
+              JOIN doc_type t
+                ON t.id = d.doc_type
+             WHERE t.name = 'OutOfScopeProtocol'
+          ORDER BY d.id""", timeout = 300)
+        outOfScopeProtocolIds = [row[0] for row in self.cursor.fetchall()]
+        n = len(outOfScopeProtocolIds)
+        i = 0
+        self.msg += "<br>%d OutOfScopeProtocol documents selected" % n
+        self.job.setProgressMsg(self.msg)
+        msg = ''
+        for cdrId in outOfScopeProtocolIds:
+            docXml  = self.getDocXml(cdrId)
+            dom     = xml.dom.minidom.parseString(docXml.encode('utf-8'))
+            docElem = dom.documentElement
+            protocol = self.OutOfScopeProtocol(self, cdrId, docElem)
+            rowOutOfScope += self.addOutOfScopeProtocol(wsOutOfScope,
+                                                        rowOutOfScope,
+                                                        protocol)
+            i += 1
+            msg = "<br>loaded %d of %d OutOfScopeProtocol documents" % (i, n)
+            self.job.setProgressMsg(self.msg + msg)
+            totalOutOfScope += 1
+        self.msg += msg
+        self.addTotal(wsOutOfScope, totalOutOfScope, rowOutOfScope)
+
+        #--------------------------------------------------------------
+        # Write out the report and tell the user where it is.
+        #--------------------------------------------------------------
+        name = "ProtocolProcessing-%d.xml" % job.getJobId()
+        f = open(REPORTS_BASE + "/" + name, "w")
+        wb.write(f)
+        f.close()
+        cdr.logwrite("saving %s" % (REPORTS_BASE + "/" + name), LOGFILE)
+        url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+                                                            cdrcgi.BASE,
+                                                            name)
+        cdr.logwrite("url: %s" % url, LOGFILE)
+        self.msg += ("<br>Report available at <a href='%s'><u>%s</u></a>." %
+                     (url, url))
+
+        body = """\
+The Protocol Processing report you requested can be viewed at
+%s.
+""" % (url)
+        sendMail(job, "Report results", body)
+        job.setProgressMsg(self.msg)
+        job.setStatus(cdrbatch.ST_COMPLETED)
+        cdr.logwrite("Completed report", LOGFILE)
+
+    def addInScopeProtocol(self, sheet, rowNum, prot):
+        nRows = len(prot.protocolSources) or 1
+        mergeRows = nRows - 1
+        row = sheet.addRow(rowNum, self.normalStyle)
+        if prot.inScopeId:
+            row.addCell(1, prot.inScopeId, 'Number', mergeDown = mergeRows)
+        else:
+            row.addCell(1, '', mergeDown = mergeRows)
+        if prot.scientificId:
+            row.addCell(2, prot.scientificId, 'Number', mergeDown = mergeRows)
+        else:
+            row.addCell(2, '', mergeDown = mergeRows)
+        if prot.protocolId:
+            row.addCell(3, prot.protocolId, mergeDown = mergeRows)
+        else:
+            row.addCell(3, '', mergeDown = mergeRows)
+        if prot.protocolSources:
+            i = 0
+            for s in prot.protocolSources:
+                r = i and sheet.addRow(rowNum + i, self.normalStyle) or row
+                if s.receiptDate:
+                    d = self.fixDate(s.receiptDate)
+                    r.addCell(4, d) #, 'DateTime', self.dateStyle)
+                else:
+                    r.addCell(4, '')
+                if s.dateSubmissionComplete:
+                    d = self.fixDate(s.dateSubmissionComplete)
+                    r.addCell(5, d) #, 'DateTime', self.dateStyle)
+                else:
+                    r.addCell(5, '')
+                if s.mergeByDate:
+                    d = self.fixDate(s.mergeByDate)
+                    r.addCell(6, d) #, 'DateTime', self.dateStyle)
+                else:
+                    r.addCell(6, '')
+                i += 1
+        else:
+            row.addCell(4, '')
+            row.addCell(5, '')
+            row.addCell(6, '')
+        row.addCell(7, self.mergeStatuses(prot.adminStatuses),
+                    mergeDown = mergeRows)
+        row.addCell(8, prot.adminUser or '', mergeDown = mergeRows)
+        row.addCell(9, self.mergeStatuses(prot.scientificStatuses),
+                    mergeDown = mergeRows)
+        row.addCell(10, prot.scientificUser or '', mergeDown = mergeRows)
+        return nRows
+
+    def addCtGovProtocol(self, sheet, rowNum, prot):
+        row = sheet.addRow(rowNum, self.normalStyle)
+        if prot.cdrId:
+            row.addCell(1, prot.cdrId, 'Number')
+        else:
+            row.addCell(1, '')
+        row.addCell(2, prot.orgStudyId or '')
+        row.addCell(3, prot.nctId or '')
+        if prot.dateCreated:
+            d = self.fixDate(prot.dateCreated)
+            row.addCell(4, d) #, 'DateTime', self.dateStyle)
+        else:
+            row.addCell(4, '')
+        return 1
+
+    def addOutOfScopeProtocol(self, sheet, rowNum, prot):
+        nRows = len(prot.sources) or 1
+        mergeRows = nRows - 1
+        row = sheet.addRow(rowNum, self.normalStyle)
+        row.addCell(1, prot.primaryId or '')
+        if prot.cdrId:
+            row.addCell(2, prot.cdrId, 'Number', mergeDown = mergeRows)
+        else:
+            row.addCell(2, '', mergeDown = mergeRows)
+        if prot.sources:
+            i = 0
+            for s in prot.sources:
+                r = i and sheet.addRow(rowNum + i, self.normalStyle) or row
+                if s.receiptDate:
+                    d = self.fixDate(s.receiptDate)
+                    r.addCell(3, d) #, 'DateTime', self.dateStyle)
+                else:
+                    r.addCell(3, '')
+                r.addCell(4, s.name or '')
+                i += 1
+        else:
+            row.addCell(3, '')
+            row.addCell(4, '')
+        if prot.recordEntered:
+            d = self.fixDate(prot.recordEntered)
+            row.addCell(5, d, #'DateTime', self.dateStyle,
+                        mergeDown = mergeRows)
+        else:
+            row.addCell(5, '', mergeDown = mergeRows)
+        row.addCell(6, prot.originalTitle or '', mergeDown = mergeRows)
+        return nRows
+
+    def mergeStatuses(self, statuses):
+        return u'\n'.join(statuses)
+
+    def addTotal(self, sheet, total, rowNum):
+        row = sheet.addRow(rowNum + 2, self.normalStyle)
+        row.addCell(1, "COUNT of UNIQUE Trials")
+        row.addCell(2, total, "Number")
+        
+    def testReport():
+        import sys
+        class Job:
+            def setProgressMsg(self, msg):
+                sys.stderr.write("%s\n" % msg)
+        report = ProtocolProcessingStatusReport(Job())
+        report.run()
+    testReport = staticmethod(testReport)
+
+    def getDocXml(self, id):
+        self.cursor.execute("SELECT xml FROM document WHERE id = ?", id)
+        return self.cursor.fetchall()[0][0]
+
+    def fixDate(self, d):
+        if not d:
+            return ""
+        if len(d) > 10:
+            return d[:10] #+ 'T' + d[11:]
+        return d
+
+#----------------------------------------------------------------------
 # Run a report of dead URLs.
 #----------------------------------------------------------------------
 def checkUrls(job):
@@ -2119,9 +2687,11 @@ if __name__ == "__main__":
             checkUrls(job)
         elif jobName == "Glossary Term Search":
             glossaryTermSearch(job)
+        elif jobName == "Protocol Processing Status Report":
+            ProtocolProcessingStatusReport(job).run()
         # That's all we know how to do right now.
         else:
-            job.fail("CdrLogReports: unknown job name '%s'" % jobName,
+            job.fail("CdrLongReports: unknown job name '%s'" % jobName,
                      logfile = LOGFILE)
     except Exception, info:
         cdr.logwrite("Failure executing job %d: %s" % (jobId, str(info)),
