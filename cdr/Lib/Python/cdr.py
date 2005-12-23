@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.118 2005-12-16 04:50:44 ameyer Exp $
+# $Id: cdr.py,v 1.119 2005-12-23 01:45:40 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.118  2005/12/16 04:50:44  ameyer
+# Added getCWDDate().
+#
 # Revision 1.117  2005/11/03 15:25:55  bkline
 # Renamed manifest file.
 #
@@ -807,8 +810,8 @@ def getCWDDate (docId, conn=None):
     """
     # If no connection, create one
     if not conn:
-        conn   = cdrdb.connect('CdrGuest')
-        cursor = conn.cursor()
+        conn = cdrdb.connect('CdrGuest')
+    cursor = conn.cursor()
 
     # Normalize passed docId to a plain integer
     idNum = exNormalize(docId)[1]
@@ -821,6 +824,7 @@ def getCWDDate (docId, conn=None):
            AND at.action = act.id
            AND at.document = %d""" % idNum)
     row = cursor.fetchone()
+    cursor.close()
 
     # Caller should only pass docId for a real document
     if not row:
