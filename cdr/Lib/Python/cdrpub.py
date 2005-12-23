@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.75 2005-12-02 22:56:09 venglisc Exp $
+# $Id: cdrpub.py,v 1.76 2005-12-23 00:44:00 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.75  2005/12/02 22:56:09  venglisc
+# Modified the display messages to create a cleaner more legible output.
+# Corrected a bug causing the job for an interim export to fail if no
+# subdir has been specified for the document type.
+#
 # Revision 1.70  2005/03/09 16:15:06  bkline
 # Fixed a bug in a call to __debugLog() (wrong parameters).
 #
@@ -691,7 +696,7 @@ class Publish:
                         numDocs += 1
                         if numDocs % self.__logDocModulus == 0:
                             msg = "%s: Filtered/validated %d docs<BR>" % (
-                                                                 time.ctime(), 
+                                                                 time.ctime(),
                                                                  numDocs)
                             self.__updateMessage(msg)
                             numFailures = self.__getFailures()
@@ -737,11 +742,17 @@ class Publish:
 
                             # Back from running all threads
                             # Add all the docs to pub_proc_doc table
+                            # NOTE: If an exception is raised in
+                            #       self.__launchPubThreads(), this update
+                            #       will not occur.
+                            # XXX Do we need to update pub_proc_doc table
+                            #     after each successful pub, or is this
+                            #     sufficient?
                             self.__addPubProcDocRows(specSubdirs[i])
                     i += 1
 
             msg = "%s: Finish filtering/validating all %d docs<BR>" % (
-                                                               time.ctime(), 
+                                                               time.ctime(),
                                                                numDocs)
             self.__updateMessage(msg)
             numFailures = self.__getFailures()
@@ -749,9 +760,9 @@ class Publish:
                 msg = """%s: Total of %d docs failed.
                     <A style='text-decoration: underline;'
                     href="%s/PubStatus.py?id=%d&type=FilterFailure">Check
-                    the failure details.</A><BR>""" % (time.ctime(), 
+                    the failure details.</A><BR>""" % (time.ctime(),
                                                        numFailures,
-                                                       self.__cdrHttp, 
+                                                       self.__cdrHttp,
                                                        self.__jobId)
                 self.__updateMessage(msg)
             else:
@@ -832,7 +843,7 @@ class Publish:
                                 noOutput = 'Y',
                                 port = self.__pubPort)
                             if not resp[0]:
-                                msg += "%s: <B>Failed:</B><BR>" % time.ctime() 
+                                msg += "%s: <B>Failed:</B><BR>" % time.ctime()
                                 msg += "<I>%s</I><BR>"          % resp[1]
                                 msg += "%s: Please run job "    % time.ctime()
                                 msg += "%s separately.<BR>"     % pushSubsetName
@@ -979,7 +990,7 @@ class Publish:
             rowsAffected = cursor.rowcount
             self.__updateMessage(
                 "<BR>%s: Updated first_pub for %d documents.<BR>" % (
-		                                                time.ctime(), 
+		                                                time.ctime(),
 								rowsAffected))
         except cdrdb.Error, info:
             self.__updateMessage("Failure updating first_pub for job %d: %s" \
@@ -1110,7 +1121,7 @@ class Publish:
 """%s: <A style='text-decoration: underline;' href='%s'>
 Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                                                  cgWorkLink)
-                                                                 
+
 
             if pubType == "Full Load" or pubType == "Export":
                 self.__createWorkPPC(vendor_job, vendor_dest)
@@ -1188,10 +1199,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
             # Prepare the server for a list of documents to send.
             msg += """%s: Sending data prolog with jobId=%d, pubType=%s,
-                    lastJobId=%d, numDocs=%d ...<BR>""" % (time.ctime(), 
-                                                           self.__jobId, 
-                                                           pubTypeCG, 
-							   lastJobId, 
+                    lastJobId=%d, numDocs=%d ...<BR>""" % (time.ctime(),
+                                                           self.__jobId,
+                                                           pubTypeCG,
+							   lastJobId,
 							   numDocs)
             response = cdr2cg.sendDataProlog(cgJobDesc, self.__jobId,
                                              pubTypeCG, lastJobId, numDocs)
@@ -1238,7 +1249,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 addCount += 1
                 row = cursor.fetchone()
             msg += "%s: %d documents pushed to Cancer.gov.<BR>" % (
-	                                                      time.ctime(), 
+	                                                      time.ctime(),
 							      addCount)
             self.__updateMessage(msg)
             msg = ""
@@ -1264,7 +1275,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     raise StandardError(msg)
                 docNum  = docNum + 1
                 if docNum % 1000 == 0:
-                    msg += "%s: Pushed %d documents<BR>" % (time.ctime(), 
+                    msg += "%s: Pushed %d documents<BR>" % (time.ctime(),
                                                             docNum)
                     self.__updateMessage(msg)
                     msg = ""
@@ -2166,10 +2177,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     #   exception in main - aborting if any thread failed.
                     # NOTE: Each thread must also check this and abort,
                     #   aborting the parent does _not_ kill the children.
-                    if self.__threadError == i:
+                    chkError = "Thread-%d" % i
+                    if self.__threadError == chkError:
                         # Abort
-                        msg = "Aborting on error in thread %d, see logfile" %\
-                              self.__threadError
+                        msg = "Aborting on error in thread %d, see logfile" % i
                         self.__debugLog(msg)
                         raise StandardError(msg)
 
@@ -2217,10 +2228,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                         numFailures = self.__getFailures()
 
 			msg = "%s: Filtered/validated %d docs. %d docs " % (
-                                                           time.ctime(), 
+                                                           time.ctime(),
 							   self.__totalPubDocs,
                                                            numFailures)
-			msg += "failed so far.<BR>" 
+			msg += "failed so far.<BR>"
                         self.__updateMessage(msg)
                     except:
                         pass
@@ -3299,7 +3310,7 @@ def findLinkedDocs(docPairList):
             row = cursor.fetchone()
             nRows += 1
         msg += "%s: Finishing link_net hash for %d linking docs<BR>" % (
-                                                             time.ctime(), 
+                                                             time.ctime(),
                                                              len(links))
 
         # Seed the hash with documents passed in.
@@ -3326,8 +3337,8 @@ def findLinkedDocs(docPairList):
             del linkedDocHash[key]
 
         msg += "%s: Found all %d linked documents in %d passes<BR>" % (
-                                                          time.ctime(), 
-                                                          len(linkedDocHash), 
+                                                          time.ctime(),
+                                                          len(linkedDocHash),
                                                           passNum)
 
         # Return what we have got.
