@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.119 2005-12-23 01:45:40 ameyer Exp $
+# $Id: cdr.py,v 1.120 2005-12-27 23:30:15 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.119  2005/12/23 01:45:40  ameyer
+# Fixed bug in new function getCWDDate().
+#
 # Revision 1.118  2005/12/16 04:50:44  ameyer
 # Added getCWDDate().
 #
@@ -884,11 +887,27 @@ def getQueryTermValueForId (path, docId, conn = None):
 #----------------------------------------------------------------------
 # Extract the text content of a DOM element.
 #----------------------------------------------------------------------
-def getTextContent(node):
+def getTextContent(node, recurse=False, separator=''):
+    """
+    Get text content for a node, possibly including sub nodes.
+
+    Pass:
+        node      - Node to be checked.
+        recurse   - Flag indicating that all subnodes must be processed.
+        separator - If multiple nodes, put this between them if we wish
+                    to avoid jamming words together.
+                    The separator is applied even if recurse=False.  It
+                    also appears after the end of the last node.
+
+    Return:
+        Text content as a single string.
+    """
     text = ''
     for child in node.childNodes:
         if child.nodeType in (child.TEXT_NODE, child.CDATA_SECTION_NODE):
-            text = text + child.nodeValue
+            text = text + child.nodeValue + separator
+        elif recurse and child.nodeType == child.ELEMENT_NODE:
+            text = text + getTextContent(child, recurse, separator)
     return text
 
 #----------------------------------------------------------------------
