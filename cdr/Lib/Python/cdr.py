@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.120 2005-12-27 23:30:15 ameyer Exp $
+# $Id: cdr.py,v 1.121 2005-12-28 15:55:44 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.120  2005/12/27 23:30:15  ameyer
+# Modified getTextContent() to support recursive retrieval.
+#
 # Revision 1.119  2005/12/23 01:45:40  ameyer
 # Fixed bug in new function getCWDDate().
 #
@@ -2964,6 +2967,22 @@ def exceptionInfo():
     else:
         eMsg = str(eValue) or "unable to find exception information"
     return eMsg
+
+#----------------------------------------------------------------------
+# Gets the email addresses for members of a group.
+#----------------------------------------------------------------------
+def getEmailList(groupName, host = 'localhost'):
+    conn = cdrdb.connect(dataSource = host)
+    cursor = conn.cursor()
+    cursor.execute("""\
+        SELECT u.email
+          FROM usr u
+          JOIN grp_usr gu
+            ON gu.usr = u.id
+          JOIN grp g
+            ON g.id = gu.grp
+         WHERE g.name = ?""", groupName)
+    return [row[0] for row in cursor.fetchall()]
 
 #----------------------------------------------------------------------
 # Send email to a list of recipients.
