@@ -1,14 +1,33 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.76 2005-12-23 00:44:00 ameyer Exp $
+# $Id: cdrpub.py,v 1.77 2006-01-26 21:03:35 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.76  2005/12/23 00:44:00  ameyer
+# Corrected a bug that allowed publishing to continue after a fatal error
+# aborted a subset.  The bug was caused by testing self.__threadError for
+# a number like "2" instead of the string "Thread-2".
+# Also added a comment about pub_proc_doc update issues.
+#
 # Revision 1.75  2005/12/02 22:56:09  venglisc
 # Modified the display messages to create a cleaner more legible output.
 # Corrected a bug causing the job for an interim export to fail if no
 # subdir has been specified for the document type.
+#
+# Revision 1.74  2005/11/25 18:06:19  bkline
+# Fixed order of strings in error message for missing or non-publishable
+# version.
+#
+# Revision 1.73  2005/11/25 16:40:03  bkline
+# Fixed message handling bug.
+#
+# Revision 1.72  2005/05/12 18:47:04  bkline
+# Fixed typo in last change (loglevel for debuglevel).
+#
+# Revision 1.71  2005/05/12 15:54:56  bkline
+# Added new command-line argument for turning on cdr2cg debugging.
 #
 # Revision 1.70  2005/03/09 16:15:06  bkline
 # Fixed a bug in a call to __debugLog() (wrong parameters).
@@ -3352,8 +3371,10 @@ def findLinkedDocs(docPairList):
 #----------------------------------------------------------------------
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        sys.stderr.write("usage: cdrpub.py job-id\n")
+        sys.stderr.write("usage: cdrpub.py job-id {--debug}\n")
         sys.exit(1)
+    if len(sys.argv) > 2 and sys.argv[2] == "--debug":
+        cdr2cg.debuglevel = 1
     LOG = ""
     p = Publish(int(sys.argv[1]))
     p.publish()
