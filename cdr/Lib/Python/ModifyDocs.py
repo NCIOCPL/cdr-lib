@@ -1,11 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.12 2005-08-15 21:05:07 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.13 2006-01-26 21:47:21 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.12  2005/08/15 21:05:07  ameyer
+# Added validation after transform and before store.  If a document was
+# valid but became invalid, it will not be stored.  Messages are logged
+# and written to the output test directory if in test mode.
+#
 # Revision 1.11  2005/05/26 23:45:07  bkline
 # Fix to create output directory in test mode for SiteImporter subclass.
 #
@@ -107,6 +112,7 @@ class Job:
         self.conn      = cdrdb.connect('CdrGuest')
         self.cursor    = self.conn.cursor()
         self.session   = cdr.login(uid, pwd)
+        self.noStdErr  = False
         _testMode      = testMode
         _validate      = validate
         _haltOnErr     = haltOnValErr
@@ -143,12 +149,20 @@ class Job:
             cdr.unlock(self.session, "CDR%010d" % docId)
 
     #------------------------------------------------------------------
+    # Call this to start/stop use of stderr in logging.
+    # If this is not called, logging will occur.
+    #------------------------------------------------------------------
+    def suppressStdErrLogging(self, suppress=True):
+        self.noStdErr = suppress
+
+    #------------------------------------------------------------------
     # Log processing/error information with a timestamp.
     #------------------------------------------------------------------
     def log(self, what):
         what = "%s: %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), what)
         self.logFile.write(what)
-        sys.stderr.write(what)
+        if not self.noStdErr:
+            sys.stderr.write(what)
 
     def __del__(self):
         try:
