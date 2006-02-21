@@ -1,10 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.77 2006-01-26 21:03:35 ameyer Exp $
+# $Id: cdrpub.py,v 1.78 2006-02-21 16:24:04 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.77  2006/01/26 21:03:35  ameyer
+# Restored some changes that were accidentally deleted in version 1.75.
+# Re-added lost cvs log entries into the comment prolog, re-added a bit
+# of code that had been lost (setting --debug), and added "{--debug}" to
+# usage message.
+#
 # Revision 1.76  2005/12/23 00:44:00  ameyer
 # Corrected a bug that allowed publishing to continue after a fatal error
 # aborted a subset.  The bug was caused by testing self.__threadError for
@@ -1036,8 +1042,9 @@ class Publish:
                            )
             row = cursor.fetchone()
             if row:
-                msg  = "%s: Pushing job %d is pending. Please " % time.ctime()
-                msg += "push again later.<BR>" % row[0]
+                msg  = "%s: Pushing job %d is pending. Please " % \
+                        (time.ctime(), row[0])
+                msg += "push again later.<BR>"
                 self.__updateMessage(msg)
                 return 0
 
