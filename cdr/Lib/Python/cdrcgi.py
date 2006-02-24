@@ -1,10 +1,17 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.56 2005-11-15 15:55:01 venglisc Exp $
+# $Id: cdrcgi.py,v 1.57 2006-02-24 20:11:14 venglisc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.56  2005/11/15 15:55:01  venglisc
+# Modified CSS to display a hover-background for table rows.
+# Added a blank space after semicolon (;) to allow Firefox browser to split
+# lines within table cells.
+# Both of these changes only affect Firefox/Mozilla browsers but not IE.
+# (Bug 1876)
+#
 # Revision 1.55  2005/10/11 17:57:27  ameyer
 # Added colorDiffs.
 #
@@ -932,10 +939,14 @@ def constructAdvancedSearchQuery(searchFields, boolOp, docType):
     # the document type in the result set for each of the documents
     # found.
     #------------------------------------------------------------------
+    # Adding the docytype as a string to the query output since we 
+    # may need to distinguish between InScope and CTGov protocols later
+    # on. 
+    # -----------------------------------------------------------------
     if type(docType) == type(""):
-        query = ("SELECT DISTINCT d.id, d.title FROM document d "
+        query = ("SELECT DISTINCT d.id, d.title, '%s' FROM document d "
                  "JOIN doc_type t ON t.id = d.doc_type AND t.name = '%s'"
-                 % docType)
+                 % (docType, docType))
     else:
         query = ("SELECT DISTINCT d.id, d.title, t.name FROM document d "
                  "JOIN doc_type t ON t.id = d.doc_type AND t.name IN (")
@@ -1021,11 +1032,18 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
         title = cgi.escape(rows[i][1])
         dtcol = "<TD>&nbsp;</TD>"
         filt  = filter
-        if len(rows[i]) > 2:
+        if docType == 'Protocol':
             dt = rows[i][2]
-            if filter:
-                filt = filter[dt]
-            dtcol = """\
+
+            # This block is only needed if the filter is of type 
+            # dictionary rather than a string (the filter name).
+            # In that case we want to display the docType on the
+            # result page and pick the appropriate filter for 
+            # echo docType
+            # --------------------------------------------------
+            if len(filter) < 10:
+               filt = filter[dt]
+               dtcol = """\
     <TD        WIDTH = "10%%"
               VALIGN = "top">%s</TD>
 """ % dt
@@ -1033,14 +1051,14 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
         # XXX Consider using QcReport.py for all advanced search results pages.
         if docType in ("Person", "Organization", "Glossary Term"):
             href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
-        elif len(rows[i]) > 2 and dt == "CTGovProtocol":
+        elif docType == 'Protocol' and dt == "CTGovProtocol":
             href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
         elif docType == "Summary":
             href = "%s/QcReport.py?DocId=%s&ReportType=nm%s" % (BASE, docId,
                                                                 session)
         else:
-            href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId, filt,
-                                                          session)
+            href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId, 
+                                                          filt, session)
         html += u"""\
    <TR CLASS="rowitem">
     <TD       NOWRAP
