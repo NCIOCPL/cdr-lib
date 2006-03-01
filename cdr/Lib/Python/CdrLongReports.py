@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.24 2005-12-22 16:31:17 bkline Exp $
+# $Id: CdrLongReports.py,v 1.25 2006-03-01 15:33:06 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.24  2005/12/22 16:31:17  bkline
+# Added new Protocol Processing Status report; added back in changes
+# for request #1702, which had been inadvertantly discarded.
+#
 # Revision 1.23  2005/11/22 13:32:26  bkline
 # Removed hardwiring of OSP report to Bach data.
 #
@@ -89,7 +93,7 @@
 #
 #----------------------------------------------------------------------
 import cdr, cdrdb, xml.dom.minidom, time, cdrcgi, cgi, sys, socket, cdrbatch
-import string, re, win32com.client, urlparse, httplib, traceback
+import string, re, urlparse, httplib, traceback
 import ExcelWriter
 
 #----------------------------------------------------------------------
@@ -766,8 +770,9 @@ class NonRespondentsReport:
             startDate[2] -= 120
             endDate[2]   -= 60
             ageString     = '60-120 days since last mailer'
-	regexp    = re.compile('since last mailer')
-	ageText   = regexp.sub('prior', ageString)
+        # startDate[2] -= 200 # for testing
+        regexp    = re.compile('since last mailer')
+        ageText   = regexp.sub('prior', ageString)
         startDate = time.mktime(startDate)
         endDate   = time.mktime(endDate)
         startDate = time.strftime("%Y-%m-%d", time.localtime(startDate))
@@ -779,10 +784,8 @@ class NonRespondentsReport:
             # Get the last mailer for each doc of this type.
             self.cursor.execute("""\
                 CREATE TABLE #last_mailers
-                (
-                    doc_id    INTEGER,
-                    mailer_id INTEGER
-                )""")
+                     (doc_id INTEGER,
+                   mailer_id INTEGER)""")
             self.conn.commit()
             job.setProgressMsg("#last_mailers table created")
             self.cursor.execute("""\
@@ -879,102 +882,41 @@ class NonRespondentsReport:
         if self.docType == "InScopeProtocol":
             self.docType = "Protocol Summary"
 
-        xl = win32com.client.Dispatch("Excel.Application")
-        xl.Visible = 0
-        wb = xl.Workbooks.Add()
-
-        # Get rid of unwanted sheets, and rename the one we're keeping.
-        xl.DisplayAlerts = 0
-        sheet = xl.Sheets("Sheet1")
-        sheet.Name = "Mailer Non-Respondents"
-        xl.Sheets("Sheet2").Select()
-        xl.ActiveWindow.SelectedSheets.Delete()
-        xl.Sheets("Sheet3").Select()
-        xl.ActiveWindow.SelectedSheets.Delete()
-        sheet.Activate()
-        
-        # Doesn't work: bug in Excel.
-        #sheet.PageSetup.Orientation = win32com.client.constants.xlPortrait
-        headings = (
-            "Recipient Name",
-            "DocId",
-            "Mailer",
-            "Mailer Type",
-         #  "Generated",
-            "Response"
-            )
-        sheet.Cells(1, 1).Value = "Mailer Non-Respondents Report"
-        cells = sheet.Cells.Range("A1:E1")
-        cells.Font.Bold = 1
-        cells.Font.Name = 'Times New Roman'
-        cells.Font.Size = 14
-        cells.MergeCells = 1
-        cells.RowHeight = 20
-        cells.Interior.ColorIndex = 35
-        cells.VerticalAlignment = win32com.client.constants.xlCenter
-        cells.HorizontalAlignment = win32com.client.constants.xlCenter
-        cells = sheet.Cells.Range("A2:E2")
-        cells.MergeCells = 1
-        cells.VerticalAlignment = win32com.client.constants.xlCenter
-        cells.HorizontalAlignment = win32com.client.constants.xlCenter
-        cells = sheet.Cells.Range("A2:E3")
-        cells.Font.Bold = 1
-        cells.Font.Name = 'Times New Roman'
-        cells.Font.Size = 12
-        cells.Interior.ColorIndex = 35
-
-        sheet.Cells(2, 1).Value = "For period of %s to %s" % (
-            ageText, time.strftime("%B %d, %Y"))
-        cells = sheet.Cells.Range("A2:E2")
-        cells.Font.Bold = 1
-        cells.Font.Name = 'Times New Roman'
-        cells.Font.Size = 12
-        cells.MergeCells = 1
-        cells.RowHeight = 16
-        cells.Interior.ColorIndex = 35
-        cells.VerticalAlignment = win32com.client.constants.xlCenter
-        cells.HorizontalAlignment = win32com.client.constants.xlCenter
-        cells = sheet.Cells.Range("A2:E2")
-        cells.MergeCells = 1
-        cells.VerticalAlignment = win32com.client.constants.xlCenter
-        cells.HorizontalAlignment = win32com.client.constants.xlCenter
-        cells = sheet.Cells.Range("A2:E3")
-        cells.Font.Bold = 1
-        cells.Font.Name = 'Times New Roman'
-        cells.Font.Size = 12
-        cells.Interior.ColorIndex = 35
-
-        sheet.Cells(3, 1).Value = "Mailer Type: %s" % self.docType
-        cells = sheet.Cells.Range("A3:E3")
-        cells.Font.Bold = 1
-        cells.Font.Name = 'Times New Roman'
-        cells.Font.Size = 12
-        cells.MergeCells = 1
-        cells.RowHeight = 16
-        cells.Interior.ColorIndex = 35
-        cells.VerticalAlignment = win32com.client.constants.xlCenter
-        cells.HorizontalAlignment = win32com.client.constants.xlCenter
-        cells = sheet.Cells.Range("A3:E3")
-        cells.MergeCells = 1
-        cells.VerticalAlignment = win32com.client.constants.xlCenter
-        cells.HorizontalAlignment = win32com.client.constants.xlCenter
-        cells = sheet.Cells.Range("A3:E3")
-        cells.Font.Bold = 1
-        cells.Font.Name = 'Times New Roman'
-        cells.Font.Size = 12
-        cells.Interior.ColorIndex = 35
-
-        sheet.Cells(4, 1).Value = "Non-Response Time: %s" % ageString
-        cells = sheet.Cells.Range("A4:E4")
-        cells.Font.Bold = 1
-        cells.Font.Name = 'Times New Roman'
-        cells.Font.Size = 12
-        cells.Interior.ColorIndex = 35
-        cells.RowHeight = 20
-        headerRows = 4
-        for i in range(len(headings)):
-            sheet.Cells(headerRows, i + 1).Value = headings[i]
-
+        fn = 'Times New Roman'
+        ff = 'Roman'
+        wb = ExcelWriter.Workbook()
+        b1 = ExcelWriter.Borders(top = ExcelWriter.Border())
+        f1 = ExcelWriter.Font(name = fn, family = ff, size = 14, bold = True)
+        f2 = ExcelWriter.Font(name = fn, family = ff, size = 12, bold = True)
+        f3 = ExcelWriter.Font(name = fn, family = ff, size = 11)
+        i1 = ExcelWriter.Interior('#CCFFCC')
+        a1 = ExcelWriter.Alignment('Center', 'Center')
+        a2 = ExcelWriter.Alignment('Left', 'Top', True)
+        s1 = wb.addStyle(font = f1, alignment = a1, interior = i1)
+        s2 = wb.addStyle(font = f2, alignment = a1, interior = i1)
+        s3 = wb.addStyle(font = f2, interior = i1)
+        s4 = wb.addStyle(font = f3, alignment = a2, borders = b1)
+        s5 = wb.addStyle(font = f3, alignment = a2)
+        ws = wb.addWorksheet("Mailer Non-Respondents", frozenRows = 5)
+        r1 = ws.addRow(1, height = 40)
+        r2 = ws.addRow(2, height = 16)
+        r3 = ws.addRow(3, height = 16)
+        r4 = ws.addRow(4, height = 16)
+        r5 = ws.addRow(5, height = 20)
+        t1 = "Mailer Non-Respondents Report"
+        t2 = "For period of %s to %s" % (ageText, time.strftime("%B %d, %Y"))
+        t3 = "Mailer Type: %s" % self.docType
+        t4 = "Non-Response Time: %s" % ageString
+        r1.addCell(1, t1, mergeAcross = 4, style = s1)
+        r2.addCell(1, t2, mergeAcross = 4, style = s2)
+        r3.addCell(1, t3, mergeAcross = 4, style = s2)
+        r4.addCell(1, t4, mergeAcross = 4, style = s2)
+        hdrs = ("Recipient Name", "DocId", "Mailer", "Mailer Type", "Response")
+        widths = (200, 50, 50, 150, 75)
+        headerRows = len(hdrs)
+        for i in range(headerRows):
+            ws.addCol(i + 1, widths[i])
+            r5.addCell(i + 1, hdrs[i], style = s3)
         done = 0
         rowNum = headerRows + 1
         recipRows = 0
@@ -983,28 +925,14 @@ class NonRespondentsReport:
         if not rows:
             job.fail("No data found for report", logfile = LOGFILE)
         for row in rows:
-            cells = sheet.Cells.Range("%d:%d" % (rowNum, rowNum))
-            cells.Font.Name = 'Times New Roman'
-            cells.Font.Size = 11
-            cells.WrapText = 1
-            cells.VerticalAlignment = win32com.client.constants.xlTop
-            cells.HorizontalAlignment = win32com.client.constants.xlLeft
-            #cells = sheet.Cells.Range("A%d:E%d" % (rowNum, rowNum))
             if row[0] == lastRecipName:
-                cells.RowHeight = 15.0
                 recipName = ""
                 recipRows += 1
                 if recipRows > 3:
                     done += 1
                     continue
+                r = ws.addRow(rowNum, s5, 15)
             else:
-                #cells.Rows.AutoFit()
-                cells.RowHeight = 15.0 
-                #cells.RowHeight = 12.75
-                border = cells.Borders(win32com.client.constants.xlEdgeTop)
-                border.LineStyle  = win32com.client.constants.xlContinuous
-                border.Weight     = win32com.client.constants.xlThin
-                border.ColorIndex = win32com.client.constants.xlAutomatic
                 recipRows = 1
                 recipName = lastRecipName = row[0]
                 if recipName.startswith("Inactive;"):
@@ -1012,52 +940,45 @@ class NonRespondentsReport:
                 semicolon = recipName.find(";")
                 if semicolon != -1:
                     recipName = recipName[:semicolon]
-                recipName = cdrcgi.unicodeToLatin1(recipName)
+                r = ws.addRow(rowNum, s4, 15)
             if row[1] == lastBaseDocId:
                 baseDocId = ""
             else:
                 baseDocId = "%d" % row[1]
                 lastBaseDocId = row[1]
-            # generatedDate = row[4] and row[4][:10] or ""
             responseDate  = row[4] and row[4][:10] or ""
             if row[5] == "Returned to sender":
                 responseDate = "RTS"
-            sheet.Cells(rowNum, 1).Value = recipName
-            sheet.Cells(rowNum, 2).Value = baseDocId
-            sheet.Cells(rowNum, 3).Value = "%d" % row[2]
-            sheet.Cells(rowNum, 4).Value = row[3]
-            #sheet.Cells(rowNum, 5).Value = generatedDate
-            sheet.Cells(rowNum, 5).Value = responseDate
-            #cells.RowHeight = 14
+            r.addCell(1, recipName)
+            r.addCell(2, baseDocId)
+            r.addCell(3, "%d" % row[2])
+            r.addCell(4, row[3])
+            r.addCell(5, responseDate)
             rowNum += 1
             done += 1
             msg = "%d rows of %d processed; %d rows added" % (
                 done, len(rows), rowNum - headerRows)
             job.setProgressMsg(msg)
 
-        sheet.Columns.Range("A:A").ColumnWidth = 36.00
-        sheet.Columns.Range("B:B").ColumnWidth =  9.00
-        sheet.Columns.Range("C:C").ColumnWidth =  7.00
-        sheet.Columns.Range("D:D").ColumnWidth = 24.00
-        #sheet.Columns.Range("E:E").ColumnWidth = 10.00
-        sheet.Columns.Range("E:E").ColumnWidth =  9.57
-
         # Make the top rows (the ones with column labels) always visible.
-        sheet.Rows.Range("%d:%d" % (headerRows + 1, headerRows + 1)).Select()
-        xl.ActiveWindow.FreezePanes = 1
+        #sheet.Rows.Range("%d:%d" % (headerRows + 1, headerRows + 1)).Select()
+        #xl.ActiveWindow.FreezePanes = 1
 
         # Move to the first row of data.
-        xl.Range("A%d" % (headerRows + 1)).Select()
+        #xl.Range("A%d" % (headerRows + 1)).Select()
 
         # Save the report.
-        name = "/MailerNonRespondentsReport-%d.xls" % job.getJobId()
-        wb.SaveAs(Filename = REPORTS_BASE + name)
+        name = "/MailerNonRespondentsReport-%d.xml" % job.getJobId()
+        f = open(REPORTS_BASE + name, 'w')
+        wb.write(f)
+        f.close()
         cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
-        url = "http://mahler.nci.nih.gov/CdrReports%s" % name
+        url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+                                                            cdrcgi.BASE,
+                                                            name)
         cdr.logwrite("url: %s" % url, LOGFILE)
         msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (
             url, url)
-        wb.Close(SaveChanges = 0)
 
         # Tell the user where to find it.
         body = """\
@@ -2152,6 +2073,7 @@ class ProtocolProcessingStatusReport:
             self.dateCreated = report.getCreationDate(cdrId)
             self.orgStudyId  = None
             self.nctId       = None
+            self.statuses    = []
             for child in node.childNodes:
                 if child.nodeName == 'IDInfo':
                     for gc in child.childNodes:
@@ -2159,6 +2081,12 @@ class ProtocolProcessingStatusReport:
                             self.orgStudyId = cdr.getTextContent(gc)
                         elif gc.nodeName == 'NCTID':
                             self.nctId = cdr.getTextContent(gc)
+                elif child.nodeName == 'ProtocolProcessingDetails':
+                    for gc in child.childNodes:
+                        if gc.nodeName == 'ProcessingStatus':
+                            s = cdr.getTextContent(gc).strip()
+                            if s:
+                                self.statuses.append(s)
 
     class InScopeProtocol:
         def __init__(self, report, cdrId, node, publishable):
@@ -2282,7 +2210,7 @@ class ProtocolProcessingStatusReport:
             wsOutOfScope.addCol(colNum, w)
             colNum += 1
         colNum = 1
-        for w in (60, 150, 80, 80):
+        for w in (60, 150, 80, 80, 160):
             wsCtGov.addCol(colNum, w)
             colNum += 1
         
@@ -2303,7 +2231,8 @@ class ProtocolProcessingStatusReport:
             colNum += 1
         row = wsCtGov.addRow(1, labelStyle)
         colNum = 1
-        for label in ("Doc ID", "OrgStudyID", "NCTID", "Date Created"):
+        for label in ("Doc ID", "OrgStudyID", "NCTID", "Date Created",
+                      "AdminProcessingStatus"):
             row.addCell(colNum, label)
             colNum += 1
         row = wsOutOfScope.addRow(1, labelStyle)
@@ -2536,6 +2465,7 @@ The Protocol Processing report you requested can be viewed at
             row.addCell(4, d) #, 'DateTime', self.dateStyle)
         else:
             row.addCell(4, '')
+        row.addCell(5, self.mergeStatuses(prot.statuses))
         return 1
 
     def addOutOfScopeProtocol(self, sheet, rowNum, prot):
