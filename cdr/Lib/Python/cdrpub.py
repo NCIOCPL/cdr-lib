@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.78 2006-02-21 16:24:04 ameyer Exp $
+# $Id: cdrpub.py,v 1.79 2006-03-09 22:37:57 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.78  2006/02/21 16:24:04  ameyer
+# Fixed line splitting error in __canPush() error message construction.
+#
 # Revision 1.77  2006/01/26 21:03:35  ameyer
 # Restored some changes that were accidentally deleted in version 1.75.
 # Re-added lost cvs log entries into the comment prolog, re-added a bit
@@ -574,7 +577,7 @@ class Publish:
                 row = cursor.fetchone()
 
         except cdrdb.Error, info:
-            msg  = "%s: Failure building hash __dateFirstPub for " % time.ctime
+            msg  = "%s: Failure building hash __dateFirstPub for " % time.ctime()
             msg += "job %d: %s" % (self.__jobId, info[1][0])
             self.__updateStatus(Publish.FAILURE, msg)
             raise StandardError(msg)
