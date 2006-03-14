@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.121 2005-12-28 15:55:44 bkline Exp $
+# $Id: cdr.py,v 1.122 2006-03-14 19:17:19 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.121  2005/12/28 15:55:44  bkline
+# Added function getEmailList().
+#
 # Revision 1.120  2005/12/27 23:30:15  ameyer
 # Modified getTextContent() to support recursive retrieval.
 #
@@ -430,6 +433,7 @@ PERL             = "d:\\bin\\Perl.exe"
 BASEDIR          = "d:/cdr"
 SMTP_RELAY       = "MAILFWD.NIH.GOV"
 DEFAULT_LOGDIR   = BASEDIR + "/Log"
+DEFAULT_LOGLVL   = 5
 DEFAULT_LOGFILE  = DEFAULT_LOGDIR + "/debug.log"
 MANIFEST_NAME    = 'CdrManifest.xml'
 CLIENT_FILES_DIR = BASEDIR + '/ClientFiles'
@@ -3286,6 +3290,140 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback = 0):
 
 
 #----------------------------------------------------------------------
+# Manage a logfile.  Improved functionality compared to cdr.logwrite()
+#----------------------------------------------------------------------
+class Log:
+    """
+    Provides efficient logging to any file desired.
+
+    Instantiate one of these to create, or append to an existing,
+    logfile.
+    """
+
+    _DEFAULT_BANNER = "=== Opening Log ==="
+    _DEFAULT_CLOSER = "=== Closing Log ==="
+
+    def __init__(self, filename,
+                 dirname=DEFAULT_LOGDIR, banner=_DEFAULT_BANNER,
+                 logTime=True, logPID=True, level=DEFAULT_LOGLVL):
+        """
+        Creates log object.
+
+        Pass:
+            filename - All logging goes here.
+            dirname  - Directory for log file.
+            banner   - If present, write it to signify opening
+                       the log.
+            logTime  - Prepend date/time to each entry.
+            logPID   - Prepend process ID.
+            level    - Log any message at this level or lower.
+                       (Possibly override with environment
+                       variable or by calling function to change
+                       level.)
+
+        Raises:
+            IOError if log cannot be opened.
+        """
+
+        # Defaults for banner
+        self.__logTime  = True
+        self.__logPID   = True
+        self.__level    = level
+
+        # Can get the PID once and save it, formatted
+        self.__pid = "!%d: " % os.getpid()
+
+        # Open for append, unbuffered
+        self.__filename = dirname + '/' + filename
+        self.__fp = open(self.__filename, "a", 0)
+
+        # If there's a banner, write it with stamps
+        if banner:
+            self.write(banner, level)
+
+        # Save parms
+        self.__banner  = banner
+        self.__logTime = logTime
+        self.__logPID  = logPID
+        self.__level   = level
+
+    def write(self, msgs, level=DEFAULT_LOGLVL, tback=False):
+        """
+        Writes msg(s) to log file.
+        Flushes after each write but does not close the file.
+
+        Pass:
+            msgs  - If type=string, write single message with
+                    newline.
+                  - If type=sequence, write each sequence in
+                    string with newline (assuming raw = False).
+            level - See __init__().
+            tback - Write latest traceback object.
+                    Use this when writing from an exception
+                    handler if desired.
+        """
+        # No write if level too high
+        if level > self.__level:
+            return
+
+        # Write process id and timestamp
+        if self.__logPID:
+            self.__fp.write(self.__pid)
+        if self.__logTime:
+            self.__fp.write("%s: " % time.ctime())
+
+        # Sequence of messages or single message
+        if type(msgs) == type(()) or type(msgs) == type([]):
+            for msg in msgs:
+                if (type(msg)) == type(u""):
+                    msg = msg.encode ('utf-8')
+                self.__fp.write(msg)
+                self.__fp.write("\n")
+        else:
+            if (type(msgs)) == type(u""):
+                msgs = msgs.encode('utf-8')
+            self.__fp.write(msgs)
+            self.__fp.write("\n")
+
+        # If traceback is requested, include the last one
+        if tback:
+            try:
+                self.writeRaw("Traceback follows:\n")
+                traceback.print_exc(999, self.__fp)
+            except:
+                pass
+
+    def writeRaw(self, msg, level=DEFAULT_LOGLVL):
+        """
+        No processing of any kind.  But we do respect level.
+
+        Caller can use this to dump data as he sees fit, but must
+        take care about encoding and other issues.
+        """
+        # No write if level too high
+        if level > self.__level:
+            return
+
+        self.__fp.write(msg)
+
+    def __del__(self):
+        """
+        Final close of the log file.
+
+        May write a closing banner - this tells when the program
+        exited, or caller explicitly called del(log_object).
+        """
+
+        # If there's a banner, put one at the end
+        if self.__banner:
+            # Insure PID: date time on closing banner
+            self.__logTime  = True
+            self.__logPID   = True
+            self.__level    = DEFAULT_LOGLVL
+            self.write("=== Closing Log ===")
+
+        self.__fp.close()
+#----------------------------------------------------------------------
 # Create an HTML table from a passed data
 #----------------------------------------------------------------------
 def tabularize (rows, tblAttrs=None):
@@ -3361,6 +3499,24 @@ def runCommand(command):
 # Create a temporary working area.
 #----------------------------------------------------------------------
 def makeTempDir(basename = "tmp", chdir = 1):
+    """
+    Create a temporary directory.
+
+    Uses deprecated mktemp function which is subject to race
+    conditions, but it's not clear what would be better within
+    the limits of the Windows tmpnam fuction used by Python for
+    tmpnam().
+
+    Pass:
+        basename - suffix to put after name.
+        chdir    - True = change to the new directory.
+
+    Return:
+        Absolute path to the directory.
+
+    Caller must delete this directory himself if he wants it deleted
+    when he's done.
+    """
     if os.environ.has_key("TMP"):
         tempfile.tempdir = os.environ["TMP"]
     where = tempfile.mktemp(basename)
