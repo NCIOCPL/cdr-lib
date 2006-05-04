@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.122 2006-03-14 19:17:19 ameyer Exp $
+# $Id: cdr.py,v 1.123 2006-05-04 21:08:53 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.122  2006/03/14 19:17:19  ameyer
+# Added Log class for enhanced logging.
+#
 # Revision 1.121  2005/12/28 15:55:44  bkline
 # Added function getEmailList().
 #
@@ -1677,17 +1680,37 @@ def deDupErrs(errXml):
 def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
               host = DEFAULT_HOST, port = DEFAULT_PORT, parm = [],
               no_output = 'N', docVer = None, docDate = None,
-              filterVer = ''):
+              filterVer = '', filterDate = None):
+    """
+    Pass:
+        credentials = Result of login.
+        filter      = Filter text or name: or set:, see inline.
+        host/port   = Standard stuff.
+        parm        = Optional array of filter parameters, but there's
+                      no way to pass separate parms for each filter in a set.
+        no_output   = Retrieves messages but no filtered document.
+        docVer      = Version number or 'last' or 'lastp'.
+        docDate     = If last or lastp, must be before this date-time.
+        filterVer   = Like docVer.
+        filterDate  = Like docDate.  If docDate but not filterDate, set
+                      filterDate = docDate.
+    Return:
+        2 element list of document + messages.
+        Else single string of error messages.
+    """
 
     # Create the command.
     if docId:
-        qual = ''
+        verQual = ''
         if docVer:
-            if type(docVer) == type(9): qual = " version='%d'" % docVer
-            else: qual = " version='%s'" % docVer
-        elif docDate:
-            qual = " docDate='%s'" % docDate
-        docElem = "<Document href='%s'%s/>" % (normalize(docId), qual)
+            # User specified a version number or "last" or "lastp"
+            if type(docVer) == type(9): verQual = " version='%d'" % docVer
+            else: verQual = " version='%s'" % docVer
+        if docDate:
+            # User specified a max date limit for last or lastp
+            # Ignored in server if version != one of those
+            verQual += " maxDate='%s'" % docDate
+        docElem = "<Document href='%s'%s/>" % (normalize(docId), verQual)
     elif doc:
         # Ensure that everything sent to host is properly encoded
         # This is belt and suspenders.  Should be encoded okay already
@@ -1695,6 +1718,14 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
             doc = doc.encode ("utf-8")
         docElem = "<Document><![CDATA[%s]]></Document>" % doc
     else: return "<Errors><Err>Document not specified.</Err></Errors>"
+
+    # Create filter date qualifier
+    # If date not specified, use document date
+    verQual = ''
+    if filterDate:
+        verQual = " maxDate='%s'" % filterDate
+    elif docDate:
+        verQual = " maxDate='%s'" % docDate
 
     # The filter is given to us as a string containing the XML directly.
     if inline:
@@ -1718,10 +1749,11 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
                     ref="href"
             if filt != "":
                 if isSet:
-                    filterElem += '<FilterSet Name="%s" Version="%s"/>' % \
-                        (cgi.escape(filt, 1), filterVer)
+                    filterElem += '<FilterSet Name="%s" Version="%s"%s/>' % \
+                        (cgi.escape(filt, 1), filterVer, verQual)
                 else:
-                    v = filterVer and (" version='%s'" % filterVer) or ""
+                    v = filterVer and (" version='%s'%s" % \
+                                      (filterVer, verQual)) or ""
                     filterElem += ("<Filter %s='%s'%s/>" %
                                    (ref,
                                     filt,
