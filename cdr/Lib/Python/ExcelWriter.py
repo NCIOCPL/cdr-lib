@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ExcelWriter.py,v 1.4 2005-11-22 14:43:11 bkline Exp $
+# $Id: ExcelWriter.py,v 1.5 2006-05-04 15:50:31 bkline Exp $
 #
 # Generates Excel workbooks using 2003 XML format.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2005/11/22 14:43:11  bkline
+# Modified test again for writing cell values (avoid writing empty
+# strings for DateTime values).
+#
 # Revision 1.3  2005/11/22 14:06:35  bkline
 # Changed test of cell value from if cell.value to if ... is not None
 # for output.
@@ -20,7 +24,7 @@ import xml.sax.saxutils, sys, time
 
 def fix(me):
     if type(me) in (str, unicode):
-        return xml.sax.saxutils.escape(me)
+        return xml.sax.saxutils.escape(me).replace('\n', '&#10;')
     return unicode(me)
 
 def quoteattr(a):
