@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.79 2006-03-09 22:37:57 venglisc Exp $
+# $Id: cdrpub.py,v 1.80 2006-05-10 03:31:59 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.79  2006/03/09 22:37:57  venglisc
+# Adding missing parenthesis for function ctime.
+#
 # Revision 1.78  2006/02/21 16:24:04  ameyer
 # Fixed line splitting error in __canPush() error message construction.
 #
@@ -540,6 +543,17 @@ class Publish:
                  WHERE pub_proc = ?""", self.__jobId)
             row = cursor.fetchone()
             while row:
+                # Runtime parameter replacement of value macro
+                # This replaces a value that may be in parameter list
+                #  rather than in the query
+                # It handles the double indirection, used in:
+                #   ParmName='?MaxDocUpdatedDate?'
+                if row[0]=='MaxDocUpdatedDate' and row[1]=='JobStartDateTime':
+                    self.__debugLog("Setting JobStartDateTime='%s'" % \
+                                     self.__jobTime)
+                    row[1] = self.__jobTime
+
+                # Insert into parameter dictionary
                 self.__params[row[0]] = row[1]
                 self.__debugLog("Parameter %s='%s'." % (row[0], row[1]))
                 row = cursor.fetchone()
@@ -2363,18 +2377,30 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     else:
                         paramList.append((pair[0], pair[1]))
 
+                # Set limiting date-time for documents
+                if self.__params.has_key('MaxDocUpdatedDate'):
+                    maxDocDate = self.__params['MaxDocUpdatedDate']
+                else:
+                    maxDocDate = None
+                # XXX Need to add filterDate param in future
+                maxFilterDate = None
+
                 # First filter set is run against document from database.
                 if not filteredDoc:
                     result = cdr.filterDoc(self.__credentials, filterSet[0],
                                            docId = docId,
                                            docVer = doc.getVersion(),
                                            parm = paramList,
+                                           docDate = maxDocDate,
+                                           filterDate = maxFilterDate,
                                            port = self.__pubPort)
 
                 # Subsequent filter sets are applied to previous results.
                 else:
                     result = cdr.filterDoc(self.__credentials, filterSet[0],
                                            doc = filteredDoc, parm = paramList,
+                                           docDate = maxDocDate,
+                                           filterDate = maxFilterDate,
                                            port = self.__pubPort)
                 if type(result) not in (type([]), type(())):
                     errors = result or "Unspecified failure filtering document"
@@ -2823,6 +2849,10 @@ Please do not reply to this message.
         ret = str
         for name in self.__params.keys():
             ret = re.sub(r"\?%s\?" % name, self.__params[name], ret)
+
+        # Not sure this is ever used.  Looks like a broken re to me.
+        # I'm leaving it in, but see JobStartDateTime above which does
+        #   this the right way I think. - AHM
         ret = re.sub(r"\?$JobDateTime\?", self.__jobTime, ret)
 
         return ret
