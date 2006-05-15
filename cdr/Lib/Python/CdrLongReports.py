@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.26 2006-05-04 15:48:52 bkline Exp $
+# $Id: CdrLongReports.py,v 1.27 2006-05-15 15:13:36 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.26  2006/05/04 15:48:52  bkline
+# Added manual version of Outcome Measures Coding Report.
+#
 # Revision 1.25  2006/03/01 15:33:06  bkline
 # Converted to new ExcelWriter module.
 #
@@ -578,10 +581,9 @@ class Protocol:
 #----------------------------------------------------------------------
 # Create a report for compliance with ICMJE requirements.
 #----------------------------------------------------------------------
-def outcomeMeasuresCodingReport(job, saveIdsAndTitle = False):
+def outcomeMeasuresCodingReport(job, idsAndTitleName = None):
 
-    if saveIdsAndTitle:
-        idsAndTitle = file('d:/tmp/IdsAndTitle2.txt', 'wb')
+    idsAndTitle = idsAndTitleName and file(idsAndTitleName, 'wb') or None
     start = time.time()
     try:
         conn = cdrdb.connect('CdrGuest')
@@ -704,7 +706,7 @@ def outcomeMeasuresCodingReport(job, saveIdsAndTitle = False):
             #    objCount += 1
             #    if objCount > 10:
             #        break
-            if saveIdsAndTitle:
+            if idsAndTitle:
                 line = u"%d\t%s\t%s" % (prot.id, prot.firstId, prot.origTitle)
                 line = line.replace(u"\n", u" ").replace(u"\r", u"") + u"\r\n"
                 idsAndTitle.write(line.encode('utf-8'))
@@ -720,7 +722,7 @@ def outcomeMeasuresCodingReport(job, saveIdsAndTitle = False):
         cdr.logwrite(msg, LOGFILE)
 
     # Save the report.
-    if saveIdsAndTitle:
+    if idsAndTitle:
         idsAndTitle.close()
     name = "/OutcomeMeasuresCodingReport-Job%d.html" % job.getJobId()
     fullname = REPORTS_BASE + name
@@ -740,7 +742,7 @@ def outcomeMeasuresCodingReport(job, saveIdsAndTitle = False):
     
     # Tell the user where to find it.
     body = """\
-The OSP report you requested on Protocols can be viewed at
+The Outcome Measures Coding report you requested can be viewed at
 %s.
 """ % url
     sendMail(job, "Report results", body)
@@ -2821,7 +2823,7 @@ if __name__ == "__main__":
     # Special handling for running outcome measures coding report by hand.
     # This version produces separate file used for web-based Trial Outcome
     # update service.
-    if jobId == 1996 and len(sys.argv) > 2 and sys.argv[2] == 'test':
+    if jobId == 1996 and len(sys.argv) > 2:
         class J:
             def setStatus(self, s): sys.stderr.write("STATUS: %s\n" % s)
             def getJobId(s): return 1996
@@ -2830,7 +2832,7 @@ if __name__ == "__main__":
                 sys.exit(1)
             def getEmail(s): return '***REMOVED***'
             def setProgressMsg(s, m): print m
-        outcomeMeasuresCodingReport(J(), True)
+        outcomeMeasuresCodingReport(J(), sys.argv[2])
         sys.exit(0)
 
     # Create the job object.
