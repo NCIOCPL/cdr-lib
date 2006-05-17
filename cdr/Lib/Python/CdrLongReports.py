@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.27 2006-05-15 15:13:36 bkline Exp $
+# $Id: CdrLongReports.py,v 1.28 2006-05-17 14:15:30 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.27  2006/05/15 15:13:36  bkline
+# Cleaned up standalone version of outcome measures coding report and
+# fixed email message for the report (which still said "OSP").
+#
 # Revision 1.26  2006/05/04 15:48:52  bkline
 # Added manual version of Outcome Measures Coding Report.
 #
@@ -99,7 +103,7 @@
 #
 #----------------------------------------------------------------------
 import cdr, cdrdb, xml.dom.minidom, time, cdrcgi, cgi, sys, socket, cdrbatch
-import string, re, urlparse, httplib, traceback
+import string, re, urlparse, httplib, traceback, xml.sax.saxutils
 import ExcelWriter
 
 #----------------------------------------------------------------------
@@ -2758,6 +2762,230 @@ The Protocol Processing report you requested can be viewed at
         return d
 
 #----------------------------------------------------------------------
+# The Spanish version of this report now takes too long to run as CGI.
+#----------------------------------------------------------------------
+class SpanishGlossaryTermsByStatus:
+    
+    #----------------------------------------------------------------------
+    # Recursively extract the complete content of an element, tags and all.
+    #----------------------------------------------------------------------
+    def getNodeContent(node, pieces = None):
+        if pieces is None:
+            pieces = []
+        strikeout = u"<span style='text-decoration: line-through'>"
+        red       = u"<span style='color: red'>"
+        for child in node.childNodes:
+            if child.nodeType in (child.TEXT_NODE, child.CDATA_SECTION_NODE):
+                if child.nodeValue:
+                    pieces.append(xml.sax.saxutils.escape(child.nodeValue))
+            elif child.nodeType == child.ELEMENT_NODE:
+                if child.nodeName == 'Insertion':
+                    pieces.append(red)
+                    SpanishGlossaryTermsByStatus.getNodeContent(child, pieces)
+                    pieces.append(u"</span>")
+                elif child.nodeName == 'Deletion':
+                    pieces.append(strikeout)
+                    SpanishGlossaryTermsByStatus.getNodeContent(child, pieces)
+                    pieces.append(u"</span>")
+                elif child.nodeName == 'Strong':
+                    pieces.append(u"<b>")
+                    SpanishGlossaryTermsByStatus.getNodeContent(child, pieces)
+                    pieces.append(u"</b>")
+                elif child.nodeName in ('Emphasis', 'ScientificName'):
+                    pieces.append(u"<i>")
+                    SpanishGlossaryTermsByStatus.getNodeContent(child, pieces)
+                    pieces.append(u"</i>")
+                else:
+                    SpanishGlossaryTermsByStatus.getNodeContent(child, pieces)
+        return u"".join(pieces)
+    getNodeContent = staticmethod(getNodeContent)
+
+    class GlossaryTerm:
+
+        class Definition:
+            def __init__(self, node, spanish = False):
+                gnc = SpanishGlossaryTermsByStatus.getNodeContent
+                self.spanish = spanish
+                self.text = None
+                self.status = None
+                self.statusDate = None
+                self.translationResource = None
+                for child in node.getElementsByTagName('DefinitionText'):
+                    self.text = gnc(child)
+                if spanish:
+                    for c in node.getElementsByTagName('TranslationResource'):
+                        self.translationResource = gnc(c)
+                    for c in node.getElementsByTagName('DefinitionStatus'):
+                        self.status = gnc(c)
+                    for c in node.getElementsByTagName('StatusDate'):
+                        self.statusDate = gnc(c)
+
+        def __init__(self, id, node):
+            self.id = id
+            self.name = None
+            self.spanishName = None
+            self.definitions = []
+            self.spanishDefinitions = []
+            gnc = SpanishGlossaryTermsByStatus.getNodeContent
+            for child in node.getElementsByTagName('TermName'):
+                self.name = gnc(child)
+            for child in node.getElementsByTagName('SpanishTermName'):
+                self.spanishName = gnc(child)
+            for child in node.getElementsByTagName('TermDefinition'):
+                self.definitions.append(self.Definition(child))
+            for child in node.getElementsByTagName('SpanishTermDefinition'):
+                self.spanishDefinitions.append(self.Definition(child, True))
+
+        # Determine whether the glossary term should be included in the report.
+        def matches(self, status, startDate, endDate):
+            for d in self.spanishDefinitions:
+                if d.status == status:
+                    if d.statusDate >= startDate:
+                        if d.statusDate <= endDate:
+                            return True
+            return False
+
+        def __cmp__(self, other):
+            return cmp(self.name, other.name)
+
+    def __init__(self, job):
+        self.job    = job
+        self.start  = job.getParm('from')
+        self.end    = job.getParm('to')
+        self.status = job.getParm('status')
+    def run(self):
+        start = time.time()
+        conn = cdrdb.connect('CdrGuest')
+        cursor = conn.cursor()
+        cursor.execute("""\
+            SELECT d.id
+              FROM document d
+              JOIN doc_type t
+                ON d.doc_type = t.id
+             WHERE t.name = 'GlossaryTerm'""")
+        docIds = [row[0] for row in cursor.fetchall()]
+        terms = []
+        counter = 0
+        for docId in docIds:
+            doc = cdr.getDoc('guest', docId, getObject = True)
+            dom = xml.dom.minidom.parseString(doc.xml)
+            term = self.GlossaryTerm(docId, dom.documentElement)
+            counter += 1
+            now = time.time()
+            timer = getElapsed(start, now)
+            msg = ("Processed %d of %d glossary terms; elapsed: %s" %
+                   (counter, len(docIds), timer))
+            self.job.setProgressMsg(msg)
+            if term.matches(self.status, self.start, self.end):
+                terms.append(term)
+        self.job.setProgressMsg("processed %d of %d" % (counter, len(docIds)))
+        terms.sort()
+        html = [u"""\
+<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
+<html>
+ <head>
+  <title>Spanish Glossary Terms by Status</title>
+  <style type 'text/css'>
+   body    { font-family: Arial, Helvetica, sans-serif }
+   span.t1 { font-size: 14pt; font-weight: bold }
+   span.t2 { font-size: 12pt; font-weight: bold }
+   th      { font-size: 10pt; font-weight: bold }
+   td      { font-size: 10pt; font-weight: normal }
+   @page   { margin-left: 0cm; margin-right: 0cm; }
+   body, table   { margin-left: 0cm; margin-right: 0cm; }
+  </style>
+ </head>
+ <body>
+  <center>
+   <span class='t1'>Spanish Glossary Terms by Status</span>
+   <br />
+   <br />
+   <span class='t2'>%s Terms<br />From %s to %s</span>
+  </center>
+  <table border='1' cellspacing='0' cellpadding='2' width='100%%'>
+""" % (self.status, self.start, self.end)]
+
+        if self.status.upper() == 'TRANSLATION REVISION PENDING':
+            html.append(u"""\
+   <tr>
+    <th>CDR ID</th>
+    <th>English Term</th>
+    <th>Spanish Term</th>
+    <th>Approved English Definition Revision</th>
+    <th>Pending Spanish Translation Revision</th>
+    <th>Translation Resource</th>
+    <th>Status Date</th>
+   </tr>
+""")
+        else:
+            html.append(u"""\
+   <tr>
+    <th>CDR ID</th>
+    <th>English Term</th>
+    <th>Spanish Term</th>
+    <th>English Definition</th>
+    <th>Spanish Translation</th>
+    <th>Translation Resource</th>
+    <th>Status Date</th>
+   </tr>
+""")
+        for term in terms:
+            englishDefs = [d.text for d in term.definitions]
+            spanishDefs = []
+            resources   = []
+            statusDates = []
+            for definition in term.spanishDefinitions:
+                if definition.text:
+                    spanishDefs.append(definition.text)
+                if definition.translationResource:
+                    resources.append(definition.translationResource)
+                if definition.statusDate:
+                    statusDates.append(definition.statusDate)
+            html.append(u"""\
+   <tr>
+    <td>%d</td>
+    <td>%s</td>
+    <td>%s</td>
+    <td>%s</td>
+    <td>%s</td>
+    <td>%s</td>
+    <td>%s</td>
+   </tr>
+""" % (term.id,
+       term.name or u"&nbsp;",
+       term.spanishName or u"&nbsp;",
+       englishDefs and "; ".join(englishDefs) or u"&nbsp;",
+       spanishDefs and "; ".join(spanishDefs) or u"&nbsp;",
+       resources   and "; ".join(resources)   or u"&nbsp;",
+       statusDates and "; ".join(statusDates) or u"&nbsp;"))
+        html.append(u"""\
+  </table>
+ </body>
+</html>
+""")
+        html = u"".join(html)
+        reportName = ("/SpanishGlossaryTermsByStatus-Job%d.html" %
+                      job.getJobId())
+        cdr.logwrite("reportName: %s" % reportName, LOGFILE)
+        url = "http://%s/CdrReports%s" % (cdrcgi.WEBSERVER, reportName)
+        cdr.logwrite("url: %s" % url, LOGFILE)
+        msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (url,
+                                                                        url)
+        htmlFile = open(REPORTS_BASE + reportName, "w")
+        cdr.logwrite("writing %s" % (REPORTS_BASE + reportName), LOGFILE)
+        htmlFile.write(cdrcgi.unicodeToLatin1(html))
+        htmlFile.close()
+        body = """\
+The report you requested on Spanish Glossary Terms by Status can be viewed at:
+
+%s.
+    """ % url
+        sendMail(job, "Report results", body)
+        job.setProgressMsg(msg)
+        job.setStatus(cdrbatch.ST_COMPLETED)
+        cdr.logwrite("Completed report", LOGFILE)
+
+#----------------------------------------------------------------------
 # Run a report of dead URLs.
 #----------------------------------------------------------------------
 def checkUrls(job):
@@ -2820,6 +3048,37 @@ if __name__ == "__main__":
         sys.exit(1)
     cdr.logwrite("CdrLongReports: job id %d" % jobId, LOGFILE)
 
+    # Test version of Spanish Glossary Term report.
+    if len(sys.argv) == 6 and sys.argv[5] == 'SpanishGlossaryTermsByStatus':
+        status = sys.argv[1]
+        start  = sys.argv[2]
+        end    = sys.argv[3]
+        jobId  = int(sys.argv[4])
+        class SGTBSJob:
+            def __init__(self, status, start, end):
+                self.status = status
+                self.start  = start
+                self.end    = end
+            def getParm(self, name):
+                if name == 'status':
+                    return self.status
+                elif name == 'from':
+                    return self.start
+                elif name == 'to':
+                    return self.end
+                else:
+                    raise Exception('invalid parameter name %s' % name)
+            def setStatus(self, s): sys.stderr.write("STATUS: %s\n" % s)
+            def getJobId(s): return 1996
+            def fail(s, m, logfile = None):
+                sys.stderr.write("FAIL: %s\n" % m);
+                sys.exit(1)
+            def getEmail(s): return '***REMOVED***'
+            def setProgressMsg(s, m): print m
+        job = SGTBSJob(status, start, end)
+        sgtbs = SpanishGlossaryTermsByStatus(job)
+        sgtbs.run()
+
     # Special handling for running outcome measures coding report by hand.
     # This version produces separate file used for web-based Trial Outcome
     # update service.
@@ -2865,6 +3124,8 @@ if __name__ == "__main__":
             ProtocolProcessingStatusReport(job).run()
         elif jobName == "Outcome Measures Coding Report":
             outcomeMeasuresCodingReport(job)
+        elif jobName == "Spanish Glossary Terms by Status":
+            SpanishGlossaryTermsByStatus(job).run()
         # That's all we know how to do right now.
         else:
             job.fail("CdrLongReports: unknown job name '%s'" % jobName,
