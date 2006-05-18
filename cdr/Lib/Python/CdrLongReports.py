@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.29 2006-05-17 14:36:49 bkline Exp $
+# $Id: CdrLongReports.py,v 1.30 2006-05-18 21:14:16 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.29  2006/05/17 14:36:49  bkline
+# Added more documentation for the new Spanish glossary terms report, and
+# fixed a bug in the code for running a debugging version of the report.
+#
 # Revision 1.28  2006/05/17 14:15:30  bkline
 # Added Spanish Glossary Terms By Status report.
 #
@@ -2239,10 +2243,11 @@ The Glossary Term report you requested can be viewed at
 class ProtocolProcessingStatusReport:
 
     def __init__(self, job):
-        self.job    = job
-        self.conn   = cdrdb.connect('CdrGuest')
-        self.cursor = self.conn.cursor()
-        self.msg    = ""
+        self.job              = job
+        self.conn             = cdrdb.connect('CdrGuest')
+        self.cursor           = self.conn.cursor()
+        self.msg              = ""
+        self.includeProtTitle = job.getParm('IncludeTitle') and True or False
 
     def getCreationDate(self, cdrId):
         self.cursor.execute("""\
@@ -2306,10 +2311,12 @@ class ProtocolProcessingStatusReport:
     class CTGovProtocol:
         def __init__(self, report, cdrId, node):
             self.cdrId       = cdrId
+            self.title       = None
             self.dateCreated = report.getCreationDate(cdrId)
             self.orgStudyId  = None
             self.nctId       = None
             self.statuses    = []
+            self.phases      = []
             for child in node.childNodes:
                 if child.nodeName == 'IDInfo':
                     for gc in child.childNodes:
@@ -2323,9 +2330,15 @@ class ProtocolProcessingStatusReport:
                             s = cdr.getTextContent(gc).strip()
                             if s:
                                 self.statuses.append(s)
+                elif child.nodeName == 'OfficialTitle':
+                    t = cdr.getTextContent(child).strip()
+                    self.title = t.replace("\n", " ").replace("\r", "")
+                elif child.nodeName == 'Phase':
+                    self.phases.append(cdr.getTextContent(child).strip())
 
     class InScopeProtocol:
         def __init__(self, report, cdrId, node, publishable):
+            self.title              = None
             self.inScopeId          = cdrId
             self.publishable        = publishable
             self.scientificId       = None
@@ -2339,6 +2352,11 @@ class ProtocolProcessingStatusReport:
             for child in node.childNodes:
                 if child.nodeName == 'ProtocolIDs':
                     self.protocolId = report.getPrimaryId(child)
+                elif child.nodeName == 'ProtocolTitle':
+                    if child.getAttribute('Type') == 'Original':
+                        t = cdr.getTextContent(child).strip()
+                        if t:
+                            self.title = t.replace("\n", ' ').replace("\r", "")
                 elif child.nodeName == 'ProtocolSources':
                     for gc in child.childNodes:
                         if gc.nodeName == 'ProtocolSource':
@@ -2384,6 +2402,10 @@ class ProtocolProcessingStatusReport:
             return "WITHDRAWN" in self.statusKeys
         def isDuplicate(self):
             return not self.publishable and "DUPLICATE" in self.statusKeys
+        def isLegacy(self):
+            return "LEGACY - DO NOT PUBLISH" in self.statusKeys
+        def isHeld(self):
+            return "HELD" in self.statusKeys
         
     def run(self):
 
@@ -2396,12 +2418,16 @@ class ProtocolProcessingStatusReport:
         totalDisapproved = 0
         totalOutOfScope  = 0
         totalDuplicate   = 0
+        totalLegacy      = 0
+        totalHeld        = 0
         rowInScope       = 2
         rowCtGov         = 2
         rowResearch      = 2
         rowDisapproved   = 2
         rowOutOfScope    = 2
         rowDuplicate     = 2
+        rowLegacy        = 2
+        rowHold          = 2
 
         #--------------------------------------------------------------
         # Create the Excel workbook and the styles we need.
@@ -2430,24 +2456,40 @@ class ProtocolProcessingStatusReport:
                                         self.normalStyle)
         wsOutOfScope  = wb.addWorksheet("Out of Scope", self.normalStyle)
         wsDuplicate   = wb.addWorksheet("Duplicate", self.normalStyle)
+        wsLegacy      = wb.addWorksheet("Legacy", self.normalStyle)
+        wsHold        = wb.addWorksheet("Hold", self.normalStyle)
 
         #--------------------------------------------------------------
         # Set the column widths.
         #--------------------------------------------------------------
         colNum = 1
+        titleWidth = 360
         for w in (60, 60, 120, 100, 100, 100, 100, 80, 100, 80):
             wsInScope.addCol(colNum, w)
             wsResearch.addCol(colNum, w)
             wsDisapproved.addCol(colNum, w)
             wsDuplicate.addCol(colNum, w)
+            wsLegacy.addCol(colNum, w)
+            wsHold.addCol(colNum, w)
+            if colNum == 3 and self.includeProtTitle:
+                colNum = 4
+                wsInScope.addCol(colNum, titleWidth)
+                wsResearch.addCol(colNum, titleWidth)
+                wsDisapproved.addCol(colNum, titleWidth)
+                wsDuplicate.addCol(colNum, titleWidth)
+                wsLegacy.addCol(colNum, titleWidth)
+                wsHold.addCol(colNum, titleWidth)
             colNum += 1
         colNum = 1
         for w in (120, 60, 100, 100, 100, 400):
             wsOutOfScope.addCol(colNum, w)
             colNum += 1
         colNum = 1
-        for w in (60, 150, 80, 80, 160):
+        for w in (60, 150, 80, 80, 160, 80):
             wsCtGov.addCol(colNum, w)
+            if colNum == 1 and self.includeProtTitle:
+                colNum = 2
+                wsCtGov.addCol(colNum, titleWidth)
             colNum += 1
         
         #--------------------------------------------------------------
@@ -2456,7 +2498,9 @@ class ProtocolProcessingStatusReport:
         headerRows   = (wsInScope.addRow(1, labelStyle),
                         wsResearch.addRow(1, labelStyle),
                         wsDisapproved.addRow(1, labelStyle),
-                        wsDuplicate.addRow(1, labelStyle))
+                        wsDuplicate.addRow(1, labelStyle),
+                        wsLegacy.addRow(1, labelStyle),
+                        wsHold.addRow(1, labelStyle))
         colNum        = 1
         for label in ("CDR InScope ID", "CDR Scientific ID", "Protocol ID",
                       "Date Received", "Submission Complete", "Merge Date",
@@ -2464,12 +2508,19 @@ class ProtocolProcessingStatusReport:
                       "Scientific Processing Status", "Scientific User"):
             for row in headerRows:
                 row.addCell(colNum, label)
+            if colNum == 3 and self.includeProtTitle:
+                colNum = 4
+                for row in headerRows:
+                    row.addCell(colNum, "Protocol Title")
             colNum += 1
         row = wsCtGov.addRow(1, labelStyle)
         colNum = 1
         for label in ("Doc ID", "OrgStudyID", "NCTID", "Date Created",
-                      "AdminProcessingStatus"):
+                      "AdminProcessingStatus", "Phase"):
             row.addCell(colNum, label)
+            if colNum == 1 and self.includeProtTitle:
+                colNum = 2
+                row.addCell(colNum, "Protocol Title")
             colNum += 1
         row = wsOutOfScope.addRow(1, labelStyle)
         colNum = 1
@@ -2503,25 +2554,26 @@ class ProtocolProcessingStatusReport:
         # Process the In-Scope Protocol documents.
         #--------------------------------------------------------------
         self.cursor.execute("""\
-            SELECT d.id
+            SELECT d.id, d.active_status
               FROM document d
               JOIN doc_type t
                 ON t.id = d.doc_type
              WHERE t.name = 'InScopeProtocol'
           ORDER BY d.id""", timeout = 300)
-        inScopeProtocolIds = [row[0] for row in self.cursor.fetchall()]
-        n = len(inScopeProtocolIds)
+        rows = self.cursor.fetchall()
+        n = len(rows)
         self.msg += "<br>%d InScopeProtocol documents selected" % n
         self.job.setProgressMsg(self.msg)
         i = 0
         msg = ''
-        for cdrId in inScopeProtocolIds:
+        for cdrId, activeStatus in rows:
             docXml   = self.getDocXml(cdrId)
             dom      = xml.dom.minidom.parseString(docXml.encode('utf-8'))
             docElem  = dom.documentElement
             pub      = cdrId in publishableDocs
             protocol = self.InScopeProtocol(self, cdrId, docElem, pub)
-            used = False
+            used     = False
+            
             if protocol.isResearch():
                 used = True
                 rowResearch += self.addInScopeProtocol(wsResearch,
@@ -2540,7 +2592,19 @@ class ProtocolProcessingStatusReport:
                                                         rowDuplicate,
                                                         protocol)
                 totalDuplicate += 1
-            if not used and not protocol.publishable:
+            if protocol.isLegacy():
+                used = True
+                rowLegacy += self.addInScopeProtocol(wsLegacy,
+                                                     rowLegacy,
+                                                     protocol)
+                totalLegacy += 1
+            if protocol.isHeld():
+                used = True
+                rowHold += self.addInScopeProtocol(wsHold,
+                                                   rowHold,
+                                                   protocol)
+                totalHeld += 1
+            if not used and not protocol.publishable and activeStatus == 'A':
                 rowInScope += self.addInScopeProtocol(wsInScope,
                                                       rowInScope,
                                                       protocol)
@@ -2553,6 +2617,8 @@ class ProtocolProcessingStatusReport:
         self.addTotal(wsDisapproved, totalDisapproved, rowDisapproved)
         self.addTotal(wsDuplicate, totalDuplicate, rowDuplicate)
         self.addTotal(wsInScope, totalInScope, rowInScope)
+        self.addTotal(wsLegacy, totalLegacy, rowLegacy)
+        self.addTotal(wsHold, totalHeld, rowHold)
 
         #--------------------------------------------------------------
         # Process the CTGov Protocol documents.
@@ -2619,7 +2685,7 @@ class ProtocolProcessingStatusReport:
         #--------------------------------------------------------------
         # Write out the report and tell the user where it is.
         #--------------------------------------------------------------
-        name = "ProtocolProcessing-%d.xml" % job.getJobId()
+        name = "ProtocolProcessing-%d.xls" % job.getJobId()
         f = open(REPORTS_BASE + "/" + name, "w")
         wb.write(f)
         f.close()
@@ -2656,36 +2722,42 @@ The Protocol Processing report you requested can be viewed at
             row.addCell(3, prot.protocolId, mergeDown = mergeRows)
         else:
             row.addCell(3, '', mergeDown = mergeRows)
+        if self.includeProtTitle:
+            row.addCell(4, prot.title or '', mergeDown = mergeRows)
+            extra = 1
+        else:
+            extra = 0
         if prot.protocolSources:
             i = 0
             for s in prot.protocolSources:
                 r = i and sheet.addRow(rowNum + i, self.normalStyle) or row
                 if s.receiptDate:
                     d = self.fixDate(s.receiptDate)
-                    r.addCell(4, d) #, 'DateTime', self.dateStyle)
+                    r.addCell(4 + extra, d) #, 'DateTime', self.dateStyle)
                 else:
-                    r.addCell(4, '')
+                    r.addCell(4 + extra, '')
                 if s.dateSubmissionComplete:
                     d = self.fixDate(s.dateSubmissionComplete)
-                    r.addCell(5, d) #, 'DateTime', self.dateStyle)
+                    r.addCell(5 + extra, d) #, 'DateTime', self.dateStyle)
                 else:
-                    r.addCell(5, '')
+                    r.addCell(5 + extra, '')
                 if s.mergeByDate:
                     d = self.fixDate(s.mergeByDate)
-                    r.addCell(6, d) #, 'DateTime', self.dateStyle)
+                    r.addCell(6 + extra, d) #, 'DateTime', self.dateStyle)
                 else:
-                    r.addCell(6, '')
+                    r.addCell(6 + extra, '')
                 i += 1
         else:
-            row.addCell(4, '')
-            row.addCell(5, '')
-            row.addCell(6, '')
-        row.addCell(7, self.mergeStatuses(prot.adminStatuses),
+            row.addCell(4 + extra, '')
+            row.addCell(5 + extra, '')
+            row.addCell(6 + extra, '')
+        row.addCell(7 + extra, self.mergeStatuses(prot.adminStatuses),
                     mergeDown = mergeRows)
-        row.addCell(8, prot.adminUser or '', mergeDown = mergeRows)
-        row.addCell(9, self.mergeStatuses(prot.scientificStatuses),
+        row.addCell(8 + extra, prot.adminUser or '', mergeDown = mergeRows)
+        row.addCell(9 + extra, self.mergeStatuses(prot.scientificStatuses),
                     mergeDown = mergeRows)
-        row.addCell(10, prot.scientificUser or '', mergeDown = mergeRows)
+        row.addCell(10 + extra, prot.scientificUser or '',
+                    mergeDown = mergeRows)
         return nRows
 
     def addCtGovProtocol(self, sheet, rowNum, prot):
@@ -2694,14 +2766,20 @@ The Protocol Processing report you requested can be viewed at
             row.addCell(1, prot.cdrId, 'Number')
         else:
             row.addCell(1, '')
-        row.addCell(2, prot.orgStudyId or '')
-        row.addCell(3, prot.nctId or '')
+        if self.includeProtTitle:
+            extra = 1
+            row.addCell(2, prot.title or '')
+        else:
+            extra = 0
+        row.addCell(2 + extra, prot.orgStudyId or '')
+        row.addCell(3 + extra, prot.nctId or '')
         if prot.dateCreated:
             d = self.fixDate(prot.dateCreated)
-            row.addCell(4, d) #, 'DateTime', self.dateStyle)
+            row.addCell(4 + extra, d) #, 'DateTime', self.dateStyle)
         else:
-            row.addCell(4, '')
-        row.addCell(5, self.mergeStatuses(prot.statuses))
+            row.addCell(4 + extra, '')
+        row.addCell(5 + extra, self.mergeStatuses(prot.statuses))
+        row.addCell(6 + extra, '; '.join(prot.phases))
         return 1
 
     def addOutOfScopeProtocol(self, sheet, rowNum, prot):
@@ -3054,17 +3132,26 @@ def glossaryTermSearch(job):
     report = GlossaryTermSearch(docId, types)
     report.report(job)
 
-## class Job:
-##     def setProgressMsg(self, m): print m
-##     def getEmail(self): return "***REMOVED***"
-##     def getJobId(self): return 1111
-##     def setStatus(self, status): print "setting status %s" % str(status)
-##     def getArgs(self): return { "id": 29500 } # 36354
-##     def fail(self, msg): print "FAIL: %s" % msg; sys.exit(1)
-## job = Job()
-## opr = OrgProtocolReview(29500, 'mahler')
-## #opr = OrgProtocolReview(36354)
-## opr.report(job)
+#----------------------------------------------------------------------
+# Dummy job for command-line testing.
+#----------------------------------------------------------------------
+class TestJob:
+    def __init__(self, jobId, email, argv):
+        self.jobId = jobId
+        self.email = email
+        self.parms = {}
+        for arg in argv:
+            name, value = arg.split('=')
+            self.parms[name] = value
+    def getParm(self, name):
+        return self.parms.get(name)
+    def setStatus(self, s): sys.stderr.write("STATUS: %s\n" % s)
+    def getJobId(self): return self.jobId
+    def fail(self, m, logfile = None):
+        sys.stderr.write("FAIL: %s\n" % m);
+        sys.exit(1)
+    def getEmail(self): return self.email
+    def setProgressMsg(self, m): print m
 
 #----------------------------------------------------------------------
 # Top level entry point.
@@ -3076,63 +3163,50 @@ if __name__ == "__main__":
         cdr.logwrite("No batch job id passed to CdrLongReports.py", LOGFILE)
         sys.exit(1)
     try:
-        jobId = int(sys.argv[-1])
+        jobIdArg = sys.argv.pop()
+        jobId    = int(jobIdArg)
     except ValueError:
         cdr.logwrite("Invalid job id passed to CdrLongReports.py: %s" %
-                     sys.argv[-1], LOGFILE)
+                     jobIdArg, LOGFILE)
         sys.exit(1)
     cdr.logwrite("CdrLongReports: job id %d" % jobId, LOGFILE)
 
-    # Test version of Spanish Glossary Term report.
-    if len(sys.argv) == 6 and sys.argv[2] == 'SpanishGlossaryTermsByStatus':
-        status = sys.argv[3]
-        start  = sys.argv[4]
-        end    = sys.argv[5]
-        class SGTBSJob:
-            def __init__(self, jobId, status, start, end):
-                self.status = status
-                self.start  = start
-                self.end    = end
-            def getParm(self, name):
-                if name == 'status':
-                    return self.status
-                elif name == 'from':
-                    return self.start
-                elif name == 'to':
-                    return self.end
-                else:
-                    raise Exception('invalid parameter name %s' % name)
-            def setStatus(self, s): sys.stderr.write("STATUS: %s\n" % s)
-            def getJobId(s): return self.jobId
-            def fail(s, m, logfile = None):
-                sys.stderr.write("FAIL: %s\n" % m);
-                sys.exit(1)
-            def getEmail(s): return '***REMOVED***'
-            def setProgressMsg(s, m): print m
-        job = SGTBSJob(jobId, status, start, end)
-        report = SpanishGlossaryTermsByStatus(job)
-        report.run()
+    # Get args for test invocations, for which sys.argv[1] is the report name.
+    # Job id parm has already been popped from the list of command-line args.
+    # Remaining args (after the report name) are an optional email address
+    # and optional name=value parameters for the job.  If the value (or the
+    # name, for that matter) has a space embedded in it, enclose the entire
+    # "name=value with spaces" argument in quotes.
+    if len(sys.argv) > 1:  
+        reportName = sys.argv[1]
+        email      = len(sys.argv) > 2 and sys.argv[2] or None
+        parms      = sys.argv[3:]
+    
+        # Test version of Spanish Glossary Term report; needs status, to, from.
+        if reportName == 'SpanishGlossaryTermsByStatus':
+            SpanishGlossaryTermsByStatus(TestJob(jobId, email, parms)).run()
+            sys.exit(0)
 
-    # Special handling for running outcome measures coding report by hand.
-    # This version produces separate file used for web-based Trial Outcome
-    # update service.
-    if jobId == 1996 and len(sys.argv) > 2:
-        class J:
-            def setStatus(self, s): sys.stderr.write("STATUS: %s\n" % s)
-            def getJobId(s): return 1996
-            def fail(s, m, logfile = None):
-                sys.stderr.write("FAIL: %s\n" % m);
-                sys.exit(1)
-            def getEmail(s): return '***REMOVED***'
-            def setProgressMsg(s, m): print m
-        outcomeMeasuresCodingReport(J(), sys.argv[2])
-        sys.exit(0)
+        # Special handling for running outcome measures coding report by hand.
+        # This version produces separate file used for web-based Trial Outcome
+        # update service.
+        if reportName == 'OutcomeMeasuresCodingReport':
+            filename = parms and parms[0] or None
+            testJob  = TestJob(jobId, email, [])
+            outcomeMeasuresCodingReport(testJob, filename)
+            sys.exit(0)
+
+        # Test invocation of Protocol Processing Status Report.
+        # Takes optional parm IncludeTitle=true
+        if reportName == 'ProtocolProcessingStatusReport':
+            job = TestJob(jobId, email, parms)
+            ProtocolProcessingStatusReport(job).run()
+            sys.exit(0)
 
     # Create the job object.
     try:
         job = cdrbatch.CdrBatch(jobId = jobId)
     except cdrbatch.BatchException, be:
-        #print "milestone 0x"
         cdr.logwrite("Unable to create batch job object: %s" % str(be),
                      LOGFILE)
         sys.exit(1)
