@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.30 2006-05-18 21:14:16 bkline Exp $
+# $Id: CdrLongReports.py,v 1.31 2006-05-23 17:36:00 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.30  2006/05/18 21:14:16  bkline
+# Enhancements to Protocol Processing report and to testing invocation
+# support.
+#
 # Revision 1.29  2006/05/17 14:36:49  bkline
 # Added more documentation for the new Spanish glossary terms report, and
 # fixed a bug in the code for running a debugging version of the report.
@@ -2405,7 +2409,7 @@ class ProtocolProcessingStatusReport:
         def isLegacy(self):
             return "LEGACY - DO NOT PUBLISH" in self.statusKeys
         def isHeld(self):
-            return "HELD" in self.statusKeys
+            return "HOLD" in self.statusKeys
         
     def run(self):
 
