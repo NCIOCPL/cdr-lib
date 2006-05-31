@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.58 2006-05-31 00:12:25 ameyer Exp $
+# $Id: cdrcgi.py,v 1.59 2006-05-31 19:44:50 venglisc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.58  2006/05/31 00:12:25  ameyer
+# Added " type='text/css'" to HEADER HTML.
+#
 # Revision 1.57  2006/02/24 20:11:14  venglisc
 # Modified to fix the problem where the CTGovProtocol documents where
 # not filtered via the QcReports.py program but rather through the
@@ -437,8 +440,8 @@ def mainMenu(session, news = None):
     except:
         pass
     for item in (
-        ('BoardManagers.py', 'CIPS Board Managers'             ),
-        ('CiatCipsStaff.py', 'CIAT/CIPS Staff'                 ),
+        ('BoardManagers.py', 'OCCM Board Managers'             ),
+        ('CiatCipsStaff.py', 'CIAT/OCCM Staff'                 ),
         ('DevSA.py',         'Developers/System Administrators'),
         ('Logout.py',        'Log Out'                         )
         ):
