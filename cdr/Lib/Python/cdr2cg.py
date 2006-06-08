@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.19 2005-12-02 22:43:51 venglisc Exp $
+# $Id: cdr2cg.py,v 1.20 2006-06-08 14:08:45 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.19  2005/12/02 22:43:51  venglisc
+# Added FRANCK as a valid host to be able to send data from FRANCK to the
+# Cancer.gov TEST4 server.
+#
 # Revision 1.18  2005/03/09 16:04:51  bkline
 # Switch CG development server from dev1 to test4 (per Olga Rosenbaum).
 #
@@ -122,7 +126,7 @@ initRequestTemplate = """\
     <PubEvent>
      <pubType>%s</pubType>
      <description>%s</description>
-     <lastJobID>%d</lastJobID>
+     <lastJobID>%s</lastJobID>
     </PubEvent>
    </message>
   </Request>"""
@@ -130,13 +134,25 @@ initRequestTemplate = """\
 dataPrologTemplate = """\
   <Request xmlns="http://gatekeeper.cancer.gov">
    <source>%s</source>   
-   <requestID>%d</requestID>
+   <requestID>%s</requestID>
    <message>
     <PubEvent>
      <pubType>%s</pubType>     
      <description>%s</description>
-     <lastJobID>%d</lastJobID>
-     <docCount>%d</docCount>
+     <lastJobID>%s</lastJobID>
+     <docCount>%s</docCount>
+    </PubEvent>
+   </message>
+  </Request>"""
+
+jobCompleteTemplate = """\
+  <Request xmlns="http://gatekeeper.cancer.gov">
+   <source>%s</source>   
+   <requestID>%s</requestID>
+   <message>
+    <PubEvent>
+     <pubType>%s</pubType>     
+     <docCount>complete</docCount>
     </PubEvent>
    </message>
   </Request>"""
@@ -144,10 +160,10 @@ dataPrologTemplate = """\
 docTemplateHead= """\
   <Request xmlns="http://gatekeeper.cancer.gov">
    <source>%s</source>   
-   <requestID>%d</requestID>
+   <requestID>%s</requestID>
    <message>
     <PubData>
-     <docNum>%d</docNum>
+     <docNum>%s</docNum>
      <transactionType>%s</transactionType>
      <CDRDoc Type="%s" ID="CDR%010d" Version="%d">"""
 
@@ -180,11 +196,14 @@ class Fault:
     """
 
     def __init__(self, node):
-        faultCodeElem     = getChildElement(node, "faultcode", 1)
-        faultStringElem   = getChildElement(node, "faultstring", 1)
+        faultCodeElem     = getChildElement(node, "faultcode", True)
+        faultStringElem   = getChildElement(node, "faultstring", True)
         self.faultcode    = getTextContent(faultCodeElem)
         self.faultstring  = getTextContent(faultStringElem)
-    
+    def __repr__(self):
+        return (u"Fault (faultcode: %s, faultstring: %s)" %
+                (self.faultcode, self.faultstring))
+
 class PubEventResponse:
     """
     Holds detailed information from a response to a request initiation
@@ -205,21 +224,40 @@ class PubEventResponse:
     """
 
     def __init__(self, node):
-        pubTypeElem        = getChildElement(node, "pubType", 1)        
-        lastJobIdElem      = getChildElement(node, "lastJobID", 1)
+        pubTypeElem        = getChildElement(node, "pubType", True)
+        lastJobIdElem      = getChildElement(node, "lastJobID")
+        nextJobIdElem      = getChildElement(node, "nextJobID")
         docCountElem       = getChildElement(node, "docCount")
         self.pubType       = getTextContent(pubTypeElem)        
         if lastJobIdElem is not None:
+            lastJobText = getTextContent(lastJobIdElem)
             try:
-                self.lastJobId = int(getTextContent(lastJobIdElem))
+                self.lastJobId = int(lastJobText)
             except:
-                self.lastJobId = None
+                self.lastJobId = lastJobText
         else:
             self.lastJobId = None
-        if docCountElem is not None:
-            self.docCount  = int(getTextContent(docCountElem))
+        if nextJobIdElem is not None:
+            nextJobText = getTextContent(nextJobIdElem)
+            try:
+                self.nextJobId = int(nextJobText)
+            except:
+                self.nextJobId = nextJobText
         else:
-            self.docCount  = None
+            self.nextJobId = None
+        if docCountElem is not None:
+            docCountText = getTextContent(docCountElem)
+            try:
+                self.docCount = int(docCountText)
+            except:
+                self.docCount = docCountText
+        else:
+            self.docCount = None
+    def __repr__(self):
+        return (u"PubEventResponse "
+                u"(pubType: %s, lastJobId: %s, nextJobId: %s, docCount: %s)"""
+                % (self.pubType, self.lastJobId, self.nextJobId,
+                   self.docCount))
 
 class PubDataResponse:
     """
@@ -233,9 +271,24 @@ class PubDataResponse:
     """
 
     def __init__(self, node):
-        child = getChildElement(node, "docNum", 1)
+        child = getChildElement(node, "docNum", True)
         self.docNum = int(getTextContent(child))
-        
+    def __repr__(self):
+        return u"PubDataResponse (docNum: %d)" % self.docNum
+
+class HttpError(StandardError):
+    def __init__(self, xmlString):
+        self.xmlString = xmlString
+        bodyElem   = extractBodyElement(xmlString)
+        faultElem  = bodyElem and getChildElement(bodyElem, "Fault") or None
+        self.fault = faultElem and Fault(faultElem) or None
+    def __repr__(self):
+        if not self.fault:
+            return self.xmlString
+        return u"""\
+HttpError (faultcode: %s, faultstring: %s)""" % (self.fault.faultcode,
+                                                self.fault.faultstring)
+
 class Response:
     """
     Encapsulates the Cancer.Gov GateKeeper response to a SOAP request.
@@ -258,15 +311,17 @@ class Response:
             members in the case of a SOAP failure
     """
     
-    def __init__(self, xmlString, publishing = 1):
+    def __init__(self, xmlString, publishing = True):
 
         """Extract the values from the server's XML response string."""
 
-        bodyElem         = extractBodyElement(xmlString)
-        faultElem        = getChildElement(bodyElem, "Fault")
-        self.fault       = faultElem and Fault(faultElem) or None
+        self.xmlString   = xmlString
+        self.bodyElem    = extractBodyElement(xmlString)
+        self.faultElem   = getChildElement(self.bodyElem, "Fault")
+        self.fault       = self.faultElem and Fault(self.faultElem) or None
+        self.publishing  = publishing
         if publishing:
-            respElem         = extractResponseElement(bodyElem)
+            respElem         = extractResponseElement(self.bodyElem)
             respTypeElem     = getChildElement(respElem, "ResponseType", 1)
             respMsgElem      = getChildElement(respElem, "ResponseMessage", 1)
             peResponseElem   = getChildElement(respElem, "PubEventResponse")
@@ -280,7 +335,18 @@ class Response:
             else:
                 self.details = None
         else:
-            self.xmlResult   = extractXmlResult(bodyElem)
+            self.xmlResult   = extractXmlResult(self.bodyElem)
+    def __repr__(self):
+        pieces = [u"cdr2cg.Response "]
+        if self.publishing:
+            pieces.append(u"(type: %s, message: %s, details: %s" %
+                          (self.type, self.message, self.details))
+        else:
+            pieces.append(u"(publish preview document")
+        if self.fault:
+            pieces.append(u", fault: %s" % self.fault)
+        pieces.append(u")")
+        return u"".join(pieces)
 
 def getTextContent(node):
     text = ''
@@ -289,7 +355,7 @@ def getTextContent(node):
             text = text + n.nodeValue
     return text
 
-def getChildElement(parent, name, required = 0):
+def getChildElement(parent, name, required = False):
     child = None
     for node in parent.childNodes:
         if node.nodeType == node.ELEMENT_NODE and node.localName == name:
@@ -308,7 +374,7 @@ def extractResponseElement(bodyNode):
 def extractBodyElement(xmlString):
     dom     = xml.dom.minidom.parseString(xmlString)
     docElem = dom.documentElement
-    body    = getChildElement(docElem, "Body", 1)
+    body    = getChildElement(docElem, "Body", True)
     return body
 
 # For publish preview.
@@ -404,6 +470,10 @@ def sendDocument(jobId, docNum, transType, docType, docId, docVer, doc = ""):
     xmlString = sendRequest(req)
    
     return Response(xmlString)
+
+def sendJobComplete(jobId, pubType):
+    response = sendRequest(jobCompleteTemplate % (source, jobId, pubType))
+    return Response(response)
 
 def pubPreview(xml, typ):
     req = pubPreviewTemplate % (xml, typ)
