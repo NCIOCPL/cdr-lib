@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrdocobject.py,v 1.1 2005-07-08 21:36:10 bkline Exp $
+# $Id: cdrdocobject.py,v 1.2 2006-06-08 19:10:09 bkline Exp $
 #
 # Types for data extracted from CDR documents of specific document types.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2005/07/08 21:36:10  bkline
+# Python classes for data extracted from CDR documents.
+#
 #----------------------------------------------------------------------
 import cdr, sys, xml.dom.minidom
 
@@ -182,7 +185,7 @@ class ContactInfo:
         self.__phone          = None
         self.__fax            = None
         self.__email          = None
-        self.__incPersonTitle = personTitleHandling
+        self.__ptHandling     = personTitleHandling
 
         if type(xmlFragment) in (str, unicode):
             dom = xml.dom.minidom.parseString(xmlFragment)
@@ -259,7 +262,7 @@ class ContactInfo:
         if includeNameAndTitle:
             if self.__addressee:
                 lines.append(self.__addressee)
-            if self.__incPersonTitle == TITLE_AFTER_NAME:
+            if self.__ptHandling == TITLE_AFTER_NAME:
                 if self.__personTitle:
                     lines.append(self.__personTitle)
 
@@ -269,7 +272,7 @@ class ContactInfo:
         for org in self.__orgs:
             if org:
                 lines.append(org)
-        if includeNameAndTitle and self.__incPersonTitle == TITLE_AFTER_ORG:
+        if includeNameAndTitle and self.__ptHandling == TITLE_AFTER_ORG:
             if self.__personTitle:
                 lines.append(self.__personTitle)
 
