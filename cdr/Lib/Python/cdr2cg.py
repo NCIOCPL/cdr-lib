@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.20 2006-06-08 14:08:45 bkline Exp $
+# $Id: cdr2cg.py,v 1.21 2006-06-14 12:50:36 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.20  2006/06/08 14:08:45  bkline
+# Modifications to support enhancements to GateKeeper for more frequent
+# publishing.
+#
 # Revision 1.19  2005/12/02 22:43:51  venglisc
 # Added FRANCK as a valid host to be able to send data from FRANCK to the
 # Cancer.gov TEST4 server.
@@ -228,7 +232,9 @@ class PubEventResponse:
         lastJobIdElem      = getChildElement(node, "lastJobID")
         nextJobIdElem      = getChildElement(node, "nextJobID")
         docCountElem       = getChildElement(node, "docCount")
-        self.pubType       = getTextContent(pubTypeElem)        
+        self.pubType       = getTextContent(pubTypeElem)
+        self.highestDocNum = None
+        self.totalPackets  = None
         if lastJobIdElem is not None:
             lastJobText = getTextContent(lastJobIdElem)
             try:
@@ -251,13 +257,20 @@ class PubEventResponse:
                 self.docCount = int(docCountText)
             except:
                 self.docCount = docCountText
+                try:
+                    totalPackets, highestDocNum = docCountText.split(u'/')
+                    self.totalPackets = int(totalPackets)
+                    self.highestDocNum = int(highestDocNum)
+                except:
+                    pass
         else:
             self.docCount = None
     def __repr__(self):
         return (u"PubEventResponse "
-                u"(pubType: %s, lastJobId: %s, nextJobId: %s, docCount: %s)"""
+                u"(pubType: %s, lastJobId: %s, nextJobId: %s, docCount: %s, "
+                u"totalPackets: %s, highestDocNum: %s)"""
                 % (self.pubType, self.lastJobId, self.nextJobId,
-                   self.docCount))
+                   self.docCount, self.totalPackets, self.highestDocNum))
 
 class PubDataResponse:
     """
