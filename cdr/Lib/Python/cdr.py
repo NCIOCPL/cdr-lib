@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.123 2006-05-04 21:08:53 ameyer Exp $
+# $Id: cdr.py,v 1.124 2006-06-30 21:19:35 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,13 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.123  2006/05/04 21:08:53  ameyer
+# Modified filtering to support limits on document and filter update dates.
+# Allows publishing to freeze or even backdate the date/time of documents
+# to be filtered.  Host supports this by limiting date time of docs from
+# which denormalized data is extracted also - under publishing conditions.
+# Added comments too.
+#
 # Revision 1.122  2006/03/14 19:17:19  ameyer
 # Added Log class for enhanced logging.
 #
@@ -3969,6 +3976,20 @@ def isDevHost():
 def isProdHost():
     localhost = socket.gethostname()
     return localhost.upper().startswith(PROD_NAME.upper())
+
+#----------------------------------------------------------------------
+# Give caller variant forms of the host name
+#----------------------------------------------------------------------
+def getHostName():
+    """
+    Return the server host name as a tuple of:
+        naked host name
+        fully qualified host name
+        fully qualified name, prefixed by "http://"
+    """
+    localhost = socket.gethostname()
+    return (localhost, "%s.nci.nih.gov" % localhost,
+            "http://%s.nci.nih.gov" % localhost)
 
 #----------------------------------------------------------------------
 # Add a row to the external_map table.
