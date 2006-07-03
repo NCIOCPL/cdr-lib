@@ -6,9 +6,12 @@
 #
 # Done for Bugzilla issue #1881
 #
-# $Id: CTGovUpdateReportBatch.py,v 1.1 2006-07-03 20:10:03 ameyer Exp $
+# $Id: CTGovUpdateReportBatch.py,v 1.2 2006-07-03 20:17:23 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2006/07/03 20:10:03  ameyer
+# Batch part of report.
+#
 #
 #----------------------------------------------------------------------
 
@@ -269,8 +272,6 @@ if diffFmt == "XDiff":
 else:
     # XXX Future
     colors = ""
-
-appendReport("test")
 
 if len(importJobs) == 1:
     appendReport(\
