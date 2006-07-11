@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.80 2006-05-10 03:31:59 ameyer Exp $
+# $Id: cdrpub.py,v 1.81 2006-07-11 20:32:10 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.80  2006/05/10 03:31:59  ameyer
+# Modifications to support publishing document date-time cutoff and
+# JobStartDateTime substitution.
+#
 # Revision 1.79  2006/03/09 22:37:57  venglisc
 # Adding missing parenthesis for function ctime.
 #
@@ -3072,7 +3076,14 @@ Please do not reply to this message.
     #----------------------------------------------------------------------
     def __updateStatus(self, status, message = None):
 
-        self.__debugLog("Updating job status to %s." % status)
+        # There is a question about whether updates are always committed
+        # This may helf us find out
+        autoCom = 'off'
+        if self.__conn.getAutoCommit():
+            autoCom = 'on'
+
+        self.__debugLog("Updating job status to %s.  Autocommit is %s." % \
+                        (status, autoCom))
         if message: self.__debugLog(message)
 
         date = "NULL"
