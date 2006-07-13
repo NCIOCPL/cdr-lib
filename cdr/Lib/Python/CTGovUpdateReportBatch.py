@@ -6,9 +6,12 @@
 #
 # Done for Bugzilla issue #1881
 #
-# $Id: CTGovUpdateReportBatch.py,v 1.2 2006-07-03 20:17:23 ameyer Exp $
+# $Id: CTGovUpdateReportBatch.py,v 1.3 2006-07-13 17:21:55 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2006/07/03 20:17:23  ameyer
+# Removed a bit of debugging code.
+#
 # Revision 1.1  2006/07/03 20:10:03  ameyer
 # Batch part of report.
 #
@@ -252,8 +255,12 @@ diffFmt    = batchObj.getParm('diffFmt')
 
 # Convert job ids from strings to numbers for min/max check
 jobNums = []
-for job in importJobs:
-    jobNums.append(int(job))
+cdr.logwrite('type(importJobs)=%s' % type(importJobs))
+if type(importJobs) in (type(""), type(u"")):
+    jobNums.append(int(importJobs))
+else:
+    for job in importJobs:
+        jobNums.append(int(job))
 
 # Generate list of docId, verNum pairs from user selected jobs
 idVerDt = findImportedDocs(min(jobNums), max(jobNums))
@@ -273,15 +280,11 @@ else:
     # XXX Future
     colors = ""
 
-if len(importJobs) == 1:
-    appendReport(\
-        "This report compares all documents imported by job number %s" % \
-         importJobs[0])
-else:
-    appendReport("""\
-This report compares the last version of each document imported
-between job number %s and job number %s
-""" % (importJobs[-1], importJobs[0]))
+# DEBUG
+appendReport("""\
+ This report compares the last version of each document imported
+ by job number(s): %s
+""" % (str(jobNums)))
 
 appendReport("""
 against the current working document for each of the documents.</p>
