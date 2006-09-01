@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.124 2006-06-30 21:19:35 ameyer Exp $
+# $Id: cdr.py,v 1.125 2006-09-01 04:02:51 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.124  2006/06/30 21:19:35  ameyer
+# Added getHostName().
+#
 # Revision 1.123  2006/05/04 21:08:53  ameyer
 # Modified filtering to support limits on document and filter update dates.
 # Allows publishing to freeze or even backdate the date/time of documents
@@ -3891,7 +3894,7 @@ def normalizeDoc(utf8DocString):
     sFile = StringSink()
     dom = xml.dom.minidom.parseString(utf8DocString)
     dom.writexml(sFile)
-    return sFile.s
+    return sFile.__repr__()
 
 #----------------------------------------------------------------------
 # Extract the first CDATA section from a document.
@@ -3994,15 +3997,21 @@ def getHostName():
 #----------------------------------------------------------------------
 # Add a row to the external_map table.
 #----------------------------------------------------------------------
-def addExternalMapping(credentials, usage, value, id = None,
+def addExternalMapping(credentials, usage, value, docId = None,
+                       bogus='N', mappable='Y',
                        host = DEFAULT_HOST, port = DEFAULT_PORT):
     if type(usage) == type(u""):
         usage = usage.encode('utf-8')
     if type(value) == type(u""):
         value = value.encode("utf-8")
-    id = id and ("<CdrId>%s</CdrId>" % normalize(id)) or ""
-    cmd = ("<CdrAddExternalMapping><Usage>" + usage + "</Usage><Value>" +
-           value + "</Value>" + id + "</CdrAddExternalMapping>")
+    docId = docId and ("<CdrId>%s</CdrId>" % normalize(docId)) or ""
+    cmd = ("<CdrAddExternalMapping>" +
+            "<Usage>" + usage + "</Usage>" +
+            "<Value>" + value + "</Value>" +
+            "<Bogus>" + bogus + "</Bogus>" +
+            "<Mappable>" + mappable + "</Mappable>" +
+                    docId +
+           "</CdrAddExternalMapping>")
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
 
     # This is how we should have been handling failures all along. :-<}
