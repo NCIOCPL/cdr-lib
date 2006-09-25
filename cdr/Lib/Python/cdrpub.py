@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.81 2006-07-11 20:32:10 ameyer Exp $
+# $Id: cdrpub.py,v 1.82 2006-09-25 19:09:38 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.81  2006/07/11 20:32:10  ameyer
+# Added autocommit status logging to logging done in __updateStatus().
+#
 # Revision 1.80  2006/05/10 03:31:59  ameyer
 # Modifications to support publishing document date-time cutoff and
 # JobStartDateTime substitution.
@@ -2378,8 +2381,18 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     if pair[0] == 'DateFirstPub':
                         date = self.__dateFirstPub[docId]
                         paramList.append((pair[0], date))
+
                     else:
                         paramList.append((pair[0], pair[1]))
+
+                # Pass a parameter pubProcDate to the filter
+                # This is needed to create a non-empty verification
+                # date for all documents with a first_pub_knowable
+                # (see creation of hash __dateFirstPub; the date
+                #  is empty if first_pub_knowable = 'N')
+                # =================================================
+                if date != '':
+                    paramList.append(('pubProcDate', self.__jobTime[:10]))
 
                 # Set limiting date-time for documents
                 if self.__params.has_key('MaxDocUpdatedDate'):
@@ -2406,6 +2419,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                            docDate = maxDocDate,
                                            filterDate = maxFilterDate,
                                            port = self.__pubPort)
+
                 if type(result) not in (type([]), type(())):
                     errors = result or "Unspecified failure filtering document"
                     filteredDoc = None
