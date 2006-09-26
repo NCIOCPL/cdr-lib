@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.13 2005-11-30 04:15:12 ameyer Exp $
+# $Id: cdrbatch.py,v 1.14 2006-09-26 14:32:13 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,9 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.13  2005/11/30 04:15:12  ameyer
+# Added getEmailList().
+#
 # Revision 1.12  2005/10/21 03:55:49  ameyer
 # Pre-declared self.__conn in class CdrBatch so that if the connection
 # cannot be created, the fail() routine will not crash trying to reference
@@ -611,7 +614,7 @@ class CdrBatch:
                     for i in range(len(val)):
                         val[i] = val[i].encode('utf-8')
                 else:
-                    val.encode('utf-8')
+                    val = val.encode('utf-8')
                 return val
         return None
 
