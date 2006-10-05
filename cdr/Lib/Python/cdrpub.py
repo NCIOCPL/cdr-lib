@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.82 2006-09-25 19:09:38 venglisc Exp $
+# $Id: cdrpub.py,v 1.83 2006-10-05 22:21:12 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.82  2006/09/25 19:09:38  venglisc
+# Adding pubProcDate parameter to filter parameters if document is newly
+# published (date = ''). (Bug 2207)
+#
 # Revision 1.81  2006/07/11 20:32:10  ameyer
 # Added autocommit status logging to logging done in __updateStatus().
 #
@@ -2390,9 +2394,13 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 # date for all documents with a first_pub_knowable
                 # (see creation of hash __dateFirstPub; the date
                 #  is empty if first_pub_knowable = 'N')
+                # Note: The date variable is not defined if we are
+                #       running a removal job (which doesn't have
+                #       a ValidateDocs parameter)
                 # =================================================
-                if date != '':
-                    paramList.append(('pubProcDate', self.__jobTime[:10]))
+                if self.__params.has_key('ValidateDocs'):
+                    if date != '':
+                        paramList.append(('pubProcDate', self.__jobTime[:10]))
 
                 # Set limiting date-time for documents
                 if self.__params.has_key('MaxDocUpdatedDate'):
