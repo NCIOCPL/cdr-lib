@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.125 2006-09-01 04:02:51 ameyer Exp $
+# $Id: cdr.py,v 1.126 2006-10-06 02:43:01 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.125  2006/09/01 04:02:51  ameyer
+# Updated addExternalMapping() for "bogus" and "mappable" parameters.
+#
 # Revision 1.124  2006/06/30 21:19:35  ameyer
 # Added getHostName().
 #
@@ -2758,17 +2761,20 @@ class LinkType:
     def __init__(self, name, linkSources = None,
                              linkTargets = None,
                              linkProps   = None,
-                             comment     = None):
+                             comment     = None,
+                             linkChkType = "P"):
         self.name        = name
         self.linkSources = linkSources or []
         self.linkTargets = linkTargets or []
         self.linkProps   = linkProps   or []
         self.comment     = comment
+        self.linkChkType = linkChkType
     def __str__(self):
-        return "LinkType(%s,\n%s,\n%s,\n%s,\n%s)" % (self.name,
+        return "LinkType(%s,\n%s,\n%s,\n%s,\n%s,\n%s)" % (self.name,
                                                  self.linkSources,
                                                  self.linkTargets,
                                                  self.linkProps,
+                                                 self.linkChkType,
                                                  self.comment)
 
 #----------------------------------------------------------------------
@@ -2818,6 +2824,7 @@ def getLinkType(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
     # Parse the response
     name     = re.findall("<Name>(.*)</Name>", resp)[0]
     cmtExpr  = re.compile("<LinkTypeComment>(.*)</LinkTypeComment>", re.DOTALL)
+    chkExpr  = re.compile("<LinkChkType>(.*?)</LinkChkType>", re.DOTALL)
     srcExpr  = re.compile("<LinkSource>(.*?)</LinkSource>", re.DOTALL)
     tgtExpr  = re.compile("<TargetDocType>(.*?)</TargetDocType>", re.DOTALL)
     prpExpr  = re.compile("<LinkProperties>(.*?)</LinkProperties>", re.DOTALL)
@@ -2827,12 +2834,14 @@ def getLinkType(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
     prvExpr  = re.compile("<PropertyValue>(.*)</PropertyValue>", re.DOTALL)
     prcExpr  = re.compile("<PropertyComment>(.*)</PropertyComment>", re.DOTALL)
     comment  = cmtExpr.findall(resp)
+    chkType  = chkExpr.findall(resp)
     sources  = srcExpr.findall(resp)
     targets  = tgtExpr.findall(resp)
     props    = prpExpr.findall(resp)
     linkType = LinkType(name)
     if comment:  linkType.comment     = comment[0]
     if targets:  linkType.linkTargets = targets
+    if chkType:  linkType.linkChkType = chkType[0]
     for source in sources:
         srcDocType  = sdtExpr.search(source).group(1)
         srcField    = fldExpr.search(source).group(1)
@@ -2859,6 +2868,12 @@ def putLinkType(credentials, name, linkType, linkAct,
             cmd += "<NewName>%s</NewName>" % linkType.name
     else:
         cmd = "<CdrAddLinkType><Name>%s</Name>" % linkType.name
+
+    # Add the target document version type to check against
+    if not linkType.linkChkType:
+        raise StandardError("No linkChkType specified for link type %s:" %\
+                             linkType.name);
+    cmd += "<LinkChkType>%s</LinkChkType>" % linkType.linkChkType
 
     # Add the comment, if present.
     if linkType.comment is not None:
