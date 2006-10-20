@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.127 2006-10-20 04:21:10 ameyer Exp $
+# $Id: cdr.py,v 1.128 2006-10-20 16:29:30 venglisc Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.127  2006/10/20 04:21:10  ameyer
+# Added logging of publishing job start.
+#
 # Revision 1.126  2006/10/06 02:43:01  ameyer
 # Modifications to CdrLink class, putLinkType, getLinkType to support
 # link target version type management.
@@ -3210,14 +3213,14 @@ def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
                                                        allowInAct)
 
     # Log what we're doing to the publishing log
-    cdr.logwrite('cdr.publish: Sending cmd to CdrServer: \n"%s"\n' % cmd,
+    logwrite('cdr.publish: Sending cmd to CdrServer: \n"%s"\n' % cmd,
                  PUBLOG)
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
 
     # And log response
-    cdr.logwrite('cdr.publish: received response:\n"%s"\n' % resp, PUBLOG)
+    logwrite('cdr.publish: received response:\n"%s"\n' % resp, PUBLOG)
 
     # Return the job ID and any warnings/errors.
     jobId  = None
