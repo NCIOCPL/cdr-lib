@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.126 2006-10-06 02:43:01 ameyer Exp $
+# $Id: cdr.py,v 1.127 2006-10-20 04:21:10 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.126  2006/10/06 02:43:01  ameyer
+# Modifications to CdrLink class, putLinkType, getLinkType to support
+# link target version type management.
+#
 # Revision 1.125  2006/09/01 04:02:51  ameyer
 # Updated addExternalMapping() for "bogus" and "mappable" parameters.
 #
@@ -451,6 +455,7 @@ SMTP_RELAY       = "MAILFWD.NIH.GOV"
 DEFAULT_LOGDIR   = BASEDIR + "/Log"
 DEFAULT_LOGLVL   = 5
 DEFAULT_LOGFILE  = DEFAULT_LOGDIR + "/debug.log"
+PUBLOG           = DEFAULT_LOGDIR + "/publish.log"
 MANIFEST_NAME    = 'CdrManifest.xml'
 CLIENT_FILES_DIR = BASEDIR + '/ClientFiles'
 MANIFEST_PATH    = "%s/%s" % (CLIENT_FILES_DIR, MANIFEST_NAME)
@@ -3204,8 +3209,15 @@ def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
                                                        allowNonPub,
                                                        allowInAct)
 
+    # Log what we're doing to the publishing log
+    cdr.logwrite('cdr.publish: Sending cmd to CdrServer: \n"%s"\n' % cmd,
+                 PUBLOG)
+
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+
+    # And log response
+    cdr.logwrite('cdr.publish: received response:\n"%s"\n' % resp, PUBLOG)
 
     # Return the job ID and any warnings/errors.
     jobId  = None
