@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.128 2006-10-20 16:29:30 venglisc Exp $
+# $Id: cdr.py,v 1.129 2006-10-25 16:03:33 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.128  2006/10/20 16:29:30  venglisc
+# Removed the cdr. prefix from the new logwrite calls. (Bug 2231)
+#
 # Revision 1.127  2006/10/20 04:21:10  ameyer
 # Added logging of publishing job start.
 #
@@ -462,6 +465,29 @@ PUBLOG           = DEFAULT_LOGDIR + "/publish.log"
 MANIFEST_NAME    = 'CdrManifest.xml'
 CLIENT_FILES_DIR = BASEDIR + '/ClientFiles'
 MANIFEST_PATH    = "%s/%s" % (CLIENT_FILES_DIR, MANIFEST_NAME)
+
+#----------------------------------------------------------------------
+# Use this class (or a derived class) when raising an exception in
+# all new Python code in the CDR, unless there is good justification
+# for using another approach.  Avoid raising string objects, which
+# is now deprecated.
+#
+# This class behaves as the standard Python Exception class (from
+# which this class is derived), except that string representation
+# for objects created with a single argument uses unicode instead
+# of ascii, which makes it safe to interpolate such objects into
+# unicode strings, even when the Exception object was created with
+# a unicode string containing non-ascii characters.
+#----------------------------------------------------------------------
+_baseException = Exception
+class Exception(_baseException):
+    __baseException = _baseException
+    def __str__(self):
+        elif len(self.args) == 1:
+            return unicode(self.args[0])
+        else:
+            return Exception.__baseException.__str__(self)
+del _baseException
 
 #----------------------------------------------------------------------
 # Find a port to the CdrServer, searching port numbers in the following
