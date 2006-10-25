@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.129 2006-10-25 16:03:33 bkline Exp $
+# $Id: cdr.py,v 1.130 2006-10-25 16:04:38 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.129  2006/10/25 16:03:33  bkline
+# Added Exception class, derived from standard class of same name.
+#
 # Revision 1.128  2006/10/20 16:29:30  venglisc
 # Removed the cdr. prefix from the new logwrite calls. (Bug 2231)
 #
@@ -483,7 +486,7 @@ _baseException = Exception
 class Exception(_baseException):
     __baseException = _baseException
     def __str__(self):
-        elif len(self.args) == 1:
+        if len(self.args) == 1:
             return unicode(self.args[0])
         else:
             return Exception.__baseException.__str__(self)
