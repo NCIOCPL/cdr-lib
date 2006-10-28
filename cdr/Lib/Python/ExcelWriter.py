@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: ExcelWriter.py,v 1.5 2006-05-04 15:50:31 bkline Exp $
+# $Id: ExcelWriter.py,v 1.6 2006-10-28 14:33:05 bkline Exp $
 #
 # Generates Excel workbooks using 2003 XML format.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2006/05/04 15:50:31  bkline
+# Replaced newlines with character entities.
+#
 # Revision 1.4  2005/11/22 14:43:11  bkline
 # Modified test again for writing cell values (avoid writing empty
 # strings for DateTime values).
@@ -20,7 +23,7 @@
 # Module to generate Excel workbooks using 2002/2003 XML format.
 #
 #----------------------------------------------------------------------
-import xml.sax.saxutils, sys, time
+import xml.sax.saxutils, sys, time, tempfile, os
 
 def fix(me):
     if type(me) in (str, unicode):
@@ -49,7 +52,34 @@ class Workbook:
                       numFormat)
         self.styles.append(style)
         return style.id
-    def write(self, fobj):
+
+    def write(self, fobj, asXls = False):
+        if asXls:
+            tempDir  = tempfile.gettempdir()
+            baseName = os.path.join(tempfile.gettempdir(),
+                                    "%s-%s" % (os.getpid(), time.time()))
+            xmlName  = "%s.xml" % baseName
+            xlsName  = "%s.xls" % baseName
+            xmlFile  = file(xmlName, "w")
+            self.__write(xmlFile)
+            xmlFile.close()
+            script = "d:\\cdr\\lib\\Perl\\xml2xls.pl"
+            perl = "D:\\Perl\\bin\\perl.EXE"
+            command = "%s %s %s %s 2>&1" % (perl, script, xmlName, xlsName)
+            commandStream = os.popen('%s 2>&1' % command)
+            output = commandStream.read()
+            code = commandStream.close()
+            if code:
+                raise Exception("ExcelWriter.write(): %d: %s" % (code, output))
+            xlsFile = file(xlsName, "rb")
+            xlsData = xlsFile.read()
+            xlsFile.close()
+            fobj.write(xlsData)
+        else:
+            self.__write(fobj)
+            
+            
+    def __write(self, fobj):
         fobj.write("""\
 <?xml version="1.0" encoding="utf-8"?>
 <?mso-application progid="Excel.Sheet"?>
@@ -416,7 +446,7 @@ if __name__ == '__main__':
     row.addCell(1, u'This is a banner\u2026', mergeAcross = 4, style = st1)
     row = ws.addRow(2)
     row.addCell(1, 3.14159, 'Number', style = st4)
-    row.addCell(2, 3.1, 'Number', formula = '=ROUND(RC[-1],4)', style = st3)
+    row.addCell(2, 3.1, 'Number', formula = '=A2+3.4', style = st3)
     row = ws.addRow(17, height = 40)
     row.addCell(7, 'foo', href = 'http://www.rksystems.com?foo=bar&x=y',
                 style = st2, tooltip = 'Click me!')
@@ -427,3 +457,6 @@ if __name__ == '__main__':
     ss = StringSink()
     wb.write(ss)
     sys.stdout.write(ss.s)
+    f = file("ExcelWriterTest.xls", "wb")
+    wb.write(f, True)
+    f.close()
