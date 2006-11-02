@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.83 2006-10-05 22:21:12 venglisc Exp $
+# $Id: cdrpub.py,v 1.84 2006-11-02 16:59:40 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.83  2006/10/05 22:21:12  venglisc
+# The date variable is not defined if the job is a remove publishing job.
+# Fixed to ensure it is not evaluated for a remove job.
+#
 # Revision 1.82  2006/09/25 19:09:38  venglisc
 # Adding pubProcDate parameter to filter parameters if document is newly
 # published (date = ''). (Bug 2207)
@@ -2346,6 +2350,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         warnings = ""
         errors   = ""
         invalDoc = ""
+        date     = None
 
         # Save blob, not XML, for Media docs.
         if doc.getDocTypeStr() == "Media":
@@ -2393,14 +2398,11 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 # This is needed to create a non-empty verification
                 # date for all documents with a first_pub_knowable
                 # (see creation of hash __dateFirstPub; the date
-                #  is empty if first_pub_knowable = 'N')
-                # Note: The date variable is not defined if we are
-                #       running a removal job (which doesn't have
-                #       a ValidateDocs parameter)
+                #  is empty if first_pub_knowable = 'N', it is None
+                #  for non-publishing jobs, i.e. QC batches)
                 # =================================================
-                if self.__params.has_key('ValidateDocs'):
-                    if date != '':
-                        paramList.append(('pubProcDate', self.__jobTime[:10]))
+                if date != '':
+                    paramList.append(('pubProcDate', self.__jobTime[:10]))
 
                 # Set limiting date-time for documents
                 if self.__params.has_key('MaxDocUpdatedDate'):
