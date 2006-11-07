@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: ExcelWriter.py,v 1.6 2006-10-28 14:33:05 bkline Exp $
+# $Id: ExcelWriter.py,v 1.7 2006-11-07 14:48:21 bkline Exp $
 #
 # Generates Excel workbooks using 2003 XML format.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2006/10/28 14:33:05  bkline
+# Added ability to write results as a binary XLS file (using a
+# separate process invoking a Perl script built around John
+# McNamara's Spreadsheet::WriteExcel module).
+#
 # Revision 1.5  2006/05/04 15:50:31  bkline
 # Replaced newlines with character entities.
 #
@@ -75,6 +80,8 @@ class Workbook:
             xlsData = xlsFile.read()
             xlsFile.close()
             fobj.write(xlsData)
+            os.unlink(xmlName)
+            os.unlink(xlsName)
         else:
             self.__write(fobj)
             
