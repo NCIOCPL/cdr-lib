@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.130 2006-10-25 16:04:38 bkline Exp $
+# $Id: cdr.py,v 1.131 2006-11-07 21:06:00 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.130  2006/10/25 16:04:38  bkline
+# Fixed typo in new Exception class.
+#
 # Revision 1.129  2006/10/25 16:03:33  bkline
 # Added Exception class, derived from standard class of same name.
 #
@@ -468,6 +471,7 @@ PUBLOG           = DEFAULT_LOGDIR + "/publish.log"
 MANIFEST_NAME    = 'CdrManifest.xml'
 CLIENT_FILES_DIR = BASEDIR + '/ClientFiles'
 MANIFEST_PATH    = "%s/%s" % (CLIENT_FILES_DIR, MANIFEST_NAME)
+CONNECT_TRIES    = 10
 
 #----------------------------------------------------------------------
 # Use this class (or a derived class) when raising an exception in
@@ -600,8 +604,49 @@ def exNormalize(id):
 def sendCommands(cmds, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Connect to the CDR Server.
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((host, port))
+    failed = False
+    for i in range(CONNECT_TRIES):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((host, port))
+            break
+        except:
+            # Remember that we failed at least once
+            failed = True
+
+            # Find out what network connections are active
+            netStat = os.popen('netstat -a 2>&1')
+            netStatus = netStat.read()
+            netStat.close()
+
+            # Log details to default log (not application log, don't know
+            #  what the application is)
+            logwrite("""sendCommands: Could not connect to host=%s port=%d
+exceptionInfo=%s
+Current netstat=
+%s
+""" % (host, port, exceptionInfo(), netStatus))
+            if i == CONNECT_TRIES-1:
+                # Tried multiple times, give up
+                logwrite("sendCommands: Giving up after %d tries" %
+                          CONNECT_TRIES)
+                raise Exception(\
+                    "sendCommands could not connect.  See info in %s" %
+                    DEFAULT_LOGFILE)
+
+            # Wait a bit before trying again
+            time.sleep(1)
+
+    # If there were any recoverable failures in connecting
+    if failed:
+        # Log net connections again so we can see if something changed
+        netStat = os.popen('netstat -a')
+        netStatus = netStat.read()
+        netStat.close()
+        logwrite("""sendCommands: Connect succeeded after %d tries
+Current netstat after successful connect=
+%s
+""" % (i, netStatus))
 
     # Send the commands to the server.
     sock.send(struct.pack('!L', len(cmds)))
@@ -3227,9 +3272,9 @@ def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
             if not match:
                 return (None, "<Errors><Err>Malformed docList member '%s'"\
                               "</Err></Errors>" % doc)
-            id = normalize(match.group(1))
+            docId = normalize(match.group(1))
             version = match.group(3) or "0"
-            docsElem += "<Doc Id='%s' Version='%s'/>" % (id, version)
+            docsElem += "<Doc Id='%s' Version='%s'/>" % (docId, version)
         docsElem += "</DocList>"
 
     cmd = "<CdrPublish>%s%s%s%s%s%s%s%s</CdrPublish>" % (pubSystem,
