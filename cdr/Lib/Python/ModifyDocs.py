@@ -1,11 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.13 2006-01-26 21:47:21 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.14 2006-12-06 04:51:29 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.13  2006/01/26 21:47:21  ameyer
+# Added function to suppress logging to stderr - useful when running
+# a ModifyDocs object in a cgi program.
+#
 # Revision 1.12  2005/08/15 21:05:07  ameyer
 # Added validation after transform and before store.  If a document was
 # valid but became invalid, it will not be stored.  Messages are logged
@@ -73,6 +77,26 @@ _testMode  = True   # True=Output to files only, not database
 _outputDir = None   # Files go in this directory
 _validate  = False  # True=Check that change didn't invalidate valid doc
 _haltOnErr = False  # True=Don't save any doc if change invalidate a version
+
+# Controls for which versions are transformed, with defaults
+_transformCWD = True    # Transform current working document
+_transformANY = True    # Last version of any kind
+_transformPUB = True    # Last publishable version
+
+#----------------------------------------------------------------------
+# Module level setters for transform version controls
+#----------------------------------------------------------------------
+def setTransformCWD(setting):
+    global _transformCWD
+    _transformCWD = setting
+
+def setTransformANY(setting):
+    global _transformANY
+    _transformANY = setting
+
+def setTransformPUB(setting):
+    global _transformPUB
+    _transformPUB = setting
 
 #----------------------------------------------------------------------
 # Class for one modification job.
@@ -197,19 +221,16 @@ class Doc:
     # and run them through the transformation for this job.
     #------------------------------------------------------------------
     def loadAndTransform(self):
-        # Current working document
-        self.cwd       = cdr.getDoc(self.session, self.id, 'Y', getObject = 1)
-        if type(self.cwd) in (type(""), type(u"")):
-            err = cdr.checkErr(self.cwd) or self.cwd
-            raise DocumentLocked("Unable to check out CWD for CDR%010d: %s" %
-                                 (self.id, err))
 
-        # Run the transformation filter
-        self.newCwd    = self.transform.run(self.cwd)
+        global _transformCWD
+        global _transformANY
+        global _transformPUB
 
         # Stored versions
+        self.cwd       = None
         self.lastv     = None
         self.lastp     = None
+        self.newCwd    = None
         self.newLastv  = None
         self.newLastp  = None
         self.cwdVals   = None
@@ -217,15 +238,25 @@ class Doc:
         self.lastpVals = None
         (lastAny, lastPub, isChanged) = self.versions
 
+        # Checkout current working document to get doc and lock
+        self.cwd = cdr.getDoc(self.session, self.id, 'Y', getObject = 1)
+        if type(self.cwd) in (type(""), type(u"")):
+            err = cdr.checkErr(self.cwd) or self.cwd
+            raise DocumentLocked("Unable to check out CWD for CDR%010d: %s" %
+                                 (self.id, err))
 
-        # If (and only if) old version was valid, validate new version
-        # cwdVal is array of error messages or empty array
-        if (_validate):
-            self.cwdVals = cdr.valPair(self.session, self.cwd.type,
-                                       self.cwd.xml, self.newCwd)
+        # Run the transformation filter on current working doc
+        if _transformCWD:
+            self.newCwd = self.transform.run(self.cwd)
+
+            # If (and only if) old version was valid, validate new version
+            # cwdVal is array of error messages or empty array
+            if (_validate):
+                self.cwdVals = cdr.valPair(self.session, self.cwd.type,
+                                           self.cwd.xml, self.newCwd)
 
         # If there is a last version
-        if lastAny > 0:
+        if _transformANY and lastAny > 0:
 
             # And it's not the same as the CWD
             if isChanged == 'Y':
@@ -248,7 +279,7 @@ class Doc:
                 self.lastvVals = self.cwdVals
 
         # If there is a last publishable version
-        if lastPub > 0:
+        if _transformPUB and lastPub > 0:
 
             # If it's not the same as the last version
             if lastPub != lastAny:
