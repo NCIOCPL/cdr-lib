@@ -1,11 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.14 2006-12-06 04:51:29 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.15 2006-12-08 02:44:20 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.14  2006/12/06 04:51:29  ameyer
+# Added controls to allow a programmer to turn on or off processing of
+# specific version types, i.e., CWD, last version, or last published version.
+#
 # Revision 1.13  2006/01/26 21:47:21  ameyer
 # Added function to suppress logging to stderr - useful when running
 # a ModifyDocs object in a cgi program.
@@ -85,6 +89,12 @@ _transformPUB = True    # Last publishable version
 
 #----------------------------------------------------------------------
 # Module level setters for transform version controls
+#
+# The way these controls work is ONLY to gate the output, not the
+# transformations.  The problem is that some complex logic occurs
+# in which one version can move through to become a new version of a
+# different type.  We allow ALL of that to happen without interference
+# and just gate the outputs.
 #----------------------------------------------------------------------
 def setTransformCWD(setting):
     global _transformCWD
@@ -246,17 +256,16 @@ class Doc:
                                  (self.id, err))
 
         # Run the transformation filter on current working doc
-        if _transformCWD:
-            self.newCwd = self.transform.run(self.cwd)
+        self.newCwd = self.transform.run(self.cwd)
 
-            # If (and only if) old version was valid, validate new version
-            # cwdVal is array of error messages or empty array
-            if (_validate):
-                self.cwdVals = cdr.valPair(self.session, self.cwd.type,
-                                           self.cwd.xml, self.newCwd)
+        # If (and only if) old version was valid, validate new version
+        # cwdVal is array of error messages or empty array
+        if (_validate):
+            self.cwdVals = cdr.valPair(self.session, self.cwd.type,
+                                       self.cwd.xml, self.newCwd)
 
         # If there is a last version
-        if _transformANY and lastAny > 0:
+        if lastAny > 0:
 
             # And it's not the same as the CWD
             if isChanged == 'Y':
@@ -268,6 +277,8 @@ class Doc:
                     raise Exception("Failure retrieving lastv (%d) "
                                     "for CDR%010d: %s" % (lastAny,
                                                        self.id, err))
+
+                # Transform
                 self.newLastv = self.transform.run(self.lastv)
                 if _validate:
                     self.lastvVals= cdr.valPair(self.session, self.lastv.type,
@@ -279,7 +290,7 @@ class Doc:
                 self.lastvVals = self.cwdVals
 
         # If there is a last publishable version
-        if _transformPUB and lastPub > 0:
+        if lastPub > 0:
 
             # If it's not the same as the last version
             if lastPub != lastAny:
@@ -291,6 +302,8 @@ class Doc:
                     raise Exception("Failure retrieving lastp (%d) "
                                     "for CDR%010d: %s" % (lastPub,
                                                        self.id, err))
+
+                # Transform
                 self.newLastp = self.transform.run(self.lastp)
                 if _validate:
                     # Original plan was to validate pub version even if
@@ -366,7 +379,7 @@ class Doc:
                 msg += "\n%s" % val
             job.log(msg)
 
-        if _testMode:
+        if _transformCWD and _testMode:
             # Write new/original CWDs
             cdrglblchg.writeDocs(_outputDir, docId,
                                  self.cwd.xml, self.newCwd, 'cwd',
@@ -375,27 +388,30 @@ class Doc:
         # If last version is not cwd, save cwd so it won't be lost
         if self.lastv and self.compare(self.cwd.xml, self.lastv.xml):
             # Don't save if test mode or validation failure
-            if not _testMode and not vals:
+            if _transformCWD and not _testMode and not vals:
                 # Save old CWD as new version
                 self.__saveDoc(str(self.cwd), ver='Y', pub='N', job=job,
                                val = (everValidated and 'Y' or 'N'),
                                logWarnings = False)
-            lastSavedXml = self.lastv.xml
+                lastSavedXml = self.lastv.xml
 
         # If publishable version changed ...
         if self.lastp and self.compare(self.lastp.xml, self.newLastp):
-            if _testMode:
+            if _transformPUB and _testMode:
                 # Write new/original last pub version
                 cdrglblchg.writeDocs(_outputDir, docId,
                                      self.lastp.xml, self.newLastp, 'pub',
                                      self.lastpVals)
             else:
-                self.lastp.xml = lastSavedXml = self.newLastp
+                self.lastp.xml = self.newLastp
                 # If not validating or passed validation,
                 #   save new last pub version
-                if not (vals and _haltOnErr):
+                # BUG!!! This might be only save of the current working doc!
+                # but we don't do it if not saving PUB.
+                if _transformPUB and not (vals and _haltOnErr):
                     self.__saveDoc(str(self.lastp), ver='Y', pub='Y', job=job,
                                    val = (everValidated and 'Y' or 'N'))
+                    lastSavedXml = self.newLastp
 
         #--------------------------------------------------------------
         # Note that in the very common case in which the last created
@@ -411,25 +427,30 @@ class Doc:
         # objects, and (equally important) it does the Right Thing.
         #--------------------------------------------------------------
         if self.lastv and self.compare(self.lastv.xml, self.newLastv):
-            if _testMode:
+            if _transformANY and _testMode:
                 # Write new/original last non-pub version results
                 cdrglblchg.writeDocs(_outputDir, docId,
                                      self.lastv.xml, self.newLastv, 'lastv',
                                      self.lastvVals)
             # Reflect the changes
-            self.lastv.xml = lastSavedXml = self.newLastv
+            self.lastv.xml = self.newLastv
 
             if not _testMode:
                 # Save new last non-pub version
-                if not (vals and _haltOnErr):
+                if _transformANY and not (vals and _haltOnErr):
                     self.__saveDoc(str(self.lastv), ver='Y', pub='N', job=job,
                                    val = (everValidated and 'Y' or 'N'))
+                    lastSavedXml = self.newLastv
 
-        if lastSavedXml and self.compare(self.newCwd, lastSavedXml):
+        # If no XML has been saved, or it has been saved but it's not
+        #   the same as the new current working document, then save
+        #   the new current working document
+        if not lastSavedXml or (lastSavedXml and
+                                self.compare(self.newCwd, lastSavedXml)):
             if not _testMode:
                 # Save new CWD
                 self.cwd.xml = self.newCwd
-                if not (vals and _haltOnErr):
+                if _transformCWD and not (vals and _haltOnErr):
                     self.__saveDoc(str(self.cwd), ver='N', pub='N', job=job,
                                    val = (everValidated and 'Y' or 'N'))
 
