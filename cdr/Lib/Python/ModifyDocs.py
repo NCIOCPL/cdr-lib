@@ -1,11 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.15 2006-12-08 02:44:20 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.16 2006-12-08 03:07:12 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.15  2006/12/08 02:44:20  ameyer
+# Last modifications to handle control over version saving were too simple.
+# This one tries to get it right.
+#
 # Revision 1.14  2006/12/06 04:51:29  ameyer
 # Added controls to allow a programmer to turn on or off processing of
 # specific version types, i.e., CWD, last version, or last published version.
@@ -442,11 +446,13 @@ class Doc:
                                    val = (everValidated and 'Y' or 'N'))
                     lastSavedXml = self.newLastv
 
-        # If no XML has been saved, or it has been saved but it's not
-        #   the same as the new current working document, then save
-        #   the new current working document
-        if not lastSavedXml or (lastSavedXml and
-                                self.compare(self.newCwd, lastSavedXml)):
+        # If no XML has been saved, and the new and old cwd are different
+        #   or
+        # If last XML saved is not the same as the new cwd
+        #   then
+        # Save the new current working document
+        if (not lastSavedXml and self.compare(self.newCwd, self.cwd.xml)) or \
+               (lastSavedXml and self.compare(self.newCwd, lastSavedXml)):
             if not _testMode:
                 # Save new CWD
                 self.cwd.xml = self.newCwd
