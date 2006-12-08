@@ -1,11 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.16 2006-12-08 03:07:12 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.17 2006-12-08 03:31:56 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.16  2006/12/08 03:07:12  ameyer
+# Once more into the breach with version controlled transformations.
+# This is a surprisingly complicated program.
+#
 # Revision 1.15  2006/12/08 02:44:20  ameyer
 # Last modifications to handle control over version saving were too simple.
 # This one tries to get it right.
@@ -87,7 +91,6 @@ _validate  = False  # True=Check that change didn't invalidate valid doc
 _haltOnErr = False  # True=Don't save any doc if change invalidate a version
 
 # Controls for which versions are transformed, with defaults
-_transformCWD = True    # Transform current working document
 _transformANY = True    # Last version of any kind
 _transformPUB = True    # Last publishable version
 
@@ -99,11 +102,17 @@ _transformPUB = True    # Last publishable version
 # in which one version can move through to become a new version of a
 # different type.  We allow ALL of that to happen without interference
 # and just gate the outputs.
+#
+# There is no _transformCWD or setTransformCWD().
+# It isn't possible to save a verwion without overwriting the current
+# working document.  Therefore the program ALWAYS modifies the current
+# working document.  Only the last version and/or last publishable
+# version can be blocked from change.
+#
+# Note however that a change to the CWD will always create a new last,
+# non-publishable version.  That is by design to avoid complete
+# obliteration of the previous CWD.
 #----------------------------------------------------------------------
-def setTransformCWD(setting):
-    global _transformCWD
-    _transformCWD = setting
-
 def setTransformANY(setting):
     global _transformANY
     _transformANY = setting
@@ -236,7 +245,6 @@ class Doc:
     #------------------------------------------------------------------
     def loadAndTransform(self):
 
-        global _transformCWD
         global _transformANY
         global _transformPUB
 
@@ -383,7 +391,7 @@ class Doc:
                 msg += "\n%s" % val
             job.log(msg)
 
-        if _transformCWD and _testMode:
+        if _testMode:
             # Write new/original CWDs
             cdrglblchg.writeDocs(_outputDir, docId,
                                  self.cwd.xml, self.newCwd, 'cwd',
@@ -392,7 +400,7 @@ class Doc:
         # If last version is not cwd, save cwd so it won't be lost
         if self.lastv and self.compare(self.cwd.xml, self.lastv.xml):
             # Don't save if test mode or validation failure
-            if _transformCWD and not _testMode and not vals:
+            if not _testMode and not vals:
                 # Save old CWD as new version
                 self.__saveDoc(str(self.cwd), ver='Y', pub='N', job=job,
                                val = (everValidated and 'Y' or 'N'),
@@ -410,8 +418,6 @@ class Doc:
                 self.lastp.xml = self.newLastp
                 # If not validating or passed validation,
                 #   save new last pub version
-                # BUG!!! This might be only save of the current working doc!
-                # but we don't do it if not saving PUB.
                 if _transformPUB and not (vals and _haltOnErr):
                     self.__saveDoc(str(self.lastp), ver='Y', pub='Y', job=job,
                                    val = (everValidated and 'Y' or 'N'))
@@ -456,7 +462,7 @@ class Doc:
             if not _testMode:
                 # Save new CWD
                 self.cwd.xml = self.newCwd
-                if _transformCWD and not (vals and _haltOnErr):
+                if not (vals and _haltOnErr):
                     self.__saveDoc(str(self.cwd), ver='N', pub='N', job=job,
                                    val = (everValidated and 'Y' or 'N'))
 
