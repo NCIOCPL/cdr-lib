@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.31 2006-05-23 17:36:00 bkline Exp $
+# $Id: CdrLongReports.py,v 1.32 2006-12-12 14:11:20 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.31  2006/05/23 17:36:00  bkline
+# Corrected "HELD" to "HOLD" in Processing Status Report for Protocols.
+#
 # Revision 1.30  2006/05/18 21:14:16  bkline
 # Enhancements to Protocol Processing report and to testing invocation
 # support.
@@ -465,6 +468,7 @@ class Protocol:
         self.origTitle  = ""
         self.phases     = []
         self.objectives = None
+        self.hasOutcome = False
         profTitle       = ""
         patientTitle    = ""
         originalTitle   = ""
@@ -526,6 +530,8 @@ class Protocol:
                         for o in grandchild.childNodes:
                             if o.nodeName == "Objectives":
                                 self.objectives = Objectives(o)
+                            elif o.nodeName == "Outcome":
+                                self.hasOutcome = True
         if profTitle:
             self.title = profTitle
         elif originalTitle:
@@ -596,10 +602,43 @@ class Protocol:
 #----------------------------------------------------------------------
 # Create a report for compliance with ICMJE requirements.
 #----------------------------------------------------------------------
-def outcomeMeasuresCodingReport(job, idsAndTitleName = None):
+def outcomeMeasuresCodingReport(job):
 
-    idsAndTitle = idsAndTitleName and file(idsAndTitleName, 'wb') or None
-    start = time.time()
+    #------------------------------------------------------------------
+    # Object to hold just enough information to be able to sort and
+    # count before assembling the report.
+    #------------------------------------------------------------------
+    class ProtocolRow:
+        def __init__(self, p):
+            sp        = u"&nbsp;"
+            phases    = p.phases[:]
+            phases.sort()
+            phase     = u", ".join(phases)
+            title     = p.title
+            stat      = p.statuses and p.statuses[-1] or None
+            status    = stat and stat.name or sp
+            statDate  = stat and stat.startDate or sp
+            obj       = p.objectives and p.objectives.toHtml() or sp
+            self.key  = (phase, p.id)
+            self.html = u"""\
+  <!-- key: %s -->
+  <tr>
+   <td class='c'>%d</td>
+   <td class='c'>%s</td>
+   <td class='c'>%s</td>
+   <td class='c'>%s</td>
+   <td class='c'>%s</td>
+  </tr>
+  <tr>
+   <td colspan='5' class='o'>%s</td>
+  </tr>""" % (self.key, p.id, phase, title, status, statDate, obj)
+        def __cmp__(self, other):
+            return cmp(self.key, other.key)
+
+    idsAndTitleName = job.getParm('ids-and-title')
+    idsAndTitle     = idsAndTitleName and file(idsAndTitleName, 'wb') or None
+    onlyMissing     = job.getParm('only-missing') == 'Y'
+    start           = time.time()
     try:
         conn = cdrdb.connect('CdrGuest')
         cursor = conn.cursor()
@@ -621,15 +660,55 @@ def outcomeMeasuresCodingReport(job, idsAndTitleName = None):
     #------------------------------------------------------------------
     # Process all candidate protocols.
     #------------------------------------------------------------------
-    done = 0
+    done      = 0
     startDate = "2005-07-01"
     endDate   = "3000-01-01"
-    report    = [u"""\
+    protocols = []
+    for row in rows:
+        cursor.execute("""\
+            SELECT xml
+              FROM doc_version
+             WHERE id = ?
+               AND num = ?""", (row[0], row[1]))
+        docXml = cursor.fetchone()[0]
+        dom = xml.dom.minidom.parseString(docXml.encode('utf-8'))
+        prot = Protocol(row[0], dom.documentElement, True)
+        if prot.wasActive(startDate, endDate):
+
+            # Added for request #2513.
+            if not (onlyMissing and prot.hasOutcome):
+                protocols.append(ProtocolRow(prot))
+
+        if idsAndTitle:
+            line = u"%d\t%s\t%s" % (prot.id, prot.firstId, prot.origTitle)
+            line = line.replace(u"\n", u" ").replace(u"\r", u"") + u"\r\n"
+            idsAndTitle.write(line.encode('utf-8'))
+        done += 1
+        #if done > 1000:
+        #    break
+        now = time.time()
+        timer = getElapsed(start, now)
+        msg = "Processed %d of %d protocols; elapsed: %s" % (done,
+                                                             len(rows),
+                                                             timer)
+        job.setProgressMsg(msg)
+        cdr.logwrite(msg, LOGFILE)
+
+    if idsAndTitle:
+        idsAndTitle.close()
+
+    #------------------------------------------------------------------
+    # Put together the report, sorting by phase then by CDR ID.
+    #------------------------------------------------------------------
+    protocols.sort()
+    report = [u"""\
 <html>
  <head>
+  <meta http-equiv='Content-Type' content='text/html; charset=utf-8' />
   <title>Outcome Measures Coding Report</title>
   <style type='text/css'>
    h1               { font-size: 16pt; }
+   h2               { font-size: 14pt; }
    .c               { color: blue; }
    .o               { color: maroon; }
     body            { font-family: sans-serif; }
@@ -680,6 +759,7 @@ def outcomeMeasuresCodingReport(job, idsAndTitleName = None):
  </head>
  <body>
  <h1>Outcome Measures Coding Report</h1>
+ <h2>(Total: %d trials)</h2>
  <table border='1' cellpadding='2' cellspacing='0'>
   <tr>
    <th>CDRID</th>
@@ -687,58 +767,11 @@ def outcomeMeasuresCodingReport(job, idsAndTitleName = None):
    <th>Health Professional Title</th>
    <th>Current Status</th>
    <th>Status Date</th>
-  </tr>"""]
-    #objCount = 0
-    for row in rows:
-        cursor.execute("""\
-            SELECT xml
-              FROM doc_version
-             WHERE id = ?
-               AND num = ?""", (row[0], row[1]))
-        docXml = cursor.fetchone()[0]
-        dom = xml.dom.minidom.parseString(docXml.encode('utf-8'))
-        prot = Protocol(row[0], dom.documentElement, True)
-        if prot.wasActive(startDate, endDate):
-            sp       = u"&nbsp;"
-            phase    = u", ".join(prot.phases)
-            title    = prot.title
-            stat     = prot.statuses and prot.statuses[-1] or None
-            status   = stat and stat.name or sp
-            statDate = stat and stat.startDate or sp
-            obj      = prot.objectives and prot.objectives.toHtml() or sp
-            report.append(u"""\
-  <tr>
-   <td class='c'>%d</td>
-   <td class='c'>%s</td>
-   <td class='c'>%s</td>
-   <td class='c'>%s</td>
-   <td class='c'>%s</td>
-  </tr>
-  <tr>
-   <td colspan='5' class='o'>%s</td>
-  </tr>""" % (row[0], phase, title, status, statDate, obj))
-            #if prot.objectives:
-            #    objCount += 1
-            #    if objCount > 10:
-            #        break
-            if idsAndTitle:
-                line = u"%d\t%s\t%s" % (prot.id, prot.firstId, prot.origTitle)
-                line = line.replace(u"\n", u" ").replace(u"\r", u"") + u"\r\n"
-                idsAndTitle.write(line.encode('utf-8'))
-        done += 1
-        #if done > 1000:
-        #    break
-        now = time.time()
-        timer = getElapsed(start, now)
-        msg = "Processed %d of %d protocols; elapsed: %s" % (done,
-                                                             len(rows),
-                                                             timer)
-        job.setProgressMsg(msg)
-        cdr.logwrite(msg, LOGFILE)
+  </tr>""" % len(protocols)]
+    for p in protocols:
+        report.append(p.html)
 
     # Save the report.
-    if idsAndTitle:
-        idsAndTitle.close()
     name = "/OutcomeMeasuresCodingReport-Job%d.html" % job.getJobId()
     fullname = REPORTS_BASE + name
     #fullname = name
@@ -2925,10 +2958,10 @@ class SpanishGlossaryTermsByStatus:
    <span class='t1'>Spanish Glossary Terms by Status</span>
    <br />
    <br />
-   <span class='t2'>%s Terms<br />From %s to %s</span>
+   <span class='t2'>%s Terms<br />From %s to %s<br />Total: %d</span>
   </center>
   <table border='1' cellspacing='0' cellpadding='2' width='100%%'>
-""" % (self.status, self.start, self.end)]
+""" % (self.status, self.start, self.end, len(terms))]
 
         if self.status.upper() == 'TRANSLATION REVISION PENDING':
             html.append(u"""\
@@ -2940,6 +2973,7 @@ class SpanishGlossaryTermsByStatus:
     <th>Pending Spanish Translation Revision</th>
     <th>Translation Resource</th>
     <th>Status Date</th>
+    <th>Comment</th>
    </tr>
 """)
         else:
@@ -2952,6 +2986,7 @@ class SpanishGlossaryTermsByStatus:
     <th>Spanish Translation</th>
     <th>Translation Resource</th>
     <th>Status Date</th>
+    <th>Comment</th>
    </tr>
 """)
 
@@ -2961,7 +2996,10 @@ class SpanishGlossaryTermsByStatus:
             spanishDefs = []
             resources   = []
             statusDates = []
+            comments    = []
             for definition in term.spanishDefinitions:
+                if definition.comment:
+                    comments.append(definition.comment)
                 if definition.text:
                     spanishDefs.append(definition.text)
                 if definition.translationResource:
@@ -2977,6 +3015,7 @@ class SpanishGlossaryTermsByStatus:
     <td>%s</td>
     <td>%s</td>
     <td>%s</td>
+    <td>%s</td>
    </tr>
 """ % (term.id,
        term.name or u"&nbsp;",
@@ -2984,7 +3023,8 @@ class SpanishGlossaryTermsByStatus:
        englishDefs and "; ".join(englishDefs) or u"&nbsp;",
        spanishDefs and "; ".join(spanishDefs) or u"&nbsp;",
        resources   and "; ".join(resources)   or u"&nbsp;",
-       statusDates and "; ".join(statusDates) or u"&nbsp;"))
+       statusDates and "; ".join(statusDates) or u"&nbsp;",
+       comments    and "; ".join(comments)    or u"&nbsp;"))
         html.append(u"""\
   </table>
  </body>
@@ -3091,6 +3131,7 @@ The report you requested on Spanish Glossary Terms by Status can be viewed at:
                 self.text = None
                 self.status = None
                 self.statusDate = None
+                self.comment = None
                 self.translationResource = None
                 for child in node.getElementsByTagName('DefinitionText'):
                     self.text = gnc(child)
@@ -3101,6 +3142,10 @@ The report you requested on Spanish Glossary Terms by Status can be viewed at:
                         self.status = gnc(e)
                     for e in node.getElementsByTagName('StatusDate'):
                         self.statusDate = gnc(e)
+                    for e in node.getElementsByTagName('Comment'):
+                        comment = cdr.getTextContent(e).strip()
+                        if comment:
+                            self.comment = xml.sax.saxutils.escape(comment)
 
 #----------------------------------------------------------------------
 # Run a report of dead URLs.
@@ -3181,6 +3226,8 @@ if __name__ == "__main__":
     # and optional name=value parameters for the job.  If the value (or the
     # name, for that matter) has a space embedded in it, enclose the entire
     # "name=value with spaces" argument in quotes.
+    # So, if you want to perform a test invocation, append a dummy job ID
+    # to the end of these arguments so it can be popped above.
     if len(sys.argv) > 1:  
         reportName = sys.argv[1]
         email      = len(sys.argv) > 2 and sys.argv[2] or None
@@ -3195,9 +3242,8 @@ if __name__ == "__main__":
         # This version produces separate file used for web-based Trial Outcome
         # update service.
         if reportName == 'OutcomeMeasuresCodingReport':
-            filename = parms and parms[0] or None
-            testJob  = TestJob(jobId, email, [])
-            outcomeMeasuresCodingReport(testJob, filename)
+            testJob  = TestJob(jobId, email, parms)
+            outcomeMeasuresCodingReport(testJob)
             sys.exit(0)
 
         # Test invocation of Protocol Processing Status Report.
