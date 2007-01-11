@@ -1,10 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.21 2006-06-14 12:50:36 bkline Exp $
+# $Id: cdr2cg.py,v 1.22 2007-01-11 16:39:48 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.21  2006/06/14 12:50:36  bkline
+# Chen changed the interface to send back n/m as docCount element,
+# where n is the total number of packets received, and m is the
+# highest document sequence number received.  Modified the parser
+# to extract these numbers when present in the PubEventResponse.
+#
 # Revision 1.20  2006/06/08 14:08:45  bkline
 # Modifications to support enhancements to GateKeeper for more frequent
 # publishing.
@@ -407,6 +413,9 @@ def logString(type, str):
 
 def sendRequest(body, app = application, host = host, headers = headers):
 
+    # At one time it was tricky finding out where the requests were going.
+    logString("REQUEST", "sending request to %s" % host)
+    
     # Defensive programming.
     tries = 3
     response = None
@@ -460,16 +469,18 @@ def initiateRequest(jobDesc, pubType, lastJobId):
     xmlString = sendRequest(initRequestTemplate % (source,
                                                    pubType,
                                                    jobDesc,
-                                                   lastJobId))
+                                                   lastJobId),
+                            host = host)
     return Response(xmlString)
     
 def sendDataProlog(jobDesc, jobId, pubType, lastJobId, docCount):
-    xmlString = sendRequest(dataPrologTemplate % (source,                                                  
-                                                  jobId, 
+    xmlString = sendRequest(dataPrologTemplate % (source,
+                                                  jobId,
                                                   pubType,
                                                   jobDesc,
                                                   lastJobId,
-                                                  docCount))
+                                                  docCount),
+                            host = host)
     return Response(xmlString)
 
 def sendDocument(jobId, docNum, transType, docType, docId, docVer, doc = ""): 
@@ -480,12 +491,13 @@ def sendDocument(jobId, docNum, transType, docType, docId, docVer, doc = ""):
     req = req.encode('utf-8') + doc   
     req += docTemplateTail.encode('utf-8') 
    
-    xmlString = sendRequest(req)
+    xmlString = sendRequest(req, host = host)
    
     return Response(xmlString)
 
 def sendJobComplete(jobId, pubType):
-    response = sendRequest(jobCompleteTemplate % (source, jobId, pubType))
+    response = sendRequest(jobCompleteTemplate % (source, jobId, pubType),
+                           host = host)
     return Response(response)
 
 def pubPreview(xml, typ):
