@@ -1,11 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.18 2007-01-10 05:50:37 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.19 2007-01-16 19:06:20 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.18  2007/01/10 05:50:37  ameyer
+# Significant further revisions to the way versions are handled in order
+# to get right versioning in right order.
+# Also added additional logging, tracking, and debugging controls.
+#
 # Revision 1.17  2006/12/08 03:31:56  ameyer
 # And once more.  I removed the _transformCWD and setter for it.  The CWD
 # will always be modified if any version is modified, so there's no point in
@@ -81,14 +86,23 @@ import cdr, cdrdb, cdrglblchg, sys, time, re, copy
 LOGFILE = 'd:/cdr/log/ModifyDocs.log'
 ERRPATT = re.compile(r"<Err>(.*?)</Err>", re.DOTALL)
 
-# If True, any exception on transformation or save halts processing
-# Else we log the error and continue
-DEBUG   = True
-
 #----------------------------------------------------------------------
 # Custom exception indicating that we can't check out a document.
 #----------------------------------------------------------------------
 class DocumentLocked(Exception): pass
+
+
+#----------------------------------------------------------------------
+# Error controls
+# If global _errCount > _maxErrors, halt processing
+#----------------------------------------------------------------------
+_maxErrors = 0
+_errCount  = 0
+
+# Caller can alter this
+def setMaxErrors(maxErrs):
+    global _errCount
+    _errCount = maxErrs
 
 #----------------------------------------------------------------------
 # Module level variables (statics)
@@ -248,6 +262,8 @@ class Job:
     # then call self.run().
     #------------------------------------------------------------------
     def run(self):
+        global _errCount, _maxErrors
+
         # In test mode, create output directory for files
         if _testMode:
             self.createOutputDir()
@@ -265,9 +281,13 @@ class Job:
                 self.log("Processing CDR%010d" % docId)
                 doc = Doc(docId, self.session, self.transform, self.comment)
                 doc.saveChanges(self)
+            except DocumentLocked, info:
+                # Log it, but always continue
+                self.log("Document %d: %s" % (docId, str(info)))
             except Exception, info:
                 self.log("Document %d: %s" % (docId, str(info)))
-                if DEBUG:
+                _errCount += 1
+                if _errCount > _maxErrors:
                     raise
             cdr.unlock(self.session, "CDR%010d" % docId)
             self.addDocsProcessed()
