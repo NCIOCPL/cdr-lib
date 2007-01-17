@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.59 2006-05-31 19:44:50 venglisc Exp $
+# $Id: cdrcgi.py,v 1.60 2007-01-17 19:49:38 venglisc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.59  2006/05/31 19:44:50  venglisc
+# Replaced string CIPS with OCCM.
+#
 # Revision 1.58  2006/05/31 00:12:25  ameyer
 # Added " type='text/css'" to HEADER HTML.
 #
@@ -443,6 +446,7 @@ def mainMenu(session, news = None):
         ('BoardManagers.py', 'OCCM Board Managers'             ),
         ('CiatCipsStaff.py', 'CIAT/OCCM Staff'                 ),
         ('DevSA.py',         'Developers/System Administrators'),
+        ('AdvancedSearch.py', 'Guest User'                     ),
         ('Logout.py',        'Log Out'                         )
         ):
         menu += """\
