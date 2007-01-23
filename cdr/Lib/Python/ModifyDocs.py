@@ -1,11 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.19 2007-01-16 19:06:20 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.20 2007-01-23 19:02:15 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.19  2007/01/16 19:06:20  ameyer
+# Added separate exception catcher for DocumentLocked exception - no abort.
+# Replaced yes/no DEBUG flag with error counter and error max.
+#
 # Revision 1.18  2007/01/10 05:50:37  ameyer
 # Significant further revisions to the way versions are handled in order
 # to get right versioning in right order.
@@ -312,8 +316,9 @@ class Job:
    Docs processed = %d
    Docs saved     = %d
    Versions saved = %d
+   Errors         = %d
  %s""" % (self._countDocsProcessed, self._countDocsSaved,
-          self._countVersionsSaved, msgReport))
+          self._countVersionsSaved, _errCount, msgReport))
 
 
     #------------------------------------------------------------------
