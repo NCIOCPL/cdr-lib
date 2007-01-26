@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.131 2006-11-07 21:06:00 ameyer Exp $
+# $Id: cdr.py,v 1.132 2007-01-26 04:08:24 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.131  2006/11/07 21:06:00  ameyer
+# Added exception handling to sendCommands to try to recover from connect errors.
+#
 # Revision 1.130  2006/10/25 16:04:38  bkline
 # Fixed typo in new Exception class.
 #
@@ -3446,8 +3449,8 @@ class Log:
     logfile.
     """
 
-    _DEFAULT_BANNER = "=== Opening Log ==="
-    _DEFAULT_CLOSER = "=== Closing Log ==="
+    _DEFAULT_BANNER = "=========== Opening Log ==========="
+    _DEFAULT_CLOSER = "=========== Closing Log ==========="
 
     def __init__(self, filename,
                  dirname=DEFAULT_LOGDIR, banner=_DEFAULT_BANNER,
@@ -3483,30 +3486,33 @@ class Log:
         self.__filename = dirname + '/' + filename
         self.__fp = open(self.__filename, "a", 0)
 
-        # If there's a banner, write it with stamps
-        if banner:
-            self.write(banner, level)
-
         # Save parms
         self.__banner  = banner
         self.__logTime = logTime
         self.__logPID  = logPID
         self.__level   = level
 
-    def write(self, msgs, level=DEFAULT_LOGLVL, tback=False):
+        # If there's a banner, write it with stamps
+        if banner:
+            self.writeRaw("%s\n%s\n" % (banner, time.ctime()), level)
+
+    def write(self, msgs, level=DEFAULT_LOGLVL, tback=False,
+              stdout=False, stderr=False):
         """
         Writes msg(s) to log file.
         Flushes after each write but does not close the file.
 
         Pass:
-            msgs  - If type=string, write single message with
-                    newline.
-                  - If type=sequence, write each sequence in
-                    string with newline (assuming raw = False).
-            level - See __init__().
-            tback - Write latest traceback object.
-                    Use this when writing from an exception
-                    handler if desired.
+            msgs   - If type=string, write single message with
+                     newline.
+                   - If type=sequence, write each sequence in
+                     string with newline (assuming raw = False).
+            level  - See __init__().
+            tback  - Write latest traceback object.
+                     Use this when writing from an exception
+                     handler if desired.
+            stdout - True=Also write to stdout.
+            stderr - True=Also write to stderr.
         """
         # No write if level too high
         if level > self.__level:
@@ -3525,11 +3531,19 @@ class Log:
                     msg = msg.encode ('utf-8')
                 self.__fp.write(msg)
                 self.__fp.write("\n")
+                if stdout:
+                    print(msg)
+                if stderr:
+                    sys.stderr.write(msg)
         else:
             if (type(msgs)) == type(u""):
                 msgs = msgs.encode('utf-8')
             self.__fp.write(msgs)
             self.__fp.write("\n")
+            if stdout:
+                print(msgs)
+            if stderr:
+                sys.stderr.write(msgs)
 
         # If traceback is requested, include the last one
         if tback:
@@ -3566,7 +3580,8 @@ class Log:
             self.__logTime  = True
             self.__logPID   = True
             self.__level    = DEFAULT_LOGLVL
-            self.write("=== Closing Log ===")
+            self.writeRaw("\n%s\n" % time.ctime())
+            self.writeRaw("=========== Closing Log ===========\n\n")
 
         self.__fp.close()
 #----------------------------------------------------------------------
