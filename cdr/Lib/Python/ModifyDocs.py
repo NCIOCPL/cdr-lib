@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.20 2007-01-23 19:02:15 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.21 2007-02-01 16:00:52 bkline Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.20  2007/01/23 19:02:15  ameyer
+# Added error count to final report.
+#
 # Revision 1.19  2007/01/16 19:06:20  ameyer
 # Added separate exception catcher for DocumentLocked exception - no abort.
 # Replaced yes/no DEBUG flag with error counter and error max.
@@ -121,6 +124,22 @@ _haltOnErr = False  # True=Don't save any doc if change invalidate a version
 #----------------------------------------------------------------------
 class Job:
 
+    #------------------------------------------------------------------
+    # Nested class for job control information.
+    #------------------------------------------------------------------
+    class Control:
+        def __init__(self, transformANY = True, transformPUB = True,
+                     maxDocs = 9999999):
+            self.__transformANY = transformANY
+            self.__transformPUB = transformPUB
+            self.__maxDocs      = maxDocs
+        def __getTransformANY(self): return self.__transformANY
+        def __getTransformPUB(self): return self.__transformPUB
+        def __getMaxDocs     (self): return self.__maxDocs
+        transformANY = property(__getTransformANY)
+        transformPUB = property(__getTransformPUB)
+        maxDocs      = property(__getMaxDocs)
+
     def __init__(self, uid, pwd, filter, transform, comment, testMode=True,
                  logFile=LOGFILE, validate=False, haltOnValErr=False):
         """
@@ -164,25 +183,22 @@ class Job:
         _haltOnErr     = haltOnValErr
 
         # Controls for which versions are transformed, with defaults
-        self._transformANY = True   # Last version of any kind
-        self._transformPUB = True   # Last publishable version
+        self.__transformANY = True   # Last version of any kind
+        self.__transformPUB = True   # Last publishable version
 
         # Max docs to process, call setMaxDocs to use a lower number for
         #   debugging or to prevent runaways
-        self._maxDocs = 9999999
+        self.__maxDocs = 9999999
 
         # Statistics
-        self._countDocsProcessed = 0
-        self._countDocsSaved     = 0
-        self._countVersionsSaved = 0
+        self.__countDocsProcessed = 0
+        self.__countDocsSaved     = 0
+        self.__countVersionsSaved = 0
 
         # Counters for different types of saves
         # Key = message passed to Doc.__saveDoc, e.g., " new pub"
         # Value = count of versions saved with that message
-        self._countMsgs = {}
-
-        # Last id processed, tells Doc.saveDoc if it's on a new doc or not
-        self._lastDocIdSaved = 0
+        self.__countMsgs = {}
 
     def createOutputDir(self):
         global _outputDir
@@ -211,53 +227,16 @@ class Job:
     # obliteration of the previous CWD.
     #------------------------------------------------------------------
     def setTransformANY(self, setting):
-        self._transformANY = setting
+        self.__transformANY = setting
 
     def setTransformPUB(self, setting):
-        self._transformPUB = setting
+        self.__transformPUB = setting
 
     #------------------------------------------------------------------
     # Limit processing to no more than this number of docs
     #------------------------------------------------------------------
     def setMaxDocs(self, maxDocs):
-        self._maxDocs = maxDocs
-
-    #------------------------------------------------------------------
-    # Increment counters
-    #------------------------------------------------------------------
-    def addDocsProcessed(self):
-        """
-        Total documents processed.
-        """
-        self._countDocsProcessed += 1
-
-    def addDocsSaved(self, docId):
-        """
-        Total documents for which at least one save occurred.
-        """
-        # Only add to count if the id is different from last one
-        if docId != self._lastDocIdSaved:
-            self._countDocsSaved += 1
-
-    def addVersionsSaved(self):
-        """
-        Total document versions saved.
-        """
-        self._countVersionsSaved += 1
-
-    def addVersionMsg(self, msg):
-        """
-        Total saves for each message set in Doc.__saveDoc().
-        """
-        if not self._countMsgs.has_key(msg):
-            self._countMsgs[msg] = 0
-        self._countMsgs[msg] += 1
-
-    #------------------------------------------------------------------
-    # Set the CDR ID of the document we have just completed.
-    #------------------------------------------------------------------
-    def setLastDocIdSaved(self, docId):
-        self._lastDocIdSaved = docId
+        self.__maxDocs = maxDocs
 
     #------------------------------------------------------------------
     # Run a transformation.
@@ -280,11 +259,20 @@ class Job:
                                                            self.comment))
 
         # Change all docs
+        jobControl = Job.Control(transformANY = self.__transformANY,
+                                 transformPUB = self.__transformPUB,
+                                 maxDocs      = self.__maxDocs)
+        logger = self
         for docId in ids:
             try:
                 self.log("Processing CDR%010d" % docId)
                 doc = Doc(docId, self.session, self.transform, self.comment)
-                doc.saveChanges(self)
+                doc.saveChanges(self.cursor, logger, jobControl)
+                self.__countVersionsSaved += len(doc.versionMessages)
+                if doc.versionMessages:
+                    self.__countDocsSaved += 1
+                for msg in doc.versionMessages:
+                    self.__countMsgs[msg] = self.__countMsgs.get(msg, 0) + 1
             except DocumentLocked, info:
                 # Log it, but always continue
                 self.log("Document %d: %s" % (docId, str(info)))
@@ -294,21 +282,21 @@ class Job:
                 if _errCount > _maxErrors:
                     raise
             cdr.unlock(self.session, "CDR%010d" % docId)
-            self.addDocsProcessed()
-            if self._countDocsProcessed >= self._maxDocs:
+            self.__countDocsProcessed += 1
+            if self.__countDocsProcessed >= self.__maxDocs:
                 self.log(
                   "Halting processing after reaching MAXDOCS limit of %d docs"
-                  % self._maxDocs)
+                  % self.__maxDocs)
                 break
 
         # Cumulate results
-        msgKeys = self._countMsgs.keys()
+        msgKeys = self.__countMsgs.keys()
         msgKeys.sort()
-        msgReport = ""
+        msgReport = []
         if msgKeys:
-            msgReport = "Specific versions saved:\n"
+            msgReport = ["Specific versions saved:\n"]
             for msg in msgKeys:
-                msgReport += "  %s = %d\n" % (msg, self._countMsgs[msg])
+                msgReport.append("  %s = %d\n" % (msg, self.__countMsgs[msg]))
 
         # Report results
         self.log(
@@ -317,8 +305,8 @@ class Job:
    Docs saved     = %d
    Versions saved = %d
    Errors         = %d
- %s""" % (self._countDocsProcessed, self._countDocsSaved,
-          self._countVersionsSaved, _errCount, msgReport))
+ %s""" % (self.__countDocsProcessed, self.__countDocsSaved,
+          self.__countVersionsSaved, _errCount, "".join(msgReport)))
 
 
     #------------------------------------------------------------------
@@ -347,17 +335,43 @@ class Job:
 # Class for a CDR document.
 #----------------------------------------------------------------------
 class Doc:
+
     def __init__(self, id, session, transform, comment):
-        self.id        = id
-        self.session   = session
-        self.transform = transform
-        self.comment   = comment
-        self.versions  = cdr.lastVersions('guest', "CDR%010d" % id)
+        self.id         = id
+        self.session    = session
+        self.transform  = transform
+        self.comment    = comment
+        self.versions   = cdr.lastVersions('guest', "CDR%010d" % id)
+        self.__messages = []
         self.loadAndTransform()
 
         global _testMode
         global _validate
         global _haltOnErr
+
+    #------------------------------------------------------------------
+    # Class to expose read-only access to messages used to describe
+    # versions of the document being saved, without the overhead of
+    # cloning the list each time it's accessed.
+    #------------------------------------------------------------------
+    class VersionMessages:
+        def __init__(self, messages):
+            self.__i = 0
+            self.__m = messages
+        def __iter__(self):
+            return self
+        def next(self):
+            if self.__i >= len(self.__m):
+                raise StopIteration
+            self.__i += 1
+            return self.__m[self.__i - 1]
+        def __nonzero__(self):
+            return len(self.__m) > 0
+        def __len__(self):
+            return len(self.__m)
+    def __getVersionMessages(self):
+        return Doc.VersionMessages(self.__messages)
+    versionMessages = property(__getVersionMessages)
 
     #------------------------------------------------------------------
     # Uses xml comparator from cdr module.
@@ -385,8 +399,8 @@ class Doc:
         (lastAny, lastPub, changedYN) = self.versions
 
         # Checkout current working document to get doc and lock
-        self.cwd = cdr.getDoc(self.session, self.id, 'Y', getObject = 1)
-        if type(self.cwd) in (type(""), type(u"")):
+        self.cwd = cdr.getDoc(self.session, self.id, 'Y', getObject = True)
+        if type(self.cwd) in (str, unicode):
             err = cdr.checkErr(self.cwd) or self.cwd
             raise DocumentLocked("Unable to check out CWD for CDR%010d: %s" %
                                  (self.id, err))
@@ -475,10 +489,25 @@ class Doc:
                 self.lastpVals = self.lastvVals
 
 
-    def saveChanges(self, job):
+    class DummyLogger:
+        """
+        Used as default logger object by the saveChanges() method of the
+        Doc class.  Does nothing.
+        """
+        def log(): pass
+
+    def saveChanges(self, cursor, logger = DummyLogger(), 
+                    jobControl = Job.Control()):
         """
         In run mode, saves all versions of a document needing to be saved.
         In test mode, writes to output files, leaving the database alone.
+
+        Parameters:
+
+            cursor     - cursor for connection to CDR database
+            logger     - object with a single log() method, taking a
+                         string to be logged (without trailing newline)
+            jobControl - object with settings for job processing logic
 
         Uses the following logic:
 
@@ -513,8 +542,7 @@ class Doc:
 
         lastSavedXml  = None
         docId         = self.cwd.id
-        everValidated = self.lastp and True or self.__everValidated(job.cursor)
-        #job.log("everValidated = %s" % everValidated)
+        everValidated = self.lastp and True or self.__everValidated(cursor)
 
         # If change made a valid doc invalid, report it to console & log
         # Note this only happens if _validate caused one of the Vals
@@ -532,7 +560,7 @@ class Doc:
             # Just appending one set of messages, others should be similar
             for val in vals:
                 msg += "\n%s" % val
-            job.log(msg)
+            logger.log(msg)
 
         if _testMode:
             # Write new/original CWDs
@@ -542,7 +570,7 @@ class Doc:
 
         # If publishable version changed ...
         if self.lastp and self.compare(self.lastp.xml, self.newLastp):
-            if job._transformPUB and _testMode:
+            if jobControl.transformPUB and _testMode:
                 # Write new/original last pub version
                 cdrglblchg.writeDocs(_outputDir, docId,
                                      self.lastp.xml, self.newLastp, 'pub',
@@ -551,8 +579,9 @@ class Doc:
                 self.lastp.xml = self.newLastp
                 # If not validating or passed validation,
                 #   save new last pub version
-                if job._transformPUB and not (vals and _haltOnErr):
-                    self.__saveDoc(str(self.lastp), ver='Y', pub='Y', job=job,
+                if jobControl.transformPUB and not (vals and _haltOnErr):
+                    self.__saveDoc(str(self.lastp), ver='Y', pub='Y',
+                                   logger=logger,
                                    val=(everValidated and 'Y' or 'N'),
                                    msg=' new pub')
                     lastSavedXml = self.newLastp
@@ -571,7 +600,7 @@ class Doc:
         # objects, and (equally important) it does the Right Thing.
         #--------------------------------------------------------------
         if self.lastv and self.compare(self.lastv.xml, self.newLastv):
-            if job._transformANY and _testMode:
+            if jobControl.transformANY and _testMode:
                 # Write new/original last non-pub version results
                 cdrglblchg.writeDocs(_outputDir, docId,
                                      self.lastv.xml, self.newLastv, 'lastv',
@@ -581,8 +610,9 @@ class Doc:
 
             if not _testMode:
                 # Save new last non-pub version
-                if job._transformANY and not (vals and _haltOnErr):
-                    self.__saveDoc(str(self.lastv), ver='Y', pub='N', job=job,
+                if jobControl.transformANY and not (vals and _haltOnErr):
+                    self.__saveDoc(str(self.lastv), ver='Y', pub='N',
+                                   logger=logger,
                                    val=(everValidated and 'Y' or 'N'),
                                    msg=' new ver')
                     lastSavedXml = self.newLastv
@@ -592,13 +622,14 @@ class Doc:
         # If last XML saved is not the same as the new cwd
         #   then
         # Save the new current working document
-        if (not lastSavedXml and self.compare(self.newCwd, self.cwd.xml)) or \
-               (lastSavedXml and self.compare(self.newCwd, lastSavedXml)):
+        if ((not lastSavedXml and self.compare(self.newCwd, self.cwd.xml)) or
+                (lastSavedXml and self.compare(self.newCwd, lastSavedXml))):
             if not _testMode:
                 # Save new CWD
                 self.cwd.xml = self.newCwd
                 if not (vals and _haltOnErr):
-                    self.__saveDoc(str(self.cwd), ver='N', pub='N', job=job,
+                    self.__saveDoc(str(self.cwd), ver='N', pub='N',
+                                   logger=logger,
                                    val=(everValidated and 'Y' or 'N'),
                                    msg=' new cwd')
 
@@ -630,7 +661,7 @@ class Doc:
     #------------------------------------------------------------------
     # Invoke the CdrRepDoc command.
     #------------------------------------------------------------------
-    def __saveDoc(self, docStr, ver, pub, job, val='Y', logWarnings=True,
+    def __saveDoc(self, docStr, ver, pub, logger, val='Y', logWarnings=True,
                   msg=''):
         # Debug
         # return 1
@@ -642,10 +673,10 @@ class Doc:
             tempRefToDoc          = self.saveThisDocFirst
             self.saveThisDocFirst = None
             self.__saveDoc(docStr=str(tempRefToDoc), ver="Y", pub="N",
-                           job=job, val='N', msg=" old cwd")
+                           logger=logger, val='N', msg=" old cwd")
 
         # Record what we're about to do
-        job.log("saveDoc(%d, ver='%s' pub='%s' val='%s'%s)" %
+        logger.log("saveDoc(%d, ver='%s' pub='%s' val='%s'%s)" %
                 (self.id, ver, pub, val, msg))
 
         response = cdr.repDoc(self.session, doc = docStr, ver = ver,
@@ -660,12 +691,9 @@ class Doc:
             warnings = ERRPATT.findall(response[1])
             if warnings:
                 for warning in warnings:
-                    job.log("Warning for CDR%010d: %s" % (self.id, warning))
+                    logger.log("Warning for CDR%010d: %s" % (self.id, warning))
             else:
-                job.log("Warning for CDR%010d: %s" % (self.id, response[1]))
+                logger.log("Warning for CDR%010d: %s" % (self.id, response[1]))
 
-        # Statistics, first one checks ID before incrementing
-        job.addDocsSaved(self.id)
-        job.addVersionsSaved()
-        job.addVersionMsg(msg)
-        job.setLastDocIdSaved(self.id)
+        # Remeber the message used to describe this version of the document.
+        self.__messages.append(msg)
