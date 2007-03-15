@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.132 2007-01-26 04:08:24 ameyer Exp $
+# $Id: cdr.py,v 1.133 2007-03-15 22:12:38 venglisc Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.132  2007/01/26 04:08:24  ameyer
+# Upgraded Log class: Can now request logging to file and stdout or stderr.
+# Revised banner management for greater clarity in the logfiles.
+#
 # Revision 1.131  2006/11/07 21:06:00  ameyer
 # Added exception handling to sendCommands to try to recover from connect errors.
 #
@@ -446,6 +450,7 @@ import os, smtplib, time, atexit, cdrdb, tempfile, traceback, difflib
 #----------------------------------------------------------------------
 # Set some package constants
 #----------------------------------------------------------------------
+OPERATOR         = 'operator@cips.nci.nih.gov'
 DOMAIN_NAME      = 'nci.nih.gov'
 PROD_NAME        = 'bach'
 DEV_NAME         = 'mahler'
