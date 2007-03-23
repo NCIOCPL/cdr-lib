@@ -1,84 +1,12 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.1 2007-03-19 18:00:46 bkline Exp $
+# $Id: cdr2gk.py,v 1.2 2007-03-23 16:04:15 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
-# Revision 1.22  2007/01/11 16:39:48  bkline
-# Made sure that when the module's host attribute is modified by outside
-# code the new value is used instead of the original value.
-#
-# Revision 1.21  2006/06/14 12:50:36  bkline
-# Chen changed the interface to send back n/m as docCount element,
-# where n is the total number of packets received, and m is the
-# highest document sequence number received.  Modified the parser
-# to extract these numbers when present in the PubEventResponse.
-#
-# Revision 1.20  2006/06/08 14:08:45  bkline
-# Modifications to support enhancements to GateKeeper for more frequent
-# publishing.
-#
-# Revision 1.19  2005/12/02 22:43:51  venglisc
-# Added FRANCK as a valid host to be able to send data from FRANCK to the
-# Cancer.gov TEST4 server.
-#
-# Revision 1.18  2005/03/09 16:04:51  bkline
-# Switch CG development server from dev1 to test4 (per Olga Rosenbaum).
-#
-# Revision 1.17  2004/12/23 01:36:28  bkline
-# Juggled some servers at the request of Cancer.gov (Chen Ling).
-#
-# Revision 1.16  2003/03/25 19:00:24  pzhang
-# Used physical path for PDQDTD.
-#
-# Revision 1.15  2003/02/14 20:04:47  pzhang
-# Dropped DocType and added description at prolog level.
-#
-# Revision 1.14  2002/11/14 20:22:07  pzhang
-# Added version infor for CG team.
-#
-# Revision 1.13  2002/11/01 19:16:05  pzhang
-# Used binary write in log.
-#
-# Revision 1.12  2002/10/23 20:44:20  pzhang
-# Used a single GateKeeper with 3 different sources: Development,
-#     Staging, and Production.
-#
-# Revision 1.11  2002/10/16 16:34:02  pzhang
-# Made GateKeeper hostname depend on localhost.
-#
-# Revision 1.10  2002/10/03 16:04:59  pzhang
-# Logged HTTP error in log file and StandardError.
-#
-# Revision 1.9  2002/09/30 19:29:53  pzhang
-# Accepted docType and docId for command line testing.
-#
-# Revision 1.8  2002/09/13 16:51:40  pzhang
-# Changed PDQDTD to point to MAHLER.
-#
-# Revision 1.7  2002/08/22 12:40:25  bkline
-# Added publish preview.
-#
-# Revision 1.6  2002/07/25 20:56:01  pzhang
-# Split docTemplate into docTemplateHead and docTemplateTail
-# and encoded them to UTF-8.
-#
-# Revision 1.5  2002/07/23 15:02:25  pzhang
-# Added PDQDTD string for PDQ.dtd location.
-#
-# Revision 1.4  2002/06/13 19:20:16  bkline
-# Made some logging conditional.
-#
-# Revision 1.3  2002/05/14 12:56:05  bkline
-# Added PUBTYPES dictionary.  Added code to retry request a few times if
-# the SOAP server drops the connection unexpectedly.
-#
-# Revision 1.2  2002/05/09 14:06:08  bkline
-# Added removeDocuments() convenience function.
-#
-# Revision 1.1  2002/05/09 12:51:50  bkline
-# Module for communicating with Cancer.Gov SOAP server (GateKeeper).
+# Revision 1.1  2007/03/19 18:00:46  bkline
+# New program for GateKeeper2.0 client.
 #
 #----------------------------------------------------------------------
 import httplib, re, sys, time, xml.dom.minidom, socket, string
@@ -481,7 +409,8 @@ def sendJobComplete(jobId, pubType, count, status):
    <message>
     <PubEvent>
      <pubType>%s</pubType>
-     <docCount>complete</docCount>
+     <docCount>%d</docCount>
+     <status>%s</status>
     </PubEvent>
    </message>
   </Request>""" % (gatekeeperNamespace, jobId, pubType, count, status)
@@ -512,7 +441,18 @@ if __name__ == "__main__":
 
     def getCursor():
         import cdrdb
-        return cdrdb.connect('CdrGuest').cursor()
+        return cdrdb.connect('CdrGuest', dataSource = 'bach').cursor()
+    def loadDocsOfType(t):
+        cursor = getCursor()
+        cursor.execute("""\
+            SELECT c.id
+              FROM pub_proc_cg c
+              JOIN document d
+                ON c.id = d.id
+              JOIN doc_type t
+                ON t.id = d.doc_type
+             WHERE t.name = ?""", t, timeout = 300)
+        return [str(row[0]) for row in cursor.fetchall()]
     class Doc:
         __cursor = getCursor()
         def __init__(self, docId):
@@ -529,17 +469,37 @@ if __name__ == "__main__":
                     ON p.pub_proc = c.pub_proc
                    AND p.doc_id = d.id
                  WHERE d.id = ?""", self.docId)
-            self.xml, self.docType, self.docVer = Doc.__cursor.fetchall()[0]
+            docXml, self.docType, self.docVer = Doc.__cursor.fetchall()[0]
+            docXml = re.sub(u"<\\?xml[^>]+>\\s*", u"", docXml)
+            self.xml = re.sub(u"<!DOCTYPE[^>]*>\\s*", u"", docXml)
 
-    # Get the document IDs from the command line.
+    # If we're asked to abort a job, do it.
     debuglevel = 1
-    docs = [Doc(docId) for docId in sys.argv[1:]]
-    if not docs:
+    if len(sys.argv) > 1 and sys.argv[1].startswith('abort='):
+        jobId = sys.argv[1][len('abort='):]
+        response = sendJobComplete(jobId, 'Export', 0, 'abort')
+        print "response:\n%s" % response
+        sys.exit(0)
+
+    # Here's how to close the job by hand.
+    if len(sys.argv) > 2 and sys.argv[1].startswith('complete='):
+        jobId = sys.argv[1][len('complete='):]
+        nDocs = int(sys.argv[2])
+        response = sendJobComplete(jobId, 'Export', nDocs, 'complete')
+        print "response:\n%s" % response
+        sys.exit(0)
+        
+    # Get the document IDs from the command line.
+    if len(sys.argv) > 1 and sys.argv[1].startswith('type='):
+        docIds = loadDocsOfType(sys.argv[1][5:])
+    else:
+        docIds = sys.argv[1:]
+    if not docIds:
         sys.stderr.write("you must specify at least one document ID\n")
         sys.exit(1)
 
     # See if the GateKeeper is awake and open for business.
-    pubType   = 'Hotfix'
+    pubType   = 'Export'
     pubTarget = 'GateKeeper'
     jobDesc   = 'Command-line test from cdr2gk module.'
     response  = initiateRequest(pubType, pubTarget)
@@ -554,6 +514,7 @@ if __name__ == "__main__":
 
     # Tell the GateKeeper we're about to send some documents.
     lastJobId = response.details.lastJobId
+    print lastJobId, type(lastJobId)
     jobId = lastJobId + 1
     print "last job id: %d" % lastJobId
     print "new job id: %d" % jobId
@@ -563,9 +524,12 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # Send the documents.
+    print "sending %d docs" % len(docIds)
     docNum = 1
-    for doc in docs:
-        print ("sendDocument(CDR%d) ..." % doc.docId),
+    for docId in docIds:
+        doc = Doc(docId)
+        print ("sendDocument(CDR%d) (%d of %d)..." % (doc.docId, docNum,
+                                                      len(docIds))),
         response = sendDocument(jobId, docNum, 'Export', doc.docType,
                                 doc.docId, doc.docVer, doc.group, doc.xml)
         if response.type != "OK":
@@ -575,6 +539,6 @@ if __name__ == "__main__":
         docNum += 1
 
     # Wrap it up.
-    response = sendJobComplete(jobId, pubType, len(docs), 'complete')
+    response = sendJobComplete(jobId, pubType, len(docIds), 'complete')
     if response.type != 'OK':
         print "%s: %s" % (response.type, response.message)
