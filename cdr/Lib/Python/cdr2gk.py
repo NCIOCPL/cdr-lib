@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.2 2007-03-23 16:04:15 bkline Exp $
+# $Id: cdr2gk.py,v 1.3 2007-03-23 16:31:33 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2007/03/23 16:04:15  bkline
+# First working version.
+#
 # Revision 1.1  2007/03/19 18:00:46  bkline
 # New program for GateKeeper2.0 client.
 #
@@ -470,6 +473,8 @@ if __name__ == "__main__":
                    AND p.doc_id = d.id
                  WHERE d.id = ?""", self.docId)
             docXml, self.docType, self.docVer = Doc.__cursor.fetchall()[0]
+            if self.docType in ('InScopeProtocol', 'CTGovProtocol'):
+                self.docType = 'Protocol'
             docXml = re.sub(u"<\\?xml[^>]+>\\s*", u"", docXml)
             self.xml = re.sub(u"<!DOCTYPE[^>]*>\\s*", u"", docXml)
 
