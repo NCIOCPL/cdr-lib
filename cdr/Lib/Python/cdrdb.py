@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.17 2005-07-26 20:11:16 ameyer Exp $
+# $Id: cdrdb.py,v 1.18 2007-04-05 13:11:26 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.17  2005/07/26 20:11:16  ameyer
+# Added more info to exception messages in the execute() method.
+#
 # Revision 1.16  2004/10/22 12:20:50  bkline
 # Fixed BLOB handling.
 #
@@ -188,11 +191,14 @@
 #----------------------------------------------------------------------
 
 import win32com.client
-import time
+import time, os
 import pywintypes
 
 # Until we do this bogus object creation, the constants are invisible.
 win32com.client.Dispatch("ADODB.Connection")
+
+# Look in the environment for override of default location of CDR database.
+CDR_DB_SERVER = os.environ.get('CDR_DB_SERVER') or 'localhost'
 
 #----------------------------------------------------------------------
 # These module constants are required by the DBSIG's API.
@@ -742,7 +748,7 @@ class Connection:
 #----------------------------------------------------------------------
 # Connect to the CDR using known login account.
 #----------------------------------------------------------------------
-def connect(user = 'cdr', dataSource = 'localhost', db = 'cdr'):
+def connect(user = 'cdr', dataSource = CDR_DB_SERVER, db = 'cdr'):
     """
     Factory for creating a connection to the database.  Returns a
     Connection Object. It takes a number of parameters which are
