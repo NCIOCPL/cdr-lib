@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.3 2007-03-23 16:31:33 bkline Exp $
+# $Id: cdr2gk.py,v 1.4 2007-04-10 21:37:28 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2007/03/23 16:31:33  bkline
+# Adjusted name of doc type for Protocol documents.
+#
 # Revision 1.2  2007/03/23 16:04:15  bkline
 # First working version.
 #
@@ -397,7 +400,7 @@ def sendDocument(jobId, docNum, transType, docType, docId, docVer,
              Group   = '%d'>""" % (gatekeeperNamespace, jobId, docNum,
                                    transType, docType, docId, docVer,
                                    groupNumber)).encode('utf-8') + doc + """\
-     </CDRDoc>
+</CDRDoc>
     </PubData>
    </message>
   </Request>"""
@@ -438,10 +441,47 @@ def pubPreview(xml, typ):
     return Response(xmlString, False)
 
 #----------------------------------------------------------------------
+# statusType is 'Summary', 'RequestDetail', 'DocumentLocation' or
+# 'SingleDocument'
+# If statusType is 'SingleDocument' then requestId contains the CDR
+# ID of the document for which the report is being generated.
+# If statusType contains the value 'DocumentLocation' then requestId
+# need not be present.
+# Otherwise, requestId refers to the publishing job for which
+# status is requested.
+# RequestDetail is not yet implemented.
+#----------------------------------------------------------------------
+def requestStatus(statusType, requestId):
+    headers = {
+        'Content-type': "text/xml; charset='utf-8'",
+        'SOAPAction'  : 'http://www.cancer.gov/webservices/RequestStatus'
+    }
+    if statusType == 'DocumentLocation':
+        body = u"""\
+  <RequestStatus xmlns='%s'>
+   <source>CDR</source>
+   <requestID></requestID>
+   <statusType>%s</statusType>
+  </RequestStatus>""" % (gatekeeperNamespace, statusType)
+    else:
+        body = u"""\
+  <RequestStatus xmlns='%s'>
+   <source>CDR</source>
+   <requestID>%s</requestID>
+   <statusType>%s</statusType>
+  </RequestStatus>""" % (gatekeeperNamespace, requestId, statusType)
+    xmlString = sendRequest(body, host = host, headers = headers)
+    print xmlString
+
+#----------------------------------------------------------------------
 # Take it out for a test spin.  Try with 43740 (a Country document).
 #----------------------------------------------------------------------
 if __name__ == "__main__":
 
+    debuglevel = 1
+    if len(sys.argv) > 2 and sys.argv[1] == 'status':
+        requestStatus(sys.argv[2], len(sys.argv) > 3 and sys.argv[3] or "")
+        sys.exit(0)
     def getCursor():
         import cdrdb
         return cdrdb.connect('CdrGuest', dataSource = 'bach').cursor()
@@ -479,7 +519,6 @@ if __name__ == "__main__":
             self.xml = re.sub(u"<!DOCTYPE[^>]*>\\s*", u"", docXml)
 
     # If we're asked to abort a job, do it.
-    debuglevel = 1
     if len(sys.argv) > 1 and sys.argv[1].startswith('abort='):
         jobId = sys.argv[1][len('abort='):]
         response = sendJobComplete(jobId, 'Export', 0, 'abort')
@@ -532,11 +571,19 @@ if __name__ == "__main__":
     print "sending %d docs" % len(docIds)
     docNum = 1
     for docId in docIds:
-        doc = Doc(docId)
-        print ("sendDocument(CDR%d) (%d of %d)..." % (doc.docId, docNum,
-                                                      len(docIds))),
-        response = sendDocument(jobId, docNum, 'Export', doc.docType,
-                                doc.docId, doc.docVer, doc.group, doc.xml)
+        if docId.startswith('remove='):
+            docId = int(docId[len('remove='):])
+            print ("removing CDR%d (%d of %d)..." % (docId,
+                                                     docNum, len(docIds))),
+            # XXX fix this (look up real doc type) after testing.
+            response = sendDocument(jobId, docNum, "Remove",
+                                    "GENETICSPROFESSIONAL", docId, 1, 1, "")
+        else:
+            doc = Doc(docId)
+            print ("sendDocument(CDR%d) (%d of %d)..." % (doc.docId, docNum,
+                                                          len(docIds))),
+            response = sendDocument(jobId, docNum, 'Export', doc.docType,
+                                    doc.docId, doc.docVer, doc.group, doc.xml)
         if response.type != "OK":
             print "%s: %s" % (response.type, response.message)
         else:
