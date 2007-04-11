@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.84 2006-11-02 16:59:40 venglisc Exp $
+# $Id: cdrpub.py,v 1.85 2007-04-11 02:04:35 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.84  2006/11/02 16:59:40  venglisc
+# The newly introduced date variable needed to be initialized. (Bug 2207)
+#
 # Revision 1.83  2006/10/05 22:21:12  venglisc
 # The date variable is not defined if the job is a remove publishing job.
 # Fixed to ensure it is not evaluated for a remove job.
@@ -302,7 +305,7 @@
 #----------------------------------------------------------------------
 
 import cdr, cdrdb, os, re, string, sys, xml.dom.minidom
-import socket, cdr2cg, time, threading, glob, base64
+import socket, cdr2gk, time, threading, glob, base64, AssignGroupNums
 from xml.parsers.xmlproc import xmlval, xmlproc
 
 #-----------------------------------------------------------------------
@@ -319,6 +322,11 @@ PUB_THREADS = 2
 
 # Publish this many docs of one doctype between reports
 LOG_MODULUS = 1000
+
+# XXX For testing, wiring target to "GateKeeper" rather than "Live" or
+# XXX "Preview".
+# XXX Need a way to set this from outside?
+CG_PUB_TARGET = "GateKeeper"
 
 #-----------------------------------------------------------------------
 # class: Doc
@@ -1138,7 +1146,7 @@ class Publish:
                                                          info[1][0]))
 
     #------------------------------------------------------------------
-    # Push documents of a specific vendor_job to Cancer.gov using cdr2cg
+    # Push documents of a specific vendor_job to Cancer.gov using cdr2gk
     # module.
     # We handle different pubTypes with different functions for clarity.
     # Raise a standard error when failed.
@@ -1148,7 +1156,7 @@ class Publish:
         # Get the value of pubType for this cg_job.
         if self.__params.has_key('PubType'):
             pubType = self.__params['PubType']
-            if not cdr2cg.PUBTYPES.has_key(pubType):
+            if not cdr2gk.PUBTYPES.has_key(pubType):
                 msg = """The value of parameter PubType, %s, is unsupported.
                        <BR>Please modify the control document or the source
                        code.<BR>""" % pubType
@@ -1241,7 +1249,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             # See if the GateKeeper is awake.
             msg = "%s: Initiating request with pubType=%s, \
                    lastJobId=%d ...<BR>" % (time.ctime(), pubTypeCG, lastJobId)
-            response = cdr2cg.initiateRequest(cgJobDesc, pubTypeCG, lastJobId)
+
+            # XXX See definition of CG_PUB_TARGET
+            response = cdr2gk.initiateRequest(pubTypeCG, CG_PUB_TARGET)
             if response.type != "OK":
                 msg += "%s: %s<BR>" % (response.type, response.message)
                 if response.fault:
@@ -1262,8 +1272,11 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                                            pubTypeCG,
 							   lastJobId,
 							   numDocs)
-            response = cdr2cg.sendDataProlog(cgJobDesc, self.__jobId,
-                                             pubTypeCG, lastJobId, numDocs)
+
+            # Tell cancer.gov GateKeeper what's coming
+            # XXX Temporarily wired for pubTarget=GateKeeper
+            response = cdr2gk.sendDataProlog(cgJobDesc, self.__jobId,
+                                 pubTypeCG, CG_PUB_TARGET, lastJobId)
             if response.type != "OK":
                 msg += "%s: %s<BR>" % (response.type, response.message)
                 raise StandardError(msg)
@@ -1271,6 +1284,16 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             msg += "%s: Pushing documents starts<BR>" % time.ctime()
             self.__updateMessage(msg)
             msg = ""
+
+            # Compute all CG group numbers for the added and
+            #   updated docs
+            # These tell CG what the dependencies are.  If one doc
+            #   fails, what other docs should fail
+            # This can take awhile because it has to parse docs looking
+            #   for cross references between them
+            self.__debugLog("Starting assignment of group numbers")
+            groupNums = AssignGroupNums.GroupNums(self.__jobId)
+            self.__debugLog("Finished assignment of group numbers")
 
             # Send all new and updated documents.
             addCount = 0
@@ -1292,8 +1315,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 xml = XmlDeclLine.sub("", xml)
                 xml = DocTypeLine.sub("", xml)
 
-                response = cdr2cg.sendDocument(self.__jobId, docNum,
-                            "Export", docType, docId, version, xml)
+                response = cdr2gk.sendDocument(self.__jobId, docNum,
+                            "Export", docType, docId, version,
+                            groupNums.getDocGroupNum(docId), xml)
                 if response.type != "OK":
                     msg += "sending document %d failed. %s: %s<BR>" % \
                             (docId, response.type, response.message)
@@ -1319,14 +1343,16 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                  WHERE xml IS NULL
                             """)
             rows = cursor.fetchall()
+            removeCount = len(rows)
             for row in rows:
                 docId     = row[0]
                 version   = row[1]
                 docType   = row[2]
                 if docType == "InScopeProtocol":
                     docType = "Protocol"
-                response = cdr2cg.sendDocument(self.__jobId, docNum, "Remove",
-                                               docType, docId, version)
+                response = cdr2gk.sendDocument(self.__jobId, docNum, "Remove",
+                                               docType, docId, version,
+                                               groupNums.genNewUniqueNum())
                 if response.type != "OK":
                     msg += "deleting document %d failed. %s: %s<BR>" % (docId,
                             response.type, response.message)
@@ -1338,11 +1364,18 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     self.__updateMessage(msg)
                     msg = ""
             msg += "%s: %d documents removed from Cancer.gov.<BR>" % (
-	                                                    time.ctime(),
-							    len(rows))
+	                                    time.ctime(), removeCount)
             msg += "%s: Pushing done<BR>" % time.ctime()
             self.__updateMessage(msg)
             msg = ""
+
+            # We're done with cancer.gov Gatekeeper link
+            # Complete and close the connection
+            response = cdr2gk.sendJobComplete(self.__jobId, pubTypeCG,
+                        addCount + removeCount, "complete")
+            if response.type != "OK":
+                msg = "Error response from job completion:<BR>" + str(msg)
+                raise StandardError(msg)
 
             # Before we claim success, we will have to update
             # pub_proc_cg and pub_proc_doc from pub_proc_cg_work.
@@ -1526,16 +1559,12 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         self.__updateMessage(msg)
 
         # Insert removed documents into pub_proc_cg_work.
-        # Removed documents are those in pub_proc_cg, but not in
-        # pub_proc_doc belonging to vendor_job. The document version number
-        # is obtained from the cg_job in pub_proc_cg. If we want the most
-        # recent version, we will either reconstruct the query or update
-        # pub_proc column in pub_proc_cg for each job.
-        # We don't regard filter failure as "removed or blocked", so
-        # every document in pub_proc_doc belonging to this vendor_job
-        # is considered as good although the failed ones were not used
-        # for update comparison.
-
+        #
+        # Removed documents are those in pub_proc_cg but which
+        # no longer have active status.
+        # Note: This is simpler, faster, and safer than older technique
+        #   that removed all docs that weren't in this publication job.
+        #
         # Removed documents must have a doc_type belonging to this
         # Export subset [e.g., Protocol, Summary, Term, etc.].
         # Subsets Export-Protocol and Export-Summary need this special
@@ -1549,21 +1578,16 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                               cg_job, doc_type)
                      SELECT DISTINCT ppc.id, ppd_cg.doc_version,
                             %d, %d, t.name
-                       FROM pub_proc_cg ppc, doc_type t, document d,
+                       FROM pub_proc_cg ppc, doc_type t, all_docs d,
                             pub_proc_doc ppd_cg
                       WHERE d.id = ppc.id
                         AND d.doc_type = t.id
                         AND d.doc_type IN (%s)
                         AND ppd_cg.doc_id = ppc.id
                         AND ppd_cg.pub_proc = ppc.pub_proc
+                        AND d.active_status <> 'A'
                         AND t.name <> 'Media' /* XXX Alan's recommendation */
-                        AND NOT EXISTS (
-                                SELECT *
-                                  FROM pub_proc_doc ppd
-                                 WHERE ppd.doc_id = ppc.id
-                                   AND ppd.pub_proc = %d
-                                       )
-                  """ % (vendor_job, cg_job, docTypes, vendor_job)
+                  """ % (vendor_job, cg_job, docTypes)
             cursor.execute(qry, timeout = self.__timeOut)
         except cdrdb.Error, info:
             raise StandardError(
@@ -2637,6 +2661,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 try:
                     cursor = self.__conn.cursor()
                     sql = self.__repParams(cdr.getTextContent(child))
+                    self.__debugLog("Selecting docs using:\n%s" % sql)
                     cursor.execute(sql, timeout = self.__timeOut)
 
                     # Sanity checks for the query.
@@ -2973,12 +2998,15 @@ Please do not reply to this message.
         for child in node.childNodes:
             if child.nodeName == "SubsetFilterName":
                 nameOrSet = cdr.getTextContent(child)
+                self.__debugLog('Fetching filter named "%s"' % nameOrSet)
                 if nameOrSet.find("set:") == 0:
                     return nameOrSet
                 else:
                     return "name:%s" % nameOrSet
             elif child.nodeName == "SubsetFilterId":
-                return cdr.getTextContent(child)
+                filterId = cdr.getTextContent(child)
+                self.__debugLog('Fetching filter id "%s"' % filterId)
+                return filterId
         raise StandardError("SubsetFilter must contain SubsetFilterName " \
                             "or SubsetFilterId")
 
@@ -3333,7 +3361,7 @@ class ErrHandler:
 #----------------------------------------------------------------------
 # Validate a given document against its DTD.
 #----------------------------------------------------------------------
-def validateDoc(filteredDoc, docId = 0, dtd = cdr2cg.PDQDTD):
+def validateDoc(filteredDoc, docId = 0, dtd = cdr2gk.PDQDTD):
 
     # These used to be global.  Now local to ensure expat thread safety
     __parser     = xmlval.XMLValidator()
@@ -3449,7 +3477,7 @@ if __name__ == "__main__":
         sys.stderr.write("usage: cdrpub.py job-id {--debug}\n")
         sys.exit(1)
     if len(sys.argv) > 2 and sys.argv[2] == "--debug":
-        cdr2cg.debuglevel = 1
+        cdr2gk.debuglevel = 1
     LOG = ""
     p = Publish(int(sys.argv[1]))
     p.publish()
