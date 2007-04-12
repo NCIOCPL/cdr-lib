@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.22 2007-01-11 16:39:48 bkline Exp $
+# $Id: cdr2cg.py,v 1.23 2007-04-12 20:03:53 venglisc Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.22  2007/01/11 16:39:48  bkline
+# Made sure that when the module's host attribute is modified by outside
+# code the new value is used instead of the original value.
+#
 # Revision 1.21  2006/06/14 12:50:36  bkline
 # Chen changed the interface to send back n/m as docCount element,
 # where n is the total number of packets received, and m is the
@@ -109,6 +113,7 @@ headers             = {
 PUBTYPES = {
     'Full Load'       : 'Send all documents to Cancer.gov',
     'Export'          : 'Send specified documents to Cancer.gov',
+    'Interim (Export)': 'Send daily update to Cancer.gov',
     'Remove'          : 'Delete documents from Cancer.gov',
     'Hotfix (Remove)' : 'Delete individual documents from Cancer.gov',
     'Hotfix (Export)' : 'Send individual documents to Cancer.gov'
