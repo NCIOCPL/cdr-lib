@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.20 2005-11-17 14:06:01 bkline Exp $
+# $Id: SiteImporter.py,v 1.21 2007-04-16 15:20:00 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.20  2005/11/17 14:06:01  bkline
+# Separated logs for imports from different sources.
+#
 # Revision 1.19  2005/10/20 14:24:59  bkline
 # Restricted processing of pending docs to the ones for this source.
 #
@@ -530,7 +533,39 @@ CDR%d has lead org(s) with UpdateMode of %s but trial has been dropped
 
     def __loadSourceIdMap(self):
         idMap = {}
-        self.__cursor.execute("""\
+        sourceIdType = self.getSourceIdType()
+        if sourceIdType == "CDR":
+            self.__cursor.execute("""\
+                SELECT d.id
+                  FROM document d
+                  JOIN doc_type t
+                    ON t.id = d.doc_type
+                 WHERE t.name = 'InScopeProtocol'""")
+            for row in self.__cursor.fetchall():
+                idMap[u"CDR%010d" % row[0]] = [row[0]]
+            return idMap
+        institutionPrefix = "@Institution="
+        if sourceIdType.startswith(institutionPrefix):
+            institution = sourceIdType[len(institutionPrefix):]
+            self.__cursor.execute("""\
+            SELECT DISTINCT i.doc_id, i.value
+                       FROM query_term i
+                       JOIN query_term t
+                         ON i.doc_id = t.doc_id
+                        AND LEFT(i.node_loc, 8) = LEFT(t.node_loc, 8)
+                       JOIN query_term o
+                         ON o.doc_id = t.doc_id
+                        AND LEFT(o.node_loc, 8) = LEFT(t.node_loc, 8)
+                      WHERE t.path = '/InScopeProtocol/ProtocolIDs/OtherID'
+                                   + '/IDType'
+                        AND i.path = '/InScopeProtocol/ProtocolIDs/OtherID'
+                                   + '/IDString'
+                        AND o.path = '/InScopeProtocol/ProtocolIDs/OtherID'
+                                   + '/@Institution'
+                        AND t.value = 'Institutional/Original'
+                        AND o.value = ?""", institution, timeout = 300)
+        else:
+            self.__cursor.execute("""\
             SELECT DISTINCT i.doc_id, i.value
                        FROM query_term i
                        JOIN query_term t
@@ -540,8 +575,7 @@ CDR%d has lead org(s) with UpdateMode of %s but trial has been dropped
                                    + '/IDType'
                         AND i.path = '/InScopeProtocol/ProtocolIDs/OtherID'
                                    + '/IDString'
-                        AND t.value = ?""", self.getSourceIdType(),
-                              timeout = 300)
+                        AND t.value = ?""", sourceIdType, timeout = 300)
         for cdrId, sourceId in self.__cursor.fetchall():
             key = ImportJob.normalizeSourceId(sourceId)
             if key in idMap:
@@ -595,7 +629,6 @@ CDR%d has lead org(s) with UpdateMode of %s but trial has been dropped
                AND source = %d
                AND id NOT IN (SELECT doc
                                 FROM import_event
-                               WHERE locked = 'Y'
                                  AND job = %d)
                AND dropped IS NULL""" % (self.getDispId('pending'),
                                          self.__sourceId,
@@ -668,7 +701,7 @@ CDR%d has lead org(s) with UpdateMode of %s but trial has been dropped
                         
                         self.log("Updating %s from %s" % (doc.cdrId,
                                                           doc.sourceId))
-                        doc.cdrDoc.saveChanges(self)
+                        doc.cdrDoc.saveChanges(self.__cursor, logger = self)
                         if not TEST_MODE:
                             doc.recordEvent()
                         if doc.new:
@@ -768,8 +801,12 @@ class ImportDoc:
             if end == -1:
                 raise Exception("addContact(): missing terminating delimiter")
             id = docXml[pos + len(openDelim) : end]
-            try:
-                self.impJob.getCursor().execute("""\
+            if not id:
+                print "addContact(): empty CTEP ID"
+                rows = []
+            else:
+                try:
+                    self.impJob.getCursor().execute("""\
                 SELECT r.element, r.value
                   FROM external_map_rule r
                   JOIN external_map m
@@ -778,12 +815,12 @@ class ImportDoc:
                     ON u.id = m.usage
                  WHERE u.name = 'CTEP_Institution_Code'
                    AND m.value = ?""", id)
-                rows = self.impJob.getCursor().fetchall()
-            except Exception, e:
-                print "addContact(): %s" % str(e)
-                print "id=[%s]" % repr(id)
-                #print "pos=%d end=%d len(id)=%d" % (pos, end, len(id))
-                rows = []
+                    rows = self.impJob.getCursor().fetchall()
+                except Exception, e:
+                    print "addContact(): %s" % str(e)
+                    print "id=[%s]" % repr(id)
+                    #print "pos=%d end=%d len(id)=%d" % (pos, end, len(id))
+                    rows = []
             title = u""
             phone = u""
             for row in rows:
