@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.21 2007-04-16 15:20:00 bkline Exp $
+# $Id: SiteImporter.py,v 1.22 2007-04-17 13:35:01 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.21  2007/04/16 15:20:00  bkline
+# Enhancements needed for Oncore imports.
+#
 # Revision 1.20  2005/11/17 14:06:01  bkline
 # Separated logs for imports from different sources.
 #
@@ -629,7 +632,7 @@ CDR%d has lead org(s) with UpdateMode of %s but trial has been dropped
                AND source = %d
                AND id NOT IN (SELECT doc
                                 FROM import_event
-                                 AND job = %d)
+                               WHERE job = %d)
                AND dropped IS NULL""" % (self.getDispId('pending'),
                                          self.__sourceId,
                                          self.__id))
