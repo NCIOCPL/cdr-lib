@@ -32,9 +32,12 @@ import sys, re, time, cdr, cdrdb
 # These assumptions mean that the class must be instantiated in the
 # push job that calls __createWorkPPC().
 #
-# $Id: AssignGroupNums.py,v 1.1 2007-04-11 02:03:03 ameyer Exp $
+# $Id: AssignGroupNums.py,v 1.2 2007-04-20 17:42:47 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2007/04/11 02:03:03  ameyer
+# Initial version, not yet tested.
+#
 #----------------------------------------------------------------------
 class GroupNums:
 
@@ -66,7 +69,7 @@ class GroupNums:
 
         # Read only access to the database
         self.__conn   = cdrdb.connect('CdrGuest')
-        self.__cursor = self.__conn.connect()
+        self.__cursor = self.__conn.cursor()
 
         # Dictionary of docId -> groupNum
         # Only newly published docs go in here
