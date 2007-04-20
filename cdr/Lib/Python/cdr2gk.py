@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.4 2007-04-10 21:37:28 bkline Exp $
+# $Id: cdr2gk.py,v 1.5 2007-04-20 03:46:25 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2007/04/10 21:37:28  bkline
+# Plugged in some additional unit-testing options, as well as the start
+# of the status query method.
+#
 # Revision 1.3  2007/03/23 16:31:33  bkline
 # Adjusted name of doc type for Protocol documents.
 #
@@ -76,6 +80,182 @@ class Fault:
     def __repr__(self):
         return (u"Fault (faultcode: %s, faultstring: %s)" %
                 (self.faultcode, self.faultstring))
+
+class DocumentLocation:
+    """
+        Object used to hold information about which locations the
+        document occupies.
+
+        Public attributes:
+
+            cdrId
+                unique CDR identifier for the document
+
+            gatekeeperJobId
+                publishing job ID for the last push job to send this
+                document to the gatekeeper; the job may have requested
+                that the document stop at the gatekeeper, or that
+                it be automatically sent on to the preview and/or
+                live servers
+
+            gatekeeperDateTime
+                date/time of the last push of this document to
+                the gatekeeper
+
+            previewJobId
+                publishing job ID for the last push job to send this
+                document to the preview server; the document may or
+                may not have also been sent on to the liver server
+
+            previewDateTime
+                date/time of the last push of this document to
+                the preview server
+
+            liveJobId
+                CDR publishing job ID for the last push job to
+                send this document to the Cancer.gov live server
+        """
+
+    def __init__(self, node):
+        self.cdrId              = int(node.getAttribute('cdrid'))
+        self.gatekeeperJobId    = node.getAttribute('gatekeeper')
+        self.gatekeeperDateTime = node.getAttribute('gatekeeperDateTime')
+        self.previewJobId       = node.getAttribute('preview')
+        self.previewDateTime    = node.getAttribute('previewDateTime')
+        self.liveJobId          = node.getAttribute('live')
+        self.liveDateTime       = node.getAttribute('liveDateTime')
+        if not self.liveJobId:
+            self.liveJobId      = node.getAttribute('liveID')
+
+class DocumentStatusList:
+    """
+        Object with a single public attribute ('docs'), which contains
+        a list of zero or more DocumentLocation objects.
+    """
+    
+    def __init__(self, node):
+        self.docs = []
+        for child in node.childNodes:
+            if child.nodeName == "document":
+                self.docs.append(DocumentLocation(child))
+
+class StatusSummaryDocument:
+    """
+        Information about one of the documents in a CDR push job.
+
+        Public attributes:
+        
+            packetNumber
+                position of the document within the push job
+
+            group
+                ID of the subset of documents in the push job
+                which must fail the load job if any document
+                within the subset fails
+
+            cdrId
+                unique CDR identifier for the document
+
+            pubType
+                document publication type; possible values are
+                Export or Remove
+
+            docType
+                type of the document; e.g., GlossaryTerm or
+                Protocol
+
+            docStatus
+                OK, Error, or Warning
+
+            dependentStatus
+                the document status relative to other members of its
+                data group; possible values are OK and Error
+
+            location
+                the system the document was most recently promoted to;
+                possible values are GateKeeper, Staging, Preview, and
+                Live
+
+    """
+
+    def __init__(self, node):
+        self.packetNumber    = node.getAttribute('packet')
+        self.group           = node.getAttribute('group')
+        self.cdrId           = node.getAttribute('cdrid')
+        self.pubType         = node.getAttribute('pubType')
+        self.docType         = node.getAttribute('type')
+        self.status          = node.getAttribute('status')
+        self.dependentStatus = node.getAttribute('dependentStatus')
+        self.location        = node.getAttribute('location')
+                                
+                                
+class StatusSummary:
+
+    """
+        Represents status information for a single GateKeeper push job.
+
+        Public attributes:
+
+            jobId
+                unique identifier in the CDR system for the push job
+
+            requestType
+                Hotfix, FullLoad, Export or Remove
+
+            description
+                description of the job provided by the CDR at the
+                time the job was submitted
+
+            status
+                Receiving or DataReceived
+
+            source
+                only value used for this version of the GateKeeper is
+                "CDR"
+
+            initiated
+                date/time the job was started
+
+            completion
+                date/time the job was finished or aborted (if appropriate)
+
+            target
+                GateKeeper, Preview, or Live
+
+            expectedCount
+                number of documents reported by the CDR in the "complete"
+                message for the job
+
+            actualCount
+                number of documents the GateKeeper recorded as having
+                been received for the job
+    """
+
+    def __init__(self, node):
+        self.jobId       = node.getAttribute('job')
+        self.requestType = node.getAttribute('type')
+        self.description = node.getAttribute('description')
+        self.status      = node.getAttribute('status')
+        self.source      = node.getAttribute('source')
+        self.initiated   = node.getAttribute('initiated')
+        self.completion  = node.getAttribute('completion')
+        self.target      = node.getAttribute('target')
+        self.docs        = []
+        expectedDocCount = node.getAttribute('expectedDocCount')
+        actualDocCount   = node.getAttribute('actualDocCount')
+        try:
+            self.expectedCount = int(expectedDocCount)
+        except:
+            self.expectedCount = expectedDocCount
+        try:
+            self.actualCount   = int(actualDocCount)
+        except:
+            self.actualCount   = actualDocCount
+        for child in node.childNodes:
+            if child.nodeName == 'document':
+                self.docs.append(StatusSummaryDocument(child))
+        if not self.initiated:
+            self.initiated = node.getAttribute('initated') # typo in spec
 
 class PubEventResponse:
     """
@@ -186,14 +366,15 @@ class Response:
 
         details
             PubEventResponse for request initiation and data prolog
-            exchanges; PubDataResponse for document transfers
+            exchanges; PubDataResponse for document transfers; JobSummary
+            or DocumentList for RequestStatus responses
 
         fault
             SOAP fault object containing faultcode and faultstring
             members in the case of a SOAP failure
     """
     
-    def __init__(self, xmlString, publishing = True):
+    def __init__(self, xmlString, publishing = True, statusRequest = False):
 
         """Extract the values from the server's XML response string."""
 
@@ -216,6 +397,15 @@ class Response:
                 self.details = PubDataResponse(pdResponseElem)
             else:
                 self.details = None
+        elif statusRequest:
+            respElem         = extractStatusResponseElement(self.bodyElem)
+            detailElem       = getChildElement(respElem, "detailedMessage", 1)
+            requestElem      = getChildElement(detailElem, "request")
+            docListElem      = getChildElement(detailElem, "documentList")
+            if requestElem:
+                self.details = StatusSummary(requestElem)
+            else:
+                self.details = DocumentStatusList(docListElem)
         else:
             self.xmlResult   = extractXmlResult(self.bodyElem)
     def __repr__(self):
@@ -250,6 +440,14 @@ def getChildElement(parent, name, required = False):
 def extractResponseElement(bodyNode):
     requestResponse = getChildElement(bodyNode,        "RequestResponse", 1)
     requestResult   = getChildElement(requestResponse, "RequestResult",   1)
+    response        = getChildElement(requestResult,   "Response",        1)
+    return response
+
+def extractStatusResponseElement(bodyNode):
+    outerWrapper    = "RequestStatusResponse"
+    innerWrapper    = "RequestStatusResult"
+    requestResponse = getChildElement(bodyNode,        outerWrapper,      1)
+    requestResult   = getChildElement(requestResponse, innerWrapper,      1)
     response        = getChildElement(requestResult,   "Response",        1)
     return response
 
@@ -451,7 +649,7 @@ def pubPreview(xml, typ):
 # status is requested.
 # RequestDetail is not yet implemented.
 #----------------------------------------------------------------------
-def requestStatus(statusType, requestId):
+def requestStatus(statusType, requestId = ""):
     headers = {
         'Content-type': "text/xml; charset='utf-8'",
         'SOAPAction'  : 'http://www.cancer.gov/webservices/RequestStatus'
@@ -460,7 +658,7 @@ def requestStatus(statusType, requestId):
         body = u"""\
   <RequestStatus xmlns='%s'>
    <source>CDR</source>
-   <requestID></requestID>
+   <!-- <requestID></requestID> -->
    <statusType>%s</statusType>
   </RequestStatus>""" % (gatekeeperNamespace, statusType)
     else:
@@ -471,7 +669,8 @@ def requestStatus(statusType, requestId):
    <statusType>%s</statusType>
   </RequestStatus>""" % (gatekeeperNamespace, requestId, statusType)
     xmlString = sendRequest(body, host = host, headers = headers)
-    print xmlString
+    # print xmlString
+    return Response(xmlString, False, True)
 
 #----------------------------------------------------------------------
 # Take it out for a test spin.  Try with 43740 (a Country document).
