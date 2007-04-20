@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.22 2007-04-17 13:35:01 bkline Exp $
+# $Id: SiteImporter.py,v 1.23 2007-04-20 21:30:10 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.22  2007/04/17 13:35:01  bkline
+# Fixed typo ('AND' for 'WHERE') in SQL query.
+#
 # Revision 1.21  2007/04/16 15:20:00  bkline
 # Enhancements needed for Oncore imports.
 #
@@ -82,6 +85,7 @@
 #
 #----------------------------------------------------------------------
 import cdr, cdrdb, httplib, sys, time, zipfile, ModifyDocs, socket
+import xml.dom.minidom
 
 TEST_MODE  = False
 UID        = "ExternalImporter"
@@ -101,7 +105,6 @@ class SoapResponse:
         self.status = ""
         self.statusText = ""
         if not self.zipfile:
-            import xml.dom.minidom
             dom = xml.dom.minidom.parseString(bytes)
             for node in dom.documentElement.childNodes:
                 if node.nodeName == "MESSAGE_PAYLOAD":
@@ -740,6 +743,7 @@ class ImportDoc:
         self.cdrDoc   = None
         self.pending  = importDocId and True or False
         self.siteXml  = self.loadSiteDocXml(name, importDocId)
+        self.status   = self.extractProtocolStatus(self.siteXml)
         if self.cdrId:
             if TEST_MODE:
                 sys.stderr.write("matched %s with %s\n" % (self.sourceId,
@@ -760,7 +764,9 @@ class ImportDoc:
 
     def run(self, docObj):
         parms = (('source', self.impJob.getSource()),
-                 ('lastModified', time.strftime("%Y-%m-%d")))
+                 ('lastModified', time.strftime("%Y-%m-%d")),
+                 ('status', self.status or ''),
+                 ('user', UID))
         newXml = cdr.filterDoc('guest', ['name:Insert External Sites'],
                                doc = docObj.xml, parm = parms)
         if type(newXml) in (type(""), type(u"")):
@@ -785,6 +791,12 @@ class ImportDoc:
             lines[1:2] = []
         return "\n".join(lines)
 
+    def extractProtocolStatus(self, siteXml):
+        dom = xml.dom.minidom.parseString(siteXml)
+        for node in dom.documentElement.childNodes:
+            if node.nodeName == 'Protocol_Status':
+                return cdr.getTextContent(node).strip()
+        
     def filterSiteXml(self):
         resp = cdr.filterDoc('guest', self.impJob.getSiteFilter(),
                              doc = self.siteXml, inline = True,
