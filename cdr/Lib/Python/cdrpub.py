@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.85 2007-04-11 02:04:35 ameyer Exp $
+# $Id: cdrpub.py,v 1.86 2007-04-20 17:49:19 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.85  2007/04/11 02:04:35  ameyer
+# Switched from cdr2cg to cdr2gk for pushing data to cancer.gov, with
+# newly required group numbers.
+# This version is not yet tested, but I'm checking it in anyway for safekeeping.
+#
 # Revision 1.84  2006/11/02 16:59:40  venglisc
 # The newly introduced date variable needed to be initialized. (Bug 2207)
 #
@@ -1210,6 +1215,14 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
                 # Stop to enter job description.
                 self.__waitUserApproval()
+            elif pubType == "Interim (Export)":
+                self.__createWorkPPCHE(vendor_job, vendor_dest)
+                pubTypeCG = "Export"
+                self.__updateMessage(link)
+                msg = "Nightly publishing continues...<BR/>"
+
+                # Create automated job description.
+                self.__updateJobDescription()
             else:
                 raise StandardError("pubType %s not supported." % pubType)
 
@@ -1279,7 +1292,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                  pubTypeCG, CG_PUB_TARGET, lastJobId)
             if response.type != "OK":
                 msg += "%s: %s<BR>" % (response.type, response.message)
-                raise StandardError(msg)
+            ###    raise StandardError(msg)
 
             msg += "%s: Pushing documents starts<BR>" % time.ctime()
             self.__updateMessage(msg)
@@ -1387,6 +1400,13 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 self.__updateFromPPCWHR()
             elif pubType == "Hotfix (Export)":
                 self.__updateFromPPCWHE()
+            elif pubType == "Interim (Export)":
+                # Not sure yet if we can reuse updateFromPPCW or if we
+                # need to create a separate function updateFromPPCWMFP
+                # It depends on how the delete records need to be
+                # handled. VE.
+                # ----------------------------------------------------
+                self.__updateFromPPCW()
             else:
                 raise StandardError("pubType %s not supported." % pubType)
 
@@ -1872,7 +1892,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 "Inserting D into pub_proc_doc failed: %s<BR>" % info[1][0])
 
         # Update a document, if its id is in both PPC and PPD.
-        # Update rows in PPD for updated documents of cg_job.
+        # Update rows in PPC for updated documents of cg_job.
         try:
             cursor.execute ("""
                     UPDATE pub_proc_cg
@@ -1886,7 +1906,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 "Updating xml, vendor_job from PPCW to PPC failed: %s<BR>" % \
                 info[1][0])
 
-        # Insert rows into PPC for updated documents of cg_job.
+        # Insert rows into PPD for updated documents of cg_job.
         try:
             cursor.execute ("""
                INSERT INTO pub_proc_doc (doc_id, doc_version, pub_proc)
@@ -1907,7 +1927,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                      SELECT ppcw.id, ppcw.num, ppcw.cg_job
                        FROM pub_proc_cg_work ppcw
                       WHERE NOT ppcw.xml IS NULL
-                        AND NOT EXISTS ( SELECT *
+                        AND NOT EXISTS ( SELECT id
                                            FROM pub_proc_cg ppc
                                           WHERE ppc.id = ppcw.id
                                         )
@@ -1925,7 +1945,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                      SELECT ppcw.id, ppcw.cg_job, ppcw.xml
                        FROM pub_proc_cg_work ppcw
                       WHERE NOT ppcw.xml IS NULL
-                        AND NOT EXISTS ( SELECT *
+                        AND NOT EXISTS ( SELECT id
                                            FROM pub_proc_cg ppc
                                           WHERE ppc.id = ppcw.id
                                         )
@@ -2021,7 +2041,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                      SELECT ppcw.id, ppcw.num, ppcw.cg_job
                        FROM pub_proc_cg_work ppcw
                       WHERE NOT ppcw.xml IS NULL
-                        AND NOT EXISTS ( SELECT *
+                        AND NOT EXISTS ( SELECT id
                                            FROM pub_proc_cg ppc
                                           WHERE ppc.id = ppcw.id
                                         )
@@ -2039,7 +2059,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                      SELECT ppcw.id, ppcw.cg_job, ppcw.xml
                        FROM pub_proc_cg_work ppcw
                       WHERE NOT ppcw.xml IS NULL
-                        AND NOT EXISTS ( SELECT *
+                        AND NOT EXISTS ( SELECT id
                                            FROM pub_proc_cg ppc
                                           WHERE ppc.id = ppcw.id
                                         )
@@ -3188,6 +3208,33 @@ Please do not reply to this message.
             msg = 'Failure updating message: %s' % info[1][0]
             self.__debugLog(msg)
             raise StandardError(msg)
+
+    # ---------------------------------------------------------------------
+    # Create the mandatory CG Job Description for the automated Interim
+    # jobs send to Gatekeeper.
+    # ---------------------------------------------------------------------
+    def __updateJobDescription(self):
+        cgJobDescription = "<CgJobDesc>Automated updates<BR/></CgJobDesc>"
+        try:
+            cursor = self.__conn.cursor()
+            cursor.execute("""
+                SELECT messages
+                  FROM pub_proc
+                 WHERE id = %d""" % self.__jobId)
+            row = cursor.fetchone()
+            msg = (row and row[0] or '') + cgJobDescription
+
+            cursor.execute("""
+                UPDATE pub_proc
+                   SET messages  = ?
+                 WHERE id        = ?""", (msg, self.__jobId))
+            self.__debugLog(
+                 'Interim-Export updated pub_proc messages with "%s"'
+                 %  msg, LOG)
+        except cdrdb.Error, info:
+            msg = 'Failure updating message: %s' % info[1][0]
+            raise StandardError(msg)
+
 
     #----------------------------------------------------------------------
     # Set output_dir to "" in pub_proc table.
