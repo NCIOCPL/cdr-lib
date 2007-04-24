@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.86 2007-04-20 17:49:19 venglisc Exp $
+# $Id: cdrpub.py,v 1.87 2007-04-24 01:47:52 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.86  2007/04/20 17:49:19  venglisc
+# Adding code that allows us to have the push to GK proceed without
+# user intervention.
+#
 # Revision 1.85  2007/04/11 02:04:35  ameyer
 # Switched from cdr2cg to cdr2gk for pushing data to cancer.gov, with
 # newly required group numbers.
@@ -1195,12 +1199,19 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
 
             if pubType == "Full Load" or pubType == "Export":
+                # Note: For SubSetName='Interim-Export', PubType='Export'
                 self.__createWorkPPC(vendor_job, vendor_dest)
                 pubTypeCG = pubType
                 self.__updateMessage(link)
 
-                # Stop to enter job description.
-                self.__waitUserApproval()
+                # XXX Job description currently entered by user,
+                #   but this will change for all these types
+                if self.__params['SubSetName'] == 'Interim-Export':
+                    # Create automated job description.
+                    self.__updateJobDescription()
+                else:
+                    # Stop to enter job description.
+                    self.__waitUserApproval()
             elif pubType == "Hotfix (Remove)":
                 self.__createWorkPPCHR(vendor_job)
                 pubTypeCG = "Hotfix"
@@ -1215,14 +1226,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
                 # Stop to enter job description.
                 self.__waitUserApproval()
-            elif pubType == "Interim (Export)":
-                self.__createWorkPPCHE(vendor_job, vendor_dest)
-                pubTypeCG = "Export"
-                self.__updateMessage(link)
-                msg = "Nightly publishing continues...<BR/>"
-
-                # Create automated job description.
-                self.__updateJobDescription()
             else:
                 raise StandardError("pubType %s not supported." % pubType)
 
@@ -1237,7 +1240,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 numDocs = row[0]
 
             if numDocs == 0:
-                msg = "%s: No documents to be pushed to Cancer.gov.<BR>" % time.ctime()
+                msg = "%s: No documents to be pushed to Cancer.gov.<BR>" % \
+                        time.ctime()
                 self.__updateStatus(Publish.SUCCESS, msg)
                 return
 
@@ -1266,25 +1270,48 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             # XXX See definition of CG_PUB_TARGET
             response = cdr2gk.initiateRequest(pubTypeCG, CG_PUB_TARGET)
             if response.type != "OK":
-                msg += "%s: %s<BR>" % (response.type, response.message)
+                # Construct messages for the pub_proc database record
+                msg += "GateKeeper: %s: %s<BR>" % \
+                        (response.type, response.message)
                 if response.fault:
                     msg += "%s: %s<BR>" % (response.fault.faultcode,
                                            response.fault.faultstring)
-                    raise StandardError(msg)
-                # Keep sending documents in this case and contact
-                # CG for detail. This is useful in testing pushes
-                # where a mismatched lostJobId is often expected.
-                elif response.details:
+
+                # And also log what happened (may also be in cdr2gk.log)
+                self.__debugLog("Aborting after GateKeeper response:\n %s" %\
+                    str(response))
+
+                # Hint for the operator
+                if response.message.startswith("Error (-4)"):
+                    msg += \
+                        'Operator may need to run "cdr2gk.py abort={jobnum}"'
+
+                # Can't continue
+                raise StandardError(msg)
+
+            # What does GateKeeper think the last job ID was
+            gkLastJobId = response.details.lastJobId;
+            if gkLastJobId != lastJobId:
+
+                # Record this
+                msg += "Last job ID from server: %d<BR>" % lastJobId
+                self.__debugLog("Our lastJobId=%s, Gatekeeper's=%s" % \
+                                (lastJobId, gkLastJobId))
+
+                # In test mode, we just rewire our view of the
+                #   lastJobId.  In production, maybe not.
+                if socket.gethostname() != cdr.PROD_NAME:
+                    self.__debugLog(\
+                      "For test, switching to GateKeeper lastJobId")
                     lastJobId = response.details.lastJobId
-                    msg += "Last job ID from server: %d<BR>" % lastJobId
+                else:
+                    raise StandardError(\
+                        "Aborting on lastJobId CDR / CG mismatch")
 
             # Prepare the server for a list of documents to send.
             msg += """%s: Sending data prolog with jobId=%d, pubType=%s,
                     lastJobId=%d, numDocs=%d ...<BR>""" % (time.ctime(),
-                                                           self.__jobId,
-                                                           pubTypeCG,
-							   lastJobId,
-							   numDocs)
+                               self.__jobId, pubTypeCG, lastJobId, numDocs)
 
             # Tell cancer.gov GateKeeper what's coming
             # XXX Temporarily wired for pubTarget=GateKeeper
@@ -1292,7 +1319,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                  pubTypeCG, CG_PUB_TARGET, lastJobId)
             if response.type != "OK":
                 msg += "%s: %s<BR>" % (response.type, response.message)
-            ###    raise StandardError(msg)
+                raise StandardError(msg)
 
             msg += "%s: Pushing documents starts<BR>" % time.ctime()
             self.__updateMessage(msg)
@@ -1305,7 +1332,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             # This can take awhile because it has to parse docs looking
             #   for cross references between them
             self.__debugLog("Starting assignment of group numbers")
-            groupNums = AssignGroupNums.GroupNums(self.__jobId)
+            groupNums = AssignGroupNums.GroupNums(vendor_job)
             self.__debugLog("Finished assignment of group numbers")
 
             # Send all new and updated documents.
@@ -1328,9 +1355,13 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 xml = XmlDeclLine.sub("", xml)
                 xml = DocTypeLine.sub("", xml)
 
+                grpNum = groupNums.getDocGroupNum(docId)
                 response = cdr2gk.sendDocument(self.__jobId, docNum,
-                            "Export", docType, docId, version,
-                            groupNums.getDocGroupNum(docId), xml)
+                            "Export", docType, docId, version, grpNum, xml)
+
+                # DEBUG
+                self.__debugLog("Pushed %s: %d group=%d" % (docType,
+                                                            docId, grpNum))
                 if response.type != "OK":
                     msg += "sending document %d failed. %s: %s<BR>" % \
                             (docId, response.type, response.message)
@@ -1400,13 +1431,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 self.__updateFromPPCWHR()
             elif pubType == "Hotfix (Export)":
                 self.__updateFromPPCWHE()
-            elif pubType == "Interim (Export)":
-                # Not sure yet if we can reuse updateFromPPCW or if we
-                # need to create a separate function updateFromPPCWMFP
-                # It depends on how the delete records need to be
-                # handled. VE.
-                # ----------------------------------------------------
-                self.__updateFromPPCW()
             else:
                 raise StandardError("pubType %s not supported." % pubType)
 
@@ -1418,7 +1442,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             msg = "__pushDocsToCG() failed: %s<BR>" % info[1][0]
             raise StandardError(msg)
         except StandardError, arg:
-            raise StandardError(arg[0])
+            raise StandardError(str(arg))
         except:
             msg = "Unexpected failure in __pushDocsToCG.<BR>"
             raise StandardError(msg)
@@ -2089,7 +2113,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                        AND pp.pub_system = ?
                        AND ppp.pub_proc = pp.id
                        AND ppp.parm_name = 'SubSetName'
-                       AND ppp.parm_value = ?
+                       AND ppp.parm_value LIKE ?
                            """, (Publish.SUCCESS,
                                  "%s_%s" % (self.__pd2cg, subsetName),
                                  self.__ctrlDocId,
@@ -2682,7 +2706,23 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     cursor = self.__conn.cursor()
                     sql = self.__repParams(cdr.getTextContent(child))
                     self.__debugLog("Selecting docs using:\n%s" % sql)
-                    cursor.execute(sql, timeout = self.__timeOut)
+                    # cdr.callOrExec(cursor, sql, timeout=self.__timeOut)
+                    # cursor.execute(sql, timeout = self.__timeOut)
+                    # XXX FOLLOWING IS EXPERIMENTAL
+                    # XXX NOT WORKING AT PRESENT WITH MULTIPART
+                    # XXX Interim-Export NON-ACTIVE PROTOCOL QUERY
+                    # XXX IT APPARENTLY DOES NOT CREATE A cursor.description
+                    # XXX SAME PROBLEM WHEN INVOKED AS execute OR callproc.
+                    if sql.strip().upper().startswith("EXEC"):
+                        tempsql = sql.strip().upper()
+                        if tempsql.startswith("EXECUTE "):
+                            tempsql = tempsql[8:]
+                        else:
+                            tempsql = tempsql[5:]
+                        self.__debugLog("Calling proc '%s'" % tempsql)
+                        cursor.callproc(tempsql, ())
+                    else:
+                        cursor.execute(sql, timeout = self.__timeOut)
 
                     # Sanity checks for the query.
                     if not cursor.description:
