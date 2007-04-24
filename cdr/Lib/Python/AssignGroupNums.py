@@ -32,9 +32,12 @@ import sys, re, time, cdr, cdrdb
 # These assumptions mean that the class must be instantiated in the
 # push job that calls __createWorkPPC().
 #
-# $Id: AssignGroupNums.py,v 1.2 2007-04-20 17:42:47 bkline Exp $
+# $Id: AssignGroupNums.py,v 1.3 2007-04-24 01:46:20 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2007/04/20 17:42:47  bkline
+# Corrected db connection code ('connect()' for 'cursor()').
+#
 # Revision 1.1  2007/04/11 02:03:03  ameyer
 # Initial version, not yet tested.
 #
@@ -118,9 +121,10 @@ SELECT doc_id
 
         # Get a list of all docs in the run that aren't removals
         qry = """
-SELECT doc_id
+SELECT id
   FROM pub_proc_cg_work
  WHERE xml IS NOT NULL
+   AND cg_job = %d
 """ % jobNum
         try:
             self.__cursor.execute(qry)
@@ -200,8 +204,8 @@ SELECT doc_id
             rows = self.__cursor.fetchall()
             if len(rows) != 1:
                 raise StandardError( \
-                  "GroupNums: Unable to fetch xml for doc %d, rowcount=%s" % \
-                   docId, len(rows))
+                  "GroupNums: Unable to fetch xml for doc %d, rowcount=%d" % \
+                   (docId, len(rows)))
             return rows[0][0]
         except cdrdb.Error, info:
             raise StandardError( \
@@ -340,7 +344,13 @@ if __name__ == "__main__":
 
     # Time this
     startTime = time.time()
-    gn = GroupNums(jobNum)
+    gn = GroupNums(int(jobNum))
     endTime = time.time()
 
     # Processed
+    print("Completed assignment in %d seconds" % (endTime - startTime))
+    print("New docs = %s" % gn.getNewDocs())
+    print("Doc groups:")
+    for docId in gn.getAllDocs():
+        print("ID: %7d  isNew=%s groupNum=%d" % (docId, gn.isDocNew(docId),
+                                                 gn.getDocGroupNum(docId)))
