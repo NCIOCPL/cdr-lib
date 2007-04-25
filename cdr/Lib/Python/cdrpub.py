@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.87 2007-04-24 01:47:52 ameyer Exp $
+# $Id: cdrpub.py,v 1.88 2007-04-25 00:53:43 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.87  2007/04/24 01:47:52  ameyer
+# Fixed several bugs in new Interim-Export processing.
+# Made parm_value SQL test compatible with ntext and varchar (required
+# changing parm_value=... to parm_value LIKE ...)
+#
 # Revision 1.86  2007/04/20 17:49:19  venglisc
 # Adding code that allows us to have the push to GK proceed without
 # user intervention.
@@ -1208,7 +1213,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 #   but this will change for all these types
                 if self.__params['SubSetName'] == 'Interim-Export':
                     # Create automated job description.
-                    self.__updateJobDescription()
+                    # self.__updateJobDescription()
+                    self.__waitUserApproval()
                 else:
                     # Stop to enter job description.
                     self.__waitUserApproval()
@@ -1365,6 +1371,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 if response.type != "OK":
                     msg += "sending document %d failed. %s: %s<BR>" % \
                             (docId, response.type, response.message)
+                    self.__debugLog(msg)
                     raise StandardError(msg)
                 docNum  = docNum + 1
                 if docNum % 1000 == 0:
@@ -1375,8 +1382,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 addCount += 1
                 row = cursor.fetchone()
             msg += "%s: %d documents pushed to Cancer.gov.<BR>" % (
-	                                                      time.ctime(),
-							      addCount)
+                                          time.ctime(), addCount)
             self.__updateMessage(msg)
             msg = ""
 
@@ -1439,9 +1445,13 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             msg = ""
 
         except cdrdb.Error, info:
+            self.__debugLog("Caught database error in __pushDocs2CG: %s" % \
+                            str(info))
             msg = "__pushDocsToCG() failed: %s<BR>" % info[1][0]
             raise StandardError(msg)
         except StandardError, arg:
+            self.__debugLog("Caught StandardError in __pushDocs2CG: %s" % \
+                            str(arg))
             raise StandardError(str(arg))
         except:
             msg = "Unexpected failure in __pushDocsToCG.<BR>"
