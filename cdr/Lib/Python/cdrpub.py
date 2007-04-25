@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.88 2007-04-25 00:53:43 ameyer Exp $
+# $Id: cdrpub.py,v 1.89 2007-04-25 03:49:33 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.88  2007/04/25 00:53:43  ameyer
+# Added a bit of debug logging.
+# Temporarily set Interim-Export to wait user continuation.
+#
 # Revision 1.87  2007/04/24 01:47:52  ameyer
 # Fixed several bugs in new Interim-Export processing.
 # Made parm_value SQL test compatible with ntext and varchar (required
@@ -1213,8 +1217,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 #   but this will change for all these types
                 if self.__params['SubSetName'] == 'Interim-Export':
                     # Create automated job description.
-                    # self.__updateJobDescription()
-                    self.__waitUserApproval()
+                    self.__updateJobDescription()
                 else:
                     # Stop to enter job description.
                     self.__waitUserApproval()
@@ -1338,7 +1341,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             # This can take awhile because it has to parse docs looking
             #   for cross references between them
             self.__debugLog("Starting assignment of group numbers")
-            groupNums = AssignGroupNums.GroupNums(vendor_job)
+            # Uncomment the following for group number debugging with
+            #   "AssignGroupNums jobnum"
+            # sys.exit(1)
+            groupNums = AssignGroupNums.GroupNums(self.__jobId)
             self.__debugLog("Finished assignment of group numbers")
 
             # Send all new and updated documents.
@@ -1403,6 +1409,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 response = cdr2gk.sendDocument(self.__jobId, docNum, "Remove",
                                                docType, docId, version,
                                                groupNums.genNewUniqueNum())
+
                 if response.type != "OK":
                     msg += "deleting document %d failed. %s: %s<BR>" % (docId,
                             response.type, response.message)
