@@ -32,9 +32,13 @@ import sys, re, time, cdr, cdrdb
 # These assumptions mean that the class must be instantiated in the
 # push job that calls __createWorkPPC().
 #
-# $Id: AssignGroupNums.py,v 1.3 2007-04-24 01:46:20 ameyer Exp $
+# $Id: AssignGroupNums.py,v 1.4 2007-04-25 00:54:47 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2007/04/24 01:46:20  ameyer
+# Fixed some bugs.
+# Added diagnostics to __main__ for stand-alone runs.
+#
 # Revision 1.2  2007/04/20 17:42:47  bkline
 # Corrected db connection code ('connect()' for 'cursor()').
 #
@@ -110,8 +114,8 @@ SELECT doc_id
             newDocs = [row[0] for row in self.__cursor.fetchall()]
         except cdrdb.Error, info:
             raise StandardError( \
-        "Database error fetching list of newly published docs in job %d: %s" %\
-                (jobNum, str(info)))
+                "GroupNums: Database error fetching list of newly published "+\
+                "docs in job %d: %s" % (jobNum, str(info)))
 
         # All doc ids in the job
         docList = []
@@ -131,7 +135,7 @@ SELECT id
             docList = [row[0] for row in self.__cursor.fetchall()]
         except cdrdb.Error, info:
             raise StandardError( \
-                "Database error fetching list of docs in job %d: %s" % \
+             "GroupNums: Database error fetching list of docs in job %d: %s" %\
                 (jobNum, str(info)))
 
         # Remember counts
@@ -179,10 +183,11 @@ SELECT id
 
             # If we have assigned the doc to a group, record the assignment
             if groupThisDoc != self.__NOT_ASSIGNED:
-                self.__group2Doc.append(docId)
+                self.__group2Doc[groupThisDoc].append(docId)
             else:
                 # Create a new group of one for just this doc
                 self.__doc2Group[docId] = self.__nextGroupNum
+                self.__group2Doc[self.__nextGroupNum] = docId
                 self.__nextGroupNum += 1
 
         # All of the groups have been created but only the groups of one
@@ -209,7 +214,7 @@ SELECT id
             return rows[0][0]
         except cdrdb.Error, info:
             raise StandardError( \
-                "Database error fetching list of docs in job %d: %s" % \
+             "GroupNums: Database error fetching list of docs in job %d: %s" %\
                 (jobNum, str(info)))
 
 
