@@ -32,9 +32,14 @@ import sys, re, time, cdr, cdrdb
 # These assumptions mean that the class must be instantiated in the
 # push job that calls __createWorkPPC().
 #
-# $Id: AssignGroupNums.py,v 1.4 2007-04-25 00:54:47 ameyer Exp $
+# $Id: AssignGroupNums.py,v 1.5 2007-04-25 03:51:44 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2007/04/25 00:54:47  ameyer
+# Added some debugging.
+# Fixed what I think was a bug.
+# Version is still not fully tested.
+#
 # Revision 1.3  2007/04/24 01:46:20  ameyer
 # Fixed some bugs.
 # Added diagnostics to __main__ for stand-alone runs.
@@ -100,10 +105,10 @@ class GroupNums:
         # Find all newly published documents
         # jobNum must match pub_proc id
         qry = """
-SELECT doc_id
-  FROM pub_proc_doc
- WHERE pub_proc=%d
-   AND doc_id NOT IN (
+SELECT id
+  FROM pub_proc_cg_work
+ WHERE cg_job=%d
+   AND id NOT IN (
             SELECT id FROM pub_proc_cg
             -- Alternative slower and maybe less accurate
             -- SELECT doc_id FROM published_doc
@@ -187,7 +192,7 @@ SELECT id
             else:
                 # Create a new group of one for just this doc
                 self.__doc2Group[docId] = self.__nextGroupNum
-                self.__group2Doc[self.__nextGroupNum] = docId
+                self.__group2Doc[self.__nextGroupNum] = [docId,]
                 self.__nextGroupNum += 1
 
         # All of the groups have been created but only the groups of one
@@ -203,7 +208,8 @@ SELECT id
         Pass:
             ID of document.
         """
-        qry = "SELECT xml FROM pub_proc_cg WHERE id=%d" % docId
+        qry = "SELECT xml FROM pub_proc_cg_work WHERE cg_job=%d and id=%d" %\
+               (self.__jobNum, docId)
         try:
             self.__cursor.execute(qry)
             rows = self.__cursor.fetchall()
@@ -239,7 +245,7 @@ SELECT id
         """
         refList = []
         for match in self.__refPat.finditer(xml):
-            cdrId = match.group(0)
+            cdrId = match.group(1)
             refList.append(cdr.exNormalize(cdrId)[1])
 
         return refList
@@ -249,21 +255,22 @@ SELECT id
         Merge all docs in srcGrp into destGrp and eliminate srcGrp.
 
         Pass:
-            destGrp - All docs wind up here.
-            srcGrp  - No docs wind up here.
+            destGrp - A group number, all docs wind up here.
+            srcGrp  - Another group number, no docs wind up here and the
+                      group itself is deleted.
         """
         # The first docId in the group is the head of the group, i.e.,
         #   the newly published doc for which this group is established
-        srcDocId = self.__group2Doc[0]
+        srcDocId = self.__group2Doc[srcGrp][0]
 
-        # It now belongs to the merged-to group
+        # That docId now points to the destination group
         self.__newDoc2Group[srcDocId] = destGrp
 
         # Python copies the srcGrp doc list in one operation
         self.__group2Doc[destGrp] += self.__group2Doc[srcGrp]
 
-        # This will force an exception if a bug causes srcGrp to be re-used
-        self.__group2Doc[srcGrp] = None
+        # Delete the source grp, all docs are now in destGrp
+        del (self.__group2Doc[srcGrp])
 
     def __invertNewGroups(self):
         """
