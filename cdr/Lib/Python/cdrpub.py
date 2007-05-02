@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.90 2007-05-02 17:39:12 venglisc Exp $
+# $Id: cdrpub.py,v 1.91 2007-05-02 20:44:57 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.90  2007/05/02 17:39:12  venglisc
+# Added logic to skip re-populating of the pub_proc_cg_work table if
+# the push job is a rerun of a previously failed push job.
+# Removed logic of populating ctgov_export table.
+#
 # Revision 1.89  2007/04/25 03:49:33  ameyer
 # Added code and comments to assist debugging of group numbers.
 #
@@ -24,7 +29,8 @@
 # Revision 1.85  2007/04/11 02:04:35  ameyer
 # Switched from cdr2cg to cdr2gk for pushing data to cancer.gov, with
 # newly required group numbers.
-# This version is not yet tested, but I'm checking it in anyway for safekeeping.
+# This version is not yet tested, but I'm checking it in anyway for
+# safekeeping.
 #
 # Revision 1.84  2006/11/02 16:59:40  venglisc
 # The newly introduced date variable needed to be initialized. (Bug 2207)
@@ -1560,7 +1566,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         try:
             # XXX Why is the subselect needed? [RMK 2004-12-17]
             qry = """
-                SELECT ppc.id, t.name, ppc.xml, ppd2.subdir, ppd2.doc_version
+                SELECT ppc.id, t.name, ppc.xml, ppd2.subdir, ppd2.doc_version,
+                       ppc.force_push
                   FROM pub_proc_cg ppc, doc_type t, document d,
                        pub_proc_doc ppd2
                  WHERE d.id = ppc.id
@@ -1589,20 +1596,27 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     row = cursor.fetchone()
                     continue
                 idsInserted[docId] = 1
-                dType  = row[1]
-                xml    = row[2]
-                subdir = row[3]
-                ver    = row[4]
+                dType              = row[1]
+                xml                = row[2]
+                subdir             = row[3]
+                ver                = row[4]
+                needsPush          = row[5] == 'Y'
                 if dType == 'Media':
-                    fileTxt = self.__getCgMediaDoc(vendor_dest, subdir, docId)
+                    fileTxt = self.__getCgMediaDoc(vendor_dest, subdir,
+                                                   docId)
                 else:
-                    path    = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
+                    path    = "%s/%s/CDR%d.xml" % (vendor_dest, subdir,
+                                                   docId)
                     fileTxt = open(path, "rb").read()
                     fileTxt = unicode(fileTxt, 'utf-8')
 
-                # Whitespace-normalized compare to stored file
-                if spNorm.sub(u" ", xml) != spNorm.sub(u" ", fileTxt):
-                    # New xml is different, save it for cancer.gov
+                if not needsPush:
+                    # Whitespace-normalized compare to stored file
+                    if spNorm.sub(u" ", xml) != spNorm.sub(u" ", fileTxt):
+                        needsPush = True
+
+                if needsPush:
+                    # New xml is different or CG wants it sent anyway
                     cursor2.execute("""
                         INSERT INTO pub_proc_cg_work (id, vendor_job,
                                         cg_job, doc_type, xml, num)
@@ -1812,6 +1826,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
     #------------------------------------------------------------------
     # Different version of __createWorkPPC for Hotfix (Export)
+    # (XXX need to explain how it's different [RMK 2007-05-02])
     #------------------------------------------------------------------
     def __createWorkPPCHE(self, vendor_job, vendor_dest):
 
@@ -1837,7 +1852,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         # into pub_proc_cg_work with xml set to the new document.
         try:
             qry = """
-                SELECT ppc.id, t.name, ppc.xml, ppd2.subdir, ppd2.doc_version
+                SELECT ppc.id, t.name, ppc.xml, ppd2.subdir, ppd2.doc_version,
+                       ppc.force_push
                   FROM pub_proc_cg ppc, doc_type t, document d,
                        pub_proc_doc ppd2
                  WHERE d.id = ppc.id
@@ -1861,10 +1877,11 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     row = cursor.fetchone()
                     continue
                 idsInserted[docId] = 1
-                dType  = row[1]
-                xml    = row[2]
-                subdir = row[3]
-                ver    = row[4]
+                dType              = row[1]
+                xml                = row[2]
+                subdir             = row[3]
+                ver                = row[4]
+                needsPush          = row[5] == 'Y'
                 if dType == 'Media':
                     fileTxt = self.__getCgMediaDoc(vendor_dest, subdir, docId)
                 else:
@@ -1875,7 +1892,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 # XXX Why aren't we doing the same normalization here as
                 #     in the original __createWorkPPC() method? [RMK
                 #     2004-12-17]
-                if xml != fileTxt:
+                if not needsPush:
+                    if xml != fileTxt:
+                        needsPush = True
+                if needsPush:
                     cursor2.execute("""
                         INSERT INTO pub_proc_cg_work (id, vendor_job,
                                         cg_job, doc_type, xml, num)
@@ -1998,7 +2018,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         try:
             cursor.execute ("""
                     UPDATE pub_proc_cg
-                       SET xml = ppcw.xml, pub_proc = ppcw.cg_job
+                       SET xml = ppcw.xml, pub_proc = ppcw.cg_job,
+                           force_push = 'N', cg_new = 'N'
                       FROM pub_proc_cg ppc, pub_proc_cg_work ppcw
                      WHERE ppc.id = ppcw.id
                             """, timeout = self.__timeOut)
@@ -2112,7 +2133,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         try:
             cursor.execute ("""
                     UPDATE pub_proc_cg
-                       SET xml = ppcw.xml, pub_proc = ppcw.cg_job
+                       SET xml = ppcw.xml, pub_proc = ppcw.cg_job,
+                           force_push = 'N', cg_new = 'N'
                       FROM pub_proc_cg ppc, pub_proc_cg_work ppcw
                      WHERE ppc.id = ppcw.id
                             """, timeout = self.__timeOut)
