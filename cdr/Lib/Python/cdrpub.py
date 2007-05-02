@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.89 2007-04-25 03:49:33 ameyer Exp $
+# $Id: cdrpub.py,v 1.90 2007-05-02 17:39:12 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.89  2007/04/25 03:49:33  ameyer
+# Added code and comments to assist debugging of group numbers.
+#
 # Revision 1.88  2007/04/25 00:53:43  ameyer
 # Added a bit of debug logging.
 # Temporarily set Interim-Export to wait user continuation.
@@ -431,6 +434,8 @@ class Publish:
     __reportOnly        = 0
     __validateDocs      = 0
     __logDocModulus     = LOG_MODULUS
+    __excludeDocTypes   = ['Country', # Document types not provided 
+                           'Person']  # to Cancer.gov     
 
     # List of Docs to be published
     __docs = []
@@ -1209,7 +1214,32 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
             if pubType == "Full Load" or pubType == "Export":
                 # Note: For SubSetName='Interim-Export', PubType='Export'
-                self.__createWorkPPC(vendor_job, vendor_dest)
+
+                # If the push fails after the temporary tables have been
+                # created and populated we don't want to have to wait
+                # to have this done again.  Skip the work and go 
+                # straight to pushing the documents.
+                # XXX This seemed to be a good idea but the assignment
+                # XXX of group numbers fails.  Probably because 
+                # XXX pub_proc_cg is being deleted above.
+                # ------------------------------------------------------
+                if pubType == "Export" or (pubType == "Full Load" and \
+                   self.__params['RerunFailedPush'] == 'No'):
+                    self.__createWorkPPC(vendor_job, vendor_dest)
+                else:
+                    try:
+                        msg  = "%s: " % time.ctime()
+                        msg += "Updating pub_proc_cg_work with "
+                        msg += "current jobID...<BR>"
+                        self.__updateMessage(msg)
+                        cursor.execute ("""
+                          UPDATE pub_proc_cg_work SET cg_job = ?
+                                """, self.__jobId)
+                    except cdrdb.Error, info:
+                        raise StandardError(
+                            "Updating pub_proc_cg_work failed: %s<BR>" % \
+                                                             info[1][0])
+
                 pubTypeCG = pubType
                 self.__updateMessage(link)
 
@@ -1254,11 +1284,14 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 self.__updateStatus(Publish.SUCCESS, msg)
                 return
 
+            # This is not needed anymore and is handled using the table
+            # pub_proc_nlm
+            # (2007-04-26, VE)
             # Remember any hotfix jobs that need to be exported to NLM.
-            if pubTypeCG == "Hotfix":
-                cursor.execute("""\
-                   INSERT INTO ctgov_export (pub_proc)
-                        VALUES (?)""", self.__jobId)
+            #if pubTypeCG == "Hotfix":
+            #    cursor.execute("""\
+            #       INSERT INTO ctgov_export (pub_proc)
+            #            VALUES (?)""", self.__jobId)
 
             # Get last successful cg_jobId. GateKeeper does not
             # care which subset it belongs to.
@@ -1328,6 +1361,12 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                  pubTypeCG, CG_PUB_TARGET, lastJobId)
             if response.type != "OK":
                 msg += "%s: %s<BR>" % (response.type, response.message)
+
+                # Hint for the operator
+                if response.message.startswith("Error (-4)"):
+                    msg += \
+                        'Operator may need to run "cdr2gk.py abort={jobnum}"'
+
                 raise StandardError(msg)
 
             msg += "%s: Pushing documents starts<BR>" % time.ctime()
@@ -1351,11 +1390,25 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             addCount = 0
             XmlDeclLine = re.compile("<\?xml.*?\?>\s*", re.DOTALL)
             DocTypeLine = re.compile("<!DOCTYPE.*?>\s*", re.DOTALL)
-            cursor.execute ("""
+
+            # Create a string of doc_types to be excluded from 
+            # pushing to Cancer.gov
+            excludeDT = "'" + "', '".join(self.__excludeDocTypes) + "'"
+
+            qry = """
                 SELECT id, num, doc_type, xml
                   FROM pub_proc_cg_work
                  WHERE NOT xml IS NULL
-                            """, timeout = self.__timeOut)
+                   AND doc_type NOT IN (%s)""" % excludeDT
+            self.__debugLog(qry)
+
+            cursor.execute (qry, timeout = self.__timeOut)
+            #cursor.execute ("""
+            #    SELECT id, num, doc_type, xml
+            #      FROM pub_proc_cg_work
+            #     WHERE NOT xml IS NULL
+            #                """, timeout = self.__timeOut)
+
             row = cursor.fetchone()
             while row:
                 docId   = row[0]
@@ -1368,6 +1421,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 xml = DocTypeLine.sub("", xml)
 
                 grpNum = groupNums.getDocGroupNum(docId)
+                
                 response = cdr2gk.sendDocument(self.__jobId, docNum,
                             "Export", docType, docId, version, grpNum, xml)
 
@@ -1393,11 +1447,18 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             msg = ""
 
             # Remove all the removed documents.
-            cursor.execute ("""
+            qry = """
                 SELECT id, num, doc_type
                   FROM pub_proc_cg_work
                  WHERE xml IS NULL
-                            """)
+                   AND doc_type NOT IN (%s)""" % excludeDT
+
+            cursor.execute (qry)
+            #cursor.execute ("""
+            #    SELECT id, num, doc_type
+            #      FROM pub_proc_cg_work
+            #     WHERE xml IS NULL
+            #                """)
             rows = cursor.fetchall()
             removeCount = len(rows)
             for row in rows:
