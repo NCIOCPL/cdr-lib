@@ -32,9 +32,12 @@ import sys, re, time, cdr, cdrdb
 # These assumptions mean that the class must be instantiated in the
 # push job that calls __createWorkPPC().
 #
-# $Id: AssignGroupNums.py,v 1.5 2007-04-25 03:51:44 ameyer Exp $
+# $Id: AssignGroupNums.py,v 1.6 2007-05-02 21:10:26 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2007/04/25 03:51:44  ameyer
+# Numerous bug fixes.  This is the first tested version.
+#
 # Revision 1.4  2007/04/25 00:54:47  ameyer
 # Added some debugging.
 # Fixed what I think was a bug.
@@ -109,7 +112,7 @@ SELECT id
   FROM pub_proc_cg_work
  WHERE cg_job=%d
    AND id NOT IN (
-            SELECT id FROM pub_proc_cg
+            SELECT id FROM pub_proc_cg WHERE cg_new = 'N'
             -- Alternative slower and maybe less accurate
             -- SELECT doc_id FROM published_doc
         )
