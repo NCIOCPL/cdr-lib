@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.5 2007-04-20 03:46:25 bkline Exp $
+# $Id: cdr2gk.py,v 1.6 2007-05-02 23:08:04 venglisc Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2007/04/20 03:46:25  bkline
+# Finished status query code.
+#
 # Revision 1.4  2007/04/10 21:37:28  bkline
 # Plugged in some additional unit-testing options, as well as the start
 # of the status query method.
@@ -29,6 +32,7 @@ localhost           = socket.gethostname()
 host                = "gatekeeper.cancer.gov"
 testhost            = "test4.cancer.gov"
 testhost            = "gkdev.cancer.gov"
+testhost            = "gkint.cancer.gov"
 port                = 80
 soapNamespace       = "http://schemas.xmlsoap.org/soap/envelope/"
 gatekeeperNamespace = "http://www.cancer.gov/webservices/"
@@ -47,6 +51,7 @@ if string.upper(localhost) in ("MAHLER", "FRANCK"):
 PUBTYPES = {
     'Full Load'       : 'Send all documents to Cancer.gov',
     'Export'          : 'Send specified documents to Cancer.gov',
+    'Reload'          : 'Re-send specified documents that failed loading',
     'Remove'          : 'Delete documents from Cancer.gov',
     'Hotfix (Remove)' : 'Delete individual documents from Cancer.gov',
     'Hotfix (Export)' : 'Send individual documents to Cancer.gov'
@@ -409,7 +414,7 @@ class Response:
         else:
             self.xmlResult   = extractXmlResult(self.bodyElem)
     def __repr__(self):
-        pieces = [u"cdr2cg.Response "]
+        pieces = [u"cdr2gk.Response "]
         if self.publishing:
             pieces.append(u"(type: %s, message: %s, details: %s" %
                           (self.type, self.message, self.details))
