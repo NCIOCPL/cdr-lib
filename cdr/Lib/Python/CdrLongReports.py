@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.32 2006-12-12 14:11:20 bkline Exp $
+# $Id: CdrLongReports.py,v 1.33 2007-05-04 14:53:34 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.32  2006/12/12 14:11:20  bkline
+# Added sorting and counting to outcome measures report; added new column
+# to Spanish Glossary Terms by Status report.
+#
 # Revision 1.31  2006/05/23 17:36:00  bkline
 # Corrected "HELD" to "HOLD" in Processing Status Report for Protocols.
 #
@@ -2354,6 +2358,7 @@ class ProtocolProcessingStatusReport:
             self.nctId       = None
             self.statuses    = []
             self.phases      = []
+            self.status      = None
             for child in node.childNodes:
                 if child.nodeName == 'IDInfo':
                     for gc in child.childNodes:
@@ -2372,6 +2377,8 @@ class ProtocolProcessingStatusReport:
                     self.title = t.replace("\n", " ").replace("\r", "")
                 elif child.nodeName == 'Phase':
                     self.phases.append(cdr.getTextContent(child).strip())
+                elif child.nodeName == 'OverallStatus':
+                    self.status = cdr.getTextContent(child).strip()
 
     class InScopeProtocol:
         def __init__(self, report, cdrId, node, publishable):
@@ -2386,6 +2393,7 @@ class ProtocolProcessingStatusReport:
             self.scientificStatuses = []
             self.scientificUser     = None
             self.statusKeys         = {}
+            self.protocolStatus     = None
             for child in node.childNodes:
                 if child.nodeName == 'ProtocolIDs':
                     self.protocolId = report.getPrimaryId(child)
@@ -2407,6 +2415,10 @@ class ProtocolProcessingStatusReport:
                             self.statusKeys[status.upper()] = status
                         elif gc.nodeName == 'EnteredBy':
                             self.adminUser = cdr.getTextContent(gc)
+                elif child.nodeName == 'ProtocolAdminInfo':
+                    for gc in child.childNodes:
+                        if gc.nodeName == 'CurrentProtocolStatus':
+                            self.protocolStatus = cdr.getTextContent(gc)
             report.cursor.execute("""\
                 SELECT doc_id
                   FROM query_term
@@ -2451,6 +2463,7 @@ class ProtocolProcessingStatusReport:
         #--------------------------------------------------------------
         totalInScope     = 0
         totalCtGov       = 0
+        totalCtGovWd     = 0
         totalResearch    = 0
         totalDisapproved = 0
         totalOutOfScope  = 0
@@ -2459,6 +2472,7 @@ class ProtocolProcessingStatusReport:
         totalHeld        = 0
         rowInScope       = 2
         rowCtGov         = 2
+        rowCtGovWd       = 2
         rowResearch      = 2
         rowDisapproved   = 2
         rowOutOfScope    = 2
@@ -2488,6 +2502,7 @@ class ProtocolProcessingStatusReport:
         #--------------------------------------------------------------
         wsInScope     = wb.addWorksheet("InScope", self.normalStyle)
         wsCtGov       = wb.addWorksheet("CTGov", self.normalStyle)
+        wsCtGovWd     = wb.addWorksheet("CTGov_Withdrawn", self.normalStyle)
         wsResearch    = wb.addWorksheet("Research", self.normalStyle)
         wsDisapproved = wb.addWorksheet("Disapproved_Withdrawn",
                                         self.normalStyle)
@@ -2501,15 +2516,17 @@ class ProtocolProcessingStatusReport:
         #--------------------------------------------------------------
         colNum = 1
         titleWidth = 360
-        for w in (60, 60, 120, 100, 100, 100, 100, 80, 100, 80):
+        protocolIdColNum = 3
+        ctGovDocIdColNum = 1
+        for w in (60, 60, 120, 100, 100, 100, 100, 80, 100, 80, 100):
             wsInScope.addCol(colNum, w)
             wsResearch.addCol(colNum, w)
             wsDisapproved.addCol(colNum, w)
             wsDuplicate.addCol(colNum, w)
             wsLegacy.addCol(colNum, w)
             wsHold.addCol(colNum, w)
-            if colNum == 3 and self.includeProtTitle:
-                colNum = 4
+            if colNum == protocolIdColNum and self.includeProtTitle:
+                colNum += 1
                 wsInScope.addCol(colNum, titleWidth)
                 wsResearch.addCol(colNum, titleWidth)
                 wsDisapproved.addCol(colNum, titleWidth)
@@ -2524,8 +2541,9 @@ class ProtocolProcessingStatusReport:
         colNum = 1
         for w in (60, 150, 80, 80, 160, 80):
             wsCtGov.addCol(colNum, w)
-            if colNum == 1 and self.includeProtTitle:
-                colNum = 2
+            wsCtGovWd.addCol(colNum, w)
+            if colNum == ctGovDocIdColNum and self.includeProtTitle:
+                colNum += 1
                 wsCtGov.addCol(colNum, titleWidth)
             colNum += 1
         
@@ -2542,22 +2560,26 @@ class ProtocolProcessingStatusReport:
         for label in ("CDR InScope ID", "CDR Scientific ID", "Protocol ID",
                       "Date Received", "Submission Complete", "Merge Date",
                       "Admin Processing Status", "Admin User",
-                      "Scientific Processing Status", "Scientific User"):
+                      "Scientific Processing Status", "Scientific User",
+                      "Current Protocol Status"):
             for row in headerRows:
                 row.addCell(colNum, label)
-            if colNum == 3 and self.includeProtTitle:
-                colNum = 4
+            if colNum == protocolIdColNum and self.includeProtTitle:
+                colNum += 1
                 for row in headerRows:
                     row.addCell(colNum, "Protocol Title")
             colNum += 1
-        row = wsCtGov.addRow(1, labelStyle)
+        headerRows = (wsCtGov.addRow(1, labelStyle),
+                      wsCtGovWd.addRow(1, labelStyle))
         colNum = 1
         for label in ("Doc ID", "OrgStudyID", "NCTID", "Date Created",
                       "AdminProcessingStatus", "Phase"):
-            row.addCell(colNum, label)
-            if colNum == 1 and self.includeProtTitle:
-                colNum = 2
-                row.addCell(colNum, "Protocol Title")
+            for row in headerRows:
+                row.addCell(colNum, label)
+            if colNum == ctGovDocIdColNum and self.includeProtTitle:
+                colNum += 1
+                for row in headerRows:
+                    row.addCell(colNum, "Protocol Title")
             colNum += 1
         row = wsOutOfScope.addRow(1, labelStyle)
         colNum = 1
@@ -2680,13 +2702,19 @@ class ProtocolProcessingStatusReport:
             dom     = xml.dom.minidom.parseString(docXml.encode('utf-8'))
             docElem = dom.documentElement
             protocol = self.CTGovProtocol(self, cdrId, docElem)
-            rowCtGov += self.addCtGovProtocol(wsCtGov, rowCtGov, protocol)
+            if protocol.status.upper() != 'WITHDRAWN':
+                rowCtGov += self.addCtGovProtocol(wsCtGov, rowCtGov, protocol)
+                totalCtGov += 1
+            else:
+                rowCtGovWd += self.addCtGovProtocol(wsCtGovWd, rowCtGovWd,
+                                                    protocol)
+                totalCtGovWd += 1
             i += 1
             msg = "<br>loaded %d of %d CTGovProtocol documents" % (i, n)
             self.job.setProgressMsg(self.msg + msg)
-            totalCtGov += 1
         self.msg += msg
         self.addTotal(wsCtGov, totalCtGov, rowCtGov)
+        self.addTotal(wsCtGovWd, totalCtGovWd, rowCtGovWd)
 
         #--------------------------------------------------------------
         # Process the Out-Of-Scope Protocol documents.
@@ -2723,8 +2751,8 @@ class ProtocolProcessingStatusReport:
         # Write out the report and tell the user where it is.
         #--------------------------------------------------------------
         name = "ProtocolProcessing-%d.xls" % job.getJobId()
-        f = open(REPORTS_BASE + "/" + name, "w")
-        wb.write(f)
+        f = open(REPORTS_BASE + "/" + name, "wb")
+        wb.write(f, True)
         f.close()
         cdr.logwrite("saving %s" % (REPORTS_BASE + "/" + name), LOGFILE)
         url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
@@ -2794,6 +2822,8 @@ The Protocol Processing report you requested can be viewed at
         row.addCell(9 + extra, self.mergeStatuses(prot.scientificStatuses),
                     mergeDown = mergeRows)
         row.addCell(10 + extra, prot.scientificUser or '',
+                    mergeDown = mergeRows)
+        row.addCell(11 + extra, prot.protocolStatus or '',
                     mergeDown = mergeRows)
         return nRows
 
