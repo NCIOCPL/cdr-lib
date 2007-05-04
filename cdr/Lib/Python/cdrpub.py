@@ -1,10 +1,17 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.91 2007-05-02 20:44:57 bkline Exp $
+# $Id: cdrpub.py,v 1.92 2007-05-04 23:01:04 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.91  2007/05/02 20:44:57  bkline
+# Modified the logic which decides whether a document needs to be pushed
+# to Cancer.gove based on whether it has changed, so that the code
+# honors the value of the 'force_push' column of the pub_proc_cg table;
+# added code to reset this column and the cg_new column to 'N' for
+# existing rows when the job is done.
+#
 # Revision 1.90  2007/05/02 17:39:12  venglisc
 # Added logic to skip re-populating of the pub_proc_cg_work table if
 # the push job is a rerun of a previously failed push job.
@@ -353,7 +360,7 @@ LOG_MODULUS = 1000
 # XXX For testing, wiring target to "GateKeeper" rather than "Live" or
 # XXX "Preview".
 # XXX Need a way to set this from outside?
-CG_PUB_TARGET = "GateKeeper"
+CG_PUB_TARGET = "Preview"
 
 #-----------------------------------------------------------------------
 # class: Doc
@@ -930,9 +937,19 @@ class Publish:
                             pushSubsetName = "%s_%s" % (self.__pd2cg,
                                                         self.__subsetName)
                             msg = ""
+
+                            # Not all Subset types have the PushJobDescription
+                            # parameter.  Need to check for existance.
+                            if self.__params.has_key('PushJobDescription'):
+                                parms = ([('PushJobDescription', 
+                                         self.__params['PushJobDescription'])])
+                            else:
+                                parms = []
+
                             resp = cdr.publish(self.__credentials,
                                 "Primary",
                                 pushSubsetName,
+                                parms = parms, 
                                 email = self.__email,
                                 noOutput = 'Y',
                                 port = self.__pubPort)
@@ -1223,11 +1240,11 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
                 # If the push fails after the temporary tables have been
                 # created and populated we don't want to have to wait
-                # to have this done again.  Skip the work and go 
+                # to have this done again provided no other publishing
+                # job ran when we try to push again.  Skip the work and go 
                 # straight to pushing the documents.
-                # XXX This seemed to be a good idea but the assignment
-                # XXX of group numbers fails.  Probably because 
-                # XXX pub_proc_cg is being deleted above.
+                # In order for this to work we need to update the cg_job
+                # column in pub_prog_cg_work with the current jobID.
                 # ------------------------------------------------------
                 if pubType == "Export" or (pubType == "Full Load" and \
                    self.__params['RerunFailedPush'] == 'No'):
@@ -1249,11 +1266,16 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 pubTypeCG = pubType
                 self.__updateMessage(link)
 
-                # XXX Job description currently entered by user,
-                #   but this will change for all these types
-                if self.__params['SubSetName'] == 'Interim-Export':
+                # Job description for automated jobs is passed via
+                # the PushJobDescription parameter. 
+                # For all other jobs the description is entered when 
+                # the job is released from the WAIT stage.
+                # ----------------------------------------------------
+                if (self.__params['SubSetName'] == 'Interim-Export' or 
+                    self.__params['SubSetName'] == 'Export'):
                     # Create automated job description.
-                    self.__updateJobDescription()
+                    #self.__updateJobDescription()
+                    pass
                 else:
                     # Stop to enter job description.
                     self.__waitUserApproval()
@@ -1306,7 +1328,11 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             lastJobId = self.__getLastCgJob()
 
             # Get the required job description.
-            cgJobDesc = self.__getCgJobDesc()
+            if self.__params.has_key('PushJobDescription'):
+                cgJobDesc = self.__params['PushJobDescription']
+            else:
+                cgJobDesc = self.__getCgJobDesc()
+            
             if not cgJobDesc:
                 self.__updateMessage(msg)
                 raise StandardError("<BR>Missing required job description.")
@@ -1498,7 +1524,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             response = cdr2gk.sendJobComplete(self.__jobId, pubTypeCG,
                         addCount + removeCount, "complete")
             if response.type != "OK":
-                msg = "Error response from job completion:<BR>" + str(msg)
+                msg = "Error response from job completion:<BR>" + \
+                       str(response.message)
                 raise StandardError(msg)
 
             # Before we claim success, we will have to update
@@ -3352,6 +3379,7 @@ Please do not reply to this message.
     # ---------------------------------------------------------------------
     # Create the mandatory CG Job Description for the automated Interim
     # jobs send to Gatekeeper.
+    # *** This function is not needed anymore: VE, 2007-05-04. ***
     # ---------------------------------------------------------------------
     def __updateJobDescription(self):
         cgJobDescription = "<CgJobDesc>Automated updates<BR/></CgJobDesc>"
