@@ -1,10 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.92 2007-05-04 23:01:04 venglisc Exp $
+# $Id: cdrpub.py,v 1.93 2007-05-05 23:12:58 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.92  2007/05/04 23:01:04  venglisc
+# Added new parameter PushJobDescription to be passed from the publishing
+# job to the push job as the GateKeeper description.
+# The Subset types of Interim-Export and Export will not need to be
+# released manually.  These are now pushed directly.
+#
 # Revision 1.91  2007/05/02 20:44:57  bkline
 # Modified the logic which decides whether a document needs to be pushed
 # to Cancer.gove based on whether it has changed, so that the code
@@ -1235,7 +1241,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                                                  cgWorkLink)
 
 
-            if pubType == "Full Load" or pubType == "Export":
+            if pubType in ("Full Load", "Export", "Reload"):
                 # Note: For SubSetName='Interim-Export', PubType='Export'
 
                 # If the push fails after the temporary tables have been
@@ -1245,9 +1251,12 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 # straight to pushing the documents.
                 # In order for this to work we need to update the cg_job
                 # column in pub_prog_cg_work with the current jobID.
+                # XXX [RMK 2007-05-05]: Comment and code don't match:
+                # code only does what comment implies for full load. XXX
                 # ------------------------------------------------------
-                if pubType == "Export" or (pubType == "Full Load" and \
-                   self.__params['RerunFailedPush'] == 'No'):
+                if (pubType in ("Export", "Reload") or
+                    pubType == "Full Load" and
+                     self.__params['RerunFailedPush'] == 'No'):
                     self.__createWorkPPC(vendor_job, vendor_dest)
                 else:
                     try:
@@ -1532,7 +1541,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             # pub_proc_cg and pub_proc_doc from pub_proc_cg_work.
             # These transactions must succeed! Failure will cause
             # a mismatch between PPC/D and Cancer.gov database.
-            if pubType == "Full Load" or pubType == "Export":
+            if pubType in ("Full Load", "Export", "Reload"):
                 self.__updateFromPPCW()
             elif pubType == "Hotfix (Remove)":
                 self.__updateFromPPCWHR()
