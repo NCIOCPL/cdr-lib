@@ -32,9 +32,13 @@ import sys, re, time, cdr, cdrdb
 # These assumptions mean that the class must be instantiated in the
 # push job that calls __createWorkPPC().
 #
-# $Id: AssignGroupNums.py,v 1.6 2007-05-02 21:10:26 bkline Exp $
+# $Id: AssignGroupNums.py,v 1.7 2007-05-07 01:34:54 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2007/05/02 21:10:26  bkline
+# Added use of cg_new column to detect documents which aren't available
+# on Cancer.gov even though they're in the pub_proc_cg table.
+#
 # Revision 1.5  2007/04/25 03:51:44  ameyer
 # Numerous bug fixes.  This is the first tested version.
 #
@@ -78,7 +82,7 @@ class GroupNums:
                      groupings will result.
 
         Raises:
-            StandardError if failure.
+            cdr.Exception if failure.
         """
         self.__jobNum = jobNum
 
@@ -86,16 +90,16 @@ class GroupNums:
         self.__conn   = cdrdb.connect('CdrGuest')
         self.__cursor = self.__conn.cursor()
 
+        # Set of document IDs for all new documents (i.e., not on Cancer.gov)
+        self.__newDocs = None
+
         # Dictionary of docId -> groupNum
-        # Only newly published docs go in here
-        self.__newDoc2Group = {}
-
         # Dictionary for all the docs, not just new ones
-        self.__doc2Group = {}
+        self.__docs = {}
 
-        # Dictionary of group -> list of doc ids in that group
+        # Dictionary of group -> set of doc ids in that group
         # Inverse of __doc2group
-        self.__group2Doc = {}
+        self.__groups = {}
 
         # Next group number to assign
         self.__nextGroupNum = 1
@@ -103,7 +107,7 @@ class GroupNums:
         # Regex pattern for finding ref and href attributes
         # Can't get them from query_term_pub because we need refs and
         #   hrefs from the final vendor filtered version
-        self.__refPat = re.compile(r"""ref=['"](CDR[0-9]{10})""", re.MULTILINE)
+        self.__refPat = re.compile("ref=['\"](CDR\\d{10})")
 
         # Find all newly published documents
         # jobNum must match pub_proc id
@@ -119,17 +123,11 @@ SELECT id
 """ % jobNum
         try:
             self.__cursor.execute(qry)
-            newDocs = [row[0] for row in self.__cursor.fetchall()]
+            self.__newDocs = set([row[0] for row in self.__cursor.fetchall()])
         except cdrdb.Error, info:
-            raise StandardError( \
-                "GroupNums: Database error fetching list of newly published "+\
+            raise cdr.Exception(
+                "GroupNums: Database error fetching list of newly published "
                 "docs in job %d: %s" % (jobNum, str(info)))
-
-        # All doc ids in the job
-        docList = []
-
-        # Constant meaning doc not assigned to a group yet
-        self.__NOT_ASSIGNED = -1
 
         # Get a list of all docs in the run that aren't removals
         qry = """
@@ -142,67 +140,68 @@ SELECT id
             self.__cursor.execute(qry)
             docList = [row[0] for row in self.__cursor.fetchall()]
         except cdrdb.Error, info:
-            raise StandardError( \
-             "GroupNums: Database error fetching list of docs in job %d: %s" %\
+            raise cdr.Exception(
+             "GroupNums: Database error fetching list of docs in job %d: %s" %
                 (jobNum, str(info)))
 
         # Remember counts
-        self.__newDocCount = len(newDocs)
+        self.__newDocCount = len(self.__newDocs)
         self.__docCount    = len(docList)
-
-        # Create base groups for the new docs, one group per doc
-        for docId in newDocs:
-            self.__newDoc2Group[docId] = self.__nextGroupNum
-            self.__group2Doc[self.__nextGroupNum] = [docId,]
-            self.__nextGroupNum += 1
 
         # Process every doc in the job
         for docId in docList:
 
-            # If this is a newly published doc, we've already handled it
-            if self.__newDoc2Group.has_key(docId):
-                continue
-
+            # The document might already be in a group if it's new.
+            groupId = self.__docs.get(docId)
+            group   = groupId and self.__groups[groupId] or None
+            
             # Get list of doc ids referenced in this document
-            xml     = self.__getXml(docId)
-            refList = self.__getRefs(xml)
+            xml  = self.__getXml(docId)
+            refs = self.__getRefs(xml)
 
             # Check to see if any of them are newly published docs
-            groupThisDoc = self.__NOT_ASSIGNED
-            for refId in refList:
-                if self.__newDoc2Group.has_key(refId):
-                    # Got a hit, is it the first new doc referred to?
-                    newGroup = self.__newDoc2Group[refId]
-                    if groupThisDoc == self.__NOT_ASSIGNED:
-                        # Yes, we now have a group
-                        groupThisDoc = newGroup
-                    elif groupThisDoc == newGroup:
-                        # A second reference to the same doc already
-                        #  already referred to.  That's fine
-                        pass
-                    else:
-                        # This doc refers to two newly published docs
-                        # We can't assign one doc to two groups, so we
-                        #  have to merge the groups
-                        # We put them all into the first group encountered
-                        #  (It's arbitrary which one we choose)
-                        # groupThisDoc remains unchanged
-                        self.__mergeGroups(groupThisDoc, newGroup)
+            linkedNewDocs = refs.intersection(self.__newDocs)
 
-            # If we have assigned the doc to a group, record the assignment
-            if groupThisDoc != self.__NOT_ASSIGNED:
-                self.__group2Doc[groupThisDoc].append(docId)
-            else:
-                # Create a new group of one for just this doc
-                self.__doc2Group[docId] = self.__nextGroupNum
-                self.__group2Doc[self.__nextGroupNum] = [docId,]
-                self.__nextGroupNum += 1
+            # Ensure that we're in the same group as all of these new docs.
+            for newDocId in linkedNewDocs:
 
-        # All of the groups have been created but only the groups of one
-        #   are recorded in self.__doc2Group
-        # Fill in the rest
-        self.__invertNewGroups()
+                # Find out if the new document is already in a group
+                newDocGroupId = self.__docs.get(newDocId)
+                if newDocGroupId:
 
+                    # If we don't already have a group, use this one
+                    if not groupId:
+                        groupId = newDocGroupId
+                        group   = self.__groups[groupId]
+                        group.add(docId)
+                        self.__docs[docId] = groupId
+
+                    # If we're already in a different group, merge the groups.
+                    elif newDocGroupId != groupId:
+                        self.__mergeGroups(groupId, newDocGroupId)
+
+                # New document doesn't have a group; bring him into ours
+                # if we have one.
+                elif groupId:
+                    group.add(newDocId)
+                    self.__docs[newDocId] = groupId
+
+                # Otherwise, we need to create a new group.
+                else:
+                    groupId = self.genNewUniqueNum()
+                    group   = self.__groups[groupId] = set()
+                    group.add(docId)
+                    group.add(newDocId)
+                    self.__docs[docId] = groupId
+                    self.__docs[newDocId] = groupId
+
+            # If we still don't have a group for this document, make one.
+            if not groupId:
+                groupId = self.genNewUniqueNum()
+                group   = self.__groups[groupId] = set()
+                group.add(docId)
+                self.__docs[docId] = groupId
+                    
     def __getXml(self, docId):
         """
         Retrieve the vendor filtered XML text for a document by ID.
@@ -217,81 +216,65 @@ SELECT id
             self.__cursor.execute(qry)
             rows = self.__cursor.fetchall()
             if len(rows) != 1:
-                raise StandardError( \
-                  "GroupNums: Unable to fetch xml for doc %d, rowcount=%d" % \
+                raise cdr.Exception(
+                  "GroupNums: Unable to fetch xml for doc %d, rowcount=%d" %
                    (docId, len(rows)))
             return rows[0][0]
         except cdrdb.Error, info:
-            raise StandardError( \
-             "GroupNums: Database error fetching list of docs in job %d: %s" %\
+            raise cdr.Exception(
+             "GroupNums: Database error fetching list of docs in job %d: %s" %
                 (jobNum, str(info)))
 
 
     def __getRefs(self, xml):
         """
-        Get a sequence of all of the CDR IDs referenced by this vendor
+        Get a set of all of the CDR IDs referenced by this vendor
         format XML.  Finds values of "ref" and "href" attributes,
         stripped of any '#' fragment extensions.
 
-        Does not worry about de-duplication.  That's handled easily
-        by the caller for this application.
-
         Uses regular expression to find the docs.  A test comparing that
         to SAX parsing appeared 2 orders of magnitude faster and found
-        all the same CDR IDs.
+        all the same CDR IDs.  This should be safe because the vendor
+        filter does not currently include comments in the exported XML
+        documents.  If that ever changes, the worst that can happen
+        will be that the groupings will be more conservative than they
+        need to be.
 
         Pass:
             xml - Vendor format text in utf-8 ( XXX - UNICODE?)
 
         Return:
-            List of CDR IDs, as integers.
+            Set of CDR IDs, as integers.
         """
-        refList = []
+        refs = set()
         for match in self.__refPat.finditer(xml):
             cdrId = match.group(1)
-            refList.append(cdr.exNormalize(cdrId)[1])
+            refs.add(cdr.exNormalize(cdrId)[1])
 
-        return refList
+        return refs
 
-    def __mergeGroups(self, destGrp, srcGrp):
+    def __mergeGroups(self, dstGrpId, srcGrpId):
         """
-        Merge all docs in srcGrp into destGrp and eliminate srcGrp.
+        Merge all docs in srcGrpId's group into group for dstGrpId and
+        eliminate srcGrpId's group.
 
         Pass:
-            destGrp - A group number, all docs wind up here.
-            srcGrp  - Another group number, no docs wind up here and the
-                      group itself is deleted.
+            dstGrpId - A group number, all docs wind up here.
+            srcGrpId - Another group number, no docs wind up here and the
+                       group itself is deleted.
         """
-        # The first docId in the group is the head of the group, i.e.,
-        #   the newly published doc for which this group is established
-        srcDocId = self.__group2Doc[srcGrp][0]
 
-        # That docId now points to the destination group
-        self.__newDoc2Group[srcDocId] = destGrp
+        # Get direct references to the sets.
+        srcGrp = self.__groups[srcGrpId]
+        dstGrp = self.__groups[dstGrpId]
 
-        # Python copies the srcGrp doc list in one operation
-        self.__group2Doc[destGrp] += self.__group2Doc[srcGrp]
+        # Plug the documents from the source group into the destination group.
+        dstGrp.update(srcGrp)
+        for docId in srcGrp:
+            self.__docs[docId] = dstGrpId
 
-        # Delete the source grp, all docs are now in destGrp
-        del (self.__group2Doc[srcGrp])
-
-    def __invertNewGroups(self):
-        """
-        After all groups have been assigned, we have created lists of
-        doc IDs for all newly published docs, and all docs that link
-        to them.
-
-        We didn't put the mappings for newly published docs in
-        self.__doc2Group because merges might have changed things.
-        It's simpler to wait until the end and do it then.
-
-        This routine does that, making self.__doc2Group a complete mapping
-        of docId -> group for the entire publishing job.
-        """
-        # Invert the lists of new docs and the docs that link to them
-        for grp in self.__group2Doc.keys():
-            for docId in self.__group2Doc[grp]:
-                self.__doc2Group[docId] = grp
+        # No longer need the source group: drop it from the dictionary.
+        del self.__groups[srcGrpId]
 
     #--------------------------------------------------------------
     # Public methods
@@ -300,7 +283,7 @@ SELECT id
         """
         Return a list of docIds for newly published documents in the job.
         """
-        newDocs = self.__newDoc2Group.keys()
+        newDocs = list(self.__newDocs)
         newDocs.sort()
         return newDocs
 
@@ -308,7 +291,7 @@ SELECT id
         """
         Return a list of all docIds, newly published or not.
         """
-        allDocs = self.__doc2Group.keys()
+        allDocs = self.__docs.keys()
         allDocs.sort()
         return allDocs
 
@@ -316,7 +299,7 @@ SELECT id
         """
         Return the group number for any particular document.
         """
-        return self.__doc2Group[docId]
+        return self.__docs[docId]
 
     def genNewUniqueNum(self):
         """
@@ -331,9 +314,7 @@ SELECT id
         """
         Tell the caller if this doc id is newly published in this job.
         """
-        if self.__newDoc2Group.has_key(docId):
-            return True
-        return False
+        return docId in self.__newDocs
 
     def getNewDocCount(self):
         """
@@ -347,13 +328,18 @@ SELECT id
         """
         return self.__docCount
 
+    def getGroupIds(self):
+        """
+        Return sequence of unique group IDs assigned.
+        """
+        return tuple(self.__groups.keys())
 
 # Main routine for test purposes only
 if __name__ == "__main__":
 
     if len(sys.argv) != 2:
-        sys.stderr.write( \
-            "usage: AssignGroupNums.py job_number_of_last_export job\n")
+        sys.stderr.write(
+            "usage: AssignGroupNums.py job_number_of_last_push_job\n")
         sys.exit(1)
     jobNum = sys.argv[1]
 
@@ -369,3 +355,5 @@ if __name__ == "__main__":
     for docId in gn.getAllDocs():
         print("ID: %7d  isNew=%s groupNum=%d" % (docId, gn.isDocNew(docId),
                                                  gn.getDocGroupNum(docId)))
+    print "Group IDs: %s" % str(gn.getGroupIds())
+
