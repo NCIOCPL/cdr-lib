@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.93 2007-05-05 23:12:58 bkline Exp $
+# $Id: cdrpub.py,v 1.94 2007-05-08 12:41:39 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.93  2007/05/05 23:12:58  bkline
+# Plugged in Reload push type.
+#
 # Revision 1.92  2007/05/04 23:01:04  venglisc
 # Added new parameter PushJobDescription to be passed from the publishing
 # job to the push job as the GateKeeper description.
@@ -433,6 +436,8 @@ class Publish:
     INIT       = "Init"
     READY      = "Ready"
     START      = "Started"
+    VERIFYING  = "Verifying"
+    STALLED    = "Stalled"
 
     # Output flavors.
     FILE       = 4
@@ -933,7 +938,7 @@ class Publish:
                                 self.__pushDocsToCG(vendor_job, vendor_dest)
 
                                 # There is no exception thrown.
-                                self.__updateStatus(Publish.SUCCESS)
+                                self.__updateStatus(Publish.VERIFYING)
 
                         # It is a vendor job. Create a pushing job and let
                         # it run in its own way.
