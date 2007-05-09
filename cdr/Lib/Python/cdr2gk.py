@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.6 2007-05-02 23:08:04 venglisc Exp $
+# $Id: cdr2gk.py,v 1.7 2007-05-09 17:18:43 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2007/05/02 23:08:04  venglisc
+# Added new PubType 'Reload'.
+#
 # Revision 1.5  2007/04/20 03:46:25  bkline
 # Finished status query code.
 #
@@ -474,8 +477,9 @@ def extractXmlResult(bodyNode):
 
 def logString(type, str):
     if debuglevel:
-        open("d:/cdr/log/cdr2gk.log", "ab").write("==== %s %s ====\n%s\n" % 
-            (time.ctime(), type, re.sub("\r", "", str)))
+        f = open("d:/cdr/log/cdr2gk.log", "ab")
+        f.write("==== %s %s (host=%s) ====\n%s\n" % 
+                (time.ctime(), type, host, re.sub("\r", "", str)))
 
 def sendRequest(body, app = application, host = host, headers = headers):
 
@@ -491,8 +495,6 @@ def sendRequest(body, app = application, host = host, headers = headers):
  </soap:Body>
 </soap:Envelope>""" % (soapNamespace, body)
 
-    # At one time it was tricky finding out where the requests were going.
-    logString("REQUEST", "sending request to %s" % host)
     logString("REQUEST", request)
     
     # Defensive programming.
