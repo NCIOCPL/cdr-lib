@@ -1,12 +1,18 @@
 #----------------------------------------------------------------------
 #
-# $Id: RepublishDocs.py,v 1.2 2007-05-07 01:16:20 bkline Exp $
+# $Id: RepublishDocs.py,v 1.3 2007-05-09 18:39:24 bkline Exp $
 #
 # Module for republishing a set of documents, regardless of whether
 # what we would send to Cancer.gov is identical with what we sent
 # for the last push job.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2007/05/07 01:16:20  bkline
+# Added test driver, substantial logging and debugging instrumentation,
+# and significant optimizations for the parts that were taking so long
+# that it would not have been possible to invoke the module from a CGI
+# script.
+#
 # Revision 1.1  2007/05/04 19:34:29  bkline
 # New module for nightly publishing project.
 #
@@ -108,7 +114,7 @@ class CdrRepublisher:
     
     def republish(self, addNewLinkedDocuments,
                   docList = None, jobList = None, docType = None,
-                  docTypeAll = False, email = ''):
+                  docTypeAll = False, failedOnly = True, email = ''):
 
 
         """
@@ -169,6 +175,16 @@ class CdrRepublisher:
                                         parameter, defaulting to False);
                                         ignored if the docType parameter
                                         is not specified
+                failedOnly            - True if only documents with failure
+                                        set to 'Y' in the pub_proc_doc
+                                        table are to be included when
+                                        collecting documents for
+                                        specified publishing jobs; otherwise
+                                        all documents are included for
+                                        the publishing jobs specified
+                                        (optional parameter, defaulting
+                                        to True); ignored if no job IDs
+                                        are specified
                 email                 - optional string containing the
                                         address to which an email message
                                         is to be sent when the publishing
@@ -202,14 +218,14 @@ class CdrRepublisher:
         if jobList:
             for jobId in jobList:
                 self.__cursor.execute("""\
-                    SELECT doc_id
+                    SELECT doc_id, failure
                       FROM pub_proc_doc
-                     WHERE (failure IS NULL OR failure = 'N')
                        AND (removed IS NULL or removed = 'N')""",
                                       timeout = 300)
                 rows = self.__cursor.fetchall()
-                for row in rows:
-                    self.__addDocumentToSet(row[0])
+                for docId, failure in rows:
+                    if not failedOnly or failure == 'Y':
+                        self.__addDocumentToSet(docId)
 
         # Collect all documents of a specified document type if requested.
         if docType:
@@ -509,9 +525,10 @@ class CdrRepublisher:
                AND d.pub_proc = p.pub_job
              WHERE d.removed = 'N'""")
         onCG = set([row[0] for row in self.__cursor.fetchall()])
-        cdr.logwrite("republish(): found %d documents on Cancer.gov in "
-                     "%.3f seconds" % (len(onCG), time.time() - start),
-                     cdr.PUBLOG)
+        if DEBUG:
+            cdr.logwrite("republish(): found %d documents on Cancer.gov in "
+                         "%.3f seconds" % (len(onCG), time.time() - start),
+                         cdr.PUBLOG)
         return onCG
                     
     #------------------------------------------------------------------
