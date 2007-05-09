@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.8 2007-05-09 17:38:52 bkline Exp $
+# $Id: cdr2gk.py,v 1.9 2007-05-09 18:21:46 venglisc Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2007/05/09 17:38:52  bkline
+# Fixed bug in initiateRequest() (wasn't using current value of host
+# in call to sendRequest()).
+#
 # Revision 1.7  2007/05/09 17:18:43  bkline
 # Modified logging to capture the host string in the banner.
 #
@@ -50,19 +54,6 @@ headers             = {
 }
 if string.upper(localhost) in ("MAHLER", "FRANCK"):
     host = testhost
-
-#----------------------------------------------------------------------
-# Module data used by publishing.py and cdrpub.py.
-#----------------------------------------------------------------------
-PUBTYPES = {
-    'Full Load'       : 'Send all documents to Cancer.gov',
-    'Export'          : 'Send specified documents to Cancer.gov',
-    'Reload'          : 'Re-send specified documents that failed loading',
-    'Remove'          : 'Delete documents from Cancer.gov',
-    'Hotfix (Remove)' : 'Delete individual documents from Cancer.gov',
-    'Hotfix (Export)' : 'Send individual documents to Cancer.gov'
-}
-PDQDTD = "d:\\cdr\licensee\\PDQ.dtd"
 
 #----------------------------------------------------------------------
 # Module-level class definitions.
