@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.94 2007-05-08 12:41:39 bkline Exp $
+# $Id: cdrpub.py,v 1.95 2007-05-09 23:33:59 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.94  2007/05/08 12:41:39  bkline
+# Added new statuses VERIFYING and STALLED.  Set push job status to
+# VERIFYING instead of SUCCESS.
+#
 # Revision 1.93  2007/05/05 23:12:58  bkline
 # Plugged in Reload push type.
 #
@@ -369,7 +373,7 @@ LOG_MODULUS = 1000
 # XXX For testing, wiring target to "GateKeeper" rather than "Live" or
 # XXX "Preview".
 # XXX Need a way to set this from outside?
-CG_PUB_TARGET = "Preview"
+# CG_PUB_TARGET = "Preview"
 
 #-----------------------------------------------------------------------
 # class: Doc
@@ -458,8 +462,8 @@ class Publish:
     __reportOnly        = 0
     __validateDocs      = 0
     __logDocModulus     = LOG_MODULUS
-    __excludeDocTypes   = ['Country', # Document types not provided 
-                           'Person']  # to Cancer.gov     
+    __excludeDocTypes   = ['Country', # Document types provided to 
+                           'Person']  # licensees but not to Cancer.gov     
 
     # List of Docs to be published
     __docs = []
@@ -596,7 +600,7 @@ class Publish:
                 row = cursor.fetchone()
         except cdrdb.Error, info:
             msg  = "%s: Failure retrieving documents for " % time.ctime()
-            msg += "job %d: %s" % (self.__jobId, info[1][0])
+            msg += "job %d: %s<BR>" % (self.__jobId, info[1][0])
             self.__updateStatus(Publish.FAILURE, msg)
             raise StandardError(msg)
 
@@ -629,7 +633,7 @@ class Publish:
                 row = cursor.fetchone()
         except cdrdb.Error, info:
             msg  = "Failure retrieving parameters for " % time.ctime()
-            msg += "job %d: %s" % (self.__jobId, info[1][0])
+            msg += "job %d: %s<BR>" % (self.__jobId, info[1][0])
             self.__updateStatus(Publish.FAILURE, msg)
             raise StandardError(msg)
 
@@ -661,8 +665,8 @@ class Publish:
                 row = cursor.fetchone()
 
         except cdrdb.Error, info:
-            msg  = "%s: Failure building hash __dateFirstPub for " % time.ctime()
-            msg += "job %d: %s" % (self.__jobId, info[1][0])
+            msg  = "%s: Failure building hash __dateFirstPub " % time.ctime()
+            msg += "for job %d: %s<BR>" % (self.__jobId, info[1][0])
             self.__updateStatus(Publish.FAILURE, msg)
             raise StandardError(msg)
 
@@ -949,14 +953,20 @@ class Publish:
                                                         self.__subsetName)
                             msg = ""
 
-                            # Not all Subset types have the PushJobDescription
+                            # A few parameters are passed to the push job
+                            # --------------------------------------------
+                            # Not all Subset types have the GKPushJobDescription
                             # parameter.  Need to check for existance.
-                            if self.__params.has_key('PushJobDescription'):
-                                parms = ([('PushJobDescription', 
-                                         self.__params['PushJobDescription'])])
+                            if self.__params.has_key('GKPushJobDescription'):
+                                parms = ([('GKPushJobDescription', 
+                                        self.__params['GKPushJobDescription'])])
                             else:
                                 parms = []
 
+                            parms.append(('GKServer', 
+                                          self.__params['GKServer']))
+                            parms.append(('GKPubTarget', 
+                                          self.__params['GKPubTarget']))
                             resp = cdr.publish(self.__credentials,
                                 "Primary",
                                 pushSubsetName,
@@ -1058,7 +1068,7 @@ class Publish:
             Void.
         """
         # Log message
-        msg = "publish: %s" % msg
+        msg = "publish: %s<BR>" % msg
         try:
             self.__debugLog(msg, tb=1)
         except:
@@ -1111,7 +1121,7 @@ class Publish:
                            )
             rowsAffected = cursor.rowcount
             self.__updateMessage(
-                "<BR>%s: Updated first_pub for %d documents.<BR>" % (
+                "%s: Updated first_pub for %d documents.<BR>" % (
 		                                                time.ctime(),
 								rowsAffected))
         except cdrdb.Error, info:
@@ -1213,7 +1223,7 @@ class Publish:
         # Get the value of pubType for this cg_job.
         if self.__params.has_key('PubType'):
             pubType = self.__params['PubType']
-            if not cdr2gk.PUBTYPES.has_key(pubType):
+            if not cdr.PUBTYPES.has_key(pubType):
                 msg = """The value of parameter PubType, %s, is unsupported.
                        <BR>Please modify the control document or the source
                        code.<BR>""" % pubType
@@ -1249,15 +1259,14 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             if pubType in ("Full Load", "Export", "Reload"):
                 # Note: For SubSetName='Interim-Export', PubType='Export'
 
-                # If the push fails after the temporary tables have been
-                # created and populated we don't want to have to wait
-                # to have this done again provided no other publishing
-                # job ran when we try to push again.  Skip the work and go 
-                # straight to pushing the documents.
+                # If the push of a Full Load failed after the temporary 
+                # tables have been created and populated we want to skip
+                # populating the tables again when we rerun the push job.
+                # This can be achieved by setting the parameter 
+                # RerunFailedPush = Yes but only as long as no other push
+                # job had been submitted in the meantime.
                 # In order for this to work we need to update the cg_job
                 # column in pub_prog_cg_work with the current jobID.
-                # XXX [RMK 2007-05-05]: Comment and code don't match:
-                # code only does what comment implies for full load. XXX
                 # ------------------------------------------------------
                 if (pubType in ("Export", "Reload") or
                     pubType == "Full Load" and
@@ -1342,8 +1351,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             lastJobId = self.__getLastCgJob()
 
             # Get the required job description.
-            if self.__params.has_key('PushJobDescription'):
-                cgJobDesc = self.__params['PushJobDescription']
+            if self.__params.has_key('GKPushJobDescription'):
+                cgJobDesc = self.__params['GKPushJobDescription']
             else:
                 cgJobDesc = self.__getCgJobDesc()
             
@@ -1351,12 +1360,19 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 self.__updateMessage(msg)
                 raise StandardError("<BR>Missing required job description.")
 
-            # See if the GateKeeper is awake.
             msg = "%s: Initiating request with pubType=%s, \
                    lastJobId=%d ...<BR>" % (time.ctime(), pubTypeCG, lastJobId)
 
-            # XXX See definition of CG_PUB_TARGET
+            # Set the GK target provided for this pubType
+            CG_PUB_TARGET = self.__params['GKPubTarget']
+
+            # Override the GK Server value if specified
+            if self.__params['GKServer']:
+                cdr2gk.host = self.__params['GKServer']
+
+            # See if the GateKeeper is awake.
             response = cdr2gk.initiateRequest(pubTypeCG, CG_PUB_TARGET)
+
             if response.type != "OK":
                 # Construct messages for the pub_proc database record
                 msg += "GateKeeper: %s: %s<BR>" % \
@@ -1402,7 +1418,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                self.__jobId, pubTypeCG, lastJobId, numDocs)
 
             # Tell cancer.gov GateKeeper what's coming
-            # XXX Temporarily wired for pubTarget=GateKeeper
             response = cdr2gk.sendDataProlog(cgJobDesc, self.__jobId,
                                  pubTypeCG, CG_PUB_TARGET, lastJobId)
             if response.type != "OK":
@@ -1426,6 +1441,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             # This can take awhile because it has to parse docs looking
             #   for cross references between them
             self.__debugLog("Starting assignment of group numbers")
+
             # Uncomment the following for group number debugging with
             #   "AssignGroupNums jobnum"
             # sys.exit(1)
@@ -2649,7 +2665,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
             # Validate the filteredDoc against Vendor DTD.
             if self.__validateDocs and filteredDoc:
+                pdqdtd = os.path.join(cdr.PDQDTDPATH, \
+                                      self.__params['DTDFileName'])
                 errObj = validateDoc(filteredDoc, docId = docId)
+                #errObj = validateDoc(filteredDoc, docId = docId, dtd = pdqdtd)
                 for error in errObj.Errors:
                     errors += "%s<BR>" % error
                     invalDoc = "InvalidDocs"
@@ -3353,12 +3372,20 @@ Please do not reply to this message.
             row     = cursor.fetchone()
             message = (row and row[0] or '') + (message or '')
 
+            # We only allow the status to be updated if it is not
+            # already set to 'Success'.  This will prevent a push
+            # job from setting the status to 'Verifying' if the 
+            # push job didn't actually send any data because the CDR
+            # and Cancer.gov versions are identical. 
+            # ------------------------------------------------------
             cursor.execute("""
                 UPDATE pub_proc
                    SET status    = ?,
                        messages  = ?,
                        completed = %s
-                 WHERE id = ?""" % date, (status, message, self.__jobId))
+                 WHERE id = ?
+                   AND status != 'Success'""" % date, 
+                                               (status, message, self.__jobId))
         except cdrdb.Error, info:
             msg = 'Failure updating status: %s' % info[1][0]
             self.__debugLog(msg)
@@ -3396,7 +3423,7 @@ Please do not reply to this message.
     # *** This function is not needed anymore: VE, 2007-05-04. ***
     # ---------------------------------------------------------------------
     def __updateJobDescription(self):
-        cgJobDescription = "<CgJobDesc>Automated updates<BR/></CgJobDesc>"
+        cgJobDescription = "<CgJobDesc>Automated updates<BR></CgJobDesc>"
         try:
             cursor = self.__conn.cursor()
             cursor.execute("""
@@ -3590,7 +3617,7 @@ class ErrHandler:
 #----------------------------------------------------------------------
 # Validate a given document against its DTD.
 #----------------------------------------------------------------------
-def validateDoc(filteredDoc, docId = 0, dtd = cdr2gk.PDQDTD):
+def validateDoc(filteredDoc, docId = 0, dtd = cdr.DEFAULT_DTD):
 
     # These used to be global.  Now local to ensure expat thread safety
     __parser     = xmlval.XMLValidator()
