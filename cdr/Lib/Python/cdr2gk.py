@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.7 2007-05-09 17:18:43 bkline Exp $
+# $Id: cdr2gk.py,v 1.8 2007-05-09 17:38:52 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2007/05/09 17:18:43  bkline
+# Modified logging to capture the host string in the banner.
+#
 # Revision 1.6  2007/05/02 23:08:04  venglisc
 # Added new PubType 'Reload'.
 #
@@ -566,7 +569,7 @@ def initiateRequest(pubType, pubTarget):
     </PubEvent>
    </message>
   </Request>""" % (gatekeeperNamespace, pubType, pubTarget)
-    xmlString = sendRequest(request)
+    xmlString = sendRequest(request, host = host)
     return Response(xmlString)
 
 def sendDataProlog(jobDesc, jobId, pubType, pubTarget, lastJobId):
