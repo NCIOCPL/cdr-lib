@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.133 2007-03-15 22:12:38 venglisc Exp $
+# $Id: cdr.py,v 1.134 2007-05-09 18:26:15 venglisc Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.133  2007/03/15 22:12:38  venglisc
+# Adding OPERATOR as a new constant for the operator email address.
+#
 # Revision 1.132  2007/01/26 04:08:24  ameyer
 # Upgraded Log class: Can now request logging to file and stdout or stderr.
 # Revised banner management for greater clarity in the logfiles.
@@ -480,6 +483,23 @@ MANIFEST_NAME    = 'CdrManifest.xml'
 CLIENT_FILES_DIR = BASEDIR + '/ClientFiles'
 MANIFEST_PATH    = "%s/%s" % (CLIENT_FILES_DIR, MANIFEST_NAME)
 CONNECT_TRIES    = 10
+
+# Default DTD.  Can get overwritten using Subset parameter
+PDQDTDPATH       = "d:\\cdr\licensee"
+DEFAULT_DTD      = PDQDTDPATH + '\\pdq.dtd'
+
+#----------------------------------------------------------------------
+# Module data used by publishing.py and cdrpub.py.
+#----------------------------------------------------------------------
+PUBTYPES = {
+    'Full Load'       : 'Send all documents to Cancer.gov',
+    'Export'          : 'Send specified documents to Cancer.gov',
+    'Reload'          : 'Re-send specified documents that failed loading',
+    'Remove'          : 'Delete documents from Cancer.gov',
+    'Hotfix (Remove)' : 'Delete individual documents from Cancer.gov',
+    'Hotfix (Export)' : 'Send individual documents to Cancer.gov'
+}
+
 
 #----------------------------------------------------------------------
 # Use this class (or a derived class) when raising an exception in
