@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.95 2007-05-09 23:33:59 venglisc Exp $
+# $Id: cdrpub.py,v 1.96 2007-05-10 15:56:25 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.95  2007/05/09 23:33:59  venglisc
+# Allowing to pass additional parameters to the publishing job:
+# GKPushJobDescription, GKServer, GKPubTarget, DTDFileName
+#
 # Revision 1.94  2007/05/08 12:41:39  bkline
 # Added new statuses VERIFYING and STALLED.  Set push job status to
 # VERIFYING instead of SUCCESS.
@@ -2665,10 +2669,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
             # Validate the filteredDoc against Vendor DTD.
             if self.__validateDocs and filteredDoc:
-                pdqdtd = os.path.join(cdr.PDQDTDPATH, \
-                                      self.__params['DTDFileName'])
-                errObj = validateDoc(filteredDoc, docId = docId)
-                #errObj = validateDoc(filteredDoc, docId = docId, dtd = pdqdtd)
+                pdqdtd = str(os.path.join(cdr.PDQDTDPATH,
+                                          self.__params['DTDFileName']))
+                errObj = validateDoc(filteredDoc, docId = docId, dtd = pdqdtd)
                 for error in errObj.Errors:
                     errors += "%s<BR>" % error
                     invalDoc = "InvalidDocs"
