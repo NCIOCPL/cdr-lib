@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.23 2007-04-20 21:30:10 bkline Exp $
+# $Id: SiteImporter.py,v 1.24 2007-05-11 03:43:49 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.23  2007/04/20 21:30:10  bkline
+# Passed in parameters to 'Insert External Sites' filter for adjusting
+# the lead org's protocol status when appropriate.
+#
 # Revision 1.22  2007/04/17 13:35:01  bkline
 # Fixed typo ('AND' for 'WHERE') in SQL query.
 #
@@ -763,9 +767,13 @@ class ImportDoc:
             self.importDocId = self.getImportDocId(importDocId, oldCdrId)
 
     def run(self, docObj):
+        status = self.status
+        if status.upper.strip() == 'TEMPORARILY CLOSED TO ACCRUAL':
+            status = 'Temporarily closed'
+            
         parms = (('source', self.impJob.getSource()),
                  ('lastModified', time.strftime("%Y-%m-%d")),
-                 ('status', self.status or ''),
+                 ('status', status or ''),
                  ('user', UID))
         newXml = cdr.filterDoc('guest', ['name:Insert External Sites'],
                                doc = docObj.xml, parm = parms)
