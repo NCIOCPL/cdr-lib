@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.25 2007-05-11 03:50:36 bkline Exp $
+# $Id: SiteImporter.py,v 1.26 2007-05-11 22:30:42 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.25  2007/05/11 03:50:36  bkline
+# Added missing parens to call to upper().
+#
 # Revision 1.24  2007/05/11 03:43:49  bkline
 # Mapped 'Temporarily Closed to Accrual' to 'Temporarily closed' (request
 # 3244).
@@ -772,8 +775,15 @@ class ImportDoc:
 
     def run(self, docObj):
         status = self.status
-        if status.upper().strip() == 'TEMPORARILY CLOSED TO ACCRUAL':
+        normalizedStatus = status.upper().strip()
+        if normalizedStatus == 'TEMPORARILY CLOSED TO ACCRUAL':
             status = 'Temporarily closed'
+        elif normalizedStatus == 'CLOSED TO ACCRUAL':
+            status = 'Closed'
+        elif normalizedStatus == 'COMPLETE':
+            status = 'Completed'
+        elif normalizedStatus == 'APPROVED':
+            status = 'Approved-not yet active'
             
         parms = (('source', self.impJob.getSource()),
                  ('lastModified', time.strftime("%Y-%m-%d")),
