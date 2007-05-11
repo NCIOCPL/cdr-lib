@@ -18,7 +18,8 @@ import sys, re, time, cdr, cdrdb
 #
 # Assumptions/Limitations:
 #
-#   1. Only documents from the last Export job can be processed.
+#   1. Only documents being pushed from the last publishing job can
+#      be processed.
 #
 #      The program uses pub_proc_doc and pub_proc_cg to determine what
 #      documents are newly published to cancer.gov, and pub_proc_cg
@@ -32,9 +33,13 @@ import sys, re, time, cdr, cdrdb
 # These assumptions mean that the class must be instantiated in the
 # push job that calls __createWorkPPC().
 #
-# $Id: AssignGroupNums.py,v 1.7 2007-05-07 01:34:54 bkline Exp $
+# $Id: AssignGroupNums.py,v 1.8 2007-05-11 03:54:36 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2007/05/07 01:34:54  bkline
+# Modified logic to handle links between new documents correctly.  Used
+# cdr.Exception class.  Replaced some sequences with sets.
+#
 # Revision 1.6  2007/05/02 21:10:26  bkline
 # Added use of cg_new column to detect documents which aren't available
 # on Cancer.gov even though they're in the pub_proc_cg table.
@@ -78,7 +83,7 @@ class GroupNums:
             jobNum - Job number to process.
                      It is the caller's responsibility to always
                      pass the right job number.  It must be the
-                     most recent export job.  Otherwise inaccurate
+                     id of the current push job.  Otherwise inaccurate
                      groupings will result.
 
         Raises:
@@ -98,7 +103,6 @@ class GroupNums:
         self.__docs = {}
 
         # Dictionary of group -> set of doc ids in that group
-        # Inverse of __doc2group
         self.__groups = {}
 
         # Next group number to assign
@@ -154,7 +158,7 @@ SELECT id
             # The document might already be in a group if it's new.
             groupId = self.__docs.get(docId)
             group   = groupId and self.__groups[groupId] or None
-            
+
             # Get list of doc ids referenced in this document
             xml  = self.__getXml(docId)
             refs = self.__getRefs(xml)
@@ -201,7 +205,7 @@ SELECT id
                 group   = self.__groups[groupId] = set()
                 group.add(docId)
                 self.__docs[docId] = groupId
-                    
+
     def __getXml(self, docId):
         """
         Retrieve the vendor filtered XML text for a document by ID.
@@ -269,6 +273,8 @@ SELECT id
         dstGrp = self.__groups[dstGrpId]
 
         # Plug the documents from the source group into the destination group.
+        # We must update the old group, not create a new one, because there
+        #   are docs pointing to the destination group.
         dstGrp.update(srcGrp)
         for docId in srcGrp:
             self.__docs[docId] = dstGrpId
@@ -304,7 +310,7 @@ SELECT id
     def genNewUniqueNum(self):
         """
         Return a new number that won't conflict with any existing number
-        now or later.  Used for docs to remove.
+        now or later.
         """
         newNum = self.__nextGroupNum
         self.__nextGroupNum += 1
