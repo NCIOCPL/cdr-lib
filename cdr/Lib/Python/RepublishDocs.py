@@ -1,12 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: RepublishDocs.py,v 1.3 2007-05-09 18:39:24 bkline Exp $
+# $Id: RepublishDocs.py,v 1.4 2007-05-11 16:06:46 bkline Exp $
 #
 # Module for republishing a set of documents, regardless of whether
 # what we would send to Cancer.gov is identical with what we sent
 # for the last push job.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2007/05/09 18:39:24  bkline
+# Added parameter indicating that only failed documents should be
+# re-published for a specified job.
+#
 # Revision 1.2  2007/05/07 01:16:20  bkline
 # Added test driver, substantial logging and debugging instrumentation,
 # and significant optimizations for the parts that were taking so long
@@ -220,8 +224,9 @@ class CdrRepublisher:
                 self.__cursor.execute("""\
                     SELECT doc_id, failure
                       FROM pub_proc_doc
+                     WHERE pub_proc = ?
                        AND (removed IS NULL or removed = 'N')""",
-                                      timeout = 300)
+                                      jobId, timeout = 300)
                 rows = self.__cursor.fetchall()
                 for docId, failure in rows:
                     if not failedOnly or failure == 'Y':
