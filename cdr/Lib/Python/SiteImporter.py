@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.24 2007-05-11 03:43:49 bkline Exp $
+# $Id: SiteImporter.py,v 1.25 2007-05-11 03:50:36 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.24  2007/05/11 03:43:49  bkline
+# Mapped 'Temporarily Closed to Accrual' to 'Temporarily closed' (request
+# 3244).
+#
 # Revision 1.23  2007/04/20 21:30:10  bkline
 # Passed in parameters to 'Insert External Sites' filter for adjusting
 # the lead org's protocol status when appropriate.
@@ -768,7 +772,7 @@ class ImportDoc:
 
     def run(self, docObj):
         status = self.status
-        if status.upper.strip() == 'TEMPORARILY CLOSED TO ACCRUAL':
+        if status.upper().strip() == 'TEMPORARILY CLOSED TO ACCRUAL':
             status = 'Temporarily closed'
             
         parms = (('source', self.impJob.getSource()),
