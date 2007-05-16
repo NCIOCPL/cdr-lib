@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.33 2007-05-04 14:53:34 bkline Exp $
+# $Id: CdrLongReports.py,v 1.34 2007-05-16 17:04:00 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.33  2007/05/04 14:53:34  bkline
+# Modifications to Protocol Processing Status report (#3134).
+#
 # Revision 1.32  2006/12/12 14:11:20  bkline
 # Added sorting and counting to outcome measures report; added new column
 # to Spanish Glossary Terms by Status report.
@@ -2357,6 +2360,7 @@ class ProtocolProcessingStatusReport:
             self.orgStudyId  = None
             self.nctId       = None
             self.statuses    = []
+            self.statusKeys  = {}
             self.phases      = []
             self.status      = None
             for child in node.childNodes:
@@ -2372,6 +2376,7 @@ class ProtocolProcessingStatusReport:
                             s = cdr.getTextContent(gc).strip()
                             if s:
                                 self.statuses.append(s)
+                                self.statusKeys[s.upper()] = s
                 elif child.nodeName == 'OfficialTitle':
                     t = cdr.getTextContent(child).strip()
                     self.title = t.replace("\n", " ").replace("\r", "")
@@ -2545,6 +2550,7 @@ class ProtocolProcessingStatusReport:
             if colNum == ctGovDocIdColNum and self.includeProtTitle:
                 colNum += 1
                 wsCtGov.addCol(colNum, titleWidth)
+                wsCtGovWd.addCol(colNum, titleWidth)
             colNum += 1
         
         #--------------------------------------------------------------
@@ -2702,7 +2708,7 @@ class ProtocolProcessingStatusReport:
             dom     = xml.dom.minidom.parseString(docXml.encode('utf-8'))
             docElem = dom.documentElement
             protocol = self.CTGovProtocol(self, cdrId, docElem)
-            if protocol.status.upper() != 'WITHDRAWN':
+            if 'WITHDRAWN' not in protocol.statusKeys:
                 rowCtGov += self.addCtGovProtocol(wsCtGov, rowCtGov, protocol)
                 totalCtGov += 1
             else:
