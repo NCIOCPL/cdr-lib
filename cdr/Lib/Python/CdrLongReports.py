@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.34 2007-05-16 17:04:00 bkline Exp $
+# $Id: CdrLongReports.py,v 1.35 2007-05-16 22:33:25 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.34  2007/05/16 17:04:00  bkline
+# Fixed title width for new CTGov Withdrawn sheet.
+#
 # Revision 1.33  2007/05/04 14:53:34  bkline
 # Modifications to Protocol Processing Status report (#3134).
 #
@@ -2829,8 +2832,10 @@ The Protocol Processing report you requested can be viewed at
                     mergeDown = mergeRows)
         row.addCell(10 + extra, prot.scientificUser or '',
                     mergeDown = mergeRows)
-        row.addCell(11 + extra, prot.protocolStatus or '',
-                    mergeDown = mergeRows)
+        status = prot.protocolStatus
+        if status == 'No valid lead organization status found.':
+            status = ''
+        row.addCell(11 + extra, status or '', mergeDown = mergeRows)
         return nRows
 
     def addCtGovProtocol(self, sheet, rowNum, prot):
