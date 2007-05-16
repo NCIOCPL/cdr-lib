@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.9 2007-05-09 18:21:46 venglisc Exp $
+# $Id: cdr2gk.py,v 1.10 2007-05-16 16:02:21 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2007/05/09 18:21:46  venglisc
+# Moved definition for PUBTYPES and PDQDTD to cdrpub.py where it belongs.
+#
 # Revision 1.8  2007/05/09 17:38:52  bkline
 # Fixed bug in initiateRequest() (wasn't using current value of host
 # in call to sendRequest()).
@@ -475,7 +478,16 @@ def logString(type, str):
         f.write("==== %s %s (host=%s) ====\n%s\n" % 
                 (time.ctime(), type, host, re.sub("\r", "", str)))
 
-def sendRequest(body, app = application, host = host, headers = headers):
+def sendRequest(body, app = application, host = None, headers = headers):
+
+    # If host is not explicitly specified by the caller, use the
+    # module's global value (yes, it was a mistake to use the same
+    # name for them, but this works, whether this module is imported
+    # or invoked directly).
+    if not host:
+        host = sys.modules[__name__].host
+    else:
+        logString
 
     if type(body) == unicode:
         body = body.encode('utf-8')
