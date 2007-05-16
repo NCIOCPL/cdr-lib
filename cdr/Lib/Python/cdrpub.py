@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.96 2007-05-10 15:56:25 bkline Exp $
+# $Id: cdrpub.py,v 1.97 2007-05-16 12:49:39 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.96  2007/05/10 15:56:25  bkline
+# Forced pdqdtd pathname to string from Unicode before call to
+# validateDoc().
+#
 # Revision 1.95  2007/05/09 23:33:59  venglisc
 # Allowing to pass additional parameters to the publishing job:
 # GKPushJobDescription, GKServer, GKPubTarget, DTDFileName
@@ -3362,7 +3366,7 @@ Please do not reply to this message.
         if message: self.__debugLog(message)
 
         date = "NULL"
-        if status in (Publish.SUCCESS, Publish.FAILURE):
+        if status in (Publish.SUCCESS, Publish.FAILURE, Publish.VERIFYING):
             date = "GETDATE()"
         try:
             cursor = self.__conn.cursor()
