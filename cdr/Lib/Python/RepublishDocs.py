@@ -1,12 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: RepublishDocs.py,v 1.5 2007-05-16 02:09:02 bkline Exp $
+# $Id: RepublishDocs.py,v 1.6 2007-05-16 15:54:54 bkline Exp $
 #
 # Module for republishing a set of documents, regardless of whether
 # what we would send to Cancer.gov is identical with what we sent
 # for the last push job.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2007/05/16 02:09:02  bkline
+# Added new parameter gkHost.
+#
 # Revision 1.4  2007/05/11 16:06:46  bkline
 # Added missing WHERE clause to SQL query for finding documents published
 # by a specified job.
@@ -308,7 +311,7 @@ class CdrRepublisher:
             # job.
             parms = []
             if gkHost:
-                parms.append('GKServer', gkHost)
+                parms.append(('GKServer', gkHost))
                 cdr.logwrite("republish(): setting GateKeeper host to %s" %
                              gkHost, cdr.PUBLOG)
             resp = cdr.publish(self.__credentials, pubSystem, pubSubset,
