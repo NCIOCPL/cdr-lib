@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.26 2007-05-11 22:30:42 bkline Exp $
+# $Id: SiteImporter.py,v 1.27 2007-05-16 22:46:37 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.26  2007/05/11 22:30:42  bkline
+# Added some more status mapping at Sheri's request (still #3244).
+#
 # Revision 1.25  2007/05/11 03:50:36  bkline
 # Added missing parens to call to upper().
 #
@@ -96,7 +99,7 @@
 #
 #----------------------------------------------------------------------
 import cdr, cdrdb, httplib, sys, time, zipfile, ModifyDocs, socket
-import xml.dom.minidom
+import xml.dom.minidom, xml.sax.saxutils
 
 TEST_MODE  = False
 UID        = "ExternalImporter"
@@ -784,10 +787,12 @@ class ImportDoc:
             status = 'Completed'
         elif normalizedStatus == 'APPROVED':
             status = 'Approved-not yet active'
+        else:
+            status = status and xml.sax.saxutils.escape(status) or ''
             
         parms = (('source', self.impJob.getSource()),
                  ('lastModified', time.strftime("%Y-%m-%d")),
-                 ('status', status or ''),
+                 ('status', status),
                  ('user', UID))
         newXml = cdr.filterDoc('guest', ['name:Insert External Sites'],
                                doc = docObj.xml, parm = parms)
