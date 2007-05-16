@@ -1,12 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: RepublishDocs.py,v 1.4 2007-05-11 16:06:46 bkline Exp $
+# $Id: RepublishDocs.py,v 1.5 2007-05-16 02:09:02 bkline Exp $
 #
 # Module for republishing a set of documents, regardless of whether
 # what we would send to Cancer.gov is identical with what we sent
 # for the last push job.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2007/05/11 16:06:46  bkline
+# Added missing WHERE clause to SQL query for finding documents published
+# by a specified job.
+#
 # Revision 1.3  2007/05/09 18:39:24  bkline
 # Added parameter indicating that only failed documents should be
 # re-published for a specified job.
@@ -118,7 +122,8 @@ class CdrRepublisher:
     
     def republish(self, addNewLinkedDocuments,
                   docList = None, jobList = None, docType = None,
-                  docTypeAll = False, failedOnly = True, email = ''):
+                  docTypeAll = False, failedOnly = True, email = '',
+                  gkHost = ''):
 
 
         """
@@ -195,6 +200,12 @@ class CdrRepublisher:
                                         job completes; also used for
                                         reporting failures if this
                                         method hits an exception
+                gkHost                - optional string containing the
+                                        fully qualified host name (or
+                                        IP address) for the GateKeeper
+                                        server, in order to override
+                                        the default as determined by the
+                                        cdr2gk module
 
             Returns:
 
@@ -295,8 +306,13 @@ class CdrRepublisher:
 
             # Create the export job, which in turn creates the follow-on push
             # job.
+            parms = []
+            if gkHost:
+                parms.append('GKServer', gkHost)
+                cdr.logwrite("republish(): setting GateKeeper host to %s" %
+                             gkHost, cdr.PUBLOG)
             resp = cdr.publish(self.__credentials, pubSystem, pubSubset,
-                               parms = None, docList = docs, email = email,
+                               parms = parms, docList = docs, email = email,
                                host = self.__host, port = self.__port)
 
             # Make sure the job creation succeeded.
