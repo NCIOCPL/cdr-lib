@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.60 2007-01-17 19:49:38 venglisc Exp $
+# $Id: cdrcgi.py,v 1.61 2007-05-17 16:59:43 kidderc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.60  2007/01/17 19:49:38  venglisc
+# Added new menu item for Guest User. (Bug 2753)
+#
 # Revision 1.59  2006/05/31 19:44:50  venglisc
 # Replaced string CIPS with OCCM.
 #
@@ -372,6 +375,11 @@ def unicodeToLatin1(s):
                   lambda match: u"&#x%X;" % ord(match.group(0)[0]),
                   s).encode('latin-1')
 
+def unicodeToJavaScriptCompatible(s):
+    return re.sub(decodePattern,
+                  lambda match: u"\\u%04X" % ord(match.group(0)[0]),
+                  s).encode('latin-1')
+
 #----------------------------------------------------------------------
 # Log out of the CDR session and put up a new login screen.
 #----------------------------------------------------------------------
@@ -428,7 +436,6 @@ def mainMenu(session, news = None):
     section  = "Main Menu"
     buttons  = []
     hdr      = header(title, title, section, "", buttons)
-
     extra    = news and ("<H2>%s</H2>\n" % news) or ""
     menu     = """\
     <ol>
