@@ -1,12 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: RepublishDocs.py,v 1.6 2007-05-16 15:54:54 bkline Exp $
+# $Id: RepublishDocs.py,v 1.7 2007-05-18 19:37:16 bkline Exp $
 #
 # Module for republishing a set of documents, regardless of whether
 # what we would send to Cancer.gov is identical with what we sent
 # for the last push job.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2007/05/16 15:54:54  bkline
+# Fixed call to append() (by making argument a tuple).
+#
 # Revision 1.5  2007/05/16 02:09:02  bkline
 # Added new parameter gkHost.
 #
@@ -260,8 +263,11 @@ class CdrRepublisher:
                       FROM doc_version v
                       JOIN doc_type t
                         ON t.id = v.doc_type
+                      JOIN document d
+                        ON d.id = v.id
                      WHERE v.publishable = 'Y'
                        AND v.val_status = 'V'
+                       AND d.active_status = 'A'
                        AND t.name = ?""", docType, timeout = 300)
 
             # ... or just those already sent to Cancer.gov, as requested.
@@ -273,7 +279,8 @@ class CdrRepublisher:
                         ON c.id = d.id
                       JOIN doc_type t
                         ON t.id = d.doc_type
-                     WHERE t.name = ?""", docType, timeout = 300)
+                     WHERE t.name = ?
+                       AND d.active_status = 'A'""", docType, timeout = 300)
             rows = self.__cursor.fetchall()
             for row in rows:
                 self.__addDocumentToSet(row[0])
