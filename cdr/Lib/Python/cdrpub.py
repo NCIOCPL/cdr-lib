@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.97 2007-05-16 12:49:39 bkline Exp $
+# $Id: cdrpub.py,v 1.98 2007-05-22 21:10:56 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.97  2007/05/16 12:49:39  bkline
+# Set completed column of pub_proc when push job is done ("Verifying").
+#
 # Revision 1.96  2007/05/10 15:56:25  bkline
 # Forced pdqdtd pathname to string from Unicode before call to
 # validateDoc().
@@ -470,8 +473,8 @@ class Publish:
     __reportOnly        = 0
     __validateDocs      = 0
     __logDocModulus     = LOG_MODULUS
-    __excludeDocTypes   = ['Country', # Document types provided to 
-                           'Person']  # licensees but not to Cancer.gov     
+    __excludeDocTypes   = ['Country', # Document types provided to
+                           'Person']  # licensees but not to Cancer.gov
 
     # List of Docs to be published
     __docs = []
@@ -966,19 +969,19 @@ class Publish:
                             # Not all Subset types have the GKPushJobDescription
                             # parameter.  Need to check for existance.
                             if self.__params.has_key('GKPushJobDescription'):
-                                parms = ([('GKPushJobDescription', 
+                                parms = ([('GKPushJobDescription',
                                         self.__params['GKPushJobDescription'])])
                             else:
                                 parms = []
 
-                            parms.append(('GKServer', 
+                            parms.append(('GKServer',
                                           self.__params['GKServer']))
-                            parms.append(('GKPubTarget', 
+                            parms.append(('GKPubTarget',
                                           self.__params['GKPubTarget']))
                             resp = cdr.publish(self.__credentials,
                                 "Primary",
                                 pushSubsetName,
-                                parms = parms, 
+                                parms = parms,
                                 email = self.__email,
                                 noOutput = 'Y',
                                 port = self.__pubPort)
@@ -1267,10 +1270,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             if pubType in ("Full Load", "Export", "Reload"):
                 # Note: For SubSetName='Interim-Export', PubType='Export'
 
-                # If the push of a Full Load failed after the temporary 
+                # If the push of a Full Load failed after the temporary
                 # tables have been created and populated we want to skip
                 # populating the tables again when we rerun the push job.
-                # This can be achieved by setting the parameter 
+                # This can be achieved by setting the parameter
                 # RerunFailedPush = Yes but only as long as no other push
                 # job had been submitted in the meantime.
                 # In order for this to work we need to update the cg_job
@@ -1298,11 +1301,11 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 self.__updateMessage(link)
 
                 # Job description for automated jobs is passed via
-                # the PushJobDescription parameter. 
-                # For all other jobs the description is entered when 
+                # the PushJobDescription parameter.
+                # For all other jobs the description is entered when
                 # the job is released from the WAIT stage.
                 # ----------------------------------------------------
-                if (self.__params['SubSetName'] == 'Interim-Export' or 
+                if (self.__params['SubSetName'] == 'Interim-Export' or
                     self.__params['SubSetName'] == 'Export'):
                     # Create automated job description.
                     #self.__updateJobDescription()
@@ -1363,7 +1366,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 cgJobDesc = self.__params['GKPushJobDescription']
             else:
                 cgJobDesc = self.__getCgJobDesc()
-            
+
             if not cgJobDesc:
                 self.__updateMessage(msg)
                 raise StandardError("<BR>Missing required job description.")
@@ -1461,7 +1464,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             XmlDeclLine = re.compile("<\?xml.*?\?>\s*", re.DOTALL)
             DocTypeLine = re.compile("<!DOCTYPE.*?>\s*", re.DOTALL)
 
-            # Create a string of doc_types to be excluded from 
+            # Create a string of doc_types to be excluded from
             # pushing to Cancer.gov
             excludeDT = "'" + "', '".join(self.__excludeDocTypes) + "'"
 
@@ -1491,7 +1494,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 xml = DocTypeLine.sub("", xml)
 
                 grpNum = groupNums.getDocGroupNum(docId)
-                
+
                 response = cdr2gk.sendDocument(self.__jobId, docNum,
                             "Export", docType, docId, version, grpNum, xml)
 
@@ -1773,35 +1776,37 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         # Get a list of docType IDs such as "18, 19, 11".
         docTypes = self.__getSubsetDocTypes(vendor_job)
 
-        try:
-            qry = """
-                INSERT INTO pub_proc_cg_work (id, num, vendor_job,
-                                              cg_job, doc_type)
-                     SELECT DISTINCT ppc.id, ppd_cg.doc_version,
-                            %d, %d, t.name
-                       FROM pub_proc_cg ppc, doc_type t, all_docs d,
-                            pub_proc_doc ppd_cg
-                      WHERE d.id = ppc.id
-                        AND d.doc_type = t.id
-                        AND d.doc_type IN (%s)
-                        AND ppd_cg.doc_id = ppc.id
-                        AND ppd_cg.pub_proc = ppc.pub_proc
-                        AND d.active_status <> 'A'
-                        AND t.name <> 'Media' /* XXX Alan's recommendation */
-                  """ % (vendor_job, cg_job, docTypes)
-            cursor.execute(qry, timeout = self.__timeOut)
-        except cdrdb.Error, info:
-            raise StandardError(
-                "Setting D to pub_proc_cg_work failed: %s<BR>" % info[1][0])
-        msg = "%s: Finished insertion for deleting<BR>" % time.ctime()
+        if docTypes:
+            try:
+                qry = """
+                    INSERT INTO pub_proc_cg_work (id, num, vendor_job,
+                                                  cg_job, doc_type)
+                         SELECT DISTINCT ppc.id, ppd_cg.doc_version,
+                                %d, %d, t.name
+                           FROM pub_proc_cg ppc, doc_type t, all_docs d,
+                                pub_proc_doc ppd_cg
+                          WHERE d.id = ppc.id
+                            AND d.doc_type = t.id
+                            AND d.doc_type IN (%s)
+                            AND ppd_cg.doc_id = ppc.id
+                            AND ppd_cg.pub_proc = ppc.pub_proc
+                            AND d.active_status <> 'A'
+                            AND t.name <> 'Media' /* XXX Alan's idea */
+                      """ % (vendor_job, cg_job, docTypes)
+                cursor.execute(qry, timeout = self.__timeOut)
+            except cdrdb.Error, info:
+                raise StandardError(
+                    "Setting D to pub_proc_cg_work failed: %s<BR>" % info[1][0])
+            msg = "%s: Finished insertion for deleting<BR>" % time.ctime()
+        else:
+            msg = ("%s: No remove transactions because no docTypes published!"
+                    % time.ctime())
         self.__updateMessage(msg)
 
     #------------------------------------------------------------------
     # Return a string of doc type IDs to be used in query.
     #------------------------------------------------------------------
     def __getSubsetDocTypes(self, vendor_job):
-
-        docTypes = ""
 
         try:
             cursor = self.__conn.cursor()
@@ -1812,10 +1817,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                    AND p.pub_proc = %d
                            """ % vendor_job
                           )
-            rows = cursor.fetchall()
-            for row in rows:
-                docTypes += "%d," % row[0]
-            return docTypes[:-1]
+            # Return comma separated list of doc_type IDs, or "" if none
+            return ",".join([str(row[0]) for row in cursor.fetchall()])
 
         except cdrdb.Error, info:
             msg = "Failure executing query to find doc types " \
@@ -3381,9 +3384,9 @@ Please do not reply to this message.
 
             # We only allow the status to be updated if it is not
             # already set to 'Success'.  This will prevent a push
-            # job from setting the status to 'Verifying' if the 
+            # job from setting the status to 'Verifying' if the
             # push job didn't actually send any data because the CDR
-            # and Cancer.gov versions are identical. 
+            # and Cancer.gov versions are identical.
             # ------------------------------------------------------
             cursor.execute("""
                 UPDATE pub_proc
@@ -3391,7 +3394,7 @@ Please do not reply to this message.
                        messages  = ?,
                        completed = %s
                  WHERE id = ?
-                   AND status != 'Success'""" % date, 
+                   AND status != 'Success'""" % date,
                                                (status, message, self.__jobId))
         except cdrdb.Error, info:
             msg = 'Failure updating status: %s' % info[1][0]
