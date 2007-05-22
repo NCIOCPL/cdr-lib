@@ -1,10 +1,18 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.98 2007-05-22 21:10:56 ameyer Exp $
+# $Id: cdrpub.py,v 1.99 2007-05-22 23:34:25 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.98  2007/05/22 21:10:56  ameyer
+# Made the query to select documents for removal conditional upon actually
+# finding any published doctypes in the job.  Shouldn't ever happen but it
+# could.
+# Replaced the logic for creating a comma separated list of published doctype
+# ids with a cleaner Pythonic approach.
+# Updated the comments regarding non-removal of Media docs.
+#
 # Revision 1.97  2007/05/16 12:49:39  bkline
 # Set completed column of pub_proc when push job is done ("Verifying").
 #
@@ -1755,7 +1763,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             raise StandardError(
                 "Setting A to pub_proc_cg_work failed: %s<BR>" % info[1][0])
         except StandardError, arg:
-            raise StandardError(arg[0])
+            raise StandardError(str(arg))
         except:
             raise StandardError(
                 "Unexpected failure in setting A to pub_proc_cg_work.")
@@ -1765,15 +1773,18 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         # Insert removed documents into pub_proc_cg_work.
         #
         # Removed documents are those in pub_proc_cg but which
-        # no longer have active status.
+        #   no longer have active status.
+        # Media are not included just in case they are used by some
+        #   other application on cancer.gov (at least this is my [ahm]
+        #   current reconstruction of why I recommended that.)
         # Note: This is simpler, faster, and safer than older technique
         #   that removed all docs that weren't in this publication job.
         #
         # Removed documents must have a doc_type belonging to this
-        # Export subset [e.g., Protocol, Summary, Term, etc.].
+        #   Export subset [e.g., Protocol, Summary, Term, etc.].
         # Subsets Export-Protocol and Export-Summary need this special
-        # treatment.
-        # Get a list of docType IDs such as "18, 19, 11".
+        #   treatment.
+        # Get a list of docType IDs such as "18,19,11".
         docTypes = self.__getSubsetDocTypes(vendor_job)
 
         if docTypes:
@@ -1791,7 +1802,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             AND ppd_cg.doc_id = ppc.id
                             AND ppd_cg.pub_proc = ppc.pub_proc
                             AND d.active_status <> 'A'
-                            AND t.name <> 'Media' /* XXX Alan's idea */
+                            AND t.name <> 'Media'
                       """ % (vendor_job, cg_job, docTypes)
                 cursor.execute(qry, timeout = self.__timeOut)
             except cdrdb.Error, info:
@@ -1800,7 +1811,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             msg = "%s: Finished insertion for deleting<BR>" % time.ctime()
         else:
             msg = ("%s: No remove transactions because no docTypes published!"
-                    % time.ctime())
+                   "<BR>" % time.ctime())
         self.__updateMessage(msg)
 
     #------------------------------------------------------------------
