@@ -1,10 +1,23 @@
 #----------------------------------------------------------------------
 #
-# $Id: ExcelWriter.py,v 1.7 2006-11-07 14:48:21 bkline Exp $
+# $Id: ExcelWriter.py,v 1.8 2007-05-24 19:40:31 ameyer Exp $
 #
 # Generates Excel workbooks using 2003 XML format.
 #
+# See:
+#   http://msdn2.microsoft.com/en-us/library/aa140066(office.10).aspx
+#     for Excel 2002 XML Spreadsheet Reference.
+#   http://www.microsoft.com/downloads/details.aspx?
+#    FamilyID=fe118952-3547-420a-a412-00a2662442d9&displaylang=en
+#    For actual schemas.
+#
+# The Excel schema from the above source is on Mahler at:
+#    d:\downloads\MicrosoftOfficeSchemas\SpreadsheetML Schemas\excelss.xsd
+#
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2006/11/07 14:48:21  bkline
+# Added code to clean up temporary files in Workbook.write().
+#
 # Revision 1.6  2006/10/28 14:33:05  bkline
 # Added ability to write results as a binary XLS file (using a
 # separate process invoking a Perl script built around John
@@ -39,28 +52,86 @@ def quoteattr(a):
     return xml.sax.saxutils.quoteattr(a)
 
 class Workbook:
+    """
+    Workbook is the top level object for Excel.  Typically we will
+    create one such object, set some overall style properties, and
+    then add a Worksheet object to it for each sheet (tabbed page
+    in Excel) in the output report.
+    """
+
     def __init__(self, author = None, company = None):
+        """
+        Create a workbook.
+
+        Pass:
+            author  - author name to embed in workbook.
+            company - company name to embed.
+        """
         self.props  = Properties(author, company)
         self.styles = []
         self.sheets = []
-        self.addStyle('Default', 'Normal', 
+        self.addStyle('Default', 'Normal',
                       alignment = Alignment(vertical = 'Bottom'))
+
     def addWorksheet(self, name, style = None, height = None,
                      frozenRows = None, frozenCols = None):
+        """
+        Add one worksheet, (spreadsheet grid).  As of this writing, Excel
+        displays worksheets as tabbed pages, with the tabs in the lower left
+        side of the display.
+
+        Each call creates another worksheet, appended to the right
+        of the last one in the row of tabbed sheets.
+
+        Pass:
+            name       - label to appear on the tab.
+            style      - a style created in the workbook via addStyle().
+            height     - default height of one row, a floating point number
+                         in "points".
+            frozenRows - number of rows above a freeze (no scroll) line.
+            frozenCols - number of columns to the left of a freeze line.
+
+        Return:
+            Reference to worksheet object.
+        """
         sheet = Worksheet(name, style, height, frozenRows, frozenCols)
         self.sheets.append(sheet)
         return sheet
+
     def addStyle(self, styleId = None, name = None, alignment = None,
                  borders = None, font = None, interior = None,
                  numFormat = None):
+        """
+        Create a Style object and add it to the spreadsheet.
+
+        Pass:
+            styleId   - an arbitrary number, defaults to next available.
+                        Can be used to identify style to attach to a block
+                        in the spreadsheet.
+            name      - human readable name, alternative to using styleId.
+            alignment - an Alignment object (q.v.).
+            borders   - a Borders object (q.v.).
+            font      - a Font object (q.v.)
+            interior  - an Interior color/pattern object (q.v.).
+            numFormat - an Excel formatting code string.  See Style.
+
+        Return:
+            Reference to style object.
+        """
         style = Style(styleId, name, alignment, borders, font, interior,
                       numFormat)
         self.styles.append(style)
         return style.id
 
     def write(self, fobj, asXls = False):
+        """
+        Write the workbook to a file that Excel can then read.
+
+        Pass:
+            fobj  - open Python file object.
+            asXls - write in Excel 97 .xls binary format (uses Perl module).
+        """
         if asXls:
-            tempDir  = tempfile.gettempdir()
             baseName = os.path.join(tempfile.gettempdir(),
                                     "%s-%s" % (os.getpid(), time.time()))
             xmlName  = "%s.xml" % baseName
@@ -68,6 +139,7 @@ class Workbook:
             xmlFile  = file(xmlName, "w")
             self.__write(xmlFile)
             xmlFile.close()
+            # Perl must be available in this location
             script = "d:\\cdr\\lib\\Perl\\xml2xls.pl"
             perl = "D:\\Perl\\bin\\perl.EXE"
             command = "%s %s %s %s 2>&1" % (perl, script, xmlName, xlsName)
@@ -84,8 +156,7 @@ class Workbook:
             os.unlink(xlsName)
         else:
             self.__write(fobj)
-            
-            
+
     def __write(self, fobj):
         fobj.write("""\
 <?xml version="1.0" encoding="utf-8"?>
@@ -111,10 +182,20 @@ class Workbook:
 """)
 
 class Properties:
+    """
+    Class for representing meta information in the XML.
+
+    Pass:
+        author  - person's name.
+        company - company name.
+    """
     def __init__(self, author = None, company = None):
         self.author  = author or 'CDR'
         self.company = company or 'CIPS'
     def write(self, fobj):
+        """
+        Invoked by Workbook write to write properties.
+        """
         u = u"""\
  <DocumentProperties>
   <Author>%s</Author>
@@ -127,6 +208,10 @@ class Properties:
         fobj.write(u.encode('utf-8'))
 
 class Style:
+    """
+    Class for representing a style that can be applied to a worksheet
+    as a whole, or to objects within it.
+    """
     __nextId = 1
     def __getId(c):
         nextId = "s%d" % c.__nextId
@@ -136,6 +221,21 @@ class Style:
     def __init__(self, styleId = None, name = None, alignment = None,
                  borders = None, font = None, interior = None,
                  numFormat = None):
+        """
+        Constructor.
+
+        Pass:
+            styleId   - optional arbitrary unique numeric identifier for Style.
+                        Uses next available if None.
+            name      - unqique human readable name as alternative.
+            alignment - an Alignment object (q.v.).
+            borders   - a Borders object (q.v.).
+            font      - a Font object (q.v.).
+            interior  - an Interior color/pattern object (q.v.).
+            numFormat - an Excel formatting code.  One of these is
+                        'YYYY-mm-dd'.  There are many others.  Search
+                        Google for more.
+        """
         self.id        = styleId or Style.__getId()
         self.name      = name
         self.alignment = alignment
@@ -143,7 +243,11 @@ class Style:
         self.font      = font
         self.interior  = interior
         self.numFormat = numFormat
+
     def write(self, fobj):
+        """
+        Invoked by Workbook.write().
+        """
         u = [u'  <Style ss:ID=%s' % quoteattr(self.id)]
         if self.name:
             u.append(u' ss:Name=%s' % quoteattr(self.name))
@@ -164,11 +268,26 @@ class Style:
         fobj.write('  </Style>\n')
 
 class Alignment:
+    """
+    Class encapsulating the alignment of a section of the grid.
+    """
     def __init__(self, horizontal = None, vertical = None, wrap = None):
+        """
+        Constructor.
+
+        Pass:
+            horizontal - 'Left', 'Right', 'Center'
+            vertical   - 'Top', 'Bottom', 'Center' (?).
+            wrap       - True = wrap text.
+        """
         self.horizontal = horizontal
         self.vertical   = vertical
         self.wrap       = wrap
+
     def write(self, fobj):
+        """
+        Invoked by Workbook.write().
+        """
         fobj.write('   <Alignment')
         if self.horizontal:
             fobj.write(' ss:Horizontal="%s"' % self.horizontal)
@@ -179,12 +298,23 @@ class Alignment:
         fobj.write('/>\n')
 
 class Borders:
+    """
+    Encapsulates border information.
+    """
     def __init__(self, bottom = None, left = None, right = None, top = None):
+        """
+        Constructor.
+            bottom, left, right, top - True = create border on that side.
+        """
         self.bottom = bottom
         self.left   = left
         self.right  = right
         self.top    = top
+
     def write(self, fobj):
+        """
+        Invoked by Workbook.write().
+        """
         fobj.write('   <Borders>\n')
         if self.bottom:
             self.bottom.write(fobj, 'Bottom')
@@ -197,17 +327,46 @@ class Borders:
         fobj.write('   </Borders>\n')
 
 class Border:
+    """
+    Defines the properties of a border.
+    """
     def __init__(self, lineStyle = 'Continuous', weight = '1'):
+        """
+        Constructor.
+
+        Pass:
+            lineStyle - 'Continuous', 'Dash', 'DashDot', 'Double'.
+            weight    - thickness, from 0 to 3.
+        """
         self.lineStyle = lineStyle
         self.weight    = weight
+
     def write(self, fobj, position):
+        """
+        Invoked by Workbook.write().
+        """
         fobj.write('    <Border ss:Position="%s" ss:LineStyle="%s"'
                    ' ss:Weight="%s"/>\n' % (position,
                                             self.lineStyle,
                                             self.weight))
+
 class Font:
+    """
+    Encapsulates font information.
+    """
     def __init__(self, color = None, underline = None, name = None,
                  family = None, bold = None, italic = None, size = None):
+        """
+        Pass:
+            color     - 6 hex digit string as '#rrggbb' (red,green,blue)
+                        or symbolic name.
+            underline - 'None', 'Single', 'Double', 'SingleAccounting',
+                        'DoubleAccounting'
+            family    - 'Decorative', 'Modern', 'Roman', 'Script', 'Swiss'.
+            bold      - True = use boldface.
+            itlaic    - True = use italic.
+            size      - numeric font size.
+        """
         self.color     = color
         self.underline = underline
         self.name      = name
@@ -215,7 +374,11 @@ class Font:
         self.bold      = bold
         self.italic    = italic
         self.size      = size
+
     def write(self, fobj):
+        """
+        Invoked by Workbook.write().
+        """
         fobj.write('   <Font')
         if self.color:
             fobj.write(' ss:Color="%s"' % self.color)
@@ -236,7 +399,15 @@ class Font:
         fobj.write('/>\n')
 
 class Interior:
+    """
+    Sets background color and pattern information for a region of the grid.
+    """
     def __init__(self, color, pattern = 'Solid'):
+        """
+        Pass:
+            color   - See Font.__init__().
+            pattern - See schema's PatternType.
+        """
         self.color   = color
         self.pattern = pattern
     def write(self, fobj):
@@ -244,8 +415,23 @@ class Interior:
                    (self.color, self.pattern))
 
 class Worksheet:
+    """
+    One worksheet within a workbook, a complete spreadsheet grid.
+
+    There can be one or more of these in a workbook, each accessed via
+    tabs in Excel's lower right corner.
+    """
     def __init__(self, name, style = None, height = None, frozenRows = None,
                  frozenCols = None):
+        """
+        Pass:
+            name       - label to appear on the tab.
+            style      - a style created in the workbook via addStyle().
+            height     - default height of one row, a floating point number
+                         in "points".
+            frozenRows - number of rows above a freeze (no scroll) line.
+            frozenCols - number of columns to the left of a freeze line.
+        """
         self.name       = name
         self.rows       = {}
         self.cols       = {}
@@ -253,11 +439,23 @@ class Worksheet:
         self.height     = height
         self.frozenRows = frozenRows
         self.frozenCols = frozenCols
-        
+
     def addRow(self, index, style = None, height = None):
+        """
+        Add one row.
+
+        Pass:
+            index  - ordinal row number in sheet, origin 1.
+            style  - style object created by Workbook.addStyle().
+            height - default height, a floating point number in "points".
+
+        Return:
+            Row object to which cells can be added.
+        """
         row = Row(index, style, height)
         self.rows[index] = row
         return row
+
     def addCol(self, index, width, auto = None):
         col = Column(index, width, auto)
         self.cols[index] = col
@@ -347,14 +545,30 @@ class Column:
         fobj.write('/>\n')
 
 class Row:
+    """
+    Object encapsulating one row.  Can add cells to it.
+    """
     def __init__(self, index, style = None, height = None):
+        """
+        Pass:
+            index  - ordinal row number, origin 1, pushes others down?
+            style  - Style object created with Workbook.addStyle().
+            height - height of one row, a floating point number in "points".
+        """
         self.index  = index
         self.style  = style
         self.cells  = {}
         self.height = height
+
     def addCell(self, index, value = None, dataType = 'String', style = None,
                 mergeAcross = None, mergeDown = None, href = None,
                 tooltip = None, formula = None):
+        """
+        Add one cell to a row.
+
+        Pass:
+            see Cell constructor.
+        """
         cell = Cell(index, value, dataType, style, mergeAcross, mergeDown,
                     href, tooltip, formula)
         self.cells[index] = cell
@@ -387,11 +601,27 @@ class Row:
             fobj.write('   </Row>\n')
         else:
             fobj.write('/>\n')
-            
+
 class Cell:
+    """
+    One cell, normally added through Row.addCell().
+    """
     def __init__(self, index, value = None, dataType = 'String', style = None,
                  mergeAcross = None, mergeDown = None, href = None,
                  tooltip = None, formula = None):
+        """
+        Pass:
+            index       - ordinal column number within row
+            dataType    - 'Number', 'DateTime', 'Boolean', 'String', 'Error'.
+            style       - from Workbook.addStyle().
+            mergeAcross - number of adjacent cells (to the right usually)
+                          to merge with the current cell.
+            mergeDown   - number of adjacent cells (down) to merge with
+                          the current cell.
+            href        - URL to link from this cell.
+            tooltip     - display content of any tooltip for this cell.
+            formula     - formula to put in cell.
+        """
         self.index       = index
         self.value       = value
         self.dataType    = dataType
@@ -401,6 +631,7 @@ class Cell:
         self.href        = href
         self.formula     = formula
         self.tooltip     = tooltip
+
     def write(self, fobj, index = None):
         u = [u'    <Cell']
         if index:
@@ -425,6 +656,9 @@ class Cell:
         fobj.write(u"".join(u).encode('utf-8'))
 
 class StringSink:
+    """
+    Ubiquitous string builder used in CDR.
+    """
     def __init__(self, s = None):
         self.__pieces = s and [s] or []
     def __repr__(self):
