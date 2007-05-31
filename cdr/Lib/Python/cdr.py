@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.134 2007-05-09 18:26:15 venglisc Exp $
+# $Id: cdr.py,v 1.135 2007-05-31 23:21:00 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,11 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.134  2007/05/09 18:26:15  venglisc
+# Moved the definition of PUBTYPES and PDQDTD from cdr2gk.py to this module.
+# PDQDTD has been renamed to DEFAULT_DTD because we are now able to pass
+# a parameter for the file name of the DTD.
+#
 # Revision 1.133  2007/03/15 22:12:38  venglisc
 # Adding OPERATOR as a new constant for the operator email address.
 #
@@ -706,6 +711,25 @@ def wrapCommand(command, credentials):
               <CdrCommand>%s</CdrCommand>
               </CdrCommandSet>""" % (credentials, command)
     return cmds
+
+#----------------------------------------------------------------------
+# Validate date/time strings using strptime.
+# Wraps the exception handling.
+#----------------------------------------------------------------------
+def strptime(str, format):
+    """
+    Wrap time.strptime() in a wrapper that performs the exception
+    handling and just returns None if an exception was generated.
+
+    The actual ValueError message from Python may not always be
+    understandable by non-programming users.
+    """
+    tm = None
+    try:
+        tm = time.strptime(str, format)
+    except ValueError:
+        tm = None
+    return tm
 
 #----------------------------------------------------------------------
 # Extract a single error element from XML response.
