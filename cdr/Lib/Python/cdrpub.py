@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.99 2007-05-22 23:34:25 ameyer Exp $
+# $Id: cdrpub.py,v 1.100 2007-05-31 14:06:06 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.99  2007/05/22 23:34:25  ameyer
+# Added and reformatted some comments.
+# Fixed handling of error messages that were not coming through properly,
+# though there are probably lots more similar problems.
+#
 # Revision 1.98  2007/05/22 21:10:56  ameyer
 # Made the query to select documents for removal conditional upon actually
 # finding any published doctypes in the job.  Shouldn't ever happen but it
@@ -2292,6 +2297,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                        AND pp.pub_system = ?
                        AND ppp.pub_proc = pp.id
                        AND ppp.parm_name = 'SubSetName'
+                        -- Must use "LIKE" instead of "=" because SQLServer
+                        -- won't test equality of NTEXT columns
                        AND ppp.parm_value LIKE ?
                            """, (Publish.SUCCESS,
                                  "%s_%s" % (self.__pd2cg, subsetName),
