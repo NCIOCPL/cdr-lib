@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.27 2007-05-16 22:46:37 bkline Exp $
+# $Id: SiteImporter.py,v 1.28 2007-06-04 10:22:47 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.27  2007/05/16 22:46:37  bkline
+# Escaped status string reserved characters.
+#
 # Revision 1.26  2007/05/11 22:30:42  bkline
 # Added some more status mapping at Sheri's request (still #3244).
 #
@@ -212,6 +215,7 @@ class ImportJob(ModifyDocs.Job):
         except Exception, e:
             self.log("loadImportDoc(%s): %s" % (name, str(e)))
             self.log("job aborting")
+            raise
             sys.exit(1)
 
     def run(self):
@@ -805,7 +809,8 @@ class ImportDoc:
     
     def loadSiteDocXml(self, name = None, importDocId = None):
         if name:
-            self.rawXml = self.impJob.getArchiveFile().read(name)
+            self.rawXml = unicode(self.impJob.getArchiveFile().read(name),
+                                  'utf-8')
         else:
             cursor = self.impJob.getCursor()
             cursor.execute("""\
@@ -813,10 +818,10 @@ class ImportDoc:
                   FROM import_doc
                  WHERE id = ?""", importDocId)
             self.rawXml = cursor.fetchall()[0][0]
-        lines = self.rawXml.split("\n")
+        lines = self.rawXml.split(u"\n")
         if lines[1].find('DOCTYPE') != -1 and lines[1].find(".dtd") != -1:
             lines[1:2] = []
-        return "\n".join(lines)
+        return u"\n".join(lines).encode('utf-8')
 
     def extractProtocolStatus(self, siteXml):
         dom = xml.dom.minidom.parseString(siteXml)
@@ -925,8 +930,8 @@ class ImportDoc:
 
             # Yes: update the row as appropriate.
             else:
-                (importDocId, siteXml, oldCdrId, dropped) = rows[0]
-                self.changed = siteXml != self.rawXml
+                (importDocId, oldXml, oldCdrId, dropped) = rows[0]
+                self.changed = oldXml != self.rawXml
                 if self.cdrId and self.cdrId != oldCdrId:
                     self.newCdrId = True
 
