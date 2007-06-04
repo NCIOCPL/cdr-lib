@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.100 2007-05-31 14:06:06 ameyer Exp $
+# $Id: cdrpub.py,v 1.101 2007-06-04 22:40:20 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.100  2007/05/31 14:06:06  ameyer
+# Commented SQL change for parm_value compare.  See rev 1.87 log comment.
+#
 # Revision 1.99  2007/05/22 23:34:25  ameyer
 # Added and reformatted some comments.
 # Fixed handling of error messages that were not coming through properly,
@@ -2289,6 +2292,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
         try:
             cursor = self.__conn.cursor()
+            # -- Must use "LIKE" instead of "=" for parm_value because
+            # -- SQLServer won't test equality of NTEXT columns
             cursor.execute("""
                     SELECT MAX(pp.id)
                       FROM pub_proc pp, pub_proc_parm ppp
@@ -2297,8 +2302,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                        AND pp.pub_system = ?
                        AND ppp.pub_proc = pp.id
                        AND ppp.parm_name = 'SubSetName'
-                        -- Must use "LIKE" instead of "=" because SQLServer
-                        -- won't test equality of NTEXT columns
                        AND ppp.parm_value LIKE ?
                            """, (Publish.SUCCESS,
                                  "%s_%s" % (self.__pd2cg, subsetName),
