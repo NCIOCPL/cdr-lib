@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: ExcelWriter.py,v 1.8 2007-05-24 19:40:31 ameyer Exp $
+# $Id: ExcelWriter.py,v 1.9 2007-06-15 04:02:53 ameyer Exp $
 #
 # Generates Excel workbooks using 2003 XML format.
 #
@@ -15,6 +15,9 @@
 #    d:\downloads\MicrosoftOfficeSchemas\SpreadsheetML Schemas\excelss.xsd
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2007/05/24 19:40:31  ameyer
+# Added documentation for public classes and methods.
+#
 # Revision 1.7  2006/11/07 14:48:21  bkline
 # Added code to clean up temporary files in Workbook.write().
 #
@@ -218,6 +221,7 @@ class Style:
         c.__nextId += 1
         return nextId
     __getId = classmethod(__getId)
+
     def __init__(self, styleId = None, name = None, alignment = None,
                  borders = None, font = None, interior = None,
                  numFormat = None):
@@ -551,7 +555,8 @@ class Row:
     def __init__(self, index, style = None, height = None):
         """
         Pass:
-            index  - ordinal row number, origin 1, pushes others down?
+            index  - ordinal row number, origin 1, overwrites any previous
+                     row and all cell contents if index already exists.
             style  - Style object created with Workbook.addStyle().
             height - height of one row, a floating point number in "points".
         """
@@ -575,6 +580,7 @@ class Row:
         #sys.stderr.write("row %d col %d: num cells is %d\n" %
         #                 (self.index, index, len(self.cells)))
         return cell
+
     def write(self, fobj, index = None):
         #sys.stderr.write("write(%d): num cells is %d\n" %
         #                 (self.index, len(self.cells)))
@@ -602,6 +608,27 @@ class Row:
         else:
             fobj.write('/>\n')
 
+    def getCell(self, index):
+        """
+        Retrieve the Cell at the passed index.
+
+        Pass:
+            index - Same index value passed to Row.addCell().
+
+        Return:
+            Cell object at that index.
+            None if no such Cell.
+        """
+        if self.cells.has_key(index):
+            return self.cells[index]
+        return None
+
+    def getRowIndex(self):
+        """
+        Retrieve the row number, origin 1.
+        """
+        return self.index
+
 class Cell:
     """
     One cell, normally added through Row.addCell().
@@ -611,7 +638,8 @@ class Cell:
                  tooltip = None, formula = None):
         """
         Pass:
-            index       - ordinal column number within row
+            index       - ordinal column number within row, origin 1.
+                          Overwrites any previous cell with that index.
             dataType    - 'Number', 'DateTime', 'Boolean', 'String', 'Error'.
             style       - from Workbook.addStyle().
             mergeAcross - number of adjacent cells (to the right usually)
@@ -654,6 +682,38 @@ class Cell:
         else:
             u.append(u'/>\n')
         fobj.write(u"".join(u).encode('utf-8'))
+
+    def getValue(self):
+        """
+        Return the current contents of the cell.
+        Typically used when we need to create a cell, then later
+        add more text to it.
+
+        Return:
+            Value of the cell, as a string.
+            Empty string "" if no content or None.
+        """
+        if self.value:
+            return str(self.value)
+        return ""
+
+    def replaceValue(self, value):
+        """
+        Replace the value of the cell with a different value.  Used, for
+        example, to add text to text already entered in a cell.
+
+        This is a simple function that just replaces the text value.
+        It does not update styles.  For a more comprehensive replacement,
+        consider replacing the Cell itself.
+
+        NB: This MUST be called before a write is performed.  After a
+            write is too late.
+
+        Pass:
+            Replacement value.  The data type must be the same as the
+            original value.
+        """
+        self.value = value
 
 class StringSink:
     """
