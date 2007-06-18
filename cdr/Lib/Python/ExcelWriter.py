@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: ExcelWriter.py,v 1.9 2007-06-15 04:02:53 ameyer Exp $
+# $Id: ExcelWriter.py,v 1.10 2007-06-18 18:25:49 kidderc Exp $
 #
 # Generates Excel workbooks using 2003 XML format.
 #
@@ -15,6 +15,9 @@
 #    d:\downloads\MicrosoftOfficeSchemas\SpreadsheetML Schemas\excelss.xsd
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2007/06/15 04:02:53  ameyer
+# Added some minor functions and documentation.
+#
 # Revision 1.8  2007/05/24 19:40:31  ameyer
 # Added documentation for public classes and methods.
 #
@@ -126,13 +129,14 @@ class Workbook:
         self.styles.append(style)
         return style.id
 
-    def write(self, fobj, asXls = False):
+    def write(self, fobj, asXls = False, big = False):
         """
         Write the workbook to a file that Excel can then read.
 
         Pass:
             fobj  - open Python file object.
             asXls - write in Excel 97 .xls binary format (uses Perl module).
+            big   -  used to write large excel files.
         """
         if asXls:
             baseName = os.path.join(tempfile.gettempdir(),
@@ -145,7 +149,7 @@ class Workbook:
             # Perl must be available in this location
             script = "d:\\cdr\\lib\\Perl\\xml2xls.pl"
             perl = "D:\\Perl\\bin\\perl.EXE"
-            command = "%s %s %s %s 2>&1" % (perl, script, xmlName, xlsName)
+            command = "%s %s %s %s %s 2>&1" % (perl, script, xmlName, xlsName, big)
             commandStream = os.popen('%s 2>&1' % command)
             output = commandStream.read()
             code = commandStream.close()
