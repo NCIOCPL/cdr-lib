@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.135 2007-05-31 23:21:00 ameyer Exp $
+# $Id: cdr.py,v 1.136 2007-06-22 04:41:24 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.135  2007/05/31 23:21:00  ameyer
+# Added strptime() wrapper for time.strptime().
+#
 # Revision 1.134  2007/05/09 18:26:15  venglisc
 # Moved the definition of PUBTYPES and PDQDTD from cdr2gk.py to this module.
 # PDQDTD has been renamed to DEFAULT_DTD because we are now able to pass
@@ -1663,6 +1666,47 @@ def getDoc(credentials, docId, checkout = 'N', version = "Current",
     doc = extract("(<CdrDoc[>\s].*</CdrDoc>)", resp)
     if doc.startswith("<Errors") or not getObject: return doc
     return Doc(doc, encoding = 'utf-8')
+
+#----------------------------------------------------------------------
+# Checkout a document without retrieving it
+#----------------------------------------------------------------------
+def checkOutDoc(credentials, docId, force='N', comment='',
+                host=DEFAULT_HOST, port=DEFAULT_PORT):
+    """
+    Checkout a document to the logged in user.
+
+    Pass:
+        credentials - returned form cdr.login().
+        docId       - ID as number or string.
+        force       - 'Y' = force checkout even if already out to another
+                      user.  Requires that user have FORCE CHECKOUT
+                      permission.
+        comment     - checkout comment.
+        host        - server.
+        port        - TCP/IP port number.
+
+    Return:
+        Current version number.
+
+    Raises:
+        cdr.Exception if error.
+    """
+    docId = exNormalize(docId)[0]
+    cmd = wrapCommand("""
+<CdrCheckOut ForceCheckOut='%s'>
+ <DocumentId>%s</DocumentId>
+ <Comment>%s</Comment>
+</CdrCheckOut>""" % (force, docId, comment), credentials)
+
+    print cmd
+    response = sendCommands(cmd, host, port)
+    errs     = getErrors(response, False)
+    if errs:
+        raise Exception(errs)
+    else:
+        pattern = re.compile("<CdrCheckOutResp>.*</Errors>", re.DOTALL)
+        verNum  = pattern.search(response).group()
+        return verNum
 
 #----------------------------------------------------------------------
 # Mark a CDR document as deleted.
