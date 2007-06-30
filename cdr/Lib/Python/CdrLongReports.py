@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.35 2007-05-16 22:33:25 bkline Exp $
+# $Id: CdrLongReports.py,v 1.36 2007-06-30 03:38:52 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.35  2007/05/16 22:33:25  bkline
+# Mapped 'No valid lead organization status found.' to empty string
+# for protocol processing report.
+#
 # Revision 1.34  2007/05/16 17:04:00  bkline
 # Fixed title width for new CTGov Withdrawn sheet.
 #
@@ -1789,7 +1793,7 @@ class UrlCheck:
     def __init__(self, host = 'localhost'):
         self.conn    = cdrdb.connect('CdrGuest', dataSource = host)
         self.cursor  = self.conn.cursor()
-        self.pattern = re.compile("([^/]+)/@cdr:xref$")
+        self.pattern = re.compile(u"([^/]+)/@cdr:xref$")
 
     #------------------------------------------------------------------
     # Report on a dead URL
@@ -1797,7 +1801,7 @@ class UrlCheck:
     def report(self, row, err):
         match = self.pattern.search(row[1])
         elem = match and match.group(1) or ""
-        return """\
+        return u"""\
    <tr bgcolor='white'>
     <td>%s</td>
     <td>%d</td>
@@ -1840,7 +1844,7 @@ ORDER BY t.name, q.doc_id
         #--------------------------------------------------------------
         # Create the HTML for the report.
         #--------------------------------------------------------------
-        html = """\
+        html = [u"""\
 <!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
 <html>
  <head>
@@ -1862,7 +1866,7 @@ ORDER BY t.name, q.doc_id
     <td><b>Problem</b></td>
     <td><b>Element</b></td>
    </tr>
-"""
+"""]
         done = 0
         for row in rows:
             done    += 1
@@ -1871,7 +1875,7 @@ ORDER BY t.name, q.doc_id
             if goodUrls.has_key(url):
                 continue
             if deadUrls.has_key(url):
-                html += self.report(row, deadUrls[url])
+                html.append(self.report(row, deadUrls[url]))
                 continue
             pieces   = urlparse.urlparse(url)
             host     = pieces[1]
@@ -1880,13 +1884,13 @@ ORDER BY t.name, q.doc_id
             if pieces[4]: selector += "?" + pieces[4]
             if pieces[5]: selector += "#" + pieces[5]
             if not host:
-                html += self.report(row, "Malformed URL")
+                html.append(self.report(row, "Malformed URL"))
                 continue
             if deadHosts.has_key(host):
-                html += self.report(row, "Host not responding")
+                html.append(self.report(row, "Host not responding"))
                 continue
             if pieces[0] not in ('http','https'):
-                html += self.report(row, "Unexpected protocol")
+                html.append(self.report(row, "Unexpected protocol"))
                 continue
             try:
                 http = httplib.HTTP(host)
@@ -1894,31 +1898,35 @@ ORDER BY t.name, q.doc_id
                 http.endheaders()
                 reply = http.getreply()
                 if reply[0] / 100 != 2:
-                    message = "%s: %s" % (reply[0], reply[1])
+                    try:
+                        message = unicode(reply[1], 'utf-8')
+                    except:
+                        message = unicode(reply[1])
+                    message = u"%s: %s" % (reply[0], message)
                     deadUrls[url] = message
-                    html += self.report(row, message)
+                    html.append(self.report(row, message))
                 else:
                     goodUrls[url] = 1
             except IOError, ioError:
-                html += self.report(row, "IOError: %s" % str(ioError))
+                html.append(self.report(row, "IOError: %s" % ioError))
             except socket.error, socketError:
                 deadHosts[host] = 1
-                html += self.report(row, "Host not responding")
+                html.append(self.report(row, "Host not responding"))
             except:
-                html += self.report(row, "Unrecognized error")
+                html.append(self.report(row, "Unrecognized error"))
             job.setProgressMsg(msg)
-        html += """\
+        html.append(u"""\
   </table>
  </body>
 </html>
-"""
+""")
 
         #--------------------------------------------------------------
         # Write out the report and tell the user where it is.
         #--------------------------------------------------------------
         name = "/UrlCheck-%d.html" % job.getJobId()
         file = open(REPORTS_BASE + name, "wb")
-        file.write(cdrcgi.unicodeToLatin1(html))
+        file.write(cdrcgi.unicodeToLatin1(u"".join(html)))
         file.close()
         cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
         url = "http://%s.nci.nih.gov/CdrReports%s" % (socket.gethostname(),
