@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.136 2007-06-22 04:41:24 ameyer Exp $
+# $Id: cdr.py,v 1.137 2007-07-03 23:56:25 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,11 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.136  2007/06/22 04:41:24  ameyer
+# Added checkOutDoc command.  It invokes the server command CdrCheckOut.  I
+# cannot find any uses of that server command and am not sure yet that it
+# really works perfectly.
+#
 # Revision 1.135  2007/05/31 23:21:00  ameyer
 # Added strptime() wrapper for time.strptime().
 #
@@ -3627,7 +3632,7 @@ class Log:
                 if stdout:
                     print(msg)
                 if stderr:
-                    sys.stderr.write(msg)
+                    sys.stderr.write(msg + "\n")
         else:
             if (type(msgs)) == type(u""):
                 msgs = msgs.encode('utf-8')
@@ -3636,7 +3641,7 @@ class Log:
             if stdout:
                 print(msgs)
             if stderr:
-                sys.stderr.write(msgs)
+                sys.stderr.write(msgs + "\n")
 
         # If traceback is requested, include the last one
         if tback:
