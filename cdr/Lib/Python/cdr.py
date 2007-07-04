@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.138 2007-07-04 03:39:03 ameyer Exp $
+# $Id: cdr.py,v 1.139 2007-07-04 03:53:17 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -1694,7 +1694,7 @@ def checkOutDoc(credentials, docId, force='N', comment='',
         port        - TCP/IP port number.
 
     Return:
-        Current version number.
+        Current version number or 0 if no version number returned.
 
     Raises:
         cdr.Exception if error.
@@ -1716,7 +1716,7 @@ def checkOutDoc(credentials, docId, force='N', comment='',
         if match:
             verNum  = match.group(1)
             return int(verNum)
-        return "0"
+        return 0
 
 #----------------------------------------------------------------------
 # Mark a CDR document as deleted.
