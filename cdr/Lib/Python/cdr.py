@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.137 2007-07-03 23:56:25 ameyer Exp $
+# $Id: cdr.py,v 1.138 2007-07-04 03:39:03 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.137  2007/07/03 23:56:25  ameyer
+# Trivial change to Log.write() for better newline formatting on stderr writes.
+#
 # Revision 1.136  2007/06/22 04:41:24  ameyer
 # Added checkOutDoc command.  It invokes the server command CdrCheckOut.  I
 # cannot find any uses of that server command and am not sure yet that it
@@ -1703,15 +1706,17 @@ def checkOutDoc(credentials, docId, force='N', comment='',
  <Comment>%s</Comment>
 </CdrCheckOut>""" % (force, docId, comment), credentials)
 
-    print cmd
     response = sendCommands(cmd, host, port)
     errs     = getErrors(response, False)
     if errs:
         raise Exception(errs)
     else:
-        pattern = re.compile("<CdrCheckOutResp>.*</Errors>", re.DOTALL)
-        verNum  = pattern.search(response).group()
-        return verNum
+        pattern = re.compile("<Version>(.*)</Version>", re.DOTALL)
+        match   = pattern.search(response)
+        if match:
+            verNum  = match.group(1)
+            return int(verNum)
+        return "0"
 
 #----------------------------------------------------------------------
 # Mark a CDR document as deleted.
