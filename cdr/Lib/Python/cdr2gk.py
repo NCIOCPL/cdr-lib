@@ -1,10 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.10 2007-05-16 16:02:21 bkline Exp $
+# $Id: cdr2gk.py,v 1.11 2007-07-09 13:57:45 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2007/05/16 16:02:21  bkline
+# Fixed sendRequet() so it uses the current value of the module-level
+# host attribute instead of the value the attribute had when the
+# module was loaded when the caller doesn't explicitly pass a value
+# for the function's host parameter.
+#
 # Revision 1.9  2007/05/09 18:21:46  venglisc
 # Moved definition for PUBTYPES and PDQDTD to cdrpub.py where it belongs.
 #
@@ -504,7 +510,7 @@ def sendRequest(body, app = application, host = None, headers = headers):
     logString("REQUEST", request)
     
     # Defensive programming.
-    tries = 3
+    tries = 10
     response = None
     while tries:
         try:
@@ -532,7 +538,8 @@ def sendRequest(body, app = application, host = None, headers = headers):
             logString("RETRY", "%d retries left" % tries)
             if not tries:
                 raise
-            time.sleep(.5)
+            waitSecs = (10.5 - tries) * .5
+            time.sleep(waitSecs)
             tries -= 1
 
     # Check for failure.
