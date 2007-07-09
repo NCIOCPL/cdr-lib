@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.13 2007-07-09 17:48:58 bkline Exp $
+# $Id: cdr2gk.py,v 1.14 2007-07-09 17:57:23 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.13  2007/07/09 17:48:58  bkline
+# Force logging of retries, regardless of debuglevel.
+#
 # Revision 1.12  2007/07/09 17:09:40  bkline
 # Added MAX_RETRIES and RETRY_MULTIPLIER module-level variables.
 #
@@ -486,8 +489,8 @@ def extractXmlResult(bodyNode):
             return xmlString.replace("<![CDATA[", "").replace( "]]>", "")
     return None
 
-def logString(type, str):
-    if debuglevel:
+def logString(type, str, forceLog = False):
+    if forceLog or debuglevel:
         f = open("d:/cdr/log/cdr2gk.log", "ab")
         f.write("==== %s %s (host=%s) ====\n%s\n" % 
                 (time.ctime(), type, host, re.sub("\r", "", str)))
@@ -501,7 +504,7 @@ def sendRequest(body, app = application, host = None, headers = headers):
     if not host:
         host = sys.modules[__name__].host
     else:
-        logString
+        logString("SEND REQUEST", "Sending to host %s" % host)
 
     if type(body) == unicode:
         body = body.encode('utf-8')
@@ -546,11 +549,10 @@ def sendRequest(body, app = application, host = None, headers = headers):
             if not tries:
                 raise
             waitSecs = (MAX_RETRIES + 1 - tries) * RETRY_MULTIPLIER
-            holdDebugLevel = debuglevel
-            debuglevel = 1
-            logString("RETRY", "%d retries left; waiting %f seconds" %
-                      (tries, waitSecs))
-            debuglevel = holdDebugLevel
+            logString("RETRY",
+                      "%d retries left; waiting %f seconds" % (tries,
+                                                               waitSecs),
+                      forceLog = True)
             time.sleep(waitSecs)
             tries -= 1
 
