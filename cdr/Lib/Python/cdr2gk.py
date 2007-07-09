@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.11 2007-07-09 13:57:45 bkline Exp $
+# $Id: cdr2gk.py,v 1.12 2007-07-09 17:09:40 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.11  2007/07/09 13:57:45  bkline
+# Enhanced retry mechanism.
+#
 # Revision 1.10  2007/05/16 16:02:21  bkline
 # Fixed sendRequet() so it uses the current value of the module-level
 # host attribute instead of the value the attribute had when the
@@ -46,6 +49,8 @@ import httplib, re, sys, time, xml.dom.minidom, socket, string
 #----------------------------------------------------------------------
 # Module data.
 #----------------------------------------------------------------------
+MAX_RETRIES         = 10
+RETRY_MULTIPLIER    = 1.0
 debuglevel          = 0
 localhost           = socket.gethostname()
 host                = "gatekeeper.cancer.gov"
@@ -510,7 +515,7 @@ def sendRequest(body, app = application, host = None, headers = headers):
     logString("REQUEST", request)
     
     # Defensive programming.
-    tries = 10
+    tries = MAX_RETRIES
     response = None
     while tries:
         try:
@@ -538,7 +543,7 @@ def sendRequest(body, app = application, host = None, headers = headers):
             logString("RETRY", "%d retries left" % tries)
             if not tries:
                 raise
-            waitSecs = (10.5 - tries) * .5
+            waitSecs = (MAX_RETRIES + 1 - tries) * RETRY_MULTIPLIER
             time.sleep(waitSecs)
             tries -= 1
 
