@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.12 2007-07-09 17:09:40 bkline Exp $
+# $Id: cdr2gk.py,v 1.13 2007-07-09 17:48:58 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.12  2007/07/09 17:09:40  bkline
+# Added MAX_RETRIES and RETRY_MULTIPLIER module-level variables.
+#
 # Revision 1.11  2007/07/09 13:57:45  bkline
 # Enhanced retry mechanism.
 #
@@ -540,10 +543,14 @@ def sendRequest(body, app = application, host = None, headers = headers):
         except:
             if debuglevel:
                 sys.stderr.write("caught http exception; trying again...\n")
-            logString("RETRY", "%d retries left" % tries)
             if not tries:
                 raise
             waitSecs = (MAX_RETRIES + 1 - tries) * RETRY_MULTIPLIER
+            holdDebugLevel = debuglevel
+            debuglevel = 1
+            logString("RETRY", "%d retries left; waiting %f seconds" %
+                      (tries, waitSecs))
+            debuglevel = holdDebugLevel
             time.sleep(waitSecs)
             tries -= 1
 
