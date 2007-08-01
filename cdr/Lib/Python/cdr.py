@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.139 2007-07-04 03:53:17 ameyer Exp $
+# $Id: cdr.py,v 1.140 2007-08-01 20:30:49 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.139  2007/07/04 03:53:17  ameyer
+# Oops.  Another fix to checkOutDoc.
+#
 # Revision 1.137  2007/07/03 23:56:25  ameyer
 # Trivial change to Log.write() for better newline formatting on stderr writes.
 #
@@ -3234,13 +3237,92 @@ def getEmailList(groupName, host = 'localhost'):
     return [row[0] for row in cursor.fetchall()]
 
 #----------------------------------------------------------------------
+# Eventually we'll use this to send all email messages; for right
+# now I'm using this for a selected set of applications to test
+# it.
+#----------------------------------------------------------------------
+def sendMailMime(sender, recips, subject, body):
+    """
+    Send an email message via SMTP to a list of recipients.  This
+    version supports Unicode in the subject and body.  The message
+    will be encoded with the most widely-supported encoding which
+    results in no loss of information.  The encoding for the
+    subject and body are determined separately.
+
+    Pass:
+
+        sender     - email address of sender; must contain only ASCII
+                     characters
+        recips     - sequence of recipient addresses; must contain only
+                     ASCII characters
+        subject    - string for subject header; must be a unicode object
+                     or contain only ASCII characters or be UTF-8 encoded
+        body       - payload for the message; must be a unicode object
+                     or contain only ASCII characters or be UTF-8 encoded
+    """
+    if not recips:
+        raise Exception("sendMail: no recipients specified")
+    if type(recips) not in (tuple, list):
+        raise Exception("sendMail: recipients must be a sequence of "
+                        "email addresses")
+    recips = [recip.encode('US-ASCII') for recip in recips]
+    sender = sender.encode('US-ASCII')
+        
+    from email.MIMEText import MIMEText
+    from email.Header   import Header as EmailHeader
+
+    # The Header class will try US-ASCII first, then the charset we
+    # specify, then fall back to UTF-8.
+    if type(subject) != unicode:
+        subject = unicode(subject, 'utf-8')
+    subject = EmailHeader(subject, 'ISO-8859-1')
+
+    # The charset for the body must be set explicitly.
+    if type(body) != unicode:
+        body = unicode(body, 'utf-8')
+    encodedBody = None
+    for charset in ('US-ASCII', 'ISO-8859-1', 'UTF-8'):
+        try:
+            encodedBody = body.encode(charset)
+        except UnicodeError:
+            pass
+        else:
+            break
+    if encodedBody is None:
+        raise Exception("sendMailMime: failure determining body charset")
+
+    # Create the message object.
+    message = MIMEText(encodedBody, 'plain', charset)
+
+    # Plug in the headers.
+    message['From']    = sender
+    message['To']      = ",\n  ".join(recips)
+    message['Subject'] = subject
+
+    # Send it
+    try:
+        server = smtplib.SMTP(SMTP_RELAY)
+        server.sendmail(sender, recips, message.as_string())
+        server.quit()
+
+    except Exception, e:
+        
+        # Log the error before re-throwing an exception.
+        msg = "sendMail failure: %s" % e
+        logwrite(msg, tback = True)
+        raise Exception(msg)
+    
+#----------------------------------------------------------------------
 # Send email to a list of recipients.
 #----------------------------------------------------------------------
-def sendMail(sender, recips, subject = "", body = "", html = 0):
+def sendMail(sender, recips, subject = "", body = "", html = 0, mime = False):
+    if mime:
+        return sendMailMime(sender, recips, subject, body)
     if not recips:
-        return "sendMail: no recipients specified"
-    if type(recips) != type([]) and type(recips) != type(()):
-        return "sendMail: recipients must be a list of email addresses"
+        raise Exception("sendMail: no recipients specified")
+    if type(recips) not in (tuple, list):
+        raise Exception("sendMail: recipients must be a sequence of "
+                        "email addresses")
     recipList = recips[0]
     for recip in recips[1:]:
         recipList += (",\n  %s" % recip)
