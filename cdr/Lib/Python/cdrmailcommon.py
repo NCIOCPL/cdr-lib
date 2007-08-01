@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrmailcommon.py,v 1.10 2005-11-18 20:47:46 bkline Exp $
+# $Id: cdrmailcommon.py,v 1.11 2007-08-01 13:18:09 bkline Exp $
 #
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2005/11/18 20:47:46  bkline
+# Bumped up timeouts.
+#
 # Revision 1.9  2005/03/03 13:57:10  bkline
 # Moved determination of emailer host to cdr module.
 #
@@ -41,7 +44,7 @@
 #
 #----------------------------------------------------------------------
 
-import sys, cdr, cdrdb, MySQLdb
+import sys, cdr, cdrdb, MySQLdb, cgi, re
 
 
 # Log file for debugging - module variable, not instance
@@ -384,3 +387,77 @@ def emailerConn(db, host = None):
                                passwd = '***REMOVED***')
     except:
         raise Exception("Failure connecting to %s" % db)
+
+#----------------------------------------------------------------------
+# Escape special XML characters.
+#----------------------------------------------------------------------
+def fix(me):
+    if not me:
+        return u""
+    return cgi.escape(me)
+
+#----------------------------------------------------------------------
+# Create a new mailer document.
+#----------------------------------------------------------------------
+def recordMailer(session, docId, recipId, mode, mailerType, sent,
+                 address = u"", remailerFor = "", jobId = None, recipName = "",
+                 docTitle = "", protOrg = "", deadline = ""):
+    docXml = [u"""\
+<CdrDoc Type='Mailer'>
+ <CdrDocCtl>
+  <DocTitle>Mailer for document CDR%010d sent to CDR%010d</DocTitle>
+ </CdrDocCtl>
+ <CdrDocXml><![CDATA[
+  <Mailer xmlns:cdr='cips.nci.nih.gov/cdr'>
+   <Type Mode='%s'>%s</Type>
+""" % (docId, recipId, mode, mailerType)]
+    if remailerFor:
+        docXml.append(u"""\
+   <RemailerFor cdr:ref='CDR%010d'/>
+""" % remailerFor)
+    if jobId:
+        docXml.append(u"""\
+   <JobId>%d</JobId>
+""" % jobId)
+    if recipName:
+        docXml.append(u"""\
+   <Recipient cdr:ref='CDR%010d'>%s</Recipient>
+""" % (recipId, fix(recipName)))
+    else:
+        docXml.append(u"""\
+   <Recipient cdr:ref='CDR%010d'/>
+""" % recipId)
+    if protOrg:
+        docXml.append(u"""\
+   <ProtocolOrg cdr:ref='CDR%010d'/>
+""" % protOrg)
+    if address:
+        docXml.append(address)
+    if docTitle:
+        docXml.append(u"""\
+   <Document cdr:ref='CDR%010d'>%s</Document>
+""" % (docId, fix(docTitle)))
+    else:
+        docXml.append(u"""\
+   <Document cdr:ref='CDR%010d'/>
+""" % docId)
+    docXml.append(u"""\
+   <Sent>%s</Sent>
+""" % sent)
+    if deadline:
+        docXml.append(u"""\
+   <Deadline>%s</Deadline>
+""" % deadline)
+    docXml.append(u"""\
+  </Mailer>]]>
+ </CdrDocXml>
+</CdrDoc>
+""")
+    rsp = cdr.addDoc(session, doc = u"".join(docXml).encode('utf-8'),
+                     checkIn = "Y", ver = "Y", val = 'Y')
+    errors = cdr.getErrors(rsp, errorsExpected = False, asSequence = True)
+    if errors:
+        raise Exception("Failure saving mailer tracking document for CDR%d: %s"
+                        % (docId, "; ".join(errors)))
+    digits = re.sub("[^\d]", "", rsp)
+    return int(digits)
