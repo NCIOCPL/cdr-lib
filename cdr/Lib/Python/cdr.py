@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.140 2007-08-01 20:30:49 bkline Exp $
+# $Id: cdr.py,v 1.141 2007-08-06 17:24:46 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.140  2007/08/01 20:30:49  bkline
+# Added Mime support to sendEmail().
+#
 # Revision 1.139  2007/07/04 03:53:17  ameyer
 # Oops.  Another fix to checkOutDoc.
 #
@@ -468,6 +471,7 @@
 #----------------------------------------------------------------------
 import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
 import os, smtplib, time, atexit, cdrdb, tempfile, traceback, difflib
+import xml.sax.saxutils
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -1972,7 +1976,7 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
     if type(parm) is type([]) or type(parm) is type(()):
         for l in parm:
             parmElem += "<Parm><Name>" + l[0] \
-                      + "</Name><Value>" + l[1] \
+                      + "</Name><Value>" + xml.sax.saxutils.escape(l[1]) \
                       + "</Value></Parm>"
     if parmElem:
         # Even parms can have non-ASCII in them and may need encoding
