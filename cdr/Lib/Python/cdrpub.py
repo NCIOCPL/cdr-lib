@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.101 2007-06-04 22:40:20 venglisc Exp $
+# $Id: cdrpub.py,v 1.102 2007-08-07 18:48:43 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.101  2007/06/04 22:40:20  venglisc
+# Moved comment out of SQL statement.  cursor.execute doesn't like comments.
+#
 # Revision 1.100  2007/05/31 14:06:06  ameyer
 # Commented SQL change for parm_value compare.  See rev 1.87 log comment.
 #
@@ -1509,7 +1512,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 xml = XmlDeclLine.sub("", xml)
                 xml = DocTypeLine.sub("", xml)
 
+                # Reverse comments to turn grouping on/off
                 grpNum = groupNums.getDocGroupNum(docId)
+                # grpNum = groupNums.genNewUniqueNum()
 
                 response = cdr2gk.sendDocument(self.__jobId, docNum,
                             "Export", docType, docId, version, grpNum, xml)
