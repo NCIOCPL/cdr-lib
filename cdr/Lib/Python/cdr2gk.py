@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.14 2007-07-09 17:57:23 bkline Exp $
+# $Id: cdr2gk.py,v 1.15 2007-08-21 17:24:58 venglisc Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.14  2007/07/09 17:57:23  bkline
+# Used another (more generic) method of forcing the logging of retries,
+# and completed an unfinished call to logString() elsewhere.
+#
 # Revision 1.13  2007/07/09 17:48:58  bkline
 # Force logging of retries, regardless of debuglevel.
 #
@@ -59,7 +63,7 @@ MAX_RETRIES         = 10
 RETRY_MULTIPLIER    = 1.0
 debuglevel          = 0
 localhost           = socket.gethostname()
-host                = "gatekeeper.cancer.gov"
+host                = "gatekeeper2.cancer.gov"
 testhost            = "test4.cancer.gov"
 testhost            = "gkdev.cancer.gov"
 testhost            = "gkint.cancer.gov"
