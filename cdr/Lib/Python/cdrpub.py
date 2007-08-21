@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.102 2007-08-07 18:48:43 ameyer Exp $
+# $Id: cdrpub.py,v 1.103 2007-08-21 23:36:37 ameyer Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.102  2007/08/07 18:48:43  ameyer
+# Added ability to turn off grouping of documents.
+# Right now this requires commenting/uncommenting a pair of lines of code.
+#
 # Revision 1.101  2007/06/04 22:40:20  venglisc
 # Moved comment out of SQL statement.  cursor.execute doesn't like comments.
 #
@@ -492,8 +496,12 @@ class Publish:
     __reportOnly        = 0
     __validateDocs      = 0
     __logDocModulus     = LOG_MODULUS
-    __excludeDocTypes   = ['Country', # Document types provided to
-                           'Person']  # licensees but not to Cancer.gov
+
+    # Document types provided to licensees but not to Cancer.gov
+    __excludeDocTypes   = ('Country', 'Person')
+
+    # Used in SQL SELECT statements to exclude documents of those types.
+    __excludeDT         = ",".join(["'%s'" % t for t in __excludeDocTypes])
 
     # List of Docs to be published
     __docs = []
@@ -1483,15 +1491,11 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             XmlDeclLine = re.compile("<\?xml.*?\?>\s*", re.DOTALL)
             DocTypeLine = re.compile("<!DOCTYPE.*?>\s*", re.DOTALL)
 
-            # Create a string of doc_types to be excluded from
-            # pushing to Cancer.gov
-            excludeDT = "'" + "', '".join(self.__excludeDocTypes) + "'"
-
             qry = """
                 SELECT id, num, doc_type, xml
                   FROM pub_proc_cg_work
                  WHERE NOT xml IS NULL
-                   AND doc_type NOT IN (%s)""" % excludeDT
+                   AND doc_type NOT IN (%s)""" % self.__excludeDT
             self.__debugLog(qry)
 
             cursor.execute (qry, timeout = self.__timeOut)
@@ -1545,7 +1549,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 SELECT id, num, doc_type
                   FROM pub_proc_cg_work
                  WHERE xml IS NULL
-                   AND doc_type NOT IN (%s)""" % excludeDT
+                   AND doc_type NOT IN (%s)""" % self.__excludeDT
 
             cursor.execute (qry)
             #cursor.execute ("""
@@ -1663,6 +1667,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                    AND d.doc_type = t.id
                    AND ppd2.doc_id = d.id
                    AND ppd2.pub_proc = %d
+                   AND t.name NOT IN (%s)
                    AND EXISTS (
                            SELECT *
                              FROM pub_proc_doc ppd
@@ -1670,7 +1675,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                               AND ppd.pub_proc = %d
                               AND ppd.failure IS NULL
                               )
-                  """ % (vendor_job, vendor_job)
+                  """ % (vendor_job, self.__excludeDT, vendor_job)
             cursor.execute(qry, timeout = self.__timeOut)
             row = cursor.fetchone()
             idsInserted = {}
@@ -1738,12 +1743,14 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                         AND d.id = ppd.doc_id
                         AND d.doc_type = t.id
                         AND ppd.failure IS NULL
+                        AND t.name NOT IN (%s)
                         AND NOT EXISTS (
                                 SELECT *
                                   FROM pub_proc_cg ppc
                                  WHERE ppc.id = ppd.doc_id
                                        )
-                            """ % vendor_job, timeout = self.__timeOut
+                            """ % (vendor_job, self.__excludeDT),
+                            timeout = self.__timeOut
                            )
             row = cursor.fetchone()
             while row:
@@ -1816,7 +1823,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             AND ppd_cg.pub_proc = ppc.pub_proc
                             AND d.active_status <> 'A'
                             AND t.name <> 'Media'
-                      """ % (vendor_job, cg_job, docTypes)
+                            AND t.name NOT IN (%s)
+                      """ % (vendor_job, cg_job, docTypes, self.__excludeDT)
                 cursor.execute(qry, timeout = self.__timeOut)
             except cdrdb.Error, info:
                 raise StandardError(
@@ -1908,7 +1916,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                       WHERE d.id = ppd.doc_id
                         AND d.doc_type = t.id
                         AND ppd.pub_proc = %d
-                  """ % (vendor_job, cg_job, vendor_job)
+                        AND t.name NOT IN (%s)
+                  """ % (vendor_job, cg_job, vendor_job, self.__excludeDT)
             cursor.execute(qry, timeout = self.__timeOut)
         except cdrdb.Error, info:
             raise StandardError(
@@ -1952,6 +1961,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                    AND d.doc_type = t.id
                    AND ppd2.doc_id = d.id
                    AND ppd2.pub_proc = %d
+                   AND t.name NOT IN (%s)
                    AND EXISTS (
                            SELECT *
                              FROM pub_proc_doc ppd
@@ -1959,7 +1969,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                               AND ppd.pub_proc = %d
                               AND ppd.failure IS NULL
                               )
-                  """ % (vendor_job, vendor_job)
+                  """ % (vendor_job, self.__excludeDT, vendor_job)
             cursor.execute(qry, timeout = self.__timeOut)
             row = cursor.fetchone()
             idsInserted = {}
@@ -2019,12 +2029,14 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                         AND d.id = ppd.doc_id
                         AND d.doc_type = t.id
                         AND ppd.failure IS NULL
+                        AND t.name NOT IN (%s)
                         AND NOT EXISTS (
                                 SELECT *
                                   FROM pub_proc_cg ppc
                                  WHERE ppc.id = ppd.doc_id
                                        )
-                            """, (vendor_job), timeout = self.__timeOut
+                            """ % self.__excludeDT,
+                            vendor_job, timeout = self.__timeOut
                            )
             row = cursor.fetchone()
             while row:
