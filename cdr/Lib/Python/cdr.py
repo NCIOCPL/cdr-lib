@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.141 2007-08-06 17:24:46 bkline Exp $
+# $Id: cdr.py,v 1.142 2007-08-22 01:01:42 venglisc Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.141  2007/08/06 17:24:46  bkline
+# Added code to escape parameter values passed to cdr.filterDoc().
+#
 # Revision 1.140  2007/08/01 20:30:49  bkline
 # Added Mime support to sendEmail().
 #
@@ -482,6 +485,7 @@ PROD_NAME        = 'bach'
 DEV_NAME         = 'mahler'
 PROD_HOST        = '%s.%s' % (PROD_NAME, DOMAIN_NAME)
 DEV_HOST         = '%s.%s' % (DEV_NAME, DOMAIN_NAME)
+PUB_NAME         = socket.gethostname()
 EMAILER_PROD     = 'pdqupdate.cancer.gov'
 EMAILER_DEV      = 'verdi.nci.nih.gov'
 EMAILER_CGI      = '/PDQUpdate/cgi-bin'
