@@ -12,23 +12,33 @@
 # $Locker:  $
 # 
 # $Source: /usr/local/cvsroot/production/prod/bin/get_stats.py,v $
-# $Revision: 1.1 $
+# $Revision: 1.2 $
 #
 # History:
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2006/03/20 17:51:19  venglisc
+# Initial copy of the script retrieving the statistics file for PDQ updates
+# and reformatting its output to be included in the vendor notification
+# message.
+#
 # ******************************************************************
-import sys, os, time
+import sys, os, ftplib, time
 
 # Setting the variables
 # ---------------------
 tmpDir  = '/tmp'
 pdqLog  = '/pdq/prod/log'
 ftpFile = '%s/getchanges.ftp' % tmpDir
-pubDir  = '/u/ftp/pub/pdq/monthly'
-FTPHOST = 'cipsftp.nci.nih.gov'
+pubDir  = '/u/ftp/pub/pdq/full'
 
-relDate = time.strftime("%Y-%b", time.localtime())
-relDateHdr = time.strftime("%b %Y", time.localtime())
+FTPSERVER = 'cipsftp.nci.nih.gov'
+FTPUSER   = 'operator'
+FTPPWD    = 'mars56'
+
+now     = time.time()
+lastWk  = time.time() - 5 * 24 * 60 * 60
+relDate = time.strftime("%Y%W", time.localtime(lastWk))
+relDateHdr = time.strftime("Week %W, %Y", time.localtime(lastWk))
 rchanges= '%s.changes'     % relDate
 lchanges= '%s_changes.txt' % relDate
 
@@ -45,23 +55,28 @@ def runCommand(command):
 
 # Creating the ftp files to perform the download
 # ----------------------------------------------
-print 'Building FTP file ...'
+print 'Getting the statistics files...'
 
-ftpCmd = open(ftpFile, 'w')
-ftpCmd.write('debug -o %s/get_status.debug\n' % pdqLog)
-ftpCmd.write('open %s\n' % FTPHOST)
-ftpCmd.write('user operator mars56\n')
-ftpCmd.write('cd %s\n' % pubDir)
-ftpCmd.write('lcd %s\n' % pdqLog)
-ftpCmd.write('get %s -o %s/%s \n' % (rchanges, pdqLog, rchanges))
-ftpCmd.write('bye\n')
-ftpCmd.close()
+try:
+    ftpDir = '/u/ftp/pub/pdq/full'
+    ftpFile = '%s' % (rchanges)
+    ftp = ftplib.FTP(FTPSERVER)
+    ftp.login(FTPUSER, FTPPWD)
+    chCwd = ftp.cwd(pubDir)
+    print ftp.pwd()
+    # ftp.dir()
+    print "%s" % chCwd
+    os.chdir(pdqLog)
+    print "FtpFile: %s" % ftpFile
 
-os.chmod(ftpFile, 0600)
-print 'Ftp starting...'
-
-doFtp = '/usr/bin/lftp -f ' + ftpFile
-myCmd = runCommand(doFtp)
+    file = open(ftpFile, 'w')
+    a = ftp.retrbinary('RETR %s' % ftpFile, file.write) # , file.write())
+    print a
+    file.close()
+    print "Bytes transfered %d" % ftp.size(ftpFile)
+except ftplib.Error, msg:
+    print '*** FTP Error ***\n%s' % msg
+    sys.exit(1)
 
 # Reading the data in
 # -------------------
@@ -90,7 +105,7 @@ for line in lines:
 print 'Writing formatted changes file...'
 sf = open(pdqLog + '/' + lchanges, 'w')
 sf.write('\n\n       Changed Documents for %s\n' % relDateHdr)
-sf.write('       ==============================\n\n')
+sf.write('       ===================================\n\n')
 sf.write('Document Type            added  modified  removed\n')
 sf.write('---------------------  -------  --------  -------\n')
 
