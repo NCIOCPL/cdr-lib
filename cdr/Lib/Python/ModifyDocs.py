@@ -1,11 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.21 2007-02-01 16:00:52 bkline Exp $
+# $Id: ModifyDocs.py,v 1.22 2007-09-12 00:19:46 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.21  2007/02/01 16:00:52  bkline
+# Cleaned up Doc.saveChanges() so that it takes parameters specific to
+# what is needed rather than an entire Job object.
+#
 # Revision 1.20  2007/01/23 19:02:15  ameyer
 # Added error count to final report.
 #
@@ -191,6 +195,7 @@ class Job:
         self.__maxDocs = 9999999
 
         # Statistics
+        self.__countDocsSelected  = 0
         self.__countDocsProcessed = 0
         self.__countDocsSaved     = 0
         self.__countVersionsSaved = 0
@@ -239,6 +244,21 @@ class Job:
         self.__maxDocs = maxDocs
 
     #------------------------------------------------------------------
+    # Get statistics for the run
+    #------------------------------------------------------------------
+    def getCountDocsSelected(self):
+        return self.__countDocsSelected
+
+    def getCountDocsProcessed(self):
+        return self.__countDocsProcessed
+
+    def getCountDocsSaved(self):
+        return self.__countDocsSaved
+
+    def getCountVersionsSaved(self):
+        return self.__countVersionsSaved
+
+    #------------------------------------------------------------------
     # Run a transformation.
     #
     # Create the job, set any desired post constructor settings,
@@ -253,10 +273,19 @@ class Job:
         else:
             self.log("Running in real mode.  Updating the database")
 
-        # Get docs, log count and purpose/comment for job
+        # Get docs
         ids = self.filter.getDocIds()
+
+        # If no docs, log info and abort
+        if not ids or len(ids) == 0:
+            self.log("No documents selected.\n  Purpose: %s\n  Ending run!\n"
+                     % self.comment)
+            return
+
+        # Get docs, log count and purpose/comment for job
         self.log("%d documents selected\n  Purpose: %s" % (len(ids),
                                                            self.comment))
+        self.__countDocsSelected = len(ids)
 
         # Change all docs
         jobControl = Job.Control(transformANY = self.__transformANY,
@@ -496,7 +525,7 @@ class Doc:
         """
         def log(): pass
 
-    def saveChanges(self, cursor, logger = DummyLogger(), 
+    def saveChanges(self, cursor, logger = DummyLogger(),
                     jobControl = Job.Control()):
         """
         In run mode, saves all versions of a document needing to be saved.
