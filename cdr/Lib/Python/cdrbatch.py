@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.15 2007-09-14 01:11:43 ameyer Exp $
+# $Id: cdrbatch.py,v 1.16 2007-09-14 01:53:07 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,10 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.15  2007/09/14 01:11:43  ameyer
+# Added bits of backward compatible flexibility to existing functions.
+# Added getJobStatusHTML().
+#
 # Revision 1.14  2006/09/26 14:32:13  ameyer
 # Fixed encoding bug spotted by Bob in getParm.
 #
@@ -321,21 +325,26 @@ def getJobStatusHTML(ageDays=1, name=None,
 
     Return:
         String containing an HTML table.
+        None if no jobs matching criteria.
     """
 
     # Get the data
     rows = getJobStatus(name=name, ageStr=str(ageDays), status=status)
 
+    # No hits?
+    if not rows:
+        return None
+
     # Create table with headers
     html = """
 <table>
   <tr>
-    <th>JobID</th>
-    <th>Name</th>
-    <th>Started</th>
-    <th>Status</th>
-    <th>Last info</th>
-    <th>Last msg</th>
+   <th>JobID</th>
+   <th>Name</th>
+   <th>Started</th>
+   <th>Status</th>
+   <th>Last info</th>
+   <th>Last msg</th>
   </tr>
 """
     # Add it all
