@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.14 2006-09-26 14:32:13 ameyer Exp $
+# $Id: cdrbatch.py,v 1.15 2007-09-14 01:11:43 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,9 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.14  2006/09/26 14:32:13  ameyer
+# Fixed encoding bug spotted by Bob in getParm.
+#
 # Revision 1.13  2005/11/30 04:15:12  ameyer
 # Added getEmailList().
 #
@@ -198,9 +201,10 @@ def getJobStatus (idStr=None, name=None, ageStr=None, status=None):
         Must pass at least one of these parms.
 
         jobId  - unique identifier of the job.
-        age    - jobs in last 'age' days.
+        ageStr - jobs in last 'age' days.
         name   - job name from table.
-        status - one of the status values.
+        status - one or more of the status values.
+                 May pass either a single string, or a sequence.
 
     Return:
         Tuple of rows of:
@@ -217,7 +221,21 @@ def getJobStatus (idStr=None, name=None, ageStr=None, status=None):
     jobId     = normalCgi (idStr, 1)
     jobAge    = normalCgi (ageStr, 1)
     jobName   = normalCgi (name)
-    jobStatus = normalCgi (status)
+    if type(status) == type(""):
+        jobStatus = normalCgi (status)
+    else:
+        # Normalize to string or sequence of normalized strings
+        newStatus = []
+        for stat in status:
+            stat = normalCgi(stat)
+            if stat:
+                newStatus.append(stat)
+        if len(newStatus) == 0:
+            jobStatus = None
+        elif len(newStatus) == 1:
+            jobStatus = newStatus[0]
+        else:
+            jobStatus = newStatus
 
     # Must pass at least one arg
     if not jobId and not jobAge and not jobName and not jobStatus:
@@ -251,8 +269,19 @@ def getJobStatus (idStr=None, name=None, ageStr=None, status=None):
         if jobStatus:
             if clauses:
                 qry += " AND "
-            qry += "status='%s'" % jobStatus
-    qry += ")"
+            if type(jobStatus) == type(""):
+                qry += "status='%s'" % jobStatus
+            else:
+                qry += "status IN ("
+                count = 0
+                for stat in jobStatus:
+                    qry += "'%s'" % stat
+                    count += 1
+                    if (count < len(jobStatus)):
+                        qry += ','
+                qry += ')'
+    qry += ")\n"
+    qry += "ORDER BY started\n"
 
     try:
         # Execute query
@@ -270,6 +299,56 @@ def getJobStatus (idStr=None, name=None, ageStr=None, status=None):
                               (info[0], info[1][0]))
 
 #------------------------------------------------------------------
+# Get an HTML display of active jobs
+#------------------------------------------------------------------
+def getJobStatusHTML(ageDays=1, name=None,
+           status=(ST_QUEUED, ST_INITIATING, ST_IN_PROCESS, ST_SUSPEND)):
+    """
+    Produce a snippet of HTML displaying a list of currently active
+    jobs.  This is intended for applications where a user doesn't
+    want to run a resource intensive batch job when others are already
+    running and so wants to see if anything is queued or running.
+
+    This is a wrapper around getJobStatus().
+
+    Parameters:
+        ageDays = Number of days to look back.
+                  The default of 1 eliminates looking at old stuff that
+                  broke and never got fixed.
+        name    = Job name.  None fetches all jobs.
+        status  = Specific job status(es) to look for.  The default finds
+                  all jobs ready to run, starting, running, or suspended.
+
+    Return:
+        String containing an HTML table.
+    """
+
+    # Get the data
+    rows = getJobStatus(name=name, ageStr=str(ageDays), status=status)
+
+    # Create table with headers
+    html = """
+<table>
+  <tr>
+    <th>JobID</th>
+    <th>Name</th>
+    <th>Started</th>
+    <th>Status</th>
+    <th>Last info</th>
+    <th>Last msg</th>
+  </tr>
+"""
+    # Add it all
+    for row in rows:
+        html += "  <tr>\n"
+        for col in row:
+            html += "   <td>%s</td>\n" % col
+        html += "  </tr>\n"
+    html += "</table>\n"
+
+    return html
+
+#------------------------------------------------------------------
 # Is there an instance of a job active?
 #------------------------------------------------------------------
 def activeCount (jobName):
@@ -282,6 +361,8 @@ def activeCount (jobName):
 
     Pass:
         jobName - Name of job in batch_job table.
+                  Name may include SQL wildcards.
+                  '%' finds any in-process batch jobs, regardless of name.
 
     Return:
         Number of active batch jobs.
@@ -293,7 +374,7 @@ def activeCount (jobName):
         SELECT count(*) FROM batch_job
          WHERE status IN ('%s', '%s', '%s')
            AND started >= DATEADD(DAY, -1, GETDATE())
-           AND name = '%s'""" % (ST_QUEUED, ST_INITIATING, ST_IN_PROCESS,
+           AND name LIKE '%s'""" % (ST_QUEUED, ST_INITIATING, ST_IN_PROCESS,
                                  jobName)
 
     try:
