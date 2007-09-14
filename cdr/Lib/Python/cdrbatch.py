@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.16 2007-09-14 01:53:07 ameyer Exp $
+# $Id: cdrbatch.py,v 1.17 2007-09-14 17:11:49 ameyer Exp $
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
@@ -7,6 +7,9 @@
 # batch jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.16  2007/09/14 01:53:07  ameyer
+# Return None if no results in getJobStatusHTML().
+#
 # Revision 1.15  2007/09/14 01:11:43  ameyer
 # Added bits of backward compatible flexibility to existing functions.
 # Added getJobStatusHTML().
@@ -225,7 +228,9 @@ def getJobStatus (idStr=None, name=None, ageStr=None, status=None):
     jobId     = normalCgi (idStr, 1)
     jobAge    = normalCgi (ageStr, 1)
     jobName   = normalCgi (name)
-    if type(status) == type(""):
+    if not status:
+        jobStatus = None
+    elif type(status) == type(""):
         jobStatus = normalCgi (status)
     else:
         # Normalize to string or sequence of normalized strings
@@ -337,14 +342,14 @@ def getJobStatusHTML(ageDays=1, name=None,
 
     # Create table with headers
     html = """
-<table>
+<table border='2'>
   <tr>
-   <th>JobID</th>
-   <th>Name</th>
-   <th>Started</th>
-   <th>Status</th>
-   <th>Last info</th>
-   <th>Last msg</th>
+   <td>JobID</td>
+   <td>Name</td>
+   <td>Started</td>
+   <td>Status</td>
+   <td>Last info</td>
+   <td>Last msg</td>
   </tr>
 """
     # Add it all
