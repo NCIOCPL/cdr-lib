@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: ExcelWriter.py,v 1.10 2007-06-18 18:25:49 kidderc Exp $
+# $Id: ExcelWriter.py,v 1.11 2007-09-18 15:39:01 ameyer Exp $
 #
 # Generates Excel workbooks using 2003 XML format.
 #
@@ -15,6 +15,9 @@
 #    d:\downloads\MicrosoftOfficeSchemas\SpreadsheetML Schemas\excelss.xsd
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2007/06/18 18:25:49  kidderc
+# 3309. Added big argument to writing excel files. Used for large excel files.
+#
 # Revision 1.9  2007/06/15 04:02:53  ameyer
 # Added some minor functions and documentation.
 #
@@ -698,7 +701,9 @@ class Cell:
             Empty string "" if no content or None.
         """
         if self.value:
-            return str(self.value)
+            if type(self.value) not in (str, unicode):
+                return str(self.value)
+            return self.value
         return ""
 
     def replaceValue(self, value):
