@@ -136,9 +136,12 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: cdrdb.py,v 1.18 2007-04-05 13:11:26 bkline Exp $
+# $Id: cdrdb.py,v 1.19 2007-09-25 19:41:36 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.18  2007/04/05 13:11:26  bkline
+# Added a way to override the default location of the CDR database server.
+#
 # Revision 1.17  2005/07/26 20:11:16  ameyer
 # Added more info to exception messages in the execute() method.
 #
@@ -199,6 +202,25 @@ win32com.client.Dispatch("ADODB.Connection")
 
 # Look in the environment for override of default location of CDR database.
 CDR_DB_SERVER = os.environ.get('CDR_DB_SERVER') or 'localhost'
+
+# Logging support.  Set LOGFILE to log file pathname to enable logging.
+LOGFILE = None
+def debugLog(sql = None, params = None, what = "SQL Query"):
+    if LOGFILE:
+        import datetime
+        now = datetime.datetime.now()
+        now = "%d-%02d-%-2d %02d:%02d:%02d.%03d" % (now.year, now.month,
+                                                    now.day, now.hour,
+                                                    now.minute, now.second,
+                                                    now.microsecond / 1000)
+        try:
+            fp = open(LOGFILE, 'a')
+            fp.write("%s: %s\n" % (now, what))
+            if sql:
+                fp.write("%s\nParameters:\n%s\n" % (sql, params))
+            fp.close()
+        except:
+            pass
 
 #----------------------------------------------------------------------
 # These module constants are required by the DBSIG's API.
@@ -298,7 +320,7 @@ class Cursor:
                                    (u"Procedure %s not cataloged" % procname,))
 
         # Plug in the parameters
-        if type(parameters) != type([]) and type(parameters) != type(()):
+        if type(parameters) not in (list, tuple):
             parameters = (parameters,)
         if len(parameters) != nParams - 1:
             raise ProgrammingError, ("Cursor.callproc",
@@ -311,6 +333,7 @@ class Cursor:
             else:
                 p.Value = parameters[i]
         try:
+            debugLog(procname, parameters, "Stored Procedure")
             self.__rs, rowsAffected = cmd.Execute()
             fields = self.__rs.Fields
             if len(fields):
@@ -345,6 +368,7 @@ class Cursor:
         """
 
         if self.__rs:
+            debugLog(what = "closing resultset with state %s" % self.__rs.State)
             if self.__rs.State == win32com.client.constants.adStateOpen:
                 self.__rs.Close()
         self.__rs        = None
@@ -390,7 +414,7 @@ class Cursor:
         try:
             if params:
                 cmdParams = cmd.Parameters
-                if type(params) != type(()) and type(params) != type([]):
+                if type(params) not in (tuple, list):
                     params = (params,)
                 if len(cmdParams) != len(params):
                     raise ProgrammingError, ("Cursor.execute",
@@ -402,6 +426,7 @@ class Cursor:
                         p.Value = buffer(params[i])
                     else:
                         p.Value = params[i]
+            debugLog(query, params)
             self.__rs, rowsAffected = cmd.Execute()
             fields = self.__rs.Fields
             if len(fields):
@@ -511,6 +536,8 @@ class Cursor:
                         val = str(val)
                     vals.append(val)
                 rows.append(vals)
+            debugLog(what = "fetch(size=%s): nrows=%s rs.EOF=%s" %
+                     (size, len(rows), self.__rs.EOF))
             return rows
 
         except:
@@ -542,6 +569,7 @@ class Cursor:
 
         try:
             self.__rs, rowsAffected = self.__rs.NextRecordset()
+            debugLog(what = "rs.NextRecordset() rowsAffected=%s" % rowsAffected)
             if not self.__rs:
                 return None
             fields = self.__rs.Fields
@@ -646,6 +674,7 @@ class Connection:
         """
 
         try:
+            debugLog(what = "closing connection")
             self.__adoConn.Close()
         except:
             errorList = buildErrorList(self.__adoConn)
@@ -663,11 +692,12 @@ class Connection:
         """
 
         try:
+            debugLog(what = "commit")
             self.__adoConn.CommitTrans()
-            if self.__autoCommit: self.__inTrans = 0
+            if self.__autoCommit: self.__inTrans = False
             else:
                 self.__adoConn.BeginTrans()
-                self.__inTrans = 1
+                self.__inTrans = True
         except:
             errorList = buildErrorList(self.__adoConn)
             if errorList:
@@ -683,11 +713,12 @@ class Connection:
         """
 
         try:
+            debugLog(what = "rollback")
             self.__adoConn.RollbackTrans()
-            if self.__autoCommit: self.__inTrans = 0
+            if self.__autoCommit: self.__inTrans = False
             else:
                 self.__adoConn.BeginTrans()
-                self.__inTrans = 1
+                self.__inTrans = True
         except:
             errorList = buildErrorList(self.__adoConn)
             if errorList:
@@ -702,7 +733,7 @@ class Connection:
 
         return Cursor(self.__adoConn)
 
-    def setAutoCommit(self, on = 1):
+    def setAutoCommit(self, on = True):
         """
         Turns autocommit on or off.  If autocommit is on, then
         implicit transactions are not used (in contradiction to
@@ -716,19 +747,21 @@ class Connection:
         # Remember what we had
         oldAutoCommit = self.__autoCommit
 
+        debugLog(what = "setting auto-commit %s (was %s)" %
+                 (on and "on" or "off", oldAutoCommit and "on" or "off"))
         try:
             if on:
                 #self.__adoConn.Execute("SET IMPLICIT_TRANSACTIONS OFF")
                 if self.__autoCommit: return
-                self.__autoCommit = 1
+                self.__autoCommit = True
                 if self.__inTrans:
                     self.commit()
             else:
                 #self.__adoConn.Execute("SET IMPLICIT_TRANSACTIONS ON")
                 if not self.__autoCommit: return
-                self.__autoCommit = 0
+                self.__autoCommit = False
                 self.__adoConn.BeginTrans()
-                self.__inTrans = 1
+                self.__inTrans = True
         except:
             errorList = buildErrorList(self.__adoConn)
             if errorList:
@@ -767,6 +800,8 @@ def connect(user = 'cdr', dataSource = CDR_DB_SERVER, db = 'cdr'):
             ((u"invalid login name %s" % user),))
 
     try:
+        debugLog(what = "connect(user=%s db=%s dataSource=%s)" %
+                 (user, db, dataSource))
         adoConn.Open("Provider=SQLOLEDB;\
                       Data Source=%s;\
                       Initial Catalog=%s;\
