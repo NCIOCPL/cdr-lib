@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.36 2007-06-30 03:38:52 bkline Exp $
+# $Id: CdrLongReports.py,v 1.37 2007-10-01 15:11:45 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.36  2007/06/30 03:38:52  bkline
+# Fixed a Unicode problem with the URL check report.
+#
 # Revision 1.35  2007/05/16 22:33:25  bkline
 # Mapped 'No valid lead organization status found.' to empty string
 # for protocol processing report.
@@ -821,31 +824,35 @@ def ospReport(job):
     #----------------------------------------------------------------------
     # Start processing here for the OSP report.
     #----------------------------------------------------------------------
-    start = time.time()
-    #print "milestone 1"
-    termIds = []
-    phaseJoin = ''
+    startTime  = time.time()
+    firstYear  = job.getParm('first-year') or '1999'
+    lastYear   = job.getParm('last-year')  or '2004'
+    yearType   = job.getParm('year-type')  or 'calendar'
+    phases     = job.getParm('phases')     or ''
+    termIds    = job.getParm('term-ids')   or ''
+    termIds    = [int(termId) for termId in termIds.split(';')]
+    phaseJoin  = ''
     phaseWhere = ''
-    yearType = 'calendar'
-    args = job.getArgs()
-    for key in args:
-        if key.upper().startswith("TERMID"):
-            try:
-                termIds.append(int(args[key]))
-            except Exception, e:
-                cdr.logwrite("Invalid term ID %s: %s" % (args[key], str(e)),
-                             LOGFILE)
-        elif key == 'Phases':
-            phaseJoin = 'JOIN query_term p ON p.doc_id = t.doc_id'
-            phaseWhere = 'AND p.value %s' % args[key]
-        elif key == 'year':
-            yearType = args[key]
+    if phases:
+        phases = phases.split(u';')
+        titlePhases = u", ".join(phases)
+        sqlPhases   = ", ".join(["'%s'" % p for p in phases])
+        phaseJoin   = 'JOIN query_term p ON p.doc_id = t.doc_id'
+        phaseWhere  = "AND p.path = '/InScopeProtocol/ProtocolPhase'"
+        phaseWhere  = '%s AND p.value IN (%s)' % (phaseWhere, sqlPhases)
     try:
         conn = cdrdb.connect('CdrGuest')
         cursor = conn.cursor()
         cursor.execute("CREATE TABLE #terms(id INTEGER)")
         conn.commit()
+        termNames = []
         for termId in termIds:
+            cursor.execute("""\
+                SELECT value
+                  FROM query_term
+                 WHERE path = '/Term/PreferredName'
+                   AND doc_id = ?""", termId)
+            termNames.append(cursor.fetchall()[0][0])
             try:
                 cursor.execute("INSERT INTO #terms VALUES(%d)" % termId)
                 conn.commit()
@@ -853,6 +860,16 @@ def ospReport(job):
                 cdr.logwrite("Failure inserting %d into #terms: %s" % (termId,
                                                                        str(e)),
                              LOGFILE)
+        if yearType.lower() == 'calendar':
+            yearRange = u"%s-%s" % (firstYear, lastYear)
+        else:
+            yearRange = u"FY%02d-FY%02d" % (int(firstYear) % 100,
+                                            int(lastYear) % 100)
+        title = (u"PDQ Clinical Trials for %s for %s" %
+                 (u", ".join(termNames), yearRange))
+        if phases:
+            title = u"%s %s" % (titlePhases, title)
+        #print title
         while 1:
             cursor.execute("""\
         INSERT INTO #terms
@@ -891,8 +908,8 @@ def ospReport(job):
                GROUP BY t.doc_id
                ORDER BY t.doc_id""" % (phaseJoin, phaseWhere), timeout = 360)
         rows = cursor.fetchall()
-    except:
-        job.fail("Database failure getting list of protocols.",
+    except Exception, e:
+        job.fail("Database failure getting list of protocols: %s" % e,
                  logfile = LOGFILE)
 
     # Create the spreadsheet.
@@ -920,13 +937,12 @@ def ospReport(job):
     ws.addCol( 9, 85.5)
     ws.addCol(10, 123)
 
-    # Set up the header cells in the spreadsheet's top row.
+    # Set up the title and header cells in the spreadsheet's top rows.
     font = ExcelWriter.Font(name = 'Times New Roman', bold = True, size = 10)
     align = ExcelWriter.Alignment('Center', 'Center', wrap = True)
     interior = ExcelWriter.Interior('#CCFFCC')
     style3 = wb.addStyle(alignment = align, font = font, borders = borders,
                          interior = interior)
-    row = ws.addRow(1, style3, 40)
     headings = (
         'PDQ Clinical Trials',
         'Primary ID',
@@ -939,6 +955,9 @@ def ospReport(job):
         'Age Range',
         'Sponsor of Trial'
         )
+    row = ws.addRow(1, style3, 40)
+    row.addCell(1, title, mergeAcross = len(headings) - 1)
+    row = ws.addRow(2, style3, 40)
     for i in range(len(headings)):
         row.addCell(i + 1, headings[i])
 
@@ -947,6 +966,7 @@ def ospReport(job):
     #------------------------------------------------------------------
     done = 0
     protocols = []
+    msg = ""
     for row in rows:
         cursor.execute("""\
             SELECT xml
@@ -956,20 +976,18 @@ def ospReport(job):
         docXml = cursor.fetchone()[0]
         dom = xml.dom.minidom.parseString(docXml.encode('utf-8'))
         prot = Protocol(row[0], dom.documentElement)
-        startYear = job.getParm('begin') or '1999'
-        endYear   = job.getParm('end')   or '2004'
         if yearType == 'fiscal':
-            firstYear = int(startYear) - 1
+            firstYear = int(firstYear) - 1
             startDate = "%s-10-01" % firstYear
-            endDate = "%s-09-30" % endYear
+            endDate = "%s-09-30" % lastYear
         else:
-            startDate = "%s-01-01" % startYear
-            endDate   = "%s-12-31" % endYear
+            startDate = "%s-01-01" % firstYear
+            endDate   = "%s-12-31" % lastYear
         if prot.wasActive(startDate, endDate):
             protocols.append(prot)
         done += 1
         now = time.time()
-        timer = getElapsed(start, now)
+        timer = getElapsed(startTime, now)
         msg = "Processed %d of %d protocols; elapsed: %s" % (done,
                                                              len(rows),
                                                              timer)
@@ -977,7 +995,7 @@ def ospReport(job):
         cdr.logwrite(msg, LOGFILE)
 
     # Add one row for each protocol.
-    rowNum = 1
+    rowNum = 2
     protocols.sort(lambda a,b: cmp(a.firstPub, b.firstPub))
     for prot in protocols:
 
@@ -1012,10 +1030,10 @@ def ospReport(job):
         row = cursor.fetchone()
 
     # Save the report.
-    name = "/OSPReport-Job%d.xml" % job.getJobId()
+    name = "/OSPReport-Job%d.xls" % job.getJobId()
     fullname = REPORTS_BASE + name
-    fobj = file(fullname, "w")
-    wb.write(fobj)
+    fobj = file(fullname, "wb")
+    wb.write(fobj, True)
     fobj.close()
     cdr.logwrite("saving %s" % fullname, LOGFILE)
     url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
@@ -1259,9 +1277,9 @@ class NonRespondentsReport:
         #xl.Range("A%d" % (headerRows + 1)).Select()
 
         # Save the report.
-        name = "/MailerNonRespondentsReport-%d.xml" % job.getJobId()
-        f = open(REPORTS_BASE + name, 'w')
-        wb.write(f)
+        name = "/MailerNonRespondentsReport-%d.xls" % job.getJobId()
+        f = open(REPORTS_BASE + name, 'wb')
+        wb.write(f, True)
         f.close()
         cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
         url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
@@ -3300,6 +3318,18 @@ if __name__ == "__main__":
         if reportName == 'ProtocolProcessingStatusReport':
             job = TestJob(jobId, email, parms)
             ProtocolProcessingStatusReport(job).run()
+            sys.exit(0)
+
+        # Test invocation of report for Office of Science Policy.
+        # Needs the following arguments:
+        #     term-ids=cdr-id[;cdr-id ...]
+        #     phases=phase[;phase] (e.g.Phase I;Phase II)
+        #     first-year=year (e.g., 2000)
+        #     last-year=year (e.g., 2006)
+        #     year-type=year-type (fiscal or calendar)
+        if reportName.upper() == 'OSP':
+            job = TestJob(jobId, email, parms)
+            ospReport(job)
             sys.exit(0)
 
     # Create the job object.
