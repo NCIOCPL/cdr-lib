@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.37 2007-10-01 15:11:45 bkline Exp $
+# $Id: CdrLongReports.py,v 1.38 2007-10-03 12:33:49 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.37  2007/10/01 15:11:45  bkline
+# Modifications for OSP report (request #3627).
+#
 # Revision 1.36  2007/06/30 03:38:52  bkline
 # Fixed a Unicode problem with the URL check report.
 #
@@ -967,6 +970,13 @@ def ospReport(job):
     done = 0
     protocols = []
     msg = ""
+    if yearType == 'fiscal':
+        firstYear = int(firstYear) - 1
+        startDate = "%s-10-01" % firstYear
+        endDate = "%s-09-30" % lastYear
+    else:
+        startDate = "%s-01-01" % firstYear
+        endDate   = "%s-12-31" % lastYear
     for row in rows:
         cursor.execute("""\
             SELECT xml
@@ -976,13 +986,6 @@ def ospReport(job):
         docXml = cursor.fetchone()[0]
         dom = xml.dom.minidom.parseString(docXml.encode('utf-8'))
         prot = Protocol(row[0], dom.documentElement)
-        if yearType == 'fiscal':
-            firstYear = int(firstYear) - 1
-            startDate = "%s-10-01" % firstYear
-            endDate = "%s-09-30" % lastYear
-        else:
-            startDate = "%s-01-01" % firstYear
-            endDate   = "%s-12-31" % lastYear
         if prot.wasActive(startDate, endDate):
             protocols.append(prot)
         done += 1
