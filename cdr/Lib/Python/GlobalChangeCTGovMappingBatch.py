@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeCTGovMappingBatch.py,v 1.1 2007-09-19 04:43:57 ameyer Exp $
+# $Id: GlobalChangeCTGovMappingBatch.py,v 1.2 2007-10-03 04:12:13 ameyer Exp $
 #
 # Examine CTGovProtocol documents and map any unmapped Facility/Name
 # and LeadSponsor/Name fields for which mappings exist in the
@@ -18,6 +18,9 @@
 #                   Identifies a row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2007/09/19 04:43:57  ameyer
+# Initial version.
+#
 #----------------------------------------------------------------------
 import sys, socket, cdr, cdrcgi, cdrdb, cdrbatch, ModifyDocs
 
@@ -29,15 +32,17 @@ _logf = cdr.Log("GlobalChange.log")
 #----------------------------------------------------------------------
 class Filter:
 
-    def __init__(self, startDT):
+    def __init__(self, startDT, endDT):
         """
         Constructor.
 
         Pass:
             startDT - Update datetime, as an ISO string, for CTGovProtocol
                       versions that are to be examined for mappings.
+            endDT   - Upper (recent) limit on versions to be examined.
         """
         self.__startDT = startDT
+        self.__endDT   = endDT
 
     def getDocIds(self):
         """
@@ -45,7 +50,8 @@ class Filter:
         """
         global _logf
 
-        _logf.write("Getting docs >= '%s' for CTGovMapping" % self.__startDT)
+        _logf.write("Getting docs from '%s' to '%s' for CTGovMapping" %
+                    (self.__startDT, self.__endDT))
 
         conn = cdrdb.connect('CdrGuest')
         cursor = conn.cursor()
@@ -61,7 +67,8 @@ class Filter:
              WHERE t.name = 'CTGovProtocol'
                AND act.name IN ('ADD DOCUMENT', 'MODIFY DOCUMENT')
                AND d.active_status = 'A'
-               AND a.dt >= '%s'""" % self.__startDT)
+               AND a.dt >= '%s'
+               AND a.dt <= '%s'""" % (self.__startDT, self.__endDT))
 
         # Return the IDs
         return [row[0] for row in cursor.fetchall()]
@@ -332,14 +339,19 @@ if __name__ == "__main__":
     # Get parameters
     try:
         session  = batchJob.getParm(cdrcgi.SESSION)
-        testMode = batchJob.getParm("testMode")
+        runMode = batchJob.getParm("runMode")
         startDt  = batchJob.getParm("startDt")
+        endDt    = batchJob.getParm("endDt")
     except Exception, info:
         fatal("Error fetching parms: '%s'" % str(info))
 
     # Create modification job
     (userid, pw) = cdr.idSessionUser(session, session)
-    modifyJob = ModifyDocs.Job(userid, pw, Filter(startDt), Transform(),
+    if runMode == "run":
+        testMode = False
+    else:
+        testMode = True
+    modifyJob = ModifyDocs.Job(userid, pw, Filter(startDt, endDt), Transform(),
          "Global change CTGovProtocol unmapped strings (request #3451).",
          testMode=testMode)
 
@@ -357,7 +369,7 @@ if __name__ == "__main__":
 
 <p>The batch job started to attempt to map unmapped Facility/Name
 and LeadSponsor strings in CTGovProtocols is complete.  Documents
-were examined that have been modfied since %s.<p>
+were examined that have been modfied between %s and %s.<p>
 
 <p>The global change was run in %s mode.</p>
 
@@ -381,11 +393,11 @@ were examined that have been modfied since %s.<p>
   <td>%d</td>
  </tr>
 </table>
-""" % (startDt, testMode, modifyJob.getCountDocsSelected(),
+""" % (startDt, endDt, runMode, modifyJob.getCountDocsSelected(),
        modifyJob.getCountDocsProcessed(), modifyJob.getCountDocsSaved(),
        modifyJob.getCountVersionsSaved())
 
-    if testMode == "test":
+    if runMode == "test":
         html += """
 <p>See
 <a href="http://mahler.nci.nih.gov/cgi-bin/cdr/ShowGlobalChangeTestResults.py">
