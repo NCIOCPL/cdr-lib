@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeCTGovMappingBatch.py,v 1.2 2007-10-03 04:12:13 ameyer Exp $
+# $Id: GlobalChangeCTGovMappingBatch.py,v 1.3 2007-10-05 04:38:23 ameyer Exp $
 #
 # Examine CTGovProtocol documents and map any unmapped Facility/Name
 # and LeadSponsor/Name fields for which mappings exist in the
@@ -122,6 +122,11 @@ class Transform:
  </xsl:variable>
 
  <!-- ======================================================================
+ Use this to put a CDR00... prefix on id integers.
+ ======================================================================= -->
+
+ <xsl:variable name='idPrefix'>CDR0000000000</xsl:variable>
+ <!-- ======================================================================
  Copy almost everything straight through.
  ======================================================================= -->
  <xsl:template match='@*|node()|comment()|processing-instruction()'>
@@ -165,16 +170,20 @@ class Transform:
    <xsl:variable name="resultSet"
                select="document(concat('cdrutil:/sql-query/', $lookupQry,
                         '~', $stringVal, '~', 'CT.gov Facilities'))"/>
-   <xsl:variable name="cdrId"
+   <xsl:variable name="plainId"
                select="$resultSet/SqlResult/row/col[@name='doc_id']"/>
+   <xsl:variable name='cdrId' select=
+     "concat(substring($idPrefix, 1, 13-string-length($plainId)), $plainId)"/>
 
-   <!-- DEBUG
-   <xsl:element name="Foobar"><xsl:value-of select="$resultSet"/></xsl:element>
-   <xsl:element name="Barfoo"><xsl:value-of select="$stringVal"/></xsl:element>
-   -->
+<!-- DEBUG
+<xsl:element name="resultSet"><xsl:value-of select="$resultSet"/></xsl:element>
+<xsl:element name="stringVal"><xsl:value-of select="$stringVal"/></xsl:element>
+<xsl:element name="plain"><xsl:value-of select="$plainId"/></xsl:element>
+<xsl:element name="cdrId"><xsl:value-of select="$cdrId"/></xsl:element>
+     DEBUG -->
 
    <xsl:choose>
-     <xsl:when test="$cdrId">
+     <xsl:when test="$plainId">
        <!-- CDR ID found for string, copy element and add attribute -->
        <xsl:message terminate="no">Adding attribute</xsl:message>
        <xsl:element name="Name">
@@ -205,25 +214,27 @@ class Transform:
         the element content for the Name.
         ~param = current element content -->
 
-   <!-- This is fragile, but is there any other way to do it? -->
    <xsl:variable name="stringVal" select="."/>
    <xsl:variable name="resultSet"
                select="document(concat('cdrutil:/sql-query/', $lookupQry,
                         '~', $stringVal, '~', 'CT.gov Agencies'))"/>
-   <xsl:variable name="cdrId"
+   <xsl:variable name="plainId"
                select="$resultSet/SqlResult/row/col[@name='doc_id']"/>
-
-   <!-- DEBUG
-   <xsl:element name="Barfoo"><xsl:value-of select="$stringVal"/></xsl:element>
-   -->
+   <xsl:variable name='cdrId' select=
+     "concat(substring($idPrefix, 1, 13-string-length($plainId)), $plainId)"/>
 
    <xsl:choose>
-     <xsl:when test="$cdrId">
+     <xsl:when test="$plainId">
        <!-- CDR ID found for string, copy element and add attribute -->
        <xsl:element name="LeadSponsor">
          <xsl:attribute name="cdr:ref">
            <xsl:value-of select="$cdrId"/>
          </xsl:attribute>
+<!-- DEBUG
+<xsl:attribute name="cdrId">
+  <xsl:value-of select="$cdrId"/>
+</xsl:attribute>
+     DEBUG -->
          <xsl:value-of select="."/>
        </xsl:element>
      </xsl:when>
