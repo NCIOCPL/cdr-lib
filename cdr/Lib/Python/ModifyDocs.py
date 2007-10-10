@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.22 2007-09-12 00:19:46 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.23 2007-10-10 04:04:51 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.22  2007/09/12 00:19:46  ameyer
+# Added graceful return for empty doc ID list, plus getters for stats.
+#
 # Revision 1.21  2007/02/01 16:00:52  bkline
 # Cleaned up Doc.saveChanges() so that it takes parameters specific to
 # what is needed rather than an entire Job object.
@@ -124,6 +127,30 @@ _validate  = False  # True=Check that change didn't invalidate valid doc
 _haltOnErr = False  # True=Don't save any doc if change invalidate a version
 
 #----------------------------------------------------------------------
+# Class to track the disposition of a single document
+#
+# One of these created for each document to indicate what happened
+# to it.
+#----------------------------------------------------------------------
+class Disposition:
+    def __init__(self, docId, errMsg=None):
+        """
+        Describes disposition of a document.
+        Normally created with an empty array of error messages, but
+        the caller can create one of these just to record a message.
+        """
+        self.docId        = docId
+        self.cwdChanged   = False
+        self.lastvChanged = False
+        self.lastpChanged = False
+        self.errMsg       = errMsg
+
+    def __str__(self):
+        return "%s: cwd=%s lv=%s lpv=%s msgs=%s" % (self.docId,
+               self.cwdChanged, self.lastvChanged, self.lastpChanged,
+               self.errMsg)
+
+#----------------------------------------------------------------------
 # Class for one modification job.
 #----------------------------------------------------------------------
 class Job:
@@ -200,6 +227,9 @@ class Job:
         self.__countDocsSaved     = 0
         self.__countVersionsSaved = 0
 
+        # Sequence of Dispositions, one for each doc examined
+        self.__dispositions = []
+
         # Counters for different types of saves
         # Key = message passed to Doc.__saveDoc, e.g., " new pub"
         # Value = count of versions saved with that message
@@ -222,7 +252,7 @@ class Job:
     # and just gate the outputs.
     #
     # There is no _transformCWD or setTransformCWD().
-    # It isn't possible to save a verwion without overwriting the current
+    # It isn't possible to save a version without overwriting the current
     # working document.  Therefore the program ALWAYS modifies the current
     # working document.  Only the last version and/or last publishable
     # version can be blocked from change.
@@ -257,6 +287,99 @@ class Job:
 
     def getCountVersionsSaved(self):
         return self.__countVersionsSaved
+
+    def getNotCheckedOut(self, markup=False):
+        """
+        Get a list or an HTML table of docs not checked out, with
+        associated messages.
+
+        Pass:
+            markup - True = return data as an HTML table.
+
+        Return:
+            If markup:
+                A string containing HTML.
+            Else:
+                A sequence of tuples of docId, error message.
+
+            If no docs failed checkout:
+                None
+        """
+        docCount = 0
+        results  = []
+        if markup:
+            # Column headers for HTML table
+            results.append(("<b>Doc ID</b>", "<b>Reason</b>"))
+
+        # Read the dispositions
+        for disp in self.__dispositions:
+
+            # Only report those with errors
+            if disp.errMsg:
+                results.append((disp.docId, disp.errMsg))
+                docCount += 1
+
+        # Return info in requested format
+        if docCount:
+            if markup:
+                return cdr.tabularize(results, "border='1' align='center'")
+            else:
+                return results
+
+        # Or no results
+        return None
+
+    def getProcessed(self, markup=False):
+        """
+        Get a list or an HTML table of docs that were processed, with
+        information about what was done for each.
+
+        Pass:
+            markup - True = return data as an HTML table.
+
+        Return:
+            If markup:
+                A string containing HTML.
+            Else:
+                A sequence of tuples of docId + Y/N flags for each of
+                current working document, last version, and last pub version.
+
+            If no docs processed:
+                None
+        """
+        docCount = 0
+        results  = []
+        if markup:
+            # Column headers for HTML table
+            results.append(("<b>Doc ID</b>", "<b>CWD</b>", "<b>LV</b>",
+                            "<b>LPV</b>"))
+
+        # Read the dispositions
+        for disp in self.__dispositions:
+
+            # Only report those with no errors
+            if not disp.errMsg:
+                docCount += 1
+                cwd = 'N'
+                if disp.cwdChanged:
+                    cwd = 'Y'
+                lv = 'N'
+                if disp.lastvChanged:
+                    lv = 'Y'
+                lpv = 'N'
+                if disp.lastpChanged:
+                    lpv = 'Y'
+                results.append((disp.docId, cwd, lv, lpv))
+
+        # Return info in requested format
+        if docCount:
+            if markup:
+                return cdr.tabularize(results, "border='1' align='center'")
+            else:
+                return results
+
+        # Or no results
+        return None
 
     #------------------------------------------------------------------
     # Run a transformation.
@@ -294,7 +417,9 @@ class Job:
         logger = self
         for docId in ids:
             try:
+                # Process doc
                 self.log("Processing CDR%010d" % docId)
+                doc = None
                 doc = Doc(docId, self.session, self.transform, self.comment)
                 doc.saveChanges(self.cursor, logger, jobControl)
                 self.__countVersionsSaved += len(doc.versionMessages)
@@ -310,6 +435,13 @@ class Job:
                 _errCount += 1
                 if _errCount > _maxErrors:
                     raise
+
+            # Save disposition
+            if doc:
+                self.__dispositions.append(doc.disp)
+            else:
+                self.__dispositions.append(Disposition(docId, str(info)))
+
             cdr.unlock(self.session, "CDR%010d" % docId)
             self.__countDocsProcessed += 1
             if self.__countDocsProcessed >= self.__maxDocs:
@@ -372,6 +504,7 @@ class Doc:
         self.comment    = comment
         self.versions   = cdr.lastVersions('guest', "CDR%010d" % id)
         self.__messages = []
+        self.disp       = Disposition(id)
         self.loadAndTransform()
 
         global _testMode
@@ -615,6 +748,9 @@ class Doc:
                                    msg=' new pub')
                     lastSavedXml = self.newLastp
 
+            # Record versions that were changed
+            self.disp.cwdChanged = self.disp.lastpChanged = True
+
         #--------------------------------------------------------------
         # Note that in the very common case in which the last created
         # version and the most recent publishable version are the same
@@ -646,6 +782,9 @@ class Doc:
                                    msg=' new ver')
                     lastSavedXml = self.newLastv
 
+            # Record versions that were changed
+            self.disp.cwdChanged = self.disp.lastvChanged = True
+
         # If no XML has been saved, and the new and old cwd are different
         #   or
         # If last XML saved is not the same as the new cwd
@@ -661,6 +800,9 @@ class Doc:
                                    logger=logger,
                                    val=(everValidated and 'Y' or 'N'),
                                    msg=' new cwd')
+
+            # Record versions that were changed
+            self.disp.cwdChanged = True
 
     #------------------------------------------------------------------
     # Find out whether the document has ever been validated.
@@ -724,5 +866,5 @@ class Doc:
             else:
                 logger.log("Warning for CDR%010d: %s" % (self.id, response[1]))
 
-        # Remeber the message used to describe this version of the document.
+        # Remember the message used to describe this version of the document.
         self.__messages.append(msg)
