@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeCTGovMappingBatch.py,v 1.3 2007-10-05 04:38:23 ameyer Exp $
+# $Id: GlobalChangeCTGovMappingBatch.py,v 1.4 2007-10-10 04:05:30 ameyer Exp $
 #
 # Examine CTGovProtocol documents and map any unmapped Facility/Name
 # and LeadSponsor/Name fields for which mappings exist in the
@@ -18,6 +18,9 @@
 #                   Identifies a row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2007/10/05 04:38:23  ameyer
+# Fixed bug - writing naked ID number instead of correct CDR000... number.
+#
 # Revision 1.1  2007/09/19 04:43:57  ameyer
 # Initial version.
 #
@@ -369,6 +372,22 @@ if __name__ == "__main__":
     # Perform the changes
     modifyJob.run()
 
+    # Construct tables of results - docs failing checkout
+    results = modifyJob.getNotCheckedOut(markup=True)
+    if results:
+        notCheckedHtml = "<h3>Documents that could NOT be checked out</h3>\n" \
+                         + results
+    else:
+        notCheckedHtml = \
+            "<h3>All selected docs successfully checked out</h3>\n"
+
+    # Docs modified
+    results = modifyJob.getProcessed(markup=True)
+    if results:
+        processedHtml="<h3>Documents successfully processed</h3>\n" + results
+    else:
+        processedHtml="<h3>No selected docs successfully processed</h3>\n"
+
     # Construct report
     html = """
 <html>
@@ -386,7 +405,7 @@ were examined that have been modfied between %s and %s.<p>
 
 <p>Results are as follows:</p>
 
-<table border="1" cellpadding="6">
+<table border="1" align="center" cellpadding="6">
  <tr>
   <td>Documents selected for examination</td>
   <td>%d</td>
@@ -404,17 +423,22 @@ were examined that have been modfied between %s and %s.<p>
   <td>%d</td>
  </tr>
 </table>
+<hr />
+%s
+<hr />
+%s
+<hr />
 """ % (startDt, endDt, runMode, modifyJob.getCountDocsSelected(),
        modifyJob.getCountDocsProcessed(), modifyJob.getCountDocsSaved(),
-       modifyJob.getCountVersionsSaved())
+       modifyJob.getCountVersionsSaved(), notCheckedHtml, processedHtml)
 
     if runMode == "test":
         html += """
 <p>See
-<a href="http://mahler.nci.nih.gov/cgi-bin/cdr/ShowGlobalChangeTestResults.py">
+<a href="http://%s.nci.nih.gov/cgi-bin/cdr/ShowGlobalChangeTestResults.py">
 Global Change Test Results</a> for change/diff information for test
 results.</p>
-"""
+""" % socket.gethostname()
     html += " </body>\n</html>\n"
 
     # Report by email
