@@ -1,10 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.103 2007-08-21 23:36:37 ameyer Exp $
+# $Id: cdrpub.py,v 1.104 2007-10-11 20:29:13 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.103  2007/08/21 23:36:37  ameyer
+# Altered multiple SQL statements that update pub_proc_cg to not insert
+# any rows for excluded document types (currently Country and Person).  These
+# doctypes are published to vendors but not pushed to cancer.gov.
+#
 # Revision 1.102  2007/08/07 18:48:43  ameyer
 # Added ability to turn off grouping of documents.
 # Right now this requires commenting/uncommenting a pair of lines of code.
@@ -1287,7 +1292,7 @@ class Publish:
             # on transactions to Cancer.gov.
             msg = "%s: Creating pub_proc_cg_work<BR>" % time.ctime()
             self.__updateMessage(msg)
-            cgWorkLink = self.__cdrHttp + "/PubStatus.py?id=1&type=CgWork"
+            cgWorkLink = self.__cdrHttp + "/PubStatus.py?id=%d&type=CgWork" % self.__jobId
             link = \
 """%s: <A style='text-decoration: underline;' href='%s'>
 Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
@@ -2741,7 +2746,26 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                         self.__saveDoc(filteredDoc, destDir,
                                        "CDR%d.xml" % docId)
                 except:
-                    errors = "Failure writing document CDR%010d" % docId
+                    # It appears that the system fails occasionally to 
+                    # write one of the first two documents processed
+                    # to disk even though all other disk writes finish
+                    # successfully.  If we run into a failure we want
+                    # to wait a moment and try again.
+                    try:
+                        warnings  = '<LI class="warning">Failure writing '
+                        warnings += 'document CDR%010d<BR/>' % docId
+                        warnings += 'Trying again...'
+                        time.sleep(2)
+                        # We always use destType = Publish.DOC for 
+                        # publishing.  So I ignore the fact that a 
+                        # single file holding all publishing results
+                        # may fail to write as well and we just retry
+                        # writing that single document.
+                        self.__saveDoc(filteredDoc, destDir,
+                                       "CDR%d.xml" % docId)
+                    except:
+                        errors  = 'Failed twice to write document '
+                        errors += 'CDR%010d' % docId
 
         # Handle errors and warnings.
         self.__checkProblems(doc, errors, warnings)
