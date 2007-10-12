@@ -1,11 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.23 2007-10-10 04:04:51 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.24 2007-10-12 05:20:09 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.23  2007/10/10 04:04:51  ameyer
+# Added logic and interfaces to enable a calling program to get more
+# information about what happened with each document selected for change.
+#
 # Revision 1.22  2007/09/12 00:19:46  ameyer
 # Added graceful return for empty doc ID list, plus getters for stats.
 #
@@ -416,6 +420,7 @@ class Job:
                                  maxDocs      = self.__maxDocs)
         logger = self
         for docId in ids:
+            lockedDoc = True
             try:
                 # Process doc
                 self.log("Processing CDR%010d" % docId)
@@ -428,6 +433,8 @@ class Job:
                 for msg in doc.versionMessages:
                     self.__countMsgs[msg] = self.__countMsgs.get(msg, 0) + 1
             except DocumentLocked, info:
+                # Lock failed
+                lockedDoc = False
                 # Log it, but always continue
                 self.log("Document %d: %s" % (docId, str(info)))
             except Exception, info:
@@ -442,7 +449,11 @@ class Job:
             else:
                 self.__dispositions.append(Disposition(docId, str(info)))
 
-            cdr.unlock(self.session, "CDR%010d" % docId)
+            # Unlock, but only if we locked it
+            if lockedDoc:
+                cdr.unlock(self.session, "CDR%010d" % docId)
+
+            # Progress count
             self.__countDocsProcessed += 1
             if self.__countDocsProcessed >= self.__maxDocs:
                 self.log(
