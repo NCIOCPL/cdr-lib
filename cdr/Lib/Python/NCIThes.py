@@ -168,7 +168,7 @@ class FullSynonym:
         child3.appendChild(text)
         child2.appendChild(child3)
 
-        if sourceCode is not None:
+        if sourceCode is not None and self.termGroup == 'PT':
             child3 = dom.createElement('SourceTermId')
             text = dom.createTextNode(sourceCode)
             child3.appendChild(text)
@@ -395,9 +395,14 @@ def updateDefinition(dom,definition):
                                     if nn.nodeValue != definition.text:
                                         bChanged = 1
                                         nn.nodeValue = definition.text
-                                        return
+                                        bFound = 1
                                     else:
                                         bFound = 1
+                        elif n.nodeName == 'ReviewStatus':
+                            for nn in n.childNodes:
+                                if nn.nodeType == xml.dom.minidom.Node.TEXT_NODE:
+                                    if bChanged == 1:
+                                        nn.nodeValue = 'Unreviewed'
                                 
     # definition not found, need to add it
     if bFound == 0:
@@ -457,7 +462,7 @@ def updateTermStatus(dom,status):
 # getCDRSemanticType
 #----------------------------------------------------------------------
 def getCDRSemanticType(session,CDRID):
-    conn = connectToDB()
+    #conn = connectToDB()
     docId = cdr.normalize(CDRID)
     oldDoc = cdr.getDoc(session, docId, 'Y')
     if oldDoc.startswith("<Errors"):
@@ -480,7 +485,7 @@ def getNCITPreferredName(conceptCode):
 # getCDRPreferredName
 #----------------------------------------------------------------------
 def getCDRPreferredName(session,CDRID):
-    conn = connectToDB()
+    #conn = connectToDB()
     docId = cdr.normalize(CDRID)
     oldDoc = cdr.getDoc(session, docId, 'Y')
     if oldDoc.startswith("<Errors"):
@@ -502,7 +507,7 @@ def updateTerm(session,CDRID,conceptCode):
     if (semanticType != """Drug/agent"""):
         return """<error>Semantic Type is '%s'. The imporing only works for Drug/agent""" % semanticType
 
-    conn = connectToDB()
+    #conn = connectToDB()
     if len(err) > 1:
         return err
     docId = cdr.normalize(CDRID)
@@ -541,7 +546,7 @@ def updateTerm(session,CDRID,conceptCode):
 
         oldDoc.xml = dom.toxml()
             
-        resp = cdr.repDoc(session, doc = str(oldDoc), val = 'Y', ver = 'Y', showWarnings = 1)
+        resp = cdr.repDoc(session, doc = str(oldDoc), val = 'Y', ver = 'Y', verPublishable = 'N', showWarnings = 1)
         if not resp[0]:
             return "<error>Failure adding concept %s: %s" % (updateCDRID, cdr.checkErr(resp[1]) ) 
                             
@@ -553,7 +558,7 @@ def updateTerm(session,CDRID,conceptCode):
 # Add a new Term
 #----------------------------------------------------------------------
 def addNewTerm(session,conceptCode):
-    conn = connectToDB()
+    #conn = connectToDB()
     if len(err) > 1:
         return err
     docId = findExistingConcept(conn,conceptCode)
