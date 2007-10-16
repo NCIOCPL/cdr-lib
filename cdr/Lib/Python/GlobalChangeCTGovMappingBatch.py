@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeCTGovMappingBatch.py,v 1.4 2007-10-10 04:05:30 ameyer Exp $
+# $Id: GlobalChangeCTGovMappingBatch.py,v 1.5 2007-10-16 21:22:54 ameyer Exp $
 #
 # Examine CTGovProtocol documents and map any unmapped Facility/Name
 # and LeadSponsor/Name fields for which mappings exist in the
@@ -18,6 +18,9 @@
 #                   Identifies a row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2007/10/10 04:05:30  ameyer
+# Added more information to the email report.
+#
 # Revision 1.3  2007/10/05 04:38:23  ameyer
 # Fixed bug - writing naked ID number instead of correct CDR000... number.
 #
@@ -363,6 +366,8 @@ if __name__ == "__main__":
     (userid, pw) = cdr.idSessionUser(session, session)
     if runMode == "run":
         testMode = False
+        # Users prefer the word "live" to "run"
+        testMode = "live"
     else:
         testMode = True
     modifyJob = ModifyDocs.Job(userid, pw, Filter(startDt, endDt), Transform(),
@@ -375,18 +380,21 @@ if __name__ == "__main__":
     # Construct tables of results - docs failing checkout
     results = modifyJob.getNotCheckedOut(markup=True)
     if results:
-        notCheckedHtml = "<h3>Documents that could NOT be checked out</h3>\n" \
-                         + results
+        notCheckedHtml = results
     else:
-        notCheckedHtml = \
-            "<h3>All selected docs successfully checked out</h3>\n"
+        notCheckedHtml = "<strong>None</strong>"
 
     # Docs modified
-    results = modifyJob.getProcessed(markup=True)
+    results = modifyJob.getProcessed(changed=True, unchanged=False,
+                                     markup=True)
     if results:
-        processedHtml="<h3>Documents successfully processed</h3>\n" + results
+        processedHtml=results
     else:
-        processedHtml="<h3>No selected docs successfully processed</h3>\n"
+        processedHtml="<strong>None</strong>"
+
+    # Docs not nodified
+    notModifiedCount = modifyJob.getProcessed(changed=False, unchanged=True,
+                                              countOnly=True)
 
     # Construct report
     html = """
@@ -424,13 +432,18 @@ were examined that have been modfied between %s and %s.<p>
  </tr>
 </table>
 <hr />
+<h3>Documents that could NOT be checked out</h3>
 %s
 <hr />
+<h3>Documents changed</h3>
 %s
+<hr />
+<h3>%d Documents examined but not modified</h3>
 <hr />
 """ % (startDt, endDt, runMode, modifyJob.getCountDocsSelected(),
        modifyJob.getCountDocsProcessed(), modifyJob.getCountDocsSaved(),
-       modifyJob.getCountVersionsSaved(), notCheckedHtml, processedHtml)
+       modifyJob.getCountVersionsSaved(), notCheckedHtml, processedHtml,
+       notModifiedCount)
 
     if runMode == "test":
         html += """
