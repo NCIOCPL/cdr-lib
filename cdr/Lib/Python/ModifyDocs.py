@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.24 2007-10-12 05:20:09 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.25 2007-10-16 21:21:39 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.24  2007/10/12 05:20:09  ameyer
+# Only unlocking doc if we locked it.
+#
 # Revision 1.23  2007/10/10 04:04:51  ameyer
 # Added logic and interfaces to enable a calling program to get more
 # information about what happened with each document selected for change.
@@ -333,24 +336,48 @@ class Job:
         # Or no results
         return None
 
-    def getProcessed(self, markup=False):
+    def getProcessed(self, changed=True, unchanged=True, countOnly=False,
+                     docIdOnly=False, markup=False):
         """
         Get a list or an HTML table of docs that were processed, with
         information about what was done for each.
 
         Pass:
-            markup - True = return data as an HTML table.
+            changed   - True = Include docs that show a change by
+                        filtering.
+            unchanged - True = Include docs that were not changed by
+                        filtering.
+            countOnly - True = Don't return any specific document data,
+                        just return a count of qualifying docs.
+            docIdOnly - True = Don't return any document version data,
+                        just return a list of doc IDs.
+            markup    - True = return data as an HTML table.
+                        Only makes sense if countOnly=False.
 
         Return:
             If markup:
                 A string containing HTML.
             Else:
-                A sequence of tuples of docId + Y/N flags for each of
-                current working document, last version, and last pub version.
+                if countOnly:
+                    A number.
+                else if docIdOnly:
+                    A sequence of doc IDs.
+                else:
+                    A sequence of tuples of docId + Y/N flags for each of
+                    current working document, last version, and last pub
+                    version.
 
             If no docs processed:
-                None
+                if countOnly:
+                    0
+                else:
+                    None
         """
+        # Validate parms
+        if not changed and not unchanged:
+            raise cdr.Exception(
+            "ModifyDocs.getProcessed called with changed/unchanged both False")
+
         docCount = 0
         results  = []
         if markup:
@@ -361,28 +388,46 @@ class Job:
         # Read the dispositions
         for disp in self.__dispositions:
 
+            # Doc not counted as modified unless we find that it was
+            docModified = False
+
             # Only report those with no errors
             if not disp.errMsg:
-                docCount += 1
                 cwd = 'N'
                 if disp.cwdChanged:
                     cwd = 'Y'
+                    docModified = True
                 lv = 'N'
                 if disp.lastvChanged:
                     lv = 'Y'
+                    docModified = True
                 lpv = 'N'
                 if disp.lastpChanged:
                     lpv = 'Y'
-                results.append((disp.docId, cwd, lv, lpv))
+                    docModified = True
+
+                # Did we find what the caller wanted?
+                if ( (docModified and changed) or
+                     (not docModified and unchanged) ):
+                    docCount += 1
+                    if not countOnly:
+                        if docIdOnly:
+                            results.append(disp.docId)
+                        else:
+                            results.append((disp.docId, cwd, lv, lpv))
 
         # Return info in requested format
         if docCount:
+            if countOnly:
+                return docCount
             if markup:
                 return cdr.tabularize(results, "border='1' align='center'")
             else:
                 return results
 
         # Or no results
+        if countOnly:
+            return 0
         return None
 
     #------------------------------------------------------------------
