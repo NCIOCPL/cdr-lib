@@ -10,6 +10,7 @@ import cgi, cdr, re, cdrdb, xml.dom.minidom, httplib, time
 
 err = ""
 bChanged = 0
+changes = ''
 
 #----------------------------------------------------------------------
 # Prepare string for living in an XML document.
@@ -132,6 +133,9 @@ class FullSynonym:
             self.termSource = match.group(6)
             self.sourceCode = match.group(8)
             self.mappedTermGroup = mapType(self.termGroup)
+
+    def toDescription(self):
+        return 'termName: ' + self.termName + ' termGroup: ' + self.termGroup
 
     def toNode(self,dom,conceptCode):
         termName = self.termName
@@ -382,6 +386,7 @@ def getSemanticType(dom):
 #----------------------------------------------------------------------
 def updateDefinition(dom,definition):
     global bChanged
+    global changes
     bFound = 0
     docElem = dom.documentElement
     for node in docElem.childNodes:
@@ -394,6 +399,7 @@ def updateDefinition(dom,definition):
                                 if nn.nodeType == xml.dom.minidom.Node.TEXT_NODE:
                                     if nn.nodeValue != definition.text:
                                         bChanged = 1
+                                        changes += ' Definition updated.'
                                         nn.nodeValue = definition.text
                                         bFound = 1
                                     else:
@@ -406,6 +412,7 @@ def updateDefinition(dom,definition):
                                 
     # definition not found, need to add it
     if bFound == 0:
+        changes += ' Definition added.'
         docElem.appendChild(definition.toNode(dom))
 
 #----------------------------------------------------------------------
@@ -413,10 +420,12 @@ def updateDefinition(dom,definition):
 #----------------------------------------------------------------------
 def addOtherName(dom,fullSyn,conceptCode):
     global bChanged
+    global changes
     bChanged = 1
     docElem = dom.documentElement
     for node in docElem.childNodes:
         if node.nodeName == 'OtherName':
+            changes += ' Other Name ' + fullSyn.toDescription() + ' added.'
             docElem.insertBefore(fullSyn.toNode(dom,conceptCode),node);
             return;
         
@@ -498,9 +507,10 @@ def getCDRPreferredName(session,CDRID):
 #----------------------------------------------------------------------
 # Update an existing concept\term
 #----------------------------------------------------------------------
-def updateTerm(session,CDRID,conceptCode):
+def updateTerm(session,CDRID,conceptCode,doUpdate=0):
     global bChanged
     global err
+    global changes
     bChanged = 0
 
     semanticType = getCDRSemanticType(session,CDRID)
@@ -546,13 +556,15 @@ def updateTerm(session,CDRID,conceptCode):
 
         oldDoc.xml = dom.toxml()
             
-        resp = cdr.repDoc(session, doc = str(oldDoc), val = 'Y', ver = 'Y', verPublishable = 'N', showWarnings = 1)
-        if not resp[0]:
-            return "<error>Failure adding concept %s: %s" % (updateCDRID, cdr.checkErr(resp[1]) ) 
+        if doUpdate:
+            resp = cdr.repDoc(session, doc = str(oldDoc), val = 'Y', ver = 'Y', verPublishable = 'N', showWarnings = 1)
+            if not resp[0]:
+                return "<error>Failure adding concept %s: %s" % (updateCDRID, cdr.checkErr(resp[1]) ) 
                             
-        return "Citation %s updated" % resp[0]
+            return "Citation %s updated. %s" % (CDRID,changes)
+        return "Citation %s will change. %s" % (CDRID,changes)
     else:
-        return "No updates needed for citation %s" % CDRID
+        return "No updates needed for citation %s." % CDRID
 
 #----------------------------------------------------------------------
 # Add a new Term
