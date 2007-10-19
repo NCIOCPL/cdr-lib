@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeCTGovMappingBatch.py,v 1.5 2007-10-16 21:22:54 ameyer Exp $
+# $Id: GlobalChangeCTGovMappingBatch.py,v 1.6 2007-10-19 00:34:40 ameyer Exp $
 #
 # Examine CTGovProtocol documents and map any unmapped Facility/Name
 # and LeadSponsor/Name fields for which mappings exist in the
@@ -18,6 +18,10 @@
 #                   Identifies a row in batch_job table.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2007/10/16 21:22:54  ameyer
+# Shortened report by only showing docs that were changed.  For unchanged
+# docs, I just provide a count in the email report.
+#
 # Revision 1.4  2007/10/10 04:05:30  ameyer
 # Added more information to the email report.
 #
@@ -367,7 +371,6 @@ if __name__ == "__main__":
     if runMode == "run":
         testMode = False
         # Users prefer the word "live" to "run"
-        testMode = "live"
     else:
         testMode = True
     modifyJob = ModifyDocs.Job(userid, pw, Filter(startDt, endDt), Transform(),
@@ -395,6 +398,12 @@ if __name__ == "__main__":
     # Docs not nodified
     notModifiedCount = modifyJob.getProcessed(changed=False, unchanged=True,
                                               countOnly=True)
+
+    # Choose a word to describe this run
+    if testMode:
+        modeToReport = "test"
+    else:
+        modeToReport = "live"
 
     # Construct report
     html = """
@@ -440,7 +449,7 @@ were examined that have been modfied between %s and %s.<p>
 <hr />
 <h3>%d Documents examined but not modified</h3>
 <hr />
-""" % (startDt, endDt, runMode, modifyJob.getCountDocsSelected(),
+""" % (startDt, endDt, modeToReport, modifyJob.getCountDocsSelected(),
        modifyJob.getCountDocsProcessed(), modifyJob.getCountDocsSaved(),
        modifyJob.getCountVersionsSaved(), notCheckedHtml, processedHtml,
        notModifiedCount)
