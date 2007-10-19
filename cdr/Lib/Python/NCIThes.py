@@ -135,7 +135,7 @@ class FullSynonym:
             self.mappedTermGroup = mapType(self.termGroup)
 
     def toDescription(self):
-        return 'termName: ' + self.termName + ' termGroup: ' + self.termGroup
+        return self.termName + ' (' + self.termGroup + ')'
 
     def toNode(self,dom,conceptCode):
         termName = self.termName
@@ -425,7 +425,7 @@ def addOtherName(dom,fullSyn,conceptCode):
     docElem = dom.documentElement
     for node in docElem.childNodes:
         if node.nodeName == 'OtherName':
-            changes += ' Other Name ' + fullSyn.toDescription() + ' added.'
+            changes += ' Other Name: ' + fullSyn.toDescription() + ' added.'
             docElem.insertBefore(fullSyn.toNode(dom,conceptCode),node);
             return;
         
@@ -473,10 +473,10 @@ def updateTermStatus(dom,status):
 def getCDRSemanticType(session,CDRID):
     #conn = connectToDB()
     docId = cdr.normalize(CDRID)
-    oldDoc = cdr.getDoc(session, docId, 'Y')
+    oldDoc = cdr.getDoc(session, docId, 'N')
     if oldDoc.startswith("<Errors"):
         return "<error>Unable to retrieve %s" % CDRID
-    oldDoc = cdr.getDoc(session, docId, 'Y',getObject=1)
+    oldDoc = cdr.getDoc(session, docId, 'N',getObject=1)
     dom = xml.dom.minidom.parseString(oldDoc.xml)
     semanticType = getSemanticType(dom)
     return semanticType
@@ -496,10 +496,10 @@ def getNCITPreferredName(conceptCode):
 def getCDRPreferredName(session,CDRID):
     #conn = connectToDB()
     docId = cdr.normalize(CDRID)
-    oldDoc = cdr.getDoc(session, docId, 'Y')
+    oldDoc = cdr.getDoc(session, docId, 'N')
     if oldDoc.startswith("<Errors"):
         return "<error>Unable to retrieve %s" % CDRID
-    oldDoc = cdr.getDoc(session, docId, 'Y',getObject=1)
+    oldDoc = cdr.getDoc(session, docId, 'N',getObject=1)
     dom = xml.dom.minidom.parseString(oldDoc.xml)
     preferredName = getPreferredName(dom)
     return preferredName
@@ -513,17 +513,20 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0):
     global changes
     bChanged = 0
 
+    docId = cdr.normalize(CDRID)
+    cdr.unlock(session,docId)
+
     semanticType = getCDRSemanticType(session,CDRID)
     if (semanticType != """Drug/agent"""):
-        return """<error>Semantic Type is '%s'. The imporing only works for Drug/agent""" % semanticType
+        return """<error>Semantic Type is %s. The importing only works for Drug/agent""" % semanticType
 
     #conn = connectToDB()
     if len(err) > 1:
         return err
-    docId = cdr.normalize(CDRID)
     oldDoc = cdr.getDoc(session, docId, 'Y')
     if oldDoc.startswith("<Errors"):
         return "<error>Unable to retrieve %s" % CDRID
+    cdr.unlock(session,docId)
     oldDoc = cdr.getDoc(session, docId, 'Y',getObject=1)
 
     concept = fetchConcept(conceptCode)
@@ -558,12 +561,14 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0):
             
         if doUpdate:
             resp = cdr.repDoc(session, doc = str(oldDoc), val = 'Y', ver = 'Y', verPublishable = 'N', showWarnings = 1)
+            cdr.unlock(session,docId)
             if not resp[0]:
                 return "<error>Failure adding concept %s: %s" % (updateCDRID, cdr.checkErr(resp[1]) ) 
                             
             return "Citation %s updated. %s" % (CDRID,changes)
         return "Citation %s will change. %s" % (CDRID,changes)
     else:
+        cdr.unlock(session,docId)
         return "No updates needed for citation %s." % CDRID
 
 #----------------------------------------------------------------------
