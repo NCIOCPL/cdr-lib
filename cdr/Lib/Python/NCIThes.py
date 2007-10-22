@@ -557,10 +557,11 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0):
     if bChanged == 1:
         updateTermStatus(dom,'Unreviewed')
 
-        oldDoc.xml = dom.toxml()
+        oldDoc.xml = dom.toxml().encode('utf-8')
             
         if doUpdate:
-            resp = cdr.repDoc(session, doc = str(oldDoc), val = 'Y', ver = 'Y', verPublishable = 'N', showWarnings = 1)
+            strDoc = str(oldDoc)
+            resp = cdr.repDoc(session, doc = strDoc, val = 'Y', ver = 'Y', verPublishable = 'N', showWarnings = 1)
             cdr.unlock(session,docId)
             if not resp[0]:
                 return "<error>Failure adding concept %s: %s" % (updateCDRID, cdr.checkErr(resp[1]) ) 
