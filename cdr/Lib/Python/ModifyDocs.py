@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.25 2007-10-16 21:21:39 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.26 2007-10-26 04:45:34 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.25  2007/10/16 21:21:39  ameyer
+# Beefed up getProcessed() to be able to do a lot more.
+#
 # Revision 1.24  2007/10/12 05:20:09  ameyer
 # Only unlocking doc if we locked it.
 #
@@ -151,11 +154,12 @@ class Disposition:
         self.lastvChanged = False
         self.lastpChanged = False
         self.errMsg       = errMsg
+        self.warnMsgs     = None
 
     def __str__(self):
-        return "%s: cwd=%s lv=%s lpv=%s msgs=%s" % (self.docId,
+        return "%s: cwd=%s lv=%s lpv=%s msgs=%s warns=%s" % (self.docId,
                self.cwdChanged, self.lastvChanged, self.lastpChanged,
-               self.errMsg)
+               self.errMsg, self.warnMsgs)
 
 #----------------------------------------------------------------------
 # Class for one modification job.
@@ -383,7 +387,7 @@ class Job:
         if markup:
             # Column headers for HTML table
             results.append(("<b>Doc ID</b>", "<b>CWD</b>", "<b>LV</b>",
-                            "<b>LPV</b>"))
+                            "<b>LPV</b>", "<b>Warnings</b>"))
 
         # Read the dispositions
         for disp in self.__dispositions:
@@ -404,7 +408,27 @@ class Job:
                 lpv = 'N'
                 if disp.lastpChanged:
                     lpv = 'Y'
+                    if disp.warnMsgs:
+                        lpv = 'I'
                     docModified = True
+
+                # Convert warnings as needed for response
+                warnStr = ""
+                if disp.warnMsgs:
+                    warnStr = "<font color='red'>"
+                    if type(disp.warnMsgs) in (type([]), type(())):
+                        count   = 0
+                        for warn in disp.warnMsgs:
+                            warnStr += warn
+                            count += 1
+                            if count < len(disp.warnMsgs):
+                                if markup:
+                                    warnStr += "<br />"
+                                else:
+                                    warnStr += "; "
+                    else:
+                        warnStr = disp.warnMsgs
+                    warnStr += "</font>"
 
                 # Did we find what the caller wanted?
                 if ( (docModified and changed) or
@@ -414,7 +438,7 @@ class Job:
                         if docIdOnly:
                             results.append(disp.docId)
                         else:
-                            results.append((disp.docId, cwd, lv, lpv))
+                            results.append((disp.docId, cwd, lv, lpv, warnStr))
 
         # Return info in requested format
         if docCount:
@@ -472,9 +496,19 @@ class Job:
                 doc = None
                 doc = Doc(docId, self.session, self.transform, self.comment)
                 doc.saveChanges(self.cursor, logger, jobControl)
-                self.__countVersionsSaved += len(doc.versionMessages)
+
+                # One distinct doc saved
                 if doc.versionMessages:
                     self.__countDocsSaved += 1
+
+                # Number of distinct versions of this doc sved
+                if doc.disp.cwdChanged:
+                    self.__countVersionsSaved += 1
+                if doc.disp.lastvChanged:
+                    self.__countVersionsSaved += 1
+                if doc.disp.lastpChanged:
+                    self.__countVersionsSaved += 1
+
                 for msg in doc.versionMessages:
                     self.__countMsgs[msg] = self.__countMsgs.get(msg, 0) + 1
             except DocumentLocked, info:
@@ -911,16 +945,21 @@ class Doc:
                               verPublishable = pub,
                               reason = self.comment, comment = self.comment,
                               showWarnings = 'Y')
+
+        # Response missing first element means save failed
+        # Almost certainly caused by locked doc
         if not response[0]:
             raise Exception("Failure saving changes for CDR%010d: %s" %
                             (self.id, response[1]))
-        if logWarnings and response[1]:
-            warnings = ERRPATT.findall(response[1])
-            if warnings:
+
+        # Second element contains XSLT filter warning(s), if any
+        if response[1]:
+            warnings = ERRPATT.findall(response[1]) or response[1]
+            if logWarnings:
                 for warning in warnings:
-                    logger.log("Warning for CDR%010d: %s" % (self.id, warning))
-            else:
-                logger.log("Warning for CDR%010d: %s" % (self.id, response[1]))
+                    logger.log("Warning for CDR%010d: %s" % (self.id,
+                                                             warning))
+            self.disp.warnMsgs = warnings
 
         # Remember the message used to describe this version of the document.
         self.__messages.append(msg)
