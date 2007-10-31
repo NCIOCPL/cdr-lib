@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.61 2007-05-17 16:59:43 kidderc Exp $
+# $Id: cdrcgi.py,v 1.62 2007-10-31 02:37:33 ameyer Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.61  2007/05/17 16:59:43  kidderc
+# 3132. Added Method unicodeToJavaScriptCompatible. Used to fix problems with unicode characters in JavaScript.
+#
 # Revision 1.60  2007/01/17 19:49:38  venglisc
 # Added new menu item for Guest User. (Bug 2753)
 #
@@ -366,19 +369,28 @@ def encode(xml): return unicode(xml, 'latin-1').encode('utf-8')
 #----------------------------------------------------------------------
 decodePattern = re.compile(u"([\u0080-\uffff])")
 def decode(xml):
+    # Take input in utf-8:
+    #   Convert it to unicode.
+    #   Replace all chars above 127 with character entitites.
+    #   Convert from unicode back to 8 bit chars, ascii is fine since
+    #     anything above ascii is entity encoded.
     return re.sub(decodePattern,
                   lambda match: u"&#x%X;" % ord(match.group(0)[0]),
-                  unicode(xml, 'utf-8')).encode('latin-1')
+                  unicode(xml, 'utf-8')).encode('ascii')
 
 def unicodeToLatin1(s):
+    # Same as above, but with unicode input instead of utf-8
+    # The unfortunate name is a historical artifact of our using 'latin-1'
+    #   as the final encoding, but it's really just 7 bit ascii.
     return re.sub(decodePattern,
                   lambda match: u"&#x%X;" % ord(match.group(0)[0]),
-                  s).encode('latin-1')
+                  s).encode('ascii')
 
 def unicodeToJavaScriptCompatible(s):
+    # Same thing but with 4 char unicode syntax for Javascript
     return re.sub(decodePattern,
                   lambda match: u"\\u%04X" % ord(match.group(0)[0]),
-                  s).encode('latin-1')
+                  s).encode('ascii')
 
 #----------------------------------------------------------------------
 # Log out of the CDR session and put up a new login screen.
