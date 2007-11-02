@@ -1,11 +1,14 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
 #
-# $Id: CgiQuery.py,v 1.6 2005-01-24 23:03:22 bkline Exp $
+# $Id: CgiQuery.py,v 1.7 2007-11-02 01:28:08 ameyer Exp $
 #
 # Base class for CGI database query interface.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.6  2005/01/24 23:03:22  bkline
+# Fixed quotes in queries.
+#
 # Revision 1.5  2003/09/11 12:34:27  bkline
 # Made it possible to override the default timeout for queries.
 #
@@ -65,7 +68,7 @@ Cache-control: no-cache, must-revalidate
 
 %s""" % page.encode('latin-1')
         sys.exit(0)
-    
+
     def bail(self, message):
         "Display an error message and exit."
         sysName = cgi.escape(self.system)
@@ -111,7 +114,7 @@ Cache-control: no-cache, must-revalidate
         try:
             name = self.dbCleanString(self.newName)
             val = self.dbCleanString(self.newQuery)
-            q = "INSERT INTO query(name, value) VALUES('%s', '%s')" % (name, 
+            q = "INSERT INTO query(name, value) VALUES('%s', '%s')" % (name,
                                                                        val)
             cursor = self.conn.cursor()
             cursor.execute(q)
@@ -184,13 +187,16 @@ Cache-control: no-cache, must-revalidate
                                                                        val)
                 html += "</tr>\n"
                 row = cursor.fetchone()
-            html += "</table>"
+            html += \
+       "<tr><th class='total' colspan='99'>%d row(s) retrieved</th></tr>\n" % \
+                    rowNum
+            html += "</table>\n"
             self.results = html
         except cdrdb.Error, info:
             self.bail("Failure executing query:\n%s\n%s" % (
                 cgi.escape(self.queryText),
                 cgi.escape(info[1][0])))
-        
+
     def createPage(self):
         queries     = self.getQueries()
         queryKeys   = queries.keys()
@@ -210,6 +216,7 @@ Cache-control: no-cache, must-revalidate
   <meta http-equiv="Pragma" content="no-cache">
   <style type = 'text/css'>
    th { background: olive; color: white; }
+   th.total { background: olive; color: white; font-weight: bold; }
    td.odd { font-size: 10pt; background: beige; color: black;
             font-family: Arial; }
    td.even { font-size: 10pt; background: wheat; color: black;
@@ -231,8 +238,8 @@ Cache-control: no-cache, must-revalidate
         }
     }
 
-    function addNewQuery() { 
-        addQuery(""); 
+    function addNewQuery() {
+        addQuery("");
     }
 
     function runQuery() {
@@ -295,7 +302,6 @@ Cache-control: no-cache, must-revalidate
      <td valign = 'center'>
       <textarea name = 'queryText' rows = '10' cols = '60'>%s</textarea>
      </td>
-     </td>
     </tr>
     <tr>
      <td colspan = '2' align = 'center'>
@@ -318,6 +324,6 @@ Cache-control: no-cache, must-revalidate
   <META HTTP-EQUIV="PRAGMA" CONTENT="NO-CACHE">
  </HEAD>
 </html>
-""" % (self.system, queriesDict, self.script, queriesHtml, 
+""" % (self.system, queriesDict, self.script, queriesHtml,
        self.queryText.replace("\r", ""), time.clock(), self.results)
         return html
