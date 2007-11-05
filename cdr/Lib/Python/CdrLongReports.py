@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.38 2007-10-03 12:33:49 bkline Exp $
+# $Id: CdrLongReports.py,v 1.39 2007-11-05 17:27:58 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.38  2007/10/03 12:33:49  bkline
+# Fixed a bug in adjusting the starting year for fiscal year reports.
+#
 # Revision 1.37  2007/10/01 15:11:45  bkline
 # Modifications for OSP report (request #3627).
 #
@@ -2426,9 +2429,9 @@ class ProtocolProcessingStatusReport:
             self.protocolId         = None
             self.protocolSources    = []
             self.adminStatuses      = []
-            self.adminUser          = None
+            self.adminUsers         = []
             self.scientificStatuses = []
-            self.scientificUser     = None
+            self.scientificUsers    = []
             self.statusKeys         = {}
             self.protocolStatus     = None
             for child in node.childNodes:
@@ -2445,13 +2448,14 @@ class ProtocolProcessingStatusReport:
                             source = report.ProtocolSource(gc)
                             self.protocolSources.append(source)
                 elif child.nodeName == 'ProtocolProcessingDetails':
-                    for gc in child.childNodes:
-                        if gc.nodeName == 'ProcessingStatus':
-                            status = cdr.getTextContent(gc).strip()
-                            self.adminStatuses.append(status)
-                            self.statusKeys[status.upper()] = status
-                        elif gc.nodeName == 'EnteredBy':
-                            self.adminUser = cdr.getTextContent(gc)
+                    for ps in child.getElementsByTagName('ProcessingStatus'):
+                        status = cdr.getTextContent(ps).strip()
+                        self.adminStatuses.append(status)
+                        self.statusKeys[status.upper()] = status
+                    for tagName in ('EnteredBy', 'User'):
+                        for elem in child.getElementsByTagName(tagName):
+                            user = cdr.getTextContent(elem)
+                            self.adminUsers.append(user)
                 elif child.nodeName == 'ProtocolAdminInfo':
                     for gc in child.childNodes:
                         if gc.nodeName == 'CurrentProtocolStatus':
@@ -2472,13 +2476,14 @@ class ProtocolProcessingStatusReport:
                     dom = xml.dom.minidom.parseString(xmlDoc.encode('utf-8'))
                     for node in dom.documentElement.childNodes:
                         if node.nodeName == 'ProtocolProcessingDetails':
-                            for child in node.childNodes:
-                                if child.nodeName == 'ProcessingStatus':
-                                    status = cdr.getTextContent(child).strip()
-                                    self.scientificStatuses.append(status)
-                                elif child.nodeName == 'EnteredBy':
-                                    user = cdr.getTextContent(child)
-                                    self.scientificUser = user
+                            tagName = 'ProcessingStatus'
+                            for ps in node.getElementsByTagName(tagName):
+                                status = cdr.getTextContent(ps).strip()
+                                self.scientificStatuses.append(status)
+                            for tagName in ('EnteredBy', 'User'):
+                                for elem in node.getElementsByTagName(tagName):
+                                    user = cdr.getTextContent(elem)
+                                    self.scientificUsers.append(user)
 
         def isResearch(self):
             return not self.publishable and "RESEARCH STUDY" in self.statusKeys
@@ -2854,12 +2859,13 @@ The Protocol Processing report you requested can be viewed at
             row.addCell(4 + extra, '')
             row.addCell(5 + extra, '')
             row.addCell(6 + extra, '')
-        row.addCell(7 + extra, self.mergeStatuses(prot.adminStatuses),
+        row.addCell(7 + extra, self.mergeValues(prot.adminStatuses),
                     mergeDown = mergeRows)
-        row.addCell(8 + extra, prot.adminUser or '', mergeDown = mergeRows)
-        row.addCell(9 + extra, self.mergeStatuses(prot.scientificStatuses),
+        row.addCell(8 + extra, self.mergeValues(prot.adminUsers),
                     mergeDown = mergeRows)
-        row.addCell(10 + extra, prot.scientificUser or '',
+        row.addCell(9 + extra, self.mergeValues(prot.scientificStatuses),
+                    mergeDown = mergeRows)
+        row.addCell(10 + extra, self.mergeValues(prot.scientificUsers),
                     mergeDown = mergeRows)
         status = prot.protocolStatus
         if status == 'No valid lead organization status found.':
@@ -2885,7 +2891,7 @@ The Protocol Processing report you requested can be viewed at
             row.addCell(4 + extra, d) #, 'DateTime', self.dateStyle)
         else:
             row.addCell(4 + extra, '')
-        row.addCell(5 + extra, self.mergeStatuses(prot.statuses))
+        row.addCell(5 + extra, self.mergeValues(prot.statuses))
         row.addCell(6 + extra, '; '.join(prot.phases))
         return 1
 
@@ -2921,7 +2927,7 @@ The Protocol Processing report you requested can be viewed at
         row.addCell(6, prot.originalTitle or '', mergeDown = mergeRows)
         return nRows
 
-    def mergeStatuses(self, statuses):
+    def mergeValues(self, statuses):
         return u'\n'.join(statuses)
 
     def addTotal(self, sheet, total, rowNum):
