@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.142 2007-08-22 01:01:42 venglisc Exp $
+# $Id: cdr.py,v 1.143 2007-11-06 15:44:49 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.142  2007/08/22 01:01:42  venglisc
+# Added PUB_NAME parameter needed for More Frequent Publishing.
+#
 # Revision 1.141  2007/08/06 17:24:46  bkline
 # Added code to escape parameter values passed to cdr.filterDoc().
 #
@@ -2713,11 +2716,11 @@ def putGroup(credentials, gName, group, host = DEFAULT_HOST,
 
     # Add the actions.
     if group.actions:
-        actions = list(group.actions.keys())
+        actions = group.actions.keys()
         actions.sort()
         for action in actions:
             doctypes = group.actions[action]
-            if not doctypes:
+            if not doctypes or doctypes == [None]:
                 cmd += "<Auth><Action>%s</Action></Auth>" % action
             else:
                 for doctype in doctypes:
