@@ -33,9 +33,12 @@ import sys, re, time, cdr, cdrdb
 # These assumptions mean that the class must be instantiated in the
 # push job that calls __createWorkPPC().
 #
-# $Id: AssignGroupNums.py,v 1.8 2007-05-11 03:54:36 ameyer Exp $
+# $Id: AssignGroupNums.py,v 1.9 2007-11-20 16:08:53 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2007/05/11 03:54:36  ameyer
+# Updated a few comments.
+#
 # Revision 1.7  2007/05/07 01:34:54  bkline
 # Modified logic to handle links between new documents correctly.  Used
 # cdr.Exception class.  Replaced some sequences with sets.
@@ -113,6 +116,10 @@ class GroupNums:
         #   hrefs from the final vendor filtered version
         self.__refPat = re.compile("ref=['\"](CDR\\d{10})")
 
+        # Regex pattern for finding SummaryURL attribute from
+        #   vendor filtered doc
+        self.__sumURLpat = re.compile("<SummaryURL xref=['\"]([^'\"]*)['\"]")
+
         # Find all newly published documents
         # jobNum must match pub_proc id
         qry = """
@@ -132,6 +139,9 @@ SELECT id
             raise cdr.Exception(
                 "GroupNums: Database error fetching list of newly published "
                 "docs in job %d: %s" % (jobNum, str(info)))
+
+        # Add to the list any Summaries for which the SummaryURL changed
+        self.__addChangedUrlIds()
 
         # Get a list of all docs in the run that aren't removals
         qry = """
@@ -256,6 +266,92 @@ SELECT id
             refs.add(cdr.exNormalize(cdrId)[1])
 
         return refs
+
+    def __getSummaryURL(self, xml):
+        """
+        Get the SummaryURL value from a Summary.
+
+        Uses regular expression for same reason as getRefs.
+
+        Pass:
+            xml - Vendor format text in utf-8 ( XXX - UNICODE?)
+
+        Return:
+            SummaryURL as a string.
+            None if not found.
+        """
+        match = self.__sumURLpat.search(xml, re.MULTILINE)
+        if match:
+            return match.group(1)
+        return None
+
+    def __addChangedUrlIds(self):
+        """
+        If any Summary has a changed SummaryURL, add it's ID to the
+        list of docs that function as heads of groups.
+        """
+        # Find any Summary docs published this run
+        qry = """
+SELECT ppcw.id
+  FROM pub_proc_cg_work ppcw
+  JOIN document d
+    ON ppcw.id = d.id
+  JOIN doc_type t
+    ON d.doc_type = t.id
+ WHERE t.name = 'Summary'
+ """
+        try:
+            self.__cursor.execute(qry)
+            docList = [row[0] for row in self.__cursor.fetchall()]
+        except cdrdb.Error, info:
+            raise cdr.Exception(
+             "GroupNums: Database error fetching list of Summary doc IDs: %s"
+                % str(info))
+
+        # If no Summaries published, we're done
+        if len(docList) == 0:
+            return
+
+        # Else have to check each one to see if the doc published
+        #   before this has a different value
+        for docId in docList:
+            try:
+                self.__cursor.execute(
+                 "SELECT xml FROM pub_proc_cg WHERE id = %d" % docId)
+                # Extract unicode string from row and convert to utf-8
+                xml = self.__cursor.fetchone()[0].encode('utf-8')
+            except cdrdb.Error, info:
+                raise cdr.Exception(
+                 "GroupNums: DB error fetching pub_proc_cg.xml for ID=%d: %s"
+                    % (docId, str(info)))
+
+            # If not found, it's a new Summary, never before published
+            # We can skip it because it will already be in the __newDocs
+            #   list
+            if not xml:
+                continue
+
+            # Get it's SummaryURL attribute value
+            oldUrl = self.__getSummaryURL(xml)
+
+            # Get new XML and extract value
+            try:
+                self.__cursor.execute(
+                 "SELECT xml FROM pub_proc_cg_work WHERE id = %d" % docId)
+                # Extract unicode string from row and convert to utf-8
+                xml = self.__cursor.fetchone()[0].encode('utf-8')
+            except cdrdb.Error, info:
+                raise cdr.Exception(
+             "GroupNums: DB error fetching pub_proc_cg_work.xml for ID=%d: %s"
+                    % (docId, str(info)))
+            newUrl = self.__getSummaryURL(xml)
+
+            # If they aren't the same, or one didn't exist, make the
+            #   doc head of a group
+            if newUrl != oldUrl:
+                self.__newDocs.add(docId)
+
+        return
 
     def __mergeGroups(self, dstGrpId, srcGrpId):
         """
