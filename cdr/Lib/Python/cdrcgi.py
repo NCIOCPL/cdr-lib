@@ -1,10 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.62 2007-10-31 02:37:33 ameyer Exp $
+# $Id: cdrcgi.py,v 1.63 2007-12-13 21:13:23 venglisc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.62  2007/10/31 02:37:33  ameyer
+# Added documentation to the character set converters.
+# Changed encoding from 'latin-1' to 'ascii' in several places where
+# output is force into 7 bit ascii.  No actual change in behavior, but
+# the intent of the code is clearer.
+#
 # Revision 1.61  2007/05/17 16:59:43  kidderc
 # 3132. Added Method unicodeToJavaScriptCompatible. Used to fix problems with unicode characters in JavaScript.
 #
@@ -237,27 +243,34 @@ DOMAIN   = ".nci.nih.gov"
 WEBSERVER= THISHOST + (ISPLAIN and DOMAIN or "")
 DAY_ONE  = cdr.URDATE
 HEADER   = """\
-<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
+<!DOCTYPE HTML PUBLIC '-//W3C//DTD HTML 4.01 Transitional//EN'
+                      'http://www.w3.org/TR/html4/loose.dtd'>
 <HTML>
  <HEAD>
   <TITLE>%s</TITLE>
-  <BASEFONT FACE='Arial, Helvetica, sans-serif'>
+  <meta http-equiv='Content-Type' content='text/html;charset=utf-8'>
+  <link rel='shortcut icon' href='/favicon.ico'>
   <LINK TYPE='text/css' REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
- %s</HEAD>
- <BODY BGCOLOR='EEEEEE'>
+  <style type='text/css'>
+    body      { background-color: #%s; }
+    *.banner  { background-color: silver;
+                background-image: url(/images/nav1.jpg); }
+  </style>
+  %s
+ </HEAD>
+ <BODY>
   <FORM ACTION='/cgi-bin/cdr/%s' METHOD='%s'%s>
    <TABLE WIDTH='100%%' CELLSPACING='0' CELLPADDING='0' BORDER='0'>
     <TR>
-     <TH NOWRAP BGCOLOR='silver' ALIGN='left' BACKGROUND='/images/nav1.jpg'>
+     <TH class='banner' NOWRAP ALIGN='left'>
       <FONT SIZE='6' COLOR='white'>&nbsp;%s</FONT>
      </TH>
 """
 B_CELL = """\
-     <TD BGCOLOR='silver'
+     <TD class='banner'
          VALIGN='middle'
          ALIGN='right'
-         WIDTH='100%'
-         BACKGROUND='/images/nav1.jpg'>
+         WIDTH='100%'>
 """
 BUTTON = """\
       <INPUT TYPE='submit' NAME='%s' VALUE='%s'>&nbsp;
@@ -275,9 +288,11 @@ SUBBANNER = """\
 #----------------------------------------------------------------------
 # Display the header for a CDR web form.
 #----------------------------------------------------------------------
-def header(title, banner, subBanner, script = '', buttons = None, bkgd = '',
-           numBreaks = 2, method = 'POST', stylesheet='', formExtra = ''):
-    html = HEADER % (title, stylesheet, script, method, formExtra, banner)
+def header(title, banner, subBanner, script = '', buttons = None,
+           bkgd = 'EFEFEF', numBreaks = 2, method = 'POST', stylesheet='',
+           formExtra = ''):
+    html = HEADER % (title, bkgd, stylesheet, script,
+                     method, formExtra, banner)
     if buttons:
         html = html + B_CELL
         for button in buttons:
