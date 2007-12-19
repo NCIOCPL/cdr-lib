@@ -6,7 +6,7 @@
 # new terms to CDR from the NCI thesaurus.
 #------------------------------------------------------
 
-import cgi, cdr, re, cdrdb, xml.dom.minidom, httplib, time
+import cgi, cdr, re, cdrdb, xml.dom.minidom, httplib, time, ExcelReader, ExcelWriter, os.path
 
 err = ""
 bChanged = 0
@@ -72,6 +72,26 @@ class Definition:
         if match:
             self.source = match.group(2)
             self.text   = match.group(4)
+        self.removeTrailingParenText()
+
+    # remove the trailing paren text like (NCI04), if it exists
+    def removeTrailingParenText(self):
+        self.text = self.text.strip()
+        if self.text[-1] == ')':
+            i=-2
+            while self.text[i] != '(':
+                i=i-1
+                posi = 0-i
+                if posi>len(self.text)-2:
+                    return
+            tempStr = self.text[i:]
+            if len(tempStr)>8:
+                return
+            if tempStr.startswith("(NCI"):
+                self.text = self.text[:i]
+                self.text = self.text.strip()
+        return
+        
     def toXml(self):
         return """\
  <Definition>
@@ -137,15 +157,23 @@ class FullSynonym:
     def toDescription(self):
         return self.termName + ' (' + self.termGroup + ')'
 
-    def toNode(self,dom,conceptCode):
+    def toNode(self,dom,conceptCode,drugTerm,cdrPreferredName):
         termName = self.termName
         mappedTermGroup = self.mappedTermGroup
         termGroup = self.termGroup
         sourceCode = self.sourceCode
-
-        if self.termGroup == 'PT':
-            mappedTermGroup = 'Lexical variant'
-            sourceCode = conceptCode
+        
+        if drugTerm == 1:
+            if self.termGroup == 'PT':
+                mappedTermGroup = 'Lexical variant'
+                sourceCode = conceptCode
+        else:
+            if self.termGroup == 'PT':
+                if ( cdrPreferredName.upper().rstrip(' ').lstrip(' ') != termName.upper().rstrip(' ').lstrip(' ') ):
+                    mappedTermGroup = 'Synonym'
+                else:
+                    mappedTermGroup = 'Lexical variant'
+                sourceCode = conceptCode
         
         node = dom.createElement('OtherName')
         
@@ -248,7 +276,7 @@ def connectToDB():
         conn = cdrdb.connect('CdrGuest')
         return conn;
     except cdrdb.Error, info:
-        err = '<error>Failure connecting to CDR: %s' % info[1][0]
+        err = '<error>Failure connecting to CDR: %s</error>' % info[1][0]
         return 0
 
 #----------------------------------------------------------------------
@@ -297,8 +325,8 @@ def fetchConcept(code):
                     f.close()
                 except:
                     pass
-                err =  """\<error>Failure retrieving concept %s; 
-                                  HTTP response %s: %s""" % (code, response.status,response.reason)
+                err =  """\<error>Failure retrieving concept %s;
+                                  HTTP response %s: %s</error>""" % (code, response.status,response.reason)
                 return 0
             # We can stop trying now, we got it.
             docXml = response.read()
@@ -307,7 +335,7 @@ def fetchConcept(code):
         except Exception, e:
             tries -= 1
             if not tries:
-                err =  "<error>EVS server unavailable: %s" % e
+                err =  "<error>EVS server unavailable: %s</error>" % e
                 return 0
     filt = ["name:EVS Concept Filter"]
     result = cdr.filterDoc('guest', filt, doc = docXml)
@@ -316,14 +344,14 @@ def fetchConcept(code):
         f = open("d:/tmp/ConceptDoc-%s-%s.xml" % (code, now), "wb")
         f.write(docXml)
         f.close()
-        err =  "<error>Error in EVS response: %s" % result
+        err =  "<error>Error in EVS response: %s</error>" % result
         return 0
     docXml = result[0]
     try:
         dom = xml.dom.minidom.parseString(docXml)
         return Concept(dom.documentElement)
     except Exception, e:
-        err =  "<error>Failure parsing concept: %s" % str(e)
+        err =  "<error>Failure parsing concept: %s</error>" % str(e)
         return 0
 
 #----------------------------------------------------------------------
@@ -350,7 +378,7 @@ def findExistingConcept(conn,code):
         if not rows: return None
         return rows[0][0]
     except cdrdb.Error, info:
-        err =  '<error>Failure checking for existing document: %s' % info[1][0]
+        err =  '<error>Failure checking for existing document: %s</error>' % info[1][0]
         return 0
 
 #----------------------------------------------------------------------
@@ -418,7 +446,7 @@ def updateDefinition(dom,definition):
 #----------------------------------------------------------------------
 # addOtherName
 #----------------------------------------------------------------------
-def addOtherName(dom,fullSyn,conceptCode):
+def addOtherName(dom,fullSyn,conceptCode,drugTerm,cdrPreferredName):
     global bChanged
     global changes
     bChanged = 1
@@ -426,10 +454,10 @@ def addOtherName(dom,fullSyn,conceptCode):
     for node in docElem.childNodes:
         if node.nodeName == 'OtherName':
             changes += ' Other Name: ' + fullSyn.toDescription() + ' added.'
-            docElem.insertBefore(fullSyn.toNode(dom,conceptCode),node);
+            docElem.insertBefore(fullSyn.toNode(dom,conceptCode,drugTerm,cdrPreferredName),node);
             return;
         
-    docElem.appendChild(fullSyn.toNode(dom))
+    docElem.appendChild(fullSyn.toNode(dom,conceptCode,drugTerm,cdrPreferredName))
 
 #----------------------------------------------------------------------
 # getOtherNames
@@ -475,7 +503,7 @@ def getCDRSemanticType(session,CDRID):
     docId = cdr.normalize(CDRID)
     oldDoc = cdr.getDoc(session, docId, 'N')
     if oldDoc.startswith("<Errors"):
-        return "<error>Unable to retrieve %s" % CDRID
+        return "<error>Unable to retrieve %s - %s</error>" % (CDRID,oldDoc)
     oldDoc = cdr.getDoc(session, docId, 'N',getObject=1)
     dom = xml.dom.minidom.parseString(oldDoc.xml)
     semanticType = getSemanticType(dom)
@@ -498,34 +526,180 @@ def getCDRPreferredName(session,CDRID):
     docId = cdr.normalize(CDRID)
     oldDoc = cdr.getDoc(session, docId, 'N')
     if oldDoc.startswith("<Errors"):
-        return "<error>Unable to retrieve %s" % CDRID
+        return "<error>Unable to retrieve %s - %s</error>" % (CDRID,oldDoc)
     oldDoc = cdr.getDoc(session, docId, 'N',getObject=1)
     dom = xml.dom.minidom.parseString(oldDoc.xml)
     preferredName = getPreferredName(dom)
     return preferredName
 
+class docConceptPair:
+    def __init__(self,doc_id,concept,updateDef):
+        self.doc_id = doc_id
+        self.concept = concept
+        self.updateDef = updateDef
+
+docConceptPairs = []
+
+def getThingsToUpdate(isDrugUpdate,excelSSName):
+    if isDrugUpdate:
+        #first, get a list of all the drug/agent concept codes
+        query="""SELECT distinct qt.doc_id,qt.value
+                   FROM query_term qt
+                   JOIN query_term semantic
+                     ON semantic.doc_id = qt.doc_id
+                  WHERE qt.path = '/Term/OtherName/SourceInformation/VocabularySource/SourceTermId'
+                    AND semantic.path = '/Term/SemanticType/@cdr:ref'
+                    AND semantic.int_val = 256166
+               ORDER BY qt.doc_id"""
+
+        #----------------------------------------------------------------------
+        # Submit the query to the database.
+        #----------------------------------------------------------------------
+        try:
+            conn = cdrdb.connect('CdrGuest')
+            cursor = conn.cursor()
+            cursor.execute(query,timeout=300)
+            rows = cursor.fetchall()
+        except cdrdb.Error, info:
+            cdrcgi.bail('Failure retrieving Summary documents: %s' % info[1][0])
+             
+        if not rows:
+            cdrcgi.bail('No Records Found for Selection')
+
+        cdridsToSkipDef = []
+        updateDef = 1
+
+        #get a list of cdrid's that won't have their definition updated
+        if (len(excelSSName) > 3 ):
+            if not os.path.exists(excelSSName):
+                cdrcgi.bail('Unable to open %s on the server.' % excelSSName )
+            book = ExcelReader.Workbook(excelSSName)
+            sheet = book[0]
+            for row in sheet.rows:
+                cell = row[0]
+                rawValue = cell.val
+                cdridsToSkipDef.append(rawValue)
+     
+        for doc_id,value in rows:
+            value = value.strip()
+            if doc_id in cdridsToSkipDef:
+                updateDef = 0
+            else:
+                updateDef = 1
+            if value[0] == 'C':
+                docConceptPairs.append(docConceptPair(doc_id,value,updateDef))
+    # disease terms
+    else:
+        #get a list of cdrid's and NCITConceptIDs
+        if (len(excelSSName) > 3 ):
+            if not os.path.exists(excelSSName):
+                cdrcgi.bail('Unable to open %s on the server.' % excelSSName )
+            book = ExcelReader.Workbook(excelSSName)
+            sheet = book[0]
+            bRow1 = 1
+            for row in sheet.rows:
+                # skip the first row
+                if bRow1 == 0:
+                    cell = row[0]
+                    ncitCode = cell.val
+                    cell = row[1]
+                    doc_id = cell.val
+                    doc_id = cdr.exNormalize(doc_id)[1]
+                    docConceptPairs.append(docConceptPair(doc_id,ncitCode,1))
+                bRow1 = 0
+
+def updateAllTerms(job,session,excelNoDefFile,excelOutputFile,doUpdate,drugTerms):
+    getThingsToUpdate(drugTerms,excelNoDefFile)
+
+    wb = ExcelWriter.Workbook()
+    b = ExcelWriter.Border()
+    borders = ExcelWriter.Borders(b, b, b, b)
+    font = ExcelWriter.Font(name = 'Times New Roman', size = 10)
+    align = ExcelWriter.Alignment('Left', 'Top', wrap = True)
+    style1 = wb.addStyle(alignment = align, font = font, borders = borders)
+    wsName = "Update NCIT"
+    if drugTerms == 1:
+        wsName += " Drug Terms"
+    else:
+        wsName += " Disease Terms"
+    ws = wb.addWorksheet(wsName, style1, 40, 1)
+
+    ws.addCol( 1, 232.5)
+    ws.addCol( 2, 100)
+    ws.addCol( 3, 127.5)
+
+# Set up the title and header cells in the spreadsheet's top rows.
+    font = ExcelWriter.Font(name = 'Times New Roman', bold = True, size = 10)
+    align = ExcelWriter.Alignment('Center', 'Center', wrap = True)
+    interior = ExcelWriter.Interior('#CCFFCC')
+    style3 = wb.addStyle(alignment = align, font = font, borders = borders,
+                         interior = interior)
+    headings = (
+        'Concept Code',
+        'CDRID',
+        'Results'
+        )
+    row = ws.addRow(1, style3, 40)
+    cellName = "Update NCIT"
+    if drugTerms == 1:
+        cellName += " Drug Terms"
+    else:
+        cellName += " Disease Terms"
+    if doUpdate == 0:
+        cellName += " (See what will change)"
+    row.addCell(1, cellName, mergeAcross = len(headings) - 1)
+    row = ws.addRow(2, style3, 40)
+    for i in range(len(headings)):
+        row.addCell(i + 1, headings[i])
+
+    rowNum = 2        
+    
+    itemCnt = 0
+    for docConceptPair in docConceptPairs:
+        row = ws.addRow(rowNum, style1, 40)
+        rowNum += 1
+        result = updateTerm(session,docConceptPair.doc_id,docConceptPair.concept,doUpdate=doUpdate,
+                   doUpdateDefinition=docConceptPair.updateDef,doImportTerms=1,drugTerm=drugTerms)
+        itemCnt += 1
+        if doUpdate == 0:
+            msg = "Checked "
+        else:
+            msg = "Updated "
+        msg += "%d of %d terms" %(itemCnt,len(docConceptPairs))
+        job.setProgressMsg(msg)
+        row.addCell(1, docConceptPair.concept)
+        row.addCell(2, docConceptPair.doc_id)
+        row.addCell(3, result)
+
+    fobj = file(excelOutputFile, "wb")
+    wb.write(fobj, asXls = True, big = True)
+    fobj.close()
+
 #----------------------------------------------------------------------
 # Update an existing concept\term
 #----------------------------------------------------------------------
-def updateTerm(session,CDRID,conceptCode,doUpdate=0):
+def updateTerm(session,CDRID,conceptCode,doUpdate=0,doUpdateDefinition=1,doImportTerms=1,drugTerm=1):
     global bChanged
     global err
     global changes
     bChanged = 0
+    err = ""
+    changes = ''
 
     docId = cdr.normalize(CDRID)
     cdr.unlock(session,docId)
-
-    semanticType = getCDRSemanticType(session,CDRID)
-    if (semanticType != """Drug/agent"""):
-        return """<error>Semantic Type is %s. The importing only works for Drug/agent""" % semanticType
+    
+    if drugTerm == 1:
+        semanticType = getCDRSemanticType(session,CDRID)
+        if (semanticType != """Drug/agent"""):
+            return """<error>Semantic Type is %s. The importing only works for Drug/agent</error>""" % semanticType
 
     #conn = connectToDB()
     if len(err) > 1:
         return err
     oldDoc = cdr.getDoc(session, docId, 'Y')
     if oldDoc.startswith("<Errors"):
-        return "<error>Unable to retrieve %s" % CDRID
+        return "<error>Unable to retrieve %s - %s, session = %s</error>" % (CDRID,oldDoc,session)
     cdr.unlock(session,docId)
     oldDoc = cdr.getDoc(session, docId, 'Y',getObject=1)
 
@@ -535,23 +709,28 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0):
 
     dom = xml.dom.minidom.parseString(oldDoc.xml)
     # update the definition, if there is one.
-    for definition in concept.definitions:
-        if definition.source == 'NCI':
-            updateDefinition(dom,definition)
-            break
+    if doUpdateDefinition == 1:
+        for definition in concept.definitions:
+            if definition.source == 'NCI':
+                updateDefinition(dom,definition)
+                break
 
-    # fetch the other names
-    otherNames = getOtherNames(dom)
-    for syn in concept.fullSyn:
-        bfound = 0
-        for otherName in otherNames:
-            if syn.termName == otherName.termName:
-                if syn.mappedTermGroup == otherName.nameType:
-                    bfound = 1
-                        
-        # Other Name not found, add it
-        if bfound == 0:                
-            addOtherName(dom,syn,conceptCode)
+    if doImportTerms == 1:
+        # fetch the other names
+        otherNames = getOtherNames(dom)
+        for syn in concept.fullSyn:
+            bfound = 0
+            for otherName in otherNames:
+                if syn.termName == otherName.termName:
+                    if syn.mappedTermGroup == otherName.nameType:
+                        bfound = 1
+                            
+            # Other Name not found, add it
+            if bfound == 0:
+                cdrPreferredName = ''
+                if drugTerm != 1:
+                    cdrPreferredName = getCDRPreferredName(session,CDRID)
+                addOtherName(dom,syn,conceptCode,drugTerm,cdrPreferredName)
 
     #set the TermStatus to Unreviewed, if a change was made
     if bChanged == 1:
@@ -564,18 +743,18 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0):
             resp = cdr.repDoc(session, doc = strDoc, val = 'Y', ver = 'Y', verPublishable = 'N', showWarnings = 1)
             cdr.unlock(session,docId)
             if not resp[0]:
-                return "<error>Failure adding concept %s: %s" % (updateCDRID, cdr.checkErr(resp[1]) ) 
+                return "<error>Failure adding concept %s: %s</error>" % (updateCDRID, cdr.checkErr(resp[1]) ) 
                             
-            return "Citation %s updated. %s" % (CDRID,changes)
-        return "Citation %s will change. %s" % (CDRID,changes)
+            return "Term %s updated. %s" % (CDRID,changes)
+        return "Term %s will change. %s" % (CDRID,changes)
     else:
         cdr.unlock(session,docId)
-        return "No updates needed for citation %s." % CDRID
+        return "No updates needed for term %s." % CDRID
 
 #----------------------------------------------------------------------
 # Add a new Term
 #----------------------------------------------------------------------
-def addNewTerm(session,conceptCode):
+def addNewTerm(session,conceptCode,updateDefinition=1,importTerms=1):
     #conn = connectToDB()
     if len(err) > 1:
         return err
@@ -583,26 +762,30 @@ def addNewTerm(session,conceptCode):
     if len(err) > 1:
         return err
     if docId:
-        return "<error>Concept has already been imported as CDR%010d" % docId
+        return "<error>Concept has already been imported as CDR%010d</error>" % docId
     doc = u"""\
             <Term xmlns:cdr='cips.nci.nih.gov/cdr'>
            <PreferredName>%s</PreferredName>
            """ % fix(concept.preferredName)
-    for syn in concept.fullSyn:
-        if syn.termSource == 'NCI':
-            code = syn.termGroup == 'PT' and conceptCode or None
-            termType = mapType(syn.termGroup)
-            doc += makeOtherName(syn.termName, termType, syn.termGroup,
-                                     code)
-    for indCode in concept.indCodes:
-        doc += makeOtherName(indCode, 'IND code', 'IND_Code')
-    for nscCode in concept.nscCodes:
-        doc += makeOtherName(nscCode, 'NSC code', 'NSC_Code')
-    for casCode in concept.casCodes:
-        doc += makeOtherName(casCode, 'CAS Registry name', 'CAS_Registry')
-    for definition in concept.definitions:
-        if definition.source == 'NCI':
-            doc += definition.toXml()
+    if importTerms == 1:
+        for syn in concept.fullSyn:
+            if syn.termSource == 'NCI':
+                code = syn.termGroup == 'PT' and conceptCode or None
+                termType = mapType(syn.termGroup)
+                doc += makeOtherName(syn.termName, termType, syn.termGroup,
+                                         code)
+        for indCode in concept.indCodes:
+            doc += makeOtherName(indCode, 'IND code', 'IND_Code')
+        for nscCode in concept.nscCodes:
+            doc += makeOtherName(nscCode, 'NSC code', 'NSC_Code')
+        for casCode in concept.casCodes:
+            doc += makeOtherName(casCode, 'CAS Registry name', 'CAS_Registry')
+            
+    if updateDefinition == 1:
+        for definition in concept.definitions:
+            if definition.source == 'NCI':
+                doc += definition.toXml()
+                
     doc += u"""\
      <TermType>
       <TermTypeName>Index term</TermTypeName>
