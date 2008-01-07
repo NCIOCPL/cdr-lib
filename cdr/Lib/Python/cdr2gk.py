@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.16 2008-01-07 20:18:29 bkline Exp $
+# $Id: cdr2gk.py,v 1.17 2008-01-07 20:42:25 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.16  2008/01/07 20:18:29  bkline
+# Cleaned up character-set handling and parameter names in the logging code.
+#
 # Revision 1.15  2007/08/21 17:24:58  venglisc
 # Changing the default GateKeeper server.
 #
@@ -22,7 +25,7 @@
 # Enhanced retry mechanism.
 #
 # Revision 1.10  2007/05/16 16:02:21  bkline
-# Fixed sendRequet() so it uses the current value of the module-level
+# Fixed sendRequest() so it uses the current value of the module-level
 # host attribute instead of the value the attribute had when the
 # module was loaded when the caller doesn't explicitly pass a value
 # for the function's host parameter.
@@ -62,6 +65,7 @@ import httplib, re, sys, time, xml.dom.minidom, socket, string
 #----------------------------------------------------------------------
 # Module data.
 #----------------------------------------------------------------------
+LOGFILE             = "d:/cdr/log/cdr2gk.log"
 MAX_RETRIES         = 10
 RETRY_MULTIPLIER    = 1.0
 debuglevel          = 0
@@ -72,7 +76,7 @@ port                = 80
 soapNamespace       = "http://schemas.xmlsoap.org/soap/envelope/"
 gatekeeperNamespace = "http://www.cancer.gov/webservices/"
 application         = "/GateKeeper/GateKeeper.asmx"
-headers             = {
+HEADERS             = {
     'Content-type': 'text/xml; charset="utf-8"',
     'SOAPAction'  : 'http://www.cancer.gov/webservices/Request'
 }
@@ -514,12 +518,12 @@ def logString(commandType, value, forceLog = False):
     if forceLog or debuglevel:
         if type(value) is unicode:
             value = value.encode('utf-8')
-        f = open("d:/cdr/log/cdr2gk.log", "ab")
+        f = open(LOGFILE, "ab")
         f.write("==== %s %s (host=%s) ====\n%s\n" % 
                 (time.ctime(), str(commandType), str(host),
-                 re.sub("\r", "", value)))
+                 [re.sub("\r", "", value)]))
 
-def sendRequest(body, app = application, host = None, headers = headers):
+def sendRequest(body, app = application, host = None, headers = HEADERS):
 
     # If host is not explicitly specified by the caller, use the
     # module's global value (yes, it was a mistake to use the same
@@ -556,8 +560,6 @@ def sendRequest(body, app = application, host = None, headers = headers):
             # Submit the request and get the headers for the response.
             conn.request("POST", app, request, headers)
             response = conn.getresponse()
-            #sys.stderr.write("got response from socket %s\n" %
-            #                 repr(conn.sock))
 
             # Skip past any "Continue" responses.
             while response.status == 100:
@@ -567,11 +569,9 @@ def sendRequest(body, app = application, host = None, headers = headers):
             # We can stop trying now, we got it.
             tries = 0
             
-        except:
-            if debuglevel:
-                sys.stderr.write("caught http exception; trying again...\n")
-            if not tries:
-                raise
+        except Exception, e:
+            import cdr
+            cdr.logwrite("caught http exception: %s" % e, LOGFILE, tback = True)
             waitSecs = (MAX_RETRIES + 1 - tries) * RETRY_MULTIPLIER
             logString("RETRY",
                       "%d retries left; waiting %f seconds" % (tries,
@@ -582,7 +582,8 @@ def sendRequest(body, app = application, host = None, headers = headers):
 
     # Check for failure.
     if not response:
-        raise StandardError("tried to connect 3 times unsuccessfully")
+        raise StandardError("tried to connect %d times unsuccessfully" %
+                            MAX_RETRIES)
     
     if response.status != 200:
         resp = response.read()
