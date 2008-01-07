@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.15 2007-08-21 17:24:58 venglisc Exp $
+# $Id: cdr2gk.py,v 1.16 2008-01-07 20:18:29 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.15  2007/08/21 17:24:58  venglisc
+# Changing the default GateKeeper server.
+#
 # Revision 1.14  2007/07/09 17:57:23  bkline
 # Used another (more generic) method of forcing the logging of retries,
 # and completed an unfinished call to logString() elsewhere.
@@ -64,16 +67,13 @@ RETRY_MULTIPLIER    = 1.0
 debuglevel          = 0
 localhost           = socket.gethostname()
 host                = "gatekeeper2.cancer.gov"
-testhost            = "test4.cancer.gov"
-testhost            = "gkdev.cancer.gov"
-testhost            = "gkint.cancer.gov"
+testhost            = "test5.cancer.gov"
 port                = 80
 soapNamespace       = "http://schemas.xmlsoap.org/soap/envelope/"
 gatekeeperNamespace = "http://www.cancer.gov/webservices/"
 application         = "/GateKeeper/GateKeeper.asmx"
 headers             = {
     'Content-type': 'text/xml; charset="utf-8"',
-#    'SOAPAction'  : 'http://gatekeeper.cancer.gov/Request'
     'SOAPAction'  : 'http://www.cancer.gov/webservices/Request'
 }
 if string.upper(localhost) in ("MAHLER", "FRANCK"):
@@ -493,11 +493,31 @@ def extractXmlResult(bodyNode):
             return xmlString.replace("<![CDATA[", "").replace( "]]>", "")
     return None
 
-def logString(type, str, forceLog = False):
+def logString(commandType, value, forceLog = False):
+    # We are forcing the commandType and host string to ASCII strings
+    # because otherwise if either is a Unicode string (which the host
+    # value will be if it comes from the database, having been explicitly
+    # overridden in the publishing interface), then the pattern string
+    # into which the values are interpolated will be upgrade to a
+    # Unicode string and the value parameter, which is encoded as utf-8,
+    # will fail interpolation if it contains any non-ASCII characters.
+    # The alternate (less efficient, but somewhat cleaner) solution
+    # looks like this:
+    #
+    #   if type(value) is not unicode:
+    #       value = unicode(value, 'utf-8')
+    #   output = (u"==== %s %s (host=%s) ====\n%s\n" %
+    #             (time.ctime(), commandType, host, re.sub("\r", "", value)))
+    #   f.write(output.encode('utf-8')
+    #
+    # which takes everything to Unicode and then back again to utf-8.
     if forceLog or debuglevel:
+        if type(value) is unicode:
+            value = value.encode('utf-8')
         f = open("d:/cdr/log/cdr2gk.log", "ab")
         f.write("==== %s %s (host=%s) ====\n%s\n" % 
-                (time.ctime(), type, host, re.sub("\r", "", str)))
+                (time.ctime(), str(commandType), str(host),
+                 re.sub("\r", "", value)))
 
 def sendRequest(body, app = application, host = None, headers = headers):
 
