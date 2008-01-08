@@ -12,10 +12,14 @@
 # $Locker:  $
 # 
 # $Source: /usr/local/cvsroot/production/prod/bin/get_stats.py,v $
-# $Revision: 1.2 $
+# $Revision: 1.3 $
 #
 # History:
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2007/09/07 16:17:53  venglisc
+# Replaced FTP process with Python ftplib commands.  Adjusting for more
+# frequent publishing.
+#
 # Revision 1.1  2006/03/20 17:51:19  venglisc
 # Initial copy of the script retrieving the statistics file for PDQ updates
 # and reformatting its output to be included in the vendor notification
@@ -37,8 +41,8 @@ FTPPWD    = 'mars56'
 
 now     = time.time()
 lastWk  = time.time() - 5 * 24 * 60 * 60
-relDate = time.strftime("%Y%W", time.localtime(lastWk))
-relDateHdr = time.strftime("Week %W, %Y", time.localtime(lastWk))
+relDate = time.strftime("%Y%V", time.localtime(lastWk))
+relDateHdr = time.strftime("Week %V, %Y", time.localtime(lastWk))
 rchanges= '%s.changes'     % relDate
 lchanges= '%s_changes.txt' % relDate
 
