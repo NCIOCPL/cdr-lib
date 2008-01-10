@@ -1,11 +1,14 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
 #
-# $Id: CgiQuery.py,v 1.7 2007-11-02 01:28:08 ameyer Exp $
+# $Id: CgiQuery.py,v 1.8 2008-01-10 22:33:15 ameyer Exp $
 #
 # Base class for CGI database query interface.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.7  2007/11/02 01:28:08  ameyer
+# Added summary count at the bottom of the output display.
+#
 # Revision 1.6  2005/01/24 23:03:22  bkline
 # Fixed quotes in queries.
 #
@@ -28,11 +31,6 @@
 #----------------------------------------------------------------------
 import cgi, re, sys, time, cdrdb
 
-unicodePattern = re.compile(u"([\u0080-\uffff])")
-def encode(unicodeString):
-    return re.sub(unicodePattern,
-                  lambda match: u"&#x%X;" % ord(match.group(0)[0]),
-                  unicodeString).encode('ascii')
 class CgiQuery:
 
     def __init__(self, conn, system, script, timeout = 30):
@@ -48,7 +46,6 @@ class CgiQuery:
         self.newQuery      = fields and fields.getvalue("newQuery") or ""
         self.queryText     = fields and fields.getvalue("queryText") or ""
         self.results       = ""
-        self.decodePattern = re.compile(u"([\u0080-\uffff])")
 
     def run(self):
         if   self.doWhat == "addQuery"  and self.newName:   self.addQuery()
@@ -59,21 +56,18 @@ class CgiQuery:
 
     def sendPage(self, page):
         "Display the specified page and exit."
-        page = re.sub(self.decodePattern,
-                      lambda match: u"&#x%X;" % ord(match.group(0)[0]),
-                      page)
         print """\
-Content-type: text/html
+Content-type: text/html; charset=utf-8
 Cache-control: no-cache, must-revalidate
-
-%s""" % page.encode('latin-1')
+"""
+        print page.encode('utf-8')
         sys.exit(0)
 
     def bail(self, message):
         "Display an error message and exit."
         sysName = cgi.escape(self.system)
         message = cgi.escape(message)
-        self.sendPage("""\
+        self.sendPage(u"""\
 <html>
  <head>
   <title>%s query failure</title>
@@ -88,36 +82,31 @@ Cache-control: no-cache, must-revalidate
     def getQueriesHtml(self, queryKeys):
         "Create <option> elements for the cached queries."
         current = self.queryName and cgi.escape(self.queryName, 1) or None
-        html = ""
+        html = [u""]
         for q in queryKeys:
-            sel = q == current and " SELECTED" or ""
-            html += """<option value = "%s"%s>%s</option>\n""" % (q, sel, q)
-        return html
+            sel = q == current and u" SELECTED" or u""
+            html.append(u"""<option value = "%s"%s>%s</option>\n""" %
+                        (q, sel, q))
+        return u"".join(html)
 
     def getQueriesDict(self, queries):
-        html = ""
+        html = [u""]
         for q in queries.keys():
-            key = q.replace("\r", "").replace("\n", "\\n")
+            key = q.replace(u"\r", u"").replace(u"\n", u"\\n")
             if queries[q]:
-                val = queries[q].replace("\r", "").replace("\n", "\\n")
+                val = queries[q].replace(u"\r", u"").replace(u"\n", u"\\n")
             else:
-                val = ""
-            html += 'queries["%s"] = "%s";\n' % (key, val.replace('"', '\\"'))
-        return html
-
-    def dbCleanString(self, str):
-        "Default implementation.  Override as appropriate."
-        return str.replace("'", "''").replace("\\", "\\\\")
+                val = u""
+            html.append(u'queries["%s"] = "%s";\n' %
+                        (key, val.replace(u'"', u'\\"')))
+        return u"".join(html)
 
     def addQuery(self):
         "Default implementation.  Override as appropriate."
         try:
-            name = self.dbCleanString(self.newName)
-            val = self.dbCleanString(self.newQuery)
-            q = "INSERT INTO query(name, value) VALUES('%s', '%s')" % (name,
-                                                                       val)
             cursor = self.conn.cursor()
-            cursor.execute(q)
+            cursor.execute("INSERT INTO query (name, value) VALUES (?, ?)",
+                           (self.newName, self.newQuery))
             self.conn.commit()
             self.queryName = self.newName
             self.queryText = self.newQuery
@@ -127,22 +116,18 @@ Cache-control: no-cache, must-revalidate
     def saveQuery(self):
         "Default implementation.  Override as appropriate."
         try:
-            name = self.dbCleanString(self.queryName)
-            val = self.dbCleanString(self.queryText)
-            q = "UPDATE query SET value = '%s' WHERE name = '%s'" % (val, name)
             cursor = self.conn.cursor()
-            cursor.execute(q)
+            cursor.execute("UPDATE query SET value = ? WHERE name = ?",
+                           (self.queryName, self.queryText))
             self.conn.commit()
         except StandardError, info:
-            self.bail("Failure adding query: %s" % cgi.escape(str(info)))
+            self.bail("Failure saving query: %s" % cgi.escape(str(info)))
 
     def delQuery(self):
         "Default implementation.  Override as appropriate."
         try:
-            name = self.dbCleanString(self.queryName)
-            q = "DELETE FROM query WHERE name = '%s'" % name
             cursor = self.conn.cursor()
-            cursor.execute(q)
+            cursor.execute("DELETE FROM query WHERE name = ?", self.queryName)
             self.conn.commit()
         except StandardError, info:
             self.bail("Failure deleting query: %s" % cgi.escape(str(info)))
@@ -163,35 +148,37 @@ Cache-control: no-cache, must-revalidate
     def runQuery(self):
         try:
             cursor = self.conn.cursor()
+            start = time.time()
             cursor.execute(self.queryText, timeout = self.timeout)
-            html = "<table border = '0' cellspacing = '1' cellpadding = '1'>"
-            html += "<tr>\n"
+            elapsed = time.time() - start
+            html = [u"<table border = '0' cellspacing = '1' cellpadding = '1'>"]
+            html.append(u"<tr>\n")
             if not cursor.description:
                 self.bail('No query results')
             for col in cursor.description:
-                col = col and cgi.escape(col[0]) or "&nbsp;"
-                html += "<th>%s</th>\n" % col
-            html += "</tr>\n"
+                col = col and cgi.escape(col[0]) or u"&nbsp;"
+                html.append(u"<th>%s</th>\n" % col)
+            html.append(u"</tr>\n")
             row = cursor.fetchone()
-            classes = ('odd', 'even')
+            classes = (u'odd', u'even')
             rowNum = 1
             while row:
                 cls = classes[rowNum % 2]
                 rowNum += 1
-                html += "<tr>\n"
+                html.append(u"<tr>\n")
                 for col in row:
-                    if type(col) == type(u""):
-                        col = encode(col)
-                    val = col and str(col) or "&nbsp;"
-                    html += "<td valign='top' class='%s'>%s</td>\n" % (cls,
-                                                                       val)
-                html += "</tr>\n"
+                    val = col and cgi.escape(u"%s" % col) or u"&nbsp;"
+                    html.append(u"<td valign='top' class='%s'>%s</td>\n" %
+                                (cls, val))
+                html.append(u"</tr>\n")
                 row = cursor.fetchone()
-            html += \
-       "<tr><th class='total' colspan='99'>%d row(s) retrieved</th></tr>\n" % \
-                    rowNum
-            html += "</table>\n"
-            self.results = html
+            html.append(u"""\
+  <tr>
+   <th class='total' colspan='99'>%d row(s) retrieved (%.3f seconds)</th>
+  </tr>
+""" % (rowNum - 1, elapsed))
+            html.append(u"</table>\n")
+            self.results = u"".join(html)
         except cdrdb.Error, info:
             self.bail("Failure executing query:\n%s\n%s" % (
                 cgi.escape(self.queryText),
@@ -209,11 +196,12 @@ Cache-control: no-cache, must-revalidate
             queryName = queryKeys[0]
             if queries.has_key(queryName):
                 queryText = cgi.escape(queries[queryName])
-        html = """\
+        html = u"""\
 <html>
  <head>
   <title>%s Query Interface</title>
   <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
   <style type = 'text/css'>
    th { background: olive; color: white; }
    th.total { background: olive; color: white; font-weight: bold; }
@@ -320,10 +308,12 @@ Cache-control: no-cache, must-revalidate
   </form>
 %s
  </body>
+ <!-- Don't know why this is down here.
  <HEAD>
   <META HTTP-EQUIV="PRAGMA" CONTENT="NO-CACHE">
  </HEAD>
+ -->
 </html>
 """ % (self.system, queriesDict, self.script, queriesHtml,
-       self.queryText.replace("\r", ""), time.clock(), self.results)
+       self.queryText.replace(u"\r", u""), time.clock(), self.results)
         return html
