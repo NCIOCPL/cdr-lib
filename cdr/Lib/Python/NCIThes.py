@@ -73,6 +73,14 @@ class Definition:
             self.source = match.group(2)
             self.text   = match.group(4)
         self.removeTrailingParenText()
+        self.removePrecedingNCIText()
+
+    # remove the opening text 'NCI|' , if it exists
+    def removePrecedingNCIText(self):
+        self.text = self.text.strip()
+        if self.text.startswith("NCI|"):
+            self.text = self.text[4:]
+        return        
 
     # remove the trailing paren text like (NCI04), if it exists
     def removeTrailingParenText(self):
@@ -425,7 +433,7 @@ def updateDefinition(dom,definition):
                         if n.nodeName == 'DefinitionText':
                             for nn in n.childNodes:
                                 if nn.nodeType == xml.dom.minidom.Node.TEXT_NODE:
-                                    if nn.nodeValue != definition.text:
+                                    if nn.nodeValue.strip() != definition.text:
                                         bChanged = 1
                                         changes += ' Definition updated.'
                                         nn.nodeValue = definition.text
