@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.39 2007-11-05 17:27:58 bkline Exp $
+# $Id: CdrLongReports.py,v 1.40 2008-01-14 18:31:26 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.39  2007/11/05 17:27:58  bkline
+# Changes to Protocol Status report to track modifications to the structure
+# of the protocol processing information block in the schema.
+#
 # Revision 1.38  2007/10/03 12:33:49  bkline
 # Fixed a bug in adjusting the starting year for fiscal year reports.
 #
@@ -2669,8 +2673,12 @@ class ProtocolProcessingStatusReport:
         i = 0
         msg = ''
         for cdrId, activeStatus in rows:
-            docXml   = self.getDocXml(cdrId)
-            dom      = xml.dom.minidom.parseString(docXml.encode('utf-8'))
+            docXml   = self.getDocXml(cdrId).encode('utf-8')
+            try:
+                dom  = xml.dom.minidom.parseString(docXml)
+            except Exception, e:
+                cdr.logwrite("failure parsing CDR%d: %s" % (cdrId, e), LOGFILE)
+                continue
             docElem  = dom.documentElement
             pub      = cdrId in publishableDocs
             protocol = self.InScopeProtocol(self, cdrId, docElem, pub)
@@ -2741,8 +2749,13 @@ class ProtocolProcessingStatusReport:
         self.job.setProgressMsg(self.msg)
         msg = ''
         for cdrId in ctGovProtocolIds:
-            docXml  = self.getDocXml(cdrId)
-            dom     = xml.dom.minidom.parseString(docXml.encode('utf-8'))
+            docXml  = self.getDocXml(cdrId).encode('utf-8')
+            try:
+                dom = xml.dom.minidom.parseString(docXml)
+            except Exception, e:
+                cdr.logwrite("failure parsing CDR%d: %s" % (cdrId, e), LOGFILE)
+                continue
+                
             docElem = dom.documentElement
             protocol = self.CTGovProtocol(self, cdrId, docElem)
             if 'WITHDRAWN' not in protocol.statusKeys:
@@ -2776,8 +2789,12 @@ class ProtocolProcessingStatusReport:
         self.job.setProgressMsg(self.msg)
         msg = ''
         for cdrId in outOfScopeProtocolIds:
-            docXml  = self.getDocXml(cdrId)
-            dom     = xml.dom.minidom.parseString(docXml.encode('utf-8'))
+            docXml  = self.getDocXml(cdrId).encode('utf-8')
+            try:
+                dom = xml.dom.minidom.parseString(docXml)
+            except Exception, e:
+                cdr.logwrite("failure parsing CDR%d: %s" % (cdrId, e), LOGFILE)
+                continue
             docElem = dom.documentElement
             protocol = self.OutOfScopeProtocol(self, cdrId, docElem)
             rowOutOfScope += self.addOutOfScopeProtocol(wsOutOfScope,
