@@ -1,11 +1,16 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
 #
-# $Id: CgiQuery.py,v 1.8 2008-01-10 22:33:15 ameyer Exp $
+# $Id: CgiQuery.py,v 1.9 2008-01-15 22:17:54 ameyer Exp $
 #
 # Base class for CGI database query interface.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.8  2008/01/10 22:33:15  ameyer
+# Bob changed the output format to send utf-8 to the browser instead of
+# Latin-1.  This version incorporates Bob's changes and removes the older
+# encoding logic that he commented out.
+#
 # Revision 1.7  2007/11/02 01:28:08  ameyer
 # Added summary count at the bottom of the output display.
 #
@@ -118,7 +123,7 @@ Cache-control: no-cache, must-revalidate
         try:
             cursor = self.conn.cursor()
             cursor.execute("UPDATE query SET value = ? WHERE name = ?",
-                           (self.queryName, self.queryText))
+                           (self.queryText, self.queryName))
             self.conn.commit()
         except StandardError, info:
             self.bail("Failure saving query: %s" % cgi.escape(str(info)))
