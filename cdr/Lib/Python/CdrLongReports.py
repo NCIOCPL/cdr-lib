@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.40 2008-01-14 18:31:26 bkline Exp $
+# $Id: CdrLongReports.py,v 1.41 2008-01-16 12:10:53 kidderc Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.40  2008/01/14 18:31:26  bkline
+# Modified protocol processing report to skip malformed documents.
+#
 # Revision 1.39  2007/11/05 17:27:58  bkline
 # Changes to Protocol Status report to track modifications to the structure
 # of the protocol processing information block in the schema.
@@ -143,7 +146,7 @@
 # by CGI.
 #
 #----------------------------------------------------------------------
-import cdr, cdrdb, xml.dom.minidom, time, cdrcgi, cgi, sys, socket, cdrbatch
+import cdr, cdrdb, xml.dom.minidom, time, cdrcgi, cgi, sys, socket, cdrbatch, NCIThes
 import string, re, urlparse, httplib, traceback, xml.sax.saxutils
 import ExcelWriter
 
@@ -824,6 +827,39 @@ The Outcome Measures Coding report you requested can be viewed at
     job.setProgressMsg(msg)
     job.setStatus(cdrbatch.ST_COMPLETED)
     cdr.logwrite("Completed report", LOGFILE)
+
+def NCITTermUpdate(job):
+    doDBUpdate  = job.getParm('doDBUpdate') or '0'
+    excelNoDefFile  = job.getParm('excelFile') or ''
+    drug  = job.getParm('drug') or '1'
+    session  = job.getParm('session') or ''
+
+    doDBUpdate = int(doDBUpdate)
+    drug = int(drug)
+
+    name = time.strftime('/ImportResults-%Y%m%d%H%M%S.xls')
+    fullname = REPORTS_BASE + name
+    excelOutputFile = fullname
+
+    NCIThes.updateAllTerms(job=job,session=session,excelNoDefFile=excelNoDefFile,
+                           excelOutputFile=excelOutputFile,doUpdate=doDBUpdate,
+                           drugTerms=drug)
+
+    cdr.logwrite("saving %s" % excelOutputFile, LOGFILE)
+    url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+                                                        cdrcgi.BASE, name)
+    cdr.logwrite("url: %s" % url, LOGFILE)
+    msg = "<br>Report available at <a href='%s'><u>%s</u></a>." % (url, url)
+    
+    # Tell the user where to find it.
+    body = """\
+The NCIT Term Update report is available at
+%s.
+""" % url
+    sendMail(job, "Report results", body)
+    job.setProgressMsg(msg)
+    job.setStatus(cdrbatch.ST_COMPLETED)
+    cdr.logwrite("Completed report", LOGFILE)    
 
 #----------------------------------------------------------------------
 # Generate a spreadsheet on selected protocols for the Office of
@@ -3389,6 +3425,10 @@ if __name__ == "__main__":
             outcomeMeasuresCodingReport(job)
         elif jobName == "Spanish Glossary Terms by Status":
             SpanishGlossaryTermsByStatus(job).run()
+        elif jobName == "Update all Drug/Agent Terms from NCI Thesaurus":
+            NCITTermUpdate(job)
+        elif jobName == "Update all Disease Terms from NCI Thesaurus":
+            NCITTermUpdate(job)
         # That's all we know how to do right now.
         else:
             job.fail("CdrLongReports: unknown job name '%s'" % jobName,
