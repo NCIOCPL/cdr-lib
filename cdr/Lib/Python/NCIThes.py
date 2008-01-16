@@ -729,7 +729,7 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0,doUpdateDefinition=1,doImpor
         for syn in concept.fullSyn:
             bfound = 0
             for otherName in otherNames:
-                if syn.termName == otherName.termName:
+                if syn.termName.upper() == otherName.termName.upper():
                     if syn.mappedTermGroup == otherName.nameType:
                         bfound = 1
                             
