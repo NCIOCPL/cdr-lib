@@ -727,18 +727,19 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0,doUpdateDefinition=1,doImpor
         # fetch the other names
         otherNames = getOtherNames(dom)
         for syn in concept.fullSyn:
-            bfound = 0
-            for otherName in otherNames:
-                if syn.termName.upper() == otherName.termName.upper():
-                    if syn.mappedTermGroup == otherName.nameType:
-                        bfound = 1
-                            
-            # Other Name not found, add it
-            if bfound == 0:
-                cdrPreferredName = ''
-                if drugTerm != 1:
-                    cdrPreferredName = getCDRPreferredName(session,CDRID)
-                addOtherName(dom,syn,conceptCode,drugTerm,cdrPreferredName)
+            if syn.termSource != 'NCI-GLOSS':
+                bfound = 0
+                for otherName in otherNames:
+                    if syn.termName.upper() == otherName.termName.upper():
+                        if syn.mappedTermGroup == otherName.nameType:
+                            bfound = 1
+                                
+                # Other Name not found, add it
+                if bfound == 0:
+                    cdrPreferredName = ''
+                    if drugTerm != 1:
+                        cdrPreferredName = getCDRPreferredName(session,CDRID)
+                    addOtherName(dom,syn,conceptCode,drugTerm,cdrPreferredName)
 
     #set the TermStatus to Unreviewed, if a change was made
     if bChanged == 1:
