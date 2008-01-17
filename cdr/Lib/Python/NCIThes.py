@@ -749,7 +749,8 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0,doUpdateDefinition=1,doImpor
             
         if doUpdate:
             strDoc = str(oldDoc)
-            resp = cdr.repDoc(session, doc = strDoc, val = 'Y', ver = 'Y', verPublishable = 'N', showWarnings = 1)
+            updateComment = "Definition updated from NCI Thesaurus"
+            resp = cdr.repDoc(session, doc = strDoc, val = 'Y', ver = 'Y', verPublishable = 'N', showWarnings = 1, comment = updateComment)
             cdr.unlock(session,docId)
             if not resp[0]:
                 return "<error>Failure adding concept %s: %s</error>" % (updateCDRID, cdr.checkErr(resp[1]) ) 
