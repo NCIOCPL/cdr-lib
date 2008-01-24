@@ -108,7 +108,7 @@ class Definition:
   <DefinitionSource>
    <DefinitionSourceName>NCI Thesaurus</DefinitionSourceName>
   </DefinitionSource>
-  <ReviewStatus>Reviewed</ReviewStatus>
+  <ReviewStatus>Unreviewed</ReviewStatus>
  </Definition>
 """ % fix(self.text or u'')
 
@@ -133,7 +133,7 @@ class Definition:
         node.appendChild(child)
 
         child = dom.createElement('ReviewStatus')
-        text = dom.createTextNode('Reviewed')
+        text = dom.createTextNode('Unreviewed')
         child.appendChild(text)
         node.appendChild(child)     
         
@@ -425,9 +425,14 @@ def updateDefinition(dom,definition):
     global changes
     bFound = 0
     docElem = dom.documentElement
+    insertPosition = 0
     for node in docElem.childNodes:
         if node.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
-            if node.nodeName == 'Definition':
+            if node.nodeName == 'OtherName':
+                insertPosition = docElem.childNodes.index(node) + 1
+            elif node.nodeName == 'TermType':
+                insertPosition = docElem.childNodes.index(node)
+            elif node.nodeName == 'Definition':
                 for n in node.childNodes:
                     if n.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
                         if n.nodeName == 'DefinitionText':
@@ -448,8 +453,10 @@ def updateDefinition(dom,definition):
                                 
     # definition not found, need to add it
     if bFound == 0:
+        bChanged = 1
         changes += ' Definition added.'
-        docElem.appendChild(definition.toNode(dom))
+        #docElem.appendChild(definition.toNode(dom))
+        docElem.childNodes.insert(insertPosition,definition.toNode(dom))
 
 #----------------------------------------------------------------------
 # addOtherName
@@ -746,10 +753,10 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0,doUpdateDefinition=1,doImpor
         updateTermStatus(dom,'Unreviewed')
 
         oldDoc.xml = dom.toxml().encode('utf-8')
-            
+          
         if doUpdate:
             strDoc = str(oldDoc)
-            updateComment = "Definition updated from NCI Thesaurus"
+            updateComment = "NCI Thesaurus Update"
             resp = cdr.repDoc(session, doc = strDoc, val = 'Y', ver = 'Y', verPublishable = 'N', showWarnings = 1, comment = updateComment)
             cdr.unlock(session,docId)
             if not resp[0]:
