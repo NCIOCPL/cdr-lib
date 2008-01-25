@@ -417,6 +417,13 @@ def getSemanticType(dom):
 
     return ""
 
+def removeAllSpaces(strToRemove):
+    strRemoved = ''
+    for str in strToRemove.split(' '):
+        strRemoved += str
+    return strRemoved    
+
+
 #----------------------------------------------------------------------
 # update the definition
 #----------------------------------------------------------------------
@@ -438,7 +445,7 @@ def updateDefinition(dom,definition):
                         if n.nodeName == 'DefinitionText':
                             for nn in n.childNodes:
                                 if nn.nodeType == xml.dom.minidom.Node.TEXT_NODE:
-                                    if nn.nodeValue.strip() != definition.text:
+                                    if removeAllSpaces(nn.nodeValue.strip()) != removeAllSpaces(definition.text):
                                         bChanged = 1
                                         changes += ' Definition updated.'
                                         nn.nodeValue = definition.text
