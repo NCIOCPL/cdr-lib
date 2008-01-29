@@ -779,7 +779,10 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0,doUpdateDefinition=1,doImpor
 # Add a new Term
 #----------------------------------------------------------------------
 def addNewTerm(session,conceptCode,updateDefinition=1,importTerms=1):
-    #conn = connectToDB()
+    conn = connectToDB()
+    if len(err) > 1:
+        return err
+    concept = fetchConcept(conceptCode)
     if len(err) > 1:
         return err
     docId = findExistingConcept(conn,conceptCode)
