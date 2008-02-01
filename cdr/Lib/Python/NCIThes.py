@@ -704,9 +704,13 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0,doUpdateDefinition=1,doImpor
     global bChanged
     global err
     global changes
+    checkOut = 'N'
     bChanged = 0
     err = ""
     changes = ''
+
+    if doUpdate:
+        checkOut = 'Y'
 
     docId = cdr.normalize(CDRID)
     cdr.unlock(session,docId)
@@ -719,11 +723,11 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0,doUpdateDefinition=1,doImpor
     #conn = connectToDB()
     if len(err) > 1:
         return err
-    oldDoc = cdr.getDoc(session, docId, 'Y')
+    oldDoc = cdr.getDoc(session, docId, checkOut)
     if oldDoc.startswith("<Errors"):
         return "<error>Unable to retrieve %s - %s, session = %s</error>" % (CDRID,oldDoc,session)
     cdr.unlock(session,docId)
-    oldDoc = cdr.getDoc(session, docId, 'Y',getObject=1)
+    oldDoc = cdr.getDoc(session, docId, checkOut, getObject=1)
 
     concept = fetchConcept(conceptCode)
     if len(err) > 1:
