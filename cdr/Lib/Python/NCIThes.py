@@ -583,10 +583,10 @@ def getThingsToUpdate(isDrugUpdate,excelSSName):
             cursor.execute(query,timeout=300)
             rows = cursor.fetchall()
         except cdrdb.Error, info:
-            cdrcgi.bail('Failure retrieving Summary documents: %s' % info[1][0])
+            return 'Failure retrieving Summary documents: %s' % info[1][0]
              
         if not rows:
-            cdrcgi.bail('No Records Found for Selection')
+            return 'No Records Found for Selection'
 
         cdridsToSkipDef = []
         updateDef = 1
@@ -594,7 +594,7 @@ def getThingsToUpdate(isDrugUpdate,excelSSName):
         #get a list of cdrid's that won't have their definition updated
         if (len(excelSSName) > 3 ):
             if not os.path.exists(excelSSName):
-                cdrcgi.bail('Unable to open %s on the server.' % excelSSName )
+                return 'Unable to open %s on the server.' % excelSSName
             book = ExcelReader.Workbook(excelSSName)
             sheet = book[0]
             for row in sheet.rows:
@@ -629,9 +629,12 @@ def getThingsToUpdate(isDrugUpdate,excelSSName):
                     doc_id = cdr.exNormalize(doc_id)[1]
                     docConceptPairs.append(docConceptPair(doc_id,ncitCode,1))
                 bRow1 = 0
+    return ""
 
 def updateAllTerms(job,session,excelNoDefFile,excelOutputFile,doUpdate,drugTerms):
-    getThingsToUpdate(drugTerms,excelNoDefFile)
+    ret = getThingsToUpdate(drugTerms,excelNoDefFile)
+    if ret != "":
+        return ret
 
     wb = ExcelWriter.Workbook()
     b = ExcelWriter.Border()
@@ -708,6 +711,7 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0,doUpdateDefinition=1,doImpor
     bChanged = 0
     err = ""
     changes = ''
+    publishVer = 'N'
 
     if doUpdate:
         checkOut = 'Y'
@@ -719,6 +723,26 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0,doUpdateDefinition=1,doImpor
         semanticType = getCDRSemanticType(session,CDRID)
         if (semanticType != """Drug/agent"""):
             return """<error>Semantic Type is %s. The importing only works for Drug/agent</error>""" % semanticType
+    else:
+        query = """SELECT publishable
+                     FROM doc_version
+                    WHERE num = (SELECT max(num)
+                                   FROM doc_version
+                                  WHERE id = %s)
+                      AND id=%s""" % (CDRID,CDRID)
+        try:
+            conn = cdrdb.connect('CdrGuest')
+            cursor = conn.cursor()
+            cursor.execute(query,timeout=300)
+            rows = cursor.fetchall()
+        except cdrdb.Error, info:
+            return 'Failure retrieving Summary documents: %s' % info[1][0]
+             
+        if not rows:
+            return 'No Records Found for Selection'
+
+        for publishableVer in rows:
+            publishVer = publishableVer
 
     #conn = connectToDB()
     if len(err) > 1:
@@ -768,13 +792,13 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0,doUpdateDefinition=1,doImpor
         if doUpdate:
             strDoc = str(oldDoc)
             updateComment = "NCI Thesaurus Update"
-            resp = cdr.repDoc(session, doc = strDoc, val = 'Y', ver = 'Y', verPublishable = 'N', showWarnings = 1, comment = updateComment)
+            resp = cdr.repDoc(session, doc = strDoc, val = 'Y', ver = 'Y', verPublishable = publishVer, showWarnings = 1, comment = updateComment)
             cdr.unlock(session,docId)
             if not resp[0]:
                 return "<error>Failure adding concept %s: %s</error>" % (updateCDRID, cdr.checkErr(resp[1]) ) 
                             
-            return "Term %s updated. %s" % (CDRID,changes)
-        return "Term %s will change. %s" % (CDRID,changes)
+            return "Term %s updated. Publishable = %s. %s" % (CDRID,publishVer,changes)
+        return "Term %s will change. Publishable = %s. %s" % (CDRID,publishVer,changes)
     else:
         cdr.unlock(session,docId)
         return "No updates needed for term %s." % CDRID
