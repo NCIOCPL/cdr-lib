@@ -742,7 +742,7 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0,doUpdateDefinition=1,doImpor
             return 'No Records Found for Selection'
 
         for publishableVer in rows:
-            publishVer = publishableVer
+            publishVer =  publishableVer[0]
 
     #conn = connectToDB()
     if len(err) > 1:
