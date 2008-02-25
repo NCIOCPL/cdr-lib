@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.143 2007-11-06 15:44:49 bkline Exp $
+# $Id: cdr.py,v 1.144 2008-02-25 15:32:52 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,12 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.143  2007/11/06 15:44:49  bkline
+# Fixed a problem with putGroup(): getGroup() returns [None] as the
+# list of doctypes connected with actions which are independent of
+# document types, which was causing the function to send None
+# as a document type.
+#
 # Revision 1.142  2007/08/22 01:01:42  venglisc
 # Added PUB_NAME parameter needed for More Frequent Publishing.
 #
@@ -3252,7 +3258,7 @@ def getEmailList(groupName, host = 'localhost'):
 # now I'm using this for a selected set of applications to test
 # it.
 #----------------------------------------------------------------------
-def sendMailMime(sender, recips, subject, body):
+def sendMailMime(sender, recips, subject, body, bodyType = 'plain'):
     """
     Send an email message via SMTP to a list of recipients.  This
     version supports Unicode in the subject and body.  The message
@@ -3303,7 +3309,7 @@ def sendMailMime(sender, recips, subject, body):
         raise Exception("sendMailMime: failure determining body charset")
 
     # Create the message object.
-    message = MIMEText(encodedBody, 'plain', charset)
+    message = MIMEText(encodedBody, bodyType, charset)
 
     # Plug in the headers.
     message['From']    = sender
@@ -4513,3 +4519,16 @@ def removeAllLockFiles():
     """
     for fname in _lockedFiles.keys():
         removeLockFile(fname)
+
+#----------------------------------------------------------------------
+# Wrapper for importing the most complete etree package available.
+#----------------------------------------------------------------------
+def importEtree():
+    try:
+        import lxml.etree as etree
+    except:
+        try:
+            import xml.etree.cElementTree as etree
+        except:
+            import xml.etree.ElementTree as etree
+    return etree
