@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.63 2007-12-13 21:13:23 venglisc Exp $
+# $Id: cdrcgi.py,v 1.64 2008-02-26 23:44:49 venglisc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.63  2007/12/13 21:13:23  venglisc
+# Minor modifications to the HTML headers on the path to make the HTML
+# output valid in regard to HTML 4.01.
+#
 # Revision 1.62  2007/10/31 02:37:33  ameyer
 # Added documentation to the character set converters.
 # Changed encoding from 'latin-1' to 'ascii' in several places where
@@ -252,9 +256,12 @@ HEADER   = """\
   <link rel='shortcut icon' href='/favicon.ico'>
   <LINK TYPE='text/css' REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
   <style type='text/css'>
-    body      { background-color: #%s; }
-    *.banner  { background-color: silver;
-                background-image: url(/images/nav1.jpg); }
+    body         { background-color: #%s; }
+    *.banner     { background-color: silver;
+                   background-image: url(/images/nav1.jpg); }
+    *.DTDerror   { color: red; 
+                   font-weight: bold; }
+    *.DTDwarning { color: green; }
   </style>
   %s
  </HEAD>
@@ -289,7 +296,7 @@ SUBBANNER = """\
 # Display the header for a CDR web form.
 #----------------------------------------------------------------------
 def header(title, banner, subBanner, script = '', buttons = None,
-           bkgd = 'EFEFEF', numBreaks = 2, method = 'POST', stylesheet='',
+           bkgd = 'DFDFDF', numBreaks = 2, method = 'POST', stylesheet='',
            formExtra = ''):
     html = HEADER % (title, bkgd, stylesheet, script,
                      method, formExtra, banner)
