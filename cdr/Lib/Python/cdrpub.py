@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.104 2007-10-11 20:29:13 venglisc Exp $
+# $Id: cdrpub.py,v 1.105 2008-02-26 23:42:29 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.104  2007/10/11 20:29:13  venglisc
+# If a document fails to be written to disk we want to try again to ensure
+# the problem isn't just a network hiccup. (Bug 3488)
+#
 # Revision 1.103  2007/08/21 23:36:37  ameyer
 # Altered multiple SQL statements that update pub_proc_cg to not insert
 # any rows for excluded document types (currently Country and Person).  These
@@ -393,6 +397,7 @@
 import cdr, cdrdb, os, re, string, sys, xml.dom.minidom
 import socket, cdr2gk, time, threading, glob, base64, AssignGroupNums
 from xml.parsers.xmlproc import xmlval, xmlproc
+import lxml.etree
 
 #-----------------------------------------------------------------------
 # Value for controlling debugging output.  None means no debugging
@@ -2721,12 +2726,18 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             if self.__validateDocs and filteredDoc:
                 pdqdtd = str(os.path.join(cdr.PDQDTDPATH,
                                           self.__params['DTDFileName']))
-                errObj = validateDoc(filteredDoc, docId = docId, dtd = pdqdtd)
-                for error in errObj.Errors:
-                    errors += "%s<BR>" % error
-                    invalDoc = "InvalidDocs"
-                for warning in errObj.Warnings:
-                    warnings += "%s<BR>" % warning
+                errObj = validateDoc(filteredDoc, docId = docId, 
+                                                        dtd = pdqdtd)
+
+                for error in errObj:
+                    if error.level_name == 'ERROR':
+                        dtdClass = 'DTDerror'
+                    else:
+                        dtdClass = 'DTDwarning'
+
+                    errors += "<span class='%s'>%s</span><BR>%s<BR>" % (
+                                              dtdClass, error.level_name, 
+                                              error.message)
                     invalDoc = "InvalidDocs"
 
             # Save the output as instructed.
@@ -3689,7 +3700,7 @@ class ErrHandler:
 #----------------------------------------------------------------------
 # Validate a given document against its DTD.
 #----------------------------------------------------------------------
-def validateDoc(filteredDoc, docId = 0, dtd = cdr.DEFAULT_DTD):
+def validateDocpyXML(filteredDoc, docId = 0, dtd = cdr.DEFAULT_DTD):
 
     # These used to be global.  Now local to ensure expat thread safety
     __parser     = xmlval.XMLValidator()
@@ -3719,6 +3730,26 @@ def validateDoc(filteredDoc, docId = 0, dtd = cdr.DEFAULT_DTD):
     __parser.reset()
 
     return errObj
+
+#----------------------------------------------------------------------
+# Validate a given document against its DTD.
+#----------------------------------------------------------------------
+def validateDoc(filteredDoc, docId = 0, dtd = cdr.DEFAULT_DTD):
+
+    # Loading the DTD file
+    fp     = open(dtd)
+    pdqDtd = lxml.etree.DTD(fp)
+    fp.close()
+
+    # Load and validate the document passed to us
+    docXml = lxml.etree.XML(filteredDoc)
+    pdqDtd.validate(docXml)
+
+    # Extract any validation errors from the error object
+    errLog = pdqDtd.error_log.filter_from_errors()
+    errObj      = errLog
+
+    return errLog
 
 #----------------------------------------------------------------------
 # Find all the linked documents for a given hash of docId/docVer pairs.
