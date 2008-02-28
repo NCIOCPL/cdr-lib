@@ -67,6 +67,7 @@ class Definition:
                          re.DOTALL)
     def __init__(self, value):
         match = Definition.pattern.search(value)
+        self.drugTerm = 1
         self.source = None
         self.text   = None
         if match:
@@ -101,6 +102,10 @@ class Definition:
         return
         
     def toXml(self):
+        if self.drugTerm == 1:
+            reviewedTxt = 'Unreviewed'
+        else:
+            reviewedTxt = 'Reviewed'
         return """\
  <Definition>
   <DefinitionText>%s</DefinitionText>
@@ -108,9 +113,9 @@ class Definition:
   <DefinitionSource>
    <DefinitionSourceName>NCI Thesaurus</DefinitionSourceName>
   </DefinitionSource>
-  <ReviewStatus>Unreviewed</ReviewStatus>
+  <ReviewStatus>%s</ReviewStatus>
  </Definition>
-""" % fix(self.text or u'')
+""" % (fix(self.text or u''),reviewedTxt)
 
     def toNode(self,dom):
         node = dom.createElement('Definition')
@@ -133,7 +138,10 @@ class Definition:
         node.appendChild(child)
 
         child = dom.createElement('ReviewStatus')
-        text = dom.createTextNode('Unreviewed')
+        if self.drugTerm == 1:
+            text = dom.createTextNode('Unreviewed')
+        else:
+            text = dom.createTextNode('Reviewed')
         child.appendChild(text)
         node.appendChild(child)     
         
@@ -762,6 +770,7 @@ def updateTerm(session,CDRID,conceptCode,doUpdate=0,doUpdateDefinition=1,doImpor
     if doUpdateDefinition == 1:
         for definition in concept.definitions:
             if definition.source == 'NCI':
+                definition.drugTerm = drugTerm
                 updateDefinition(dom,definition)
                 break
 
