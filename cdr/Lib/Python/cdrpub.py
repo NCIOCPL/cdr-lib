@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.105 2008-02-26 23:42:29 venglisc Exp $
+# $Id: cdrpub.py,v 1.106 2008-03-17 21:49:22 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.105  2008/02/26 23:42:29  venglisc
+# Replaced PyXML validator with Lxml. (Bug 3923)
+#
 # Revision 1.104  2007/10/11 20:29:13  venglisc
 # If a document fails to be written to disk we want to try again to ensure
 # the problem isn't just a network hiccup. (Bug 3488)
@@ -1834,6 +1837,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             AND d.active_status <> 'A'
                             AND t.name <> 'Media'
                             AND t.name NOT IN (%s)
+                            AND ppc.id NOT IN (SELECT id
+                                                 FROM pub_proc_cg_work)
                       """ % (vendor_job, cg_job, docTypes, self.__excludeDT)
                 cursor.execute(qry, timeout = self.__timeOut)
             except cdrdb.Error, info:
@@ -1931,7 +1936,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             cursor.execute(qry, timeout = self.__timeOut)
         except cdrdb.Error, info:
             raise StandardError(
-                "Setting D to pub_proc_cg_work failed: %s<BR>" % info[1][0])
+                "Setting D to pub_proc_cg_work failed (HFR): %s<BR>" \
+                                                               % info[1][0])
         msg = "%s: Finished inserting D to PPCW<BR>" % time.ctime()
         self.__updateMessage(msg)
 
