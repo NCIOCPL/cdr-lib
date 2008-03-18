@@ -18,8 +18,7 @@
 
     Limitations:
 
-        The current version only supports simple lists (no nesting,
-        only Arabic numbering or bullets).
+        The current version only supports single-level lists.
 
     To do:
 
@@ -28,11 +27,14 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: RtfWriter.py,v 1.4 2005-03-03 14:42:30 bkline Exp $
+# $Id: RtfWriter.py,v 1.5 2008-03-18 12:40:16 bkline Exp $
 #
 # Module for generating RTF documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2005/03/03 14:42:30  bkline
+# Fixed documentation typos.
+#
 # Revision 1.3  2005/02/24 04:32:04  bkline
 # Cleanup of pydoc comments.
 #
@@ -176,6 +178,13 @@ class List:
     
     BULLETED  = 1   # listid for un-numbered lists
     ARABIC    = 0   # number type for numbered lists
+    ROMAN_UC  = 1   # (I., II., III., IV., etc.)
+    ROMAN_LC  = 2   # (i., ii., etc.)
+    LETTER_UC = 3   # (A., B., C., etc.)
+    LETTER_LC = 4   # (a., b., c., etc.)
+    ORDINAL   = 5   # (1st, 2nd, 3rd, etc.)
+    CARDINAL  = 6   # (One, Two, Three)
+    ORD_TEXT  = 7   # (First, Second, Third)
     NONE      = 23  # number type for bulleted lists
     __nextId  = 0   # class variable for generating list IDs
 
@@ -384,6 +393,7 @@ class Document:
         of the new list is returned to be used in the \lsN command
         in the document for the actual list, where N is the ID returned
         by this method.
+        2008-03-17: added support for most other list types.
         """
         
         newList = List(numberType)
