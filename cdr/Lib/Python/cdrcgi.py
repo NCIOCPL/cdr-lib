@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.64 2008-02-26 23:44:49 venglisc Exp $
+# $Id: cdrcgi.py,v 1.65 2008-04-02 01:06:02 ameyer Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.64  2008/02/26 23:44:49  venglisc
+# Minor modifications to background color and FilterFailure error messages.
+# (Bug 3923)
+#
 # Revision 1.63  2007/12/13 21:13:23  venglisc
 # Minor modifications to the HTML headers on the path to make the HTML
 # output valid in regard to HTML 4.01.
@@ -259,7 +263,7 @@ HEADER   = """\
     body         { background-color: #%s; }
     *.banner     { background-color: silver;
                    background-image: url(/images/nav1.jpg); }
-    *.DTDerror   { color: red; 
+    *.DTDerror   { color: red;
                    font-weight: bold; }
     *.DTDwarning { color: green; }
   </style>
@@ -653,7 +657,23 @@ SELECT DISTINCT value, value
 #
 # For example invocations, see stateList and countryList above.
 #----------------------------------------------------------------------
-def generateHtmlPicklist(conn, fieldName, query, pattern):
+def generateHtmlPicklist(conn, fieldName, query, pattern,
+                         selAttrs=None, firstOpt=None, lastOpt=None):
+    """
+    Pass:
+        conn      - Database connection.
+        fieldName - Name of the entire selection field, <select name=...
+        query     - Database query to generate options.
+        pattern   - Interpolation pattern for items in each row of query result
+                      e.g.: "<option value='%s'>%s&nbsp;</option>"
+        selAttrs  - Optional attributes to add to the select line
+                      e.g.: "multiple='1' size='5'"
+        firstOpt  - Optional line(s) at the beginning of the option list
+                      e.g.: "<option value='any' selected='1'>Any</option>\n"
+        lastOpt   - Optional line(s) at the end of the option list
+                      e.g.: "<option value='all'>All</option>\n"
+    """
+    # Select rows from the database
     try:
         cursor = conn.cursor()
         cursor.execute(query, timeout=300)
@@ -663,16 +683,31 @@ def generateHtmlPicklist(conn, fieldName, query, pattern):
     except cdrdb.Error, info:
         bail('Failure retrieving %s list from CDR: %s' % (fieldName,
                                                           info[1][0]))
-    html = """\
-      <select name='%s'>
-       <option value='' selected>&nbsp;</option>
-""" % fieldName
+    html = "<select name='%s'" % fieldName
+
+    # Add any requested attributes to the select
+    if selAttrs:
+        html += " " + selAttrs
+    html += ">\n"
+
+    # If there are user supplied options to put at the top
+    if firstOpt:
+        html += firstOpt
+    else:
+        # Backwards compatibity requires this default firstOpt
+        html += "   " + "<option value='' selected>&nbsp;</option>\n"
+
+    # Add data from the query
     for row in rows:
         option = pattern % tuple(row)
         html += "%s\n" % option
-    html += """\
-      </select>
-"""
+
+    # Final options
+    if lastOpt:
+        html += lastOpt
+    # Termination
+    html += "</select>\n"
+
     return html
 
 #----------------------------------------------------------------------
