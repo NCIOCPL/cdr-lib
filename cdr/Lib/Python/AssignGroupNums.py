@@ -33,9 +33,17 @@ import sys, re, time, cdr, cdrdb
 # These assumptions mean that the class must be instantiated in the
 # push job that calls __createWorkPPC().
 #
-# $Id: AssignGroupNums.py,v 1.9 2007-11-20 16:08:53 ameyer Exp $
+# $Id: AssignGroupNums.py,v 1.10 2008-04-11 02:55:08 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2007/11/20 16:08:53  ameyer
+# Added logic to check SummaryURL attributes, determine whether they have
+# changed since the last publication and, if so, force the Summary with
+# the changed attribute to become the head of a group.  If it fails, all
+# Summaries or other docs that link to it will also fail so that their
+# modified SummaryRef references by URL will not be loaded (and vice
+# versa if one of them fails.)
+#
 # Revision 1.8  2007/05/11 03:54:36  ameyer
 # Updated a few comments.
 #
@@ -66,6 +74,10 @@ import sys, re, time, cdr, cdrdb
 # Initial version, not yet tested.
 #
 #----------------------------------------------------------------------
+
+# Global (for this module) logger appends to publish.log
+gLog = cdr.Log("publish.log", banner=None)
+
 class GroupNums:
 
     def __init__(self, jobNum):
@@ -92,6 +104,7 @@ class GroupNums:
         Raises:
             cdr.Exception if failure.
         """
+        gLog.write("AGN = Instantiating AssignGroupNums object")
         self.__jobNum = jobNum
 
         # Read only access to the database
@@ -120,6 +133,7 @@ class GroupNums:
         #   vendor filtered doc
         self.__sumURLpat = re.compile("<SummaryURL xref=['\"]([^'\"]*)['\"]")
 
+        gLog.write("AGN: Searching for newly published documents")
         # Find all newly published documents
         # jobNum must match pub_proc id
         qry = """
@@ -161,6 +175,8 @@ SELECT id
         # Remember counts
         self.__newDocCount = len(self.__newDocs)
         self.__docCount    = len(docList)
+        gLog.write("AGN: Found %d docs, including %d new docs" %
+                   (self.__docCount, self.__newDocCount))
 
         # Process every doc in the job
         for docId in docList:
@@ -178,6 +194,8 @@ SELECT id
 
             # Ensure that we're in the same group as all of these new docs.
             for newDocId in linkedNewDocs:
+
+              try:
 
                 # Find out if the new document is already in a group
                 newDocGroupId = self.__docs.get(newDocId)
@@ -209,12 +227,21 @@ SELECT id
                     self.__docs[docId] = groupId
                     self.__docs[newDocId] = groupId
 
+              except Exception, e:
+                # Report to log and bubble it up
+                gLog.write("AGN: Caught exception=%s value='%s' on docId=%d" %
+                           (str(type(e)), str(e), docId), tback=True)
+                raise
+
+
             # If we still don't have a group for this document, make one.
             if not groupId:
                 groupId = self.genNewUniqueNum()
                 group   = self.__groups[groupId] = set()
                 group.add(docId)
                 self.__docs[docId] = groupId
+
+        gLog.write("AGN: Completed AssignGroupNums processing")
 
     def __getXml(self, docId):
         """
@@ -385,6 +412,7 @@ SELECT ppcw.id
         """
         Return a list of docIds for newly published documents in the job.
         """
+        gLog.write("AGN: getNewDocs()")
         newDocs = list(self.__newDocs)
         newDocs.sort()
         return newDocs
@@ -393,6 +421,7 @@ SELECT ppcw.id
         """
         Return a list of all docIds, newly published or not.
         """
+        gLog.write("AGN: getAllDocs()")
         allDocs = self.__docs.keys()
         allDocs.sort()
         return allDocs
@@ -422,18 +451,21 @@ SELECT ppcw.id
         """
         Report how many docs were newly published.
         """
+        gLog.write("AGN: getNewDocCount()")
         return self.__newDocCount
 
     def getDocCount(self):
         """
         Report how many docs were processed (docs that didn't fail)
         """
+        gLog.write("AGN: getDocCount()")
         return self.__docCount
 
     def getGroupIds(self):
         """
         Return sequence of unique group IDs assigned.
         """
+        gLog.write("AGN: getGroupIds()")
         return tuple(self.__groups.keys())
 
 # Main routine for test purposes only
