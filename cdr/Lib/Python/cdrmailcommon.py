@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrmailcommon.py,v 1.11 2007-08-01 13:18:09 bkline Exp $
+# $Id: cdrmailcommon.py,v 1.12 2008-04-17 21:06:39 bkline Exp $
 #
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.11  2007/08/01 13:18:09  bkline
+# Added recordMailer() function.
+#
 # Revision 1.10  2005/11/18 20:47:46  bkline
 # Bumped up timeouts.
 #
@@ -381,10 +384,12 @@ class RemailSelector:
 #----------------------------------------------------------------------
 def emailerConn(db, host = None):
     try:
-        return MySQLdb.connect(host = host or cdr.emailerHost(),
+        conn = MySQLdb.connect(host = host or cdr.emailerHost(),
                                db = db,
                                user = "dropbox",
                                passwd = '***REMOVED***')
+        conn.cursor().execute("SET NAMES utf8")
+        return conn
     except:
         raise Exception("Failure connecting to %s" % db)
 
