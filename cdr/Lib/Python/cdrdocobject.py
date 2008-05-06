@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrdocobject.py,v 1.3 2008-05-06 17:40:22 bkline Exp $
+# $Id: cdrdocobject.py,v 1.4 2008-05-06 18:06:09 bkline Exp $
 #
 # Types for data extracted from CDR documents of specific document types.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2008/05/06 17:40:22  bkline
+# Added new classes for protocols and organizations.
+#
 # Revision 1.2  2006/06/08 19:10:09  bkline
 # Renamed __incPersonTitle to __ptHandling in ContactInfo class.
 #
@@ -252,7 +255,8 @@ class ContactInfo:
     # label sheets (which use uppercase versions of the address
     # line strings).
     #------------------------------------------------------------------
-    def getAddressLines(self, includeNameAndTitle = True):
+    def getAddressLines(self, includeNameAndTitle = True,
+                        includeOrgs = True):
 
         #--------------------------------------------------------------
         # Start with an empty list.
@@ -272,9 +276,10 @@ class ContactInfo:
         #--------------------------------------------------------------
         # Add organization lines.
         #--------------------------------------------------------------
-        for org in self.__orgs:
-            if org:
-                lines.append(org)
+        if includeOrgs:
+            for org in self.__orgs:
+                if org:
+                    lines.append(org)
         if includeNameAndTitle and self.__ptHandling == TITLE_AFTER_ORG:
             if self.__personTitle:
                 lines.append(self.__personTitle)
@@ -441,6 +446,37 @@ class Person:
             if not fragId:
                 raise Exception("no CIPS Contact for %s" % cdrId)
             Person.Contact.__init__(self, cdrId, fragId)
+
+#----------------------------------------------------------------------
+# Object for a CDR Organization.
+#----------------------------------------------------------------------
+class Organization:
+
+    def getCipsContactId(docId, conn = None):
+        path = '/Organization/OrganizationLocations/CIPSContact'
+        rows = cdr.getQueryTermValueForId(path, docId, conn)
+        if not rows:
+            return None
+        return rows[0]
+    getCipsContactId = staticmethod(getCipsContactId)
+
+    class Contact(ContactInfo):
+        def __init__(self, cdrId, fragId,
+                     filt = 'Organization Address Fragment'):
+            filters = ['name:%s' % filt]
+            parms = (('fragId', fragId),)
+            result = cdr.filterDoc('guest', filters, cdrId, parm = parms)
+            if type(result) in (str, unicode):
+                raise Exception(u"Organization.Contact(%s, %s): %s" %
+                                (cdrId, fragId, result))
+            ContactInfo.__init__(self, result[0])
+
+    class CipsContact(Contact):
+        def __init__(self, cdrId):
+            fragId = Organization.getCipsContactId(cdrId)
+            if not fragId:
+                raise Exception("no CIPS Contact for %s" % cdrId)
+            Organization.Contact.__init__(self, cdrId, fragId)
 
 #----------------------------------------------------------------------
 # Object for a CDR InScopeProtocol document.
