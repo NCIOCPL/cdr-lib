@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.28 2007-06-04 10:22:47 bkline Exp $
+# $Id: SiteImporter.py,v 1.29 2008-05-06 13:37:15 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.28  2007/06/04 10:22:47  bkline
+# Converted incoming xml from utf-8 before storing or processing.
+#
 # Revision 1.27  2007/05/16 22:46:37  bkline
 # Escaped status string reserved characters.
 #
@@ -546,11 +549,16 @@ CDR%d has lead org(s) with UpdateMode of %s but trial has been dropped
                 manifestName = name
         try:
             for line in self.__file.read(manifestName).splitlines():
+                line = line.strip()
                 try:
-                    id, status = line.strip().split(' , ', 1)
+                    id, status = line.split(' , ', 1)
                 except:
-                    id, status = line.strip(), None
-                manifest[id] = status
+                    try:
+                        id, status = line.split('\t', 1)
+                    except:
+                        id, status = line, None
+                if status.upper() != 'CLOSED':
+                    manifest[id] = status
         except Exception, e:
             self.log("__loadManifest(%s) failure: %s" % (manifestName, str(e)))
         return manifest
@@ -785,14 +793,14 @@ class ImportDoc:
         normalizedStatus = status.upper().strip()
         if normalizedStatus == 'TEMPORARILY CLOSED TO ACCRUAL':
             status = 'Temporarily closed'
-        elif normalizedStatus == 'CLOSED TO ACCRUAL':
+        elif normalizedStatus.startswith('CLOSED TO ACCRUAL'):
             status = 'Closed'
         elif normalizedStatus == 'COMPLETE':
             status = 'Completed'
         elif normalizedStatus == 'APPROVED':
             status = 'Approved-not yet active'
         else:
-            status = status and xml.sax.saxutils.escape(status) or ''
+            status = status or ''
             
         parms = (('source', self.impJob.getSource()),
                  ('lastModified', time.strftime("%Y-%m-%d")),
