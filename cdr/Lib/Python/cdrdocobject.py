@@ -1,15 +1,18 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrdocobject.py,v 1.2 2006-06-08 19:10:09 bkline Exp $
+# $Id: cdrdocobject.py,v 1.3 2008-05-06 17:40:22 bkline Exp $
 #
 # Types for data extracted from CDR documents of specific document types.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.2  2006/06/08 19:10:09  bkline
+# Renamed __incPersonTitle to __ptHandling in ContactInfo class.
+#
 # Revision 1.1  2005/07/08 21:36:10  bkline
 # Python classes for data extracted from CDR documents.
 #
 #----------------------------------------------------------------------
-import cdr, sys, xml.dom.minidom
+import cdr, sys, xml.dom.minidom, time
 
 #------------------------------------------------------------------
 # Constants for adding a person's title to his address
@@ -423,8 +426,8 @@ class Person:
     getCipsContactId = staticmethod(getCipsContactId)
 
     class Contact(ContactInfo):
-        def __init__(self, cdrId, fragId):
-            filters = ['name:Person Address Fragment']
+        def __init__(self, cdrId, fragId, filt = 'Person Address Fragment'):
+            filters = ['name:%s' % filt]
             parms = (('fragId', fragId),)
             result = cdr.filterDoc('guest', filters, cdrId, parm = parms)
             if type(result) in (str, unicode):
@@ -438,3 +441,227 @@ class Person:
             if not fragId:
                 raise Exception("no CIPS Contact for %s" % cdrId)
             Person.Contact.__init__(self, cdrId, fragId)
+
+#----------------------------------------------------------------------
+# Object for a CDR InScopeProtocol document.
+#----------------------------------------------------------------------
+class Protocol:
+    "Modeled on protocol information used for OPS-like reports."
+
+    def __init__(self, id, node):
+        "Create a protocol object from the XML document."
+        self.id         = id
+        self.leadOrgs   = []
+        self.statuses   = []
+        self.status     = ""
+        self.primaryId  = ""
+        self.otherIds   = []
+        self.firstPub   = ""
+        self.closed     = ""
+        self.completed  = ""
+        self.studyTypes = []
+        self.categories = []
+        self.sources    = []
+        self.designs    = []
+        self.pupLink    = []
+        self.sponsors   = []
+        self.title      = ""
+        self.origTitle  = ""
+        self.phases     = []
+        profTitle       = ""
+        patientTitle    = ""
+        originalTitle   = ""
+        for child in node.childNodes:
+            if child.nodeName == "ProtocolSponsors":
+                for grandchild in child.childNodes:
+                    if grandchild.nodeName == "SponsorName":
+                        value = cdr.getTextContent(grandchild)
+                        if value:
+                            self.sponsors.append(value)
+            elif child.nodeName == 'ProtocolSources':
+                for grandchild in child.childNodes:
+                    if grandchild.nodeName == 'ProtocolSource':
+                        for greatgrandchild in grandchild.childNodes:
+                            if greatgrandchild.nodeName == 'SourceName':
+                                source = cdr.getTextContent(greatgrandchild)
+                                source = source.strip()
+                                if source:
+                                    self.sources.append(source)
+            elif child.nodeName == 'ProtocolDesign':
+                design = cdr.getTextContent(child).strip()
+                if design:
+                    self.designs.append(design)
+            elif child.nodeName == "ProtocolIDs":
+                for grandchild in child.childNodes:
+                    if grandchild.nodeName == "PrimaryID":
+                        for greatgrandchild in grandchild.childNodes:
+                            if greatgrandchild.nodeName == "IDString":
+                                value = cdr.getTextContent(greatgrandchild)
+                                self.primaryId = value
+                    if grandchild.nodeName == "OtherID":
+                        for greatgrandchild in grandchild.childNodes:
+                            if greatgrandchild.nodeName == "IDString":
+                                value = cdr.getTextContent(greatgrandchild)
+                                if value:
+                                    self.otherIds.append(value)
+            elif child.nodeName == "ProtocolTitle":
+                titleType = child.getAttribute("Type")
+                value     = cdr.getTextContent(child)
+                if value:
+                    if titleType == "Professional":
+                        profTitle = value
+                    elif titleType == "Patient":
+                        patientTitle = value
+                    elif titleType == "Original":
+                        originalTitle = self.origTitle = value
+            elif child.nodeName == "ProtocolAdminInfo":
+                for grandchild in child.childNodes:
+                    if grandchild.nodeName == "ProtocolLeadOrg":
+                        self.leadOrgs.append(self.LeadOrg(grandchild))
+                    elif grandchild.nodeName == "CurrentProtocolStatus":
+                        value = cdr.getTextContent(grandchild)
+                        if value:
+                            self.status = value
+            elif child.nodeName == "ProtocolDetail":
+                for grandchild in child.childNodes:
+                    if grandchild.nodeName == 'StudyCategory':
+                        for greatgrandchild in grandchild.childNodes:
+                            if greatgrandchild.nodeName == 'StudyCategoryName':
+                                cat = cdr.getTextContent(greatgrandchild)
+                                cat = cat.strip()
+                                if cat:
+                                    self.categories.append(cat)
+                    elif grandchild.nodeName == 'StudyType':
+                        studyType = cdr.getTextContent(grandchild).strip()
+                        if studyType:
+                            self.studyTypes.append(studyType)
+            elif child.nodeName == 'ProtocolPhase':
+                self.phases.append(cdr.getTextContent(child))
+        if profTitle:
+            self.title = profTitle
+        elif originalTitle:
+            self.title = originalTitle
+        elif patientTitle:
+            self.title = patientTitle
+        orgStatuses = []
+        statuses    = {}
+        i           = 0
+        for leadOrg in self.leadOrgs:
+            if leadOrg.role == 'Primary' and leadOrg.pupLink:
+                self.pupLink = leadOrg.pupLink
+            orgStatuses.append("")
+            for orgStatus in leadOrg.statuses:
+                startDate = orgStatus.startDate
+                val = (i, orgStatus.name)
+                #print "val: %s" % repr(val)
+                #print "orgStatuses: %s" % repr(orgStatuses)
+                statuses.setdefault(startDate, []).append(val)
+            i += 1
+        keys = statuses.keys()
+        keys.sort()
+        for startDate in keys:
+            for i, orgStatus in statuses[startDate]:
+                try:
+                    orgStatuses[i] = orgStatus
+                except:
+                    print "statuses: %s" % repr(statuses)
+                    print "orgStatuses: %s" % repr(orgStatuses)
+                    raise
+            protStatus = self.getProtStatus(orgStatuses)
+            if protStatus == "Active" and not self.firstPub:
+                self.firstPub = startDate
+            if protStatus in ("Active", "Approved-not yet active",
+                              "Temporarily closed"):
+                self.closed = ""
+            elif not self.closed:
+                self.closed = startDate
+            if protStatus == 'Completed':
+                self.completed = startDate
+            else:
+                self.completed = ""
+            if self.statuses:
+                self.statuses[-1].endDate = startDate
+            self.statuses.append(Protocol.Status(protStatus, startDate))
+        if self.statuses:
+            self.statuses[-1].endDate = time.strftime("%Y-%m-%d")
+
+    def getProtStatus(self, orgStatuses):
+        "Look up the protocol status based on the status of the lead orgs."
+        statusSet = set()
+        for orgStatus in orgStatuses:
+            statusSet.add(orgStatus.upper())
+        if len(statusSet) == 1:
+            # return orgStatuses.pop() BAD SIDE EFFECT!
+            return tuple(orgStatuses)[0]
+        for status in ("ACTIVE",
+                       "TEMPORARILY CLOSED",
+                       "COMPLETED",
+                       "CLOSED",
+                       "APPROVED-NOT YET ACTIVE"):
+            if status in statusSet:
+                return status
+        return ""
+
+    def hadStatus(self, start, end, statuses = ("Active",
+                                                "Approved-not yet active",
+                                                "Temporarily closed")):
+        """
+        Did this protocol have any of these status values at any time
+        during the indicated range of dates?
+        """
+        for status in self.statuses:
+            if status.endDate > start:
+                if status.startDate <= end:
+                    if status.name in statuses:
+                        return True
+        return False
+
+    class Status:
+        "Protocol status for a given range of dates."
+        def __init__(self, name, startDate, endDate = None):
+            self.name      = name
+            self.startDate = startDate
+            self.endDate   = endDate
+        def __cmp__(self, other):
+            diff = cmp(self.startDate, other.startDate)
+            if diff:
+                return diff
+            return cmp(self.endDate, other.endDate)
+
+    class LeadOrg:
+        "Lead Organization for a protocol, with all its status history."
+        def __init__(self, node):
+            self.statuses = []
+            self.role     = None
+            self.pupLink  = None
+            for child in node.childNodes:
+                if child.nodeName == "LeadOrgProtocolStatuses":
+                    for grandchild in child.childNodes:
+                        if grandchild.nodeName in ("PreviousOrgStatus",
+                                                   "CurrentOrgStatus"):
+                            name = date = ""
+                            for greatgrandchild in grandchild.childNodes:
+                                if greatgrandchild.nodeName == "StatusDate":
+                                    date = cdr.getTextContent(greatgrandchild)
+                                elif greatgrandchild.nodeName == "StatusName":
+                                    name = cdr.getTextContent(greatgrandchild)
+                            if name and date:
+                                ps = Protocol.Status(name, date)
+                                self.statuses.append(ps)
+                elif child.nodeName == "LeadOrgRole":
+                    self.role = cdr.getTextContent(child).strip() or None
+                elif child.nodeName == 'LeadOrgPersonnel':
+                    role = link = ""
+                    for grandchild in child.childNodes:
+                        if grandchild.nodeName == 'PersonRole':
+                            role = cdr.getTextContent(grandchild).strip()
+                        elif grandchild.nodeName == 'Person':
+                            link = grandchild.getAttribute('cdr:ref').strip()
+                    if role.upper() == 'UPDATE PERSON':
+                        self.pupLink = link
+            self.statuses.sort()
+            for i in range(len(self.statuses)):
+                if i == len(self.statuses) - 1:
+                    self.statuses[i].endDate = time.strftime("%Y-%m-%d")
+                else:
+                    self.statuses[i].endDate = self.statuses[i + 1].startDate
