@@ -1,9 +1,14 @@
+#!/usr/bin/python
 #----------------------------------------------------------------------
-# $Id: WebService.py,v 1.1 2005-11-09 00:08:16 bkline Exp $
+# $Id: WebService.py,v 1.2 2008-05-14 14:40:46 bkline Exp $
 #
 # Simple Web service helper classes.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2005/11/09 00:08:16  bkline
+# Module used by the CDR client files refresh server to receive and
+# respond to client requests contained in XML documents.
+#
 #----------------------------------------------------------------------
 import os, sys, re, xml.dom.minidom
 
@@ -95,7 +100,13 @@ class Request:
         for e in os.environ:
             lines.append("%s=%s" % (e, os.environ[e]))
         lines.append("")
-        f = open('d:/cdr/log/WebService.log', 'a')
+        try:
+            f = open('d:/cdr/log/WebService.log', 'a')
+        except:
+            try:
+                f = open('/tmp/WebService.log', 'a')
+            except:
+                return
         f.write("\n".join(lines) + "\n")
         f.close()
 
