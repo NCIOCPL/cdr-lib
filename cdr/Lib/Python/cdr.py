@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.144 2008-02-25 15:32:52 bkline Exp $
+# $Id: cdr.py,v 1.145 2008-05-28 21:26:29 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.144  2008/02/25 15:32:52  bkline
+# Added optional bodyType parameter to sendMailMime(); added importEtree().
+#
 # Revision 1.143  2007/11/06 15:44:49  bkline
 # Fixed a problem with putGroup(): getGroup() returns [None] as the
 # list of doctypes connected with actions which are independent of
@@ -1761,6 +1764,7 @@ def delDoc(credentials, docId, val = 'N', reason = '',
 #----------------------------------------------------------------------
 def valDoc(credentials, docType, docId = None, doc = None,
            valLinks = 'Y', valSchema = 'Y', validateOnly = 'Y',
+           errorLocators = 'N',
            host = DEFAULT_HOST, port = DEFAULT_PORT):
     """
     Validate a document, either in the database or passed to here.
@@ -1781,6 +1785,9 @@ def valDoc(credentials, docType, docId = None, doc = None,
                         table.
                       Only usable if docId passed.
                       Default is to leave val_status alone.
+        errorLocators - 'Y' if information needed for finding the errors
+                      in the document is requested; otherwise 'N' (the
+                      default)
         host/port   - The usual.
 
     Return:
@@ -1807,10 +1814,12 @@ def valDoc(credentials, docType, docId = None, doc = None,
         valTypes = "Schema"
     else:
         raise StandardError("valDoc: no validation method specified")
-    cmd     = "<CdrValidateDoc DocType='%s' "\
-              "ValidationTypes='%s'>%s</CdrValidateDoc>" % (docType,
-                                                            valTypes,
-                                                            doc)
+    cmd = ("<CdrValidateDoc DocType='%s' "
+           "ValidationTypes='%s' "
+           "ErrorLocators='%s'>%s</CdrValidateDoc>" % (docType,
+                                                       valTypes,
+                                                       errorLocators,
+                                                       doc))
 
     # Submit the commands.
     return sendCommands(wrapCommand(cmd, credentials), host, port)
