@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.29 2008-05-06 13:37:15 bkline Exp $
+# $Id: SiteImporter.py,v 1.30 2008-05-29 20:32:55 bkline Exp $
 #
 # Base class for importing protocol site information from external sites.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.29  2008/05/06 13:37:15  bkline
+# Refinements in manifest parser; mapping of new status value.
+#
 # Revision 1.28  2007/06/04 10:22:47  bkline
 # Converted incoming xml from utf-8 before storing or processing.
 #
@@ -557,8 +560,8 @@ CDR%d has lead org(s) with UpdateMode of %s but trial has been dropped
                         id, status = line.split('\t', 1)
                     except:
                         id, status = line, None
-                if status.upper() != 'CLOSED':
-                    manifest[id] = status
+                if not status or status.upper() != 'CLOSED':
+                    manifest[id.upper()] = status
         except Exception, e:
             self.log("__loadManifest(%s) failure: %s" % (manifestName, str(e)))
         return manifest
@@ -645,7 +648,7 @@ CDR%d has lead org(s) with UpdateMode of %s but trial has been dropped
                AND dropped IS NULL""", self.__sourceId)
         rows = self.__cursor.fetchall()
         for id, sourceId in rows:
-            if sourceId not in self.__manifest:
+            if sourceId.upper() not in self.__manifest:
                 self.__dropped[sourceId] = True
                 self.__cursor.execute("""\
                     UPDATE import_doc
