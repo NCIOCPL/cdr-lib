@@ -29,9 +29,13 @@
 # parameter list to be invoked in pre-filtering documents before diff'ing
 # them.
 #
-# $Id: cdrxdiff.py,v 1.3 2005-12-16 05:22:52 ameyer Exp $
+# $Id: cdrxdiff.py,v 1.4 2008-06-03 21:14:49 bkline Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2005/12/16 05:22:52  ameyer
+# Changed from inefficient string buffer accumulation to sequence
+# accumulation with conversion to string only upon request.
+#
 # Revision 1.2  2005/11/30 04:56:55  ameyer
 # Added getDiffText() to retrieve buffer contents whenever.
 #
@@ -107,7 +111,7 @@ class _Diff:
         """
         # Validate
         if format not in ("html", "text"):
-            raise StandardError("Invalid format: %s" % format)
+            raise Exception("Invalid format: %s" % format)
 
         # Parms
         self._format  = format
@@ -267,7 +271,7 @@ class _Diff:
         """
         # Must pass doc or docID
         if not (doc or docId):
-            raise StandardError("No doc or docID passed to _getDiffDoc")
+            raise Exception("No doc or docID passed to _getDiffDoc")
 
         if filter:
             # If filtering, let our filter function resolve everything
@@ -281,10 +285,10 @@ class _Diff:
             if type(resp) == type("") or type(resp) == type(u""):
                 errs = cdr.getErrors(resp, errorsExpected=False)
                 if errs:
-                    raise StandardError("_getDiffDoc filter error: %s" % errs)
+                    raise Exception("_getDiffDoc filter error: %s" % errs)
                 else:
-                    raise StandardError(\
-                        "Unexpected response from _getDiffDoc: %s" % resp)
+                    raise Exception("Unexpected response from _getDiffDoc: %s"
+                                    % resp)
 
             # Must be okay
             xmlText = resp[0]
@@ -293,8 +297,7 @@ class _Diff:
             # Else resolve docId with fetch
             xmlText = cdr.getDoc("guest", docId, version=docVer)
             if cdr.getErrors(xmlText, False):
-                raise StandardError("Error fetching doc %s: %s" % \
-                                    (docId, xmlText))
+                raise Exception("Error fetching doc %s: %s" % (docId, xmlText))
         else:
             # It's just a pass through
             xmlText = doc

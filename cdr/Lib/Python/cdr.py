@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.145 2008-05-28 21:26:29 bkline Exp $
+# $Id: cdr.py,v 1.146 2008-06-03 21:14:49 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.145  2008/05/28 21:26:29  bkline
+# Added errorLocators parameter to valDoc().
+#
 # Revision 1.144  2008/02/25 15:32:52  bkline
 # Added optional bodyType parameter to sendMailMime(); added importEtree().
 #
@@ -596,7 +599,7 @@ def getPubPort():
                 pass
 
     # If we got here, we've tried all possibilities
-    raise StandardError("No CdrServer found for publishing")
+    raise Exception("No CdrServer found for publishing")
 
 #----------------------------------------------------------------------
 # Normalize a document id to form 'CDRnnnnnnnnnn'.
@@ -634,7 +637,7 @@ def exNormalize(id):
             12345
             'F1'
     Raise:
-        StandardError if not a CDR ID.
+        Exception if not a CDR ID.
     """
 
     if type(id) == type(9):
@@ -649,14 +652,14 @@ def exNormalize(id):
         result = pat.search (id)
 
         if not result:
-            raise StandardError ("Invalid CDR ID string: " + id)
+            raise Exception("Invalid CDR ID string: " + id)
 
         idNum = int (result.group ('num'))
         frag  = result.group ('frag')
 
     # Sanity check on number
     if idNum < 1:
-        raise StandardError ("Invalid CDR ID number: " + str (idNum))
+        raise Exception("Invalid CDR ID number: " + str(idNum))
 
     # Construct full id
     fullId = "CDR%010d" % idNum
@@ -688,7 +691,8 @@ def sendCommands(cmds, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
             # Log details to default log (not application log, don't know
             #  what the application is)
-            logwrite("""sendCommands: Could not connect to host=%s port=%d
+            logwrite("""\
+sendCommands: Could not connect to host=%s port=%d
 exceptionInfo=%s
 Current netstat=
 %s
@@ -697,9 +701,8 @@ Current netstat=
                 # Tried multiple times, give up
                 logwrite("sendCommands: Giving up after %d tries" %
                           CONNECT_TRIES)
-                raise Exception(\
-                    "sendCommands could not connect.  See info in %s" %
-                    DEFAULT_LOGFILE)
+                raise Exception("sendCommands could not connect.  "
+                                "See info in %s" % DEFAULT_LOGFILE)
 
             # Wait a bit before trying again
             time.sleep(1)
@@ -766,44 +769,131 @@ def strptime(str, format):
     return tm
 
 #----------------------------------------------------------------------
-# Extract a single error element from XML response.
+# Information about an error returned by the CDR server API.  Provides
+# access to the new attributes attached to some Err elements.  As of
+# this writing, only the CDR commands involving validation assign
+# these attributes, and only when specifically requested by the client.
+#
+# Members:
+#
+#    message  - text description of the error
+#    etype    - type of error ('validation' or 'other') (default 'other')
+#    elevel   - 'error' | 'warning' | 'info' | 'fatal' (default 'fatal')
+#    eref     - position of validation error in document (if appropriate)
 #----------------------------------------------------------------------
-def checkErr(resp):
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*?)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
-    return None
+class Error:
+    def __init__(self, node):
+        self.message = getTextContent(node)
+        self.etype   = node.getAttribute('etype') or 'other'
+        self.elevel  = node.getAttribute('elevel') or 'fatal'
+        self.eref    = node.getAttribute('eref') or None
+    __pattern = None
+    @classmethod
+    def getPattern(cls):
+        """
+        Accessor for regular expression pattern for extracting the
+        text content of <Err/> elements found in an XML fragment,
+        in case the caller prefers not to incur the overhead of
+        the DOM parser.  Note that we optimize by deferring the
+        compilation of the regular expression pattern until it's
+        actually requested, to avoid incurring the processing penalty
+        every time this module is loaded.
+        """
+        if not cls.__pattern:
+            cls.__pattern = re.compile(u"<Err(?:\\s+[^>]*)?>(.*?)</Err>",
+                                       re.DOTALL)
+        return cls.__pattern
+
+#----------------------------------------------------------------------
+# Extract a single error element from XML response.
+#
+# Pass:
+#    resp      - XML fragment in which to look for <Err/> elements
+#    asObject  - True if the return show be an Error object (see
+#                above) with information contained in the Err
+#                element's attributes; otherwise returns the text
+#                content of the first Err element as a string
+#
+# Return:        An Error object or a string (as determined by the
+#                value of the asObject parameter) for the first
+#                Err element found, if any; otherwise, None
+#----------------------------------------------------------------------
+def checkErr(resp, asObject = False):
+    errors = getErrors(resp, False, True, asObjects = asObject)
+    return errors and errors[0] or None
 
 #----------------------------------------------------------------------
 # Extract error elements from XML.
+#
+# Pass:
+#    xmlFragment   - string in which to look for serialized Err elements
+#    errorExpected - if True (the default), then return a generic error
+#                    string when no Err elements are found; otherwise
+#                    return an empty string or list if no Err elements
+#                    are found
+#    asSequence    - if False (the default), return the entire <Errors/>
+#                    element (serialized as a string) if present (for
+#                    backward compatibility with older code which expects
+#                    strings for error conditions); otherwise return
+#                    a (possibly empty) list of Error objects or error
+#                    strings; assumed to be True if asObjects is True (q.v.)
+#    asObjects     - if False (the default) errors found are returned as
+#                    strings; otherwise, errors are returned as Error
+#                    objects
+#    useDom        - if True a DOM parser is used to to extract the
+#                    information from the Err elements; otherwise
+#                    a regular expression is used to extract the error
+#                    description strings; the performance penalty
+#                    for using the DOM parser is roughly an order of
+#                    magnitude compared to using regular expressions,
+#                    but even in the worst case (a response containing
+#                    multiple errors and the breast cancer HP summary),
+#                    the call to getErrors with useDom = True takes
+#                    less than .002 seconds; default value is True;
+#                    if asObject is True, then useDom is assumed to
+#                    be True; if an exception is raised by the attempt
+#                    to get a DOM parse tree and asObjects is False,
+#                    then the function will fall back on extracting
+#                    the Err values using a regular expression
 #----------------------------------------------------------------------
-def getErrors(xml, errorsExpected = 1, asSequence = 0):
+def getErrors(xmlFragment, errorsExpected = True, asSequence = False,
+               asObjects = False, useDom = True):
+    
+    if asSequence or asObjects:
 
-    # Version which returns the errors in a list.
-    if asSequence:
-        if type(xml) not in (type(""), type(u"")):
+        # Safety check.
+        if type(xmlFragment) not in (str, unicode):
             return []
-        pattern = re.compile("<Err>(.*?)</Err>", re.DOTALL)
-        errs = pattern.findall(xml)
-        if errorsExpected and not errs:
-            return ["Internal failure"]
-        return errs
+        
+        if useDom or asObjects:
+            try:
+                dom = xml.dom.minidom.parseString(xmlFragment)
+                errors = [Error(node)
+                          for node in dom.getElementsByTagName('Err')]
+                if errorsExpected and not errors:
+                    return [u"Internal failure"]
+                return asObjects and errors or [e.message for e in errors]
+            except Exception, e:
+                if asObjects:
+                    raise Exception(u"getErrors(): %s" % e)
+        errors = Error.getPattern().findall(xmlFragment)
+        if not errors and errorsExpected:
+            return [u"Internal failure"]
+        return errors
 
     # Make sure we have a string.
-    if type(xml) not in (type(""), type(u"")):
-        return ""
+    if type(xmlFragment) not in (str, unicode):
+        return ''
 
     # Compile the pattern for the regular expression.
     pattern = re.compile("<Errors[>\s].*</Errors>", re.DOTALL)
 
     # Search for the <Errors> element.
-    errors  =  pattern.search(xml)
+    errors  =  pattern.search(xmlFragment)
     if errors:           return errors.group()
     elif errorsExpected: return "<Errors><Err>Internal failure</Err></Errors>"
     else:                return ""
-
+    
 #----------------------------------------------------------------------
 # Extract a piece of the CDR Server's response.
 #----------------------------------------------------------------------
@@ -1000,7 +1090,7 @@ def getCWDDate (docId, conn=None):
 
     Raises:
         cdrdb.Error if database error.
-        StandardError if doc ID not found.
+        Exception if doc ID not found.
     """
     # If no connection, create one
     if not conn:
@@ -1022,8 +1112,7 @@ def getCWDDate (docId, conn=None):
 
     # Caller should only pass docId for a real document
     if not row:
-        raise StandardError("cdr.getCWDDate: No document found for id=%d" % \
-                             idNum)
+        raise Exception("cdr.getCWDDate: No document found for id=%d" % idNum)
 
     return row[0]
 
@@ -1041,15 +1130,15 @@ def getQueryTermValueForId (path, docId, conn = None):
     Return:
         Sequence of values.  May be None.
     Raises:
-        StandardError if any failure.
+        Exception if any failure.
     """
     # Create connection if none available
     if not conn:
         try:
             conn = cdrdb.connect ("CdrGuest")
         except cdrdb.Error, info:
-            raise StandardError (
-              "getQueryTermValueForId: can't connect to DB: %s" % info[1][0])
+            raise Exception("getQueryTermValueForId: can't connect to DB: %s" %
+                            info[1][0])
 
     # Normalize id to integer
     did = exNormalize(docId)[1]
@@ -1072,8 +1161,8 @@ def getQueryTermValueForId (path, docId, conn = None):
         return retRows
 
     except cdrdb.Error, info:
-        raise StandardError (
-          "getQueryTermValueForId: database error: %s" % info[1][0])
+        raise Exception("getQueryTermValueForId: database error: %s" %
+                        info[1][0])
 
 #----------------------------------------------------------------------
 # Extract the text content of a DOM element.
@@ -1127,13 +1216,13 @@ def makeDocBlob(blob=None, inFile=None, outFile=None, wrapper=None, attrs=""):
         Base64 encoded blob if outFile not specified.
         Else returns empty string with output to file.
 
-    Raises StandardError if invalid parms or bad file i/o.
+    Raises Exception if invalid parms or bad file i/o.
     """
     # Check parms
     if blob == None and not inFile:
-        raise StandardError("makeDocBlob: requires passed blob or inFile")
+        raise Exception("makeDocBlob: requires passed blob or inFile")
     if blob and inFile:
-        raise StandardError("makeDocBlob: pass blob or inFile, not both")
+        raise Exception("makeDocBlob: pass blob or inFile, not both")
 
     if inFile:
         # Get blob from file
@@ -1142,10 +1231,9 @@ def makeDocBlob(blob=None, inFile=None, outFile=None, wrapper=None, attrs=""):
             blob = fp.read()
             fp.close()
         except IOError, info:
-            raise StandardError("makeDocBlob: %s" % info)
+            raise Exception("makeDocBlob: %s" % info)
         if not blob:
-            raise StandardError("makeDocBlob: no data read from file %s" % \
-                                 inFile)
+            raise Exception("makeDocBlob: no data read from file %s" % inFile)
 
     # Encode with or without wrapper
     startTag = endTag = ""
@@ -1164,7 +1252,7 @@ def makeDocBlob(blob=None, inFile=None, outFile=None, wrapper=None, attrs=""):
             fp.write(encodedBlob)
             fp.close()
         except IOError, info:
-            raise StandardError("makeDocBlob: %s" % info)
+            raise Exception("makeDocBlob: %s" % info)
         return ""
     return encodedBlob
 
@@ -1363,7 +1451,7 @@ def _addRepDocComment(doc, comment):
 
     # Sanity check.
     if not doc:
-        raise StandardError("_addRepDocComment(): missing doc argument")
+        raise Exception("_addRepDocComment(): missing doc argument")
 
     # Search for and delete existing DocComment
     delPat = re.compile (r"\n*<DocComment.*</DocComment>\n*", re.DOTALL)
@@ -1378,8 +1466,7 @@ def _addRepDocComment(doc, comment):
         parts = insRes.group ('first', 'last')
     if not insRes or len (parts) != 2:
         # Should never happen unless there's a bug
-        raise StandardError ("addRepDocComment: No CdrDocCtl in doc:\n%s" %
-                             doc)
+        raise Exception("addRepDocComment: No CdrDocCtl in doc:\n%s" % doc)
 
     # Comment must be compatible with CdrDoc utf-8
     if type(comment) == type(u""):
@@ -1410,7 +1497,7 @@ def _addRepDocActiveStatus(doc, newStatus):
 
     # Sanity check.
     if not doc:
-        raise StandardError("_addRepDocActiveStatus(): missing doc argument")
+        raise Exception("_addRepDocActiveStatus(): missing doc argument")
 
     # Search for and delete existing DocComment
     delPat = re.compile (r"\n*<DocActiveStatus.*</DocActiveStatus>\n*",
@@ -1426,8 +1513,7 @@ def _addRepDocActiveStatus(doc, newStatus):
         parts = insRes.group ('first', 'last')
     if not insRes or len (parts) != 2:
         # Should never happen unless there's a bug
-        raise StandardError ("addRepDocActiveStatus: No CdrDocCtl in doc:\n%s"
-                             % doc)
+        raise Exception("addRepDocActiveStatus: No CdrDocCtl in doc:\n%s" % doc)
 
     # Comment must be compatible with CdrDoc utf-8
     if type(newStatus) == type(u""):
@@ -1471,7 +1557,7 @@ def _addDocBlob(doc, blob=None, blobFileName=None):
         Possibly revised CdrDoc string.
 
     Raises:
-        StandardError if both blob and blobFileName are passed, or no
+        Exception if both blob and blobFileName are passed, or no
         CdrDoc end tag is found.
     """
     # Common case, we're just checking for the caller
@@ -1480,8 +1566,8 @@ def _addDocBlob(doc, blob=None, blobFileName=None):
 
     # Check parms
     if (blob and blobFileName):
-        raise StandardError("_addDocBlob called with two blobs, one in " +
-                            "memory and one in named file")
+        raise Exception("_addDocBlob called with two blobs, one in "
+                        "memory and one in named file")
 
     # Encode blob from memory or file
     encodedBlob = makeDocBlob(blob, blobFileName, wrapper='CdrDocBlob')
@@ -1499,7 +1585,7 @@ def _addDocBlob(doc, blob=None, blobFileName=None):
 
     # Should never happen
     if newDoc == strippedDoc:
-        raise StandardError("_addDocBlob: could not find CdrDoc end tag")
+        raise Exception("_addDocBlob: could not find CdrDoc end tag")
 
     return newDoc
 
@@ -1520,6 +1606,7 @@ def addDoc(credentials, file = None, doc = None, comment = '',
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
            verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
            activeStatus = None, blob = None, blobFile = None,
+           errorLocators = 'N',
            host = DEFAULT_HOST, port = DEFAULT_PORT):
     """
     Add a document to the repository.
@@ -1544,6 +1631,9 @@ def addDoc(credentials, file = None, doc = None, comment = '',
                          Will be converted to base64 for transmission, so
                          don't convert before passing it to addDoc.
         blobFile      - Alternative way to get blob - from file of bytes.
+        errorLocators - 'Y' if information needed for finding the errors
+                        in the document is requested; otherwise 'N' (the
+                        default)
         host          - Computer.
         port          - CdrServer listening port.
 
@@ -1575,7 +1665,8 @@ def addDoc(credentials, file = None, doc = None, comment = '',
 
     # Create the command.
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
-    val     = "<Validate>%s</Validate>" % (val)
+    elocs   = errorLocators
+    val     = "<Validate ErrorLocators='%s'>%s</Validate>" % (elocs, val)
     reason  = "<Reason>%s</Reason>" % (reason)
     doLinks = "<SetLinks>%s</SetLinks>" % setLinks
     ver     = "<Version Publishable='%s'>%s</Version>" % (verPublishable, ver)
@@ -1592,8 +1683,8 @@ def addDoc(credentials, file = None, doc = None, comment = '',
             return (None, docId)
         else:
             return docId
-    errors = getErrors(resp, errorsExpected = 0)
     if showWarnings:
+        errors = getErrors(resp, errorsExpected = False)
         return (docId, errors)
     else:
         return docId
@@ -1613,6 +1704,7 @@ def repDoc(credentials, file = None, doc = None, comment = '',
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
            verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
            activeStatus = None, blob = None, blobFile = None, delBlob=0,
+           errorLocators = 'N',
            host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     """
@@ -1652,7 +1744,8 @@ def repDoc(credentials, file = None, doc = None, comment = '',
 
     # Create the command.
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
-    val     = "<Validate>%s</Validate>" % (val)
+    elocs   = errorLocators
+    val     = "<Validate ErrorLocators='%s'>%s</Validate>" % (elocs, val)
     reason  = "<Reason>%s</Reason>" % (reason)
     doLinks = "<SetLinks>%s</SetLinks>" % setLinks
     ver     = "<Version Publishable='%s'>%s</Version>" % (verPublishable, ver)
@@ -1669,8 +1762,8 @@ def repDoc(credentials, file = None, doc = None, comment = '',
             return (None, docId)
         else:
             return docId
-    errors = getErrors(resp, errorsExpected = 0)
     if showWarnings:
+        errors = getErrors(resp, errorsExpected = False)
         return (docId, errors)
     else:
         return docId
@@ -1805,7 +1898,7 @@ def valDoc(credentials, docType, docId = None, doc = None,
         doc = "<DocId ValidateOnly='%s'>%s</DocId>" % (validateOnly,
                                                        normalize(docId))
     if not doc:
-        raise StandardError("valDoc: no doc or docId specified")
+        raise Exception("valDoc: no doc or docId specified")
     if valLinks == 'Y' and valSchema == 'Y':
         valTypes = "Links Schema"
     elif valLinks == 'Y':
@@ -1813,7 +1906,7 @@ def valDoc(credentials, docType, docId = None, doc = None,
     elif valSchema == 'Y':
         valTypes = "Schema"
     else:
-        raise StandardError("valDoc: no validation method specified")
+        raise Exception("valDoc: no validation method specified")
     cmd = ("<CdrValidateDoc DocType='%s' "
            "ValidationTypes='%s' "
            "ErrorLocators='%s'>%s</CdrValidateDoc>" % (docType,
@@ -2151,8 +2244,8 @@ def getDoctype(credentials, doctype, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Extract the response.
     results = extract("<CdrGetDocTypeResp (.*)</CdrGetDocTypeResp>", resp)
-    if string.find(results, "<Err") != -1:
-        return dtinfo(error = extract("<Err>(.*)</Err>", results))
+    errors = getErrors(results, False, True)
+    if errors: return dtinfo(error = errors)
 
     # Build the regular expressions.
     typeExpr       = re.compile("Type=['\"]([^'\"]*)['\"]")
@@ -2213,11 +2306,8 @@ def addDoctype(credentials, info, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return dtinfo(error = err)
+    error = checkErr(resp)
+    if error: return dtinfo(error = error)
     return getDoctype(credentials, info.type, host, port)
 
 #----------------------------------------------------------------------
@@ -2235,11 +2325,8 @@ def modDoctype(credentials, info, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return dtinfo(error = err)
+    error = checkErr(resp)
+    if error: return dtinfo(error = error)
     return getDoctype(credentials, info.type, host, port)
 
 
@@ -2335,11 +2422,8 @@ def getTree(credentials, docId, depth = 1,
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return TermSet(error = err)
+    err = checkErr(resp)
+    if err: return TermSet(error = err)
 
     # Parse the response.
     respExpr = re.compile("<CdrGetTreeResp>\s*"
@@ -2377,11 +2461,8 @@ def getActions(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # Parse the response.
     actions = {}
@@ -2400,11 +2481,8 @@ def getUsers(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # Parse the response.
     users = re.findall("<UserName>(.*?)</UserName>", resp)
@@ -2421,11 +2499,8 @@ def getGroups(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # Parse the response.
     groups = re.findall("<GrpName>(.*?)</GrpName>", resp)
@@ -2442,11 +2517,8 @@ def delGroup(credentials, grp, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # No errors to report.
     return None
@@ -2461,11 +2533,8 @@ def getDoctypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # Parse the response.
     types = re.findall("<DocType>(.*?)</DocType>", resp)
@@ -2488,7 +2557,7 @@ def addSysValue(credentials, name, value="", program=None, notes=None,
         notes   = Documentation to store with name.
     Return:
         None.
-        Raises StandardError if failure.
+        Raises Exception if failure.
     """
     _sysValue(credentials, "Add", name, value, program, notes, host, port)
 
@@ -2503,7 +2572,7 @@ def repSysValue(credentials, name, value="", program=None, notes=None,
         See addSysValue
     Return:
         None.
-        Raises StandardError if failure.
+        Raises Exception if failure.
     """
     _sysValue(credentials, "Rep", name, value, program, notes, host, port)
 
@@ -2518,7 +2587,7 @@ def delSysValue(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
         name = "name" column of the row to delete.
     Return:
         None.
-        Raises StandardError if failure.
+        Raises Exception if failure.
     """
     _sysValue(credentials, "Del", name, host=host, port=port)
 
@@ -2536,7 +2605,7 @@ def getSysValue(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
         Value string:
             May be empty string.
             Returns None if NULL in database.
-        Raises StandardError if failure.
+        Raises Exception if failure.
     """
     return _sysValue(credentials, "Get", name, host=host, port=port)
 
@@ -2558,13 +2627,13 @@ def _sysValue(credentials, action, name, value=None, program=None,
         notes   = Documentation to store with name.
     Return:
         None.
-        Raises StandardError if failure.
+        Raises Exception if failure.
     """
     # Required for anything
     if not credentials:
-        raise StandardError ("No credentials passed to %sSysValue" % action)
+        raise Exception("No credentials passed to %sSysValue" % action)
     if not name:
-        raise StandardError ("No name passed to %sSysValue" % action)
+        raise Exception("No name passed to %sSysValue" % action)
 
     # Create command
     tag = "Cdr" + action + "SysValue"
@@ -2586,7 +2655,7 @@ def _sysValue(credentials, action, name, value=None, program=None,
     # Did server report error?
     errs = getErrors (resp, 0)
     if len(errs) > 0:
-        raise StandardError ("Server error on %sSysValue:\n%s" % (action,errs))
+        raise Exception("Server error on %sSysValue:\n%s" % (action,errs))
 
     # Do we need to return a value?
     if action == "Get":
@@ -2615,11 +2684,8 @@ def getCssFiles(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # Parse the response.
     nameExpr = re.compile("<Name>(.*)</Name>", re.DOTALL)
@@ -2651,11 +2717,8 @@ def getSchemaDocs(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # Parse the response.
     return re.findall("<DocTitle>(.*?)</DocTitle>", resp)
@@ -2680,11 +2743,8 @@ def getGroup(credentials, gName, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # Parse the response.
     name     = re.findall("<GrpName>(.*?)</GrpName>", resp)[0]
@@ -2748,11 +2808,8 @@ def putGroup(credentials, gName, group, host = DEFAULT_HOST,
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # No errors to report.
     return None
@@ -2789,11 +2846,8 @@ def getUser(credentials, uName, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # Parse the response.
     name     = re.findall("<UserName>(.*?)</UserName>", resp)[0]
@@ -2854,11 +2908,8 @@ def putUser(credentials, uName, user, host = DEFAULT_HOST,
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # No errors to report.
     return None
@@ -2873,11 +2924,8 @@ def delUser(credentials, usr, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # No errors to report.
     return None
@@ -2901,11 +2949,8 @@ def getAction(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # Parse the response.
     name     = re.findall("<Name>(.*)</Name>", resp)[0]
@@ -2943,11 +2988,8 @@ def putAction(credentials, name, action, host = DEFAULT_HOST,
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # No errors to report.
     return None
@@ -2962,11 +3004,8 @@ def delAction(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # No errors to report.
     return None
@@ -3012,11 +3051,8 @@ def getLinkTypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # Parse the response
     types = re.findall("<Name>(.*?)</Name>", resp)
@@ -3033,11 +3069,9 @@ def getLinkType(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
+
     # Parse the response
     name     = re.findall("<Name>(.*)</Name>", resp)[0]
     cmtExpr  = re.compile("<LinkTypeComment>(.*)</LinkTypeComment>", re.DOTALL)
@@ -3088,8 +3122,8 @@ def putLinkType(credentials, name, linkType, linkAct,
 
     # Add the target document version type to check against
     if not linkType.linkChkType:
-        raise StandardError("No linkChkType specified for link type %s:" %\
-                             linkType.name);
+        raise Exception("No linkChkType specified for link type %s:" %
+                        linkType.name);
     cmd += "<LinkChkType>%s</LinkChkType>" % linkType.linkChkType
 
     # Add the comment, if present.
@@ -3117,11 +3151,8 @@ def putLinkType(credentials, name, linkType, linkAct,
     else:
         cmd += "</CdrAddLinkType>"
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # No errors to report if we get here.
     return None
@@ -3136,11 +3167,8 @@ def getLinkProps(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    if string.find(resp, "<Err>") != -1:
-        expr = re.compile("<Err>(.*)</Err>", re.DOTALL)
-        err = expr.search(resp)
-        err = err and err.group(1) or "Unknown failure"
-        return err
+    err = checkErr(resp)
+    if err: return err
 
     # Parse the response
     propExpr = re.compile("<LinkProperty>(.*?)</LinkProperty>", re.DOTALL)
@@ -3417,7 +3445,7 @@ def listVersions(credentials, docId, nVersions = -1,
 
     # Check for failure.
     if resp.find("<Errors") != -1:
-        raise StandardError(extract(r"(<Errors[\s>].*</Errors>)", resp))
+        raise Exception(extract(r"(<Errors[\s>].*</Errors>)", resp))
 
     # Extract the versions.
     versions    = []
@@ -3430,7 +3458,7 @@ def listVersions(credentials, docId, nVersions = -1,
             numMatch     = numExpr.search(ver)
             commentMatch = commentExpr.search(ver)
             if not numMatch:
-                raise StandardError("listVersions: missing Num element")
+                raise Exception("listVersions: missing Num element")
             num = int(numMatch.group(1))
             comment = commentMatch and commentMatch.group(1) or None
             versions.append((num, comment))
@@ -3485,7 +3513,7 @@ def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
             match = expr.search(doc)
             if not match:
                 return (None, "<Errors><Err>Malformed docList member '%s'"\
-                              "</Err></Errors>" % doc)
+                              "</Err></Errors>" % cgi.escape(doc))
             docId = normalize(match.group(1))
             version = match.group(3) or "0"
             docsElem += "<Doc Id='%s' Version='%s'/>" % (docId, version)
@@ -3587,7 +3615,7 @@ def cacheInit(credentials, cacheOn, cacheType,
     # If error occurred, raise exception
     err = checkErr(resp)
     if err:
-        raise StandardError (err)
+        raise Exception(err)
 
     return None
 
@@ -3896,14 +3924,12 @@ def makeTempDir(basename = "tmp", chdir = 1):
     try:
         os.mkdir(abspath)
     except:
-        raise StandardError("makeTempDir",
-                            "Cannot create directory %s" % abspath)
+        raise Exception("makeTempDir", "Cannot create directory %s" % abspath)
     if chdir:
         try:
             os.chdir(abspath)
         except:
-            raise StandardError("makeTempDir",
-                                "Cannot chdir to %s" % abspath)
+            raise Exception("makeTempDir", "Cannot chdir to %s" % abspath)
     return abspath
 
 #----------------------------------------------------------------------
@@ -3927,11 +3953,11 @@ class CdrResponseNode:
         for child in node.childNodes:
             if child.nodeType == child.ELEMENT_NODE:
                 if self.specificElement:
-                    raise StandardError("CdrResponseNode: too many children "
+                    raise Exception("CdrResponseNode: too many children "
                                         "of CdrResponse element")
                 self.specificElement = child
         if not self.specificElement:
-            raise StandardError("No element children found for CdrResponse")
+            raise Exception("No element children found for CdrResponse")
         self.elapsed         = self.specificElement.getAttribute('Elapsed')
 
 #----------------------------------------------------------------------
@@ -3941,7 +3967,7 @@ def wrapException(caller, errElems):
     args = [caller]
     for elem in errElems:
         args.append(getTextContent(elem))
-    exception = StandardError()
+    exception = Exception()
     exception.args = tuple(args)
     raise exception
 
@@ -3966,18 +3992,18 @@ def extractResponseNode(caller, responseString):
         if errElems:
             wrapException(caller, errElems)
         else:
-            raise StandardError(caller, 'No CdrResponse elements found')
+            raise Exception(caller, 'No CdrResponse elements found')
     if len(cdrResponseElems) == 1:
         responseElem = cdrResponseElems[0]
     elif len(cdrResponseElems) == 3:
         responseElem = cdrResponseElems[2]
-        raise StandardError(caller, 'Found %d CdrResponse elements; '
+        raise Exception(caller, 'Found %d CdrResponse elements; '
                                     'expected one or three')
     if responseElem.getAttribute('Status') == 'success':
         return CdrResponseNode(responseElem, when)
     errElems = cdrResponseElems[0].getElementsByTagName('Err')
     if not errElems:
-        raise StandardError(caller, 'call failed but Err elements missing')
+        raise Exception(caller, 'call failed but Err elements missing')
     wrapException(caller, errElems)
 
     # wrapException does not return, but add a return to silence pychecker
@@ -4130,7 +4156,7 @@ def expandFilterSet(session, name, level = 0,
                     host = DEFAULT_HOST, port = DEFAULT_PORT):
     global _expandedFilterSetCache
     if level > 100:
-        raise StandardError('expandFilterSet', 'infinite nesting of sets')
+        raise Exception('expandFilterSet', 'infinite nesting of sets')
     if _expandedFilterSetCache.has_key(name):
         return _expandedFilterSetCache[name]
     set = getFilterSet(session, name, host, port)
@@ -4480,8 +4506,8 @@ def createLockFile(fname):
     """
     # Nested calls are not allowed
     if _lockedFiles.has_key(fname):
-        raise StandardError(\
-         'File "%s" locked twice without intervening unlock' % fname)
+        raise Exception('File "%s" locked twice without intervening unlock' %
+                        fname)
 
     # If another process locked the file, caller loses
     if os.path.exists(fname):
@@ -4512,7 +4538,7 @@ def removeLockFile(fname):
     # Only remove the file if we created it.
     # It is illegal to remove a lock created by another process
     if not _lockedFiles.has_key(fname):
-        raise StandardError('File "%s" not locked in this process' % fname)
+        raise Exception('File "%s" not locked in this process' % fname)
     del(_lockedFiles[fname])
 
     # If we got here, this ought to work, propagate exception if it fails

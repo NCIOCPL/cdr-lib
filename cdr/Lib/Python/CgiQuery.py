@@ -1,11 +1,14 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
 #
-# $Id: CgiQuery.py,v 1.9 2008-01-15 22:17:54 ameyer Exp $
+# $Id: CgiQuery.py,v 1.10 2008-06-03 21:14:49 bkline Exp $
 #
 # Base class for CGI database query interface.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.9  2008/01/15 22:17:54  ameyer
+# Fixed dumb bug introduced in last version.
+#
 # Revision 1.8  2008/01/10 22:33:15  ameyer
 # Bob changed the output format to send utf-8 to the browser instead of
 # Latin-1.  This version incorporates Bob's changes and removes the older
@@ -115,7 +118,7 @@ Cache-control: no-cache, must-revalidate
             self.conn.commit()
             self.queryName = self.newName
             self.queryText = self.newQuery
-        except StandardError, info:
+        except Exception, info:
             self.bail("Failure adding query: %s" % cgi.escape(str(info)))
 
     def saveQuery(self):
@@ -125,7 +128,7 @@ Cache-control: no-cache, must-revalidate
             cursor.execute("UPDATE query SET value = ? WHERE name = ?",
                            (self.queryText, self.queryName))
             self.conn.commit()
-        except StandardError, info:
+        except Exception, info:
             self.bail("Failure saving query: %s" % cgi.escape(str(info)))
 
     def delQuery(self):
@@ -134,7 +137,7 @@ Cache-control: no-cache, must-revalidate
             cursor = self.conn.cursor()
             cursor.execute("DELETE FROM query WHERE name = ?", self.queryName)
             self.conn.commit()
-        except StandardError, info:
+        except Exception, info:
             self.bail("Failure deleting query: %s" % cgi.escape(str(info)))
 
     def getQueries(self):

@@ -1,8 +1,11 @@
-# $Id: cdrglblchg.py,v 1.38 2005-09-30 03:54:02 ameyer Exp $
+# $Id: cdrglblchg.py,v 1.39 2008-06-03 21:14:49 bkline Exp $
 #
 # Common routines and classes for global change scripts.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.38  2005/09/30 03:54:02  ameyer
+# Added DateLastUpdated update to terminology global changes.
+#
 # Revision 1.37  2005/08/26 02:03:44  ameyer
 # Added second pass filter to some global changes to update DateLastModified,
 # or warn user if there isn't one.
@@ -530,7 +533,7 @@ def createOutputDir():
     except:
         msg = "Unable to create directory '%s'" % dirName
         cdr.logwrite (msg, LF)
-        raise StandardError (msg)
+        raise Exception (msg)
 
     cdr.logwrite ("Created directory '%s'" % dirName, LF)
     return dirName
@@ -558,7 +561,7 @@ def writeDocs (dirName, docId, oldDoc, newDoc, verType, valErrs=None):
         valErrs - Sequence of validation errors, or None.
                    If present & non-empty write them to a NEW_ERRORS.txt file.
     """
-    # Construct filenames.  exNormalize() can raise StandardError
+    # Construct filenames.  exNormalize() can raise Exception
     idStr = cdr.exNormalize(docId)[0]
     oldName = "%s/%s.%sold.xml" % (dirName, idStr, verType)
     newName = "%s/%s.%snew.xml" % (dirName, idStr, verType)
@@ -755,8 +758,8 @@ class GlblChg:
         try:
             # result must be a FuncReturn object
             result = stage.subr (parms)
-        except StandardError, e:
-            msg = "execStage StandardError: %s: %s" % (stage.excpMsg, str(e))
+        except Exception, e:
+            msg = "execStage Exception: %s: %s" % (stage.excpMsg, str(e))
             cdr.logwrite (msg, LF, tback=1)
             return FuncReturn (RET_ERROR, msg)
         except:
@@ -877,8 +880,8 @@ class GlblChg:
         """
         # Get parameters
         if (len(parms) != 3):
-            raise StandardError ("verifyId expected 3 parms, got " +
-                                 str(len(parms)))
+            raise Exception ("verifyId expected 3 parms, got " +
+                             str(len(parms)))
         docId     = parms[0]
         docType   = parms[1]
         titleName = parms[2]
@@ -892,7 +895,7 @@ class GlblChg:
         # Normalize any type of valid id
         try:
             oneId = cdr.exNormalize(docId)[1]
-        except StandardError, e:
+        except Exception, e:
             result.setErrMsg ("Internal error: %s" % str(e))
             return result
 
@@ -958,8 +961,8 @@ class GlblChg:
         """
         # Get parameters
         if (len(parms) != 4):
-            raise StandardError ("getPickList expected 4 parms, got " +
-                                 str(len(parms)))
+            raise Exception ("getPickList expected 4 parms, got " +
+                             str(len(parms)))
         docType      = parms[0]
         searchString = parms[1]
         title        = parms[2]
@@ -1024,8 +1027,8 @@ class GlblChg:
         """
         # Parameters
         if (len(parms) != 5):
-            raise StandardError ("genValidValPickList expected 5 parms, got " +
-                                 str(len(parms)))
+            raise Exception ("genValidValPickList expected 5 parms, got " +
+                             str(len(parms)))
         docType    = parms[0]
         vvType     = parms[1]
         vvVarName  = parms[2]
@@ -1263,8 +1266,8 @@ class GlblChg:
 
         # Get parameters
         if (len(parms) != 4):
-            raise StandardError ("genInputHtml expected 4 parms, got " +
-                                 str(len(parms)))
+            raise Exception ("genInputHtml expected 4 parms, got " +
+                             str(len(parms)))
         docType    = parms[0]
         inputTitle = parms[1]
         varPrefix  = parms[2]
@@ -1319,8 +1322,8 @@ class GlblChg:
         """
         # Get parameters
         if (len(parms) != 3):
-            raise StandardError ("genFragPickList expected 3 parms, got " +
-                                 str(len(parms)))
+            raise Exception ("genFragPickList expected 3 parms, got " +
+                             str(len(parms)))
         docId     = parms[0]
         varPrefix = parms[1]
         optional  = parms[2]

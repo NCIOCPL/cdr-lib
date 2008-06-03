@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.23 2007-04-12 20:03:53 venglisc Exp $
+# $Id: cdr2cg.py,v 1.24 2008-06-03 21:14:49 bkline Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.23  2007/04/12 20:03:53  venglisc
+# Modified name for MFP to Interim-Export.
+#
 # Revision 1.22  2007/01/11 16:39:48  bkline
 # Made sure that when the module's host attribute is modified by outside
 # code the new value is used instead of the original value.
@@ -300,7 +303,7 @@ class PubDataResponse:
     def __repr__(self):
         return u"PubDataResponse (docNum: %d)" % self.docNum
 
-class HttpError(StandardError):
+class HttpError(Exception):
     def __init__(self, xmlString):
         self.xmlString = xmlString
         bodyElem   = extractBodyElement(xmlString)
@@ -386,7 +389,7 @@ def getChildElement(parent, name, required = False):
             child = node
             break
     if required and not child:
-        raise StandardError("Response missing required %s element" % name)
+        raise Exception("Response missing required %s element" % name)
     return child
 
 def extractResponseElement(bodyNode):
@@ -455,15 +458,15 @@ def sendRequest(body, app = application, host = host, headers = headers):
 
     # Check for failure.
     if not response:
-        raise StandardError("tried to connect 3 times unsuccessfully")
+        raise Exception("tried to connect 3 times unsuccessfully")
     
     if response.status != 200:
         resp = response.read()
         logString("HTTP ERROR", resp)
         resp = "(occurred at %s) (%s)" % (time.ctime(), resp)
-        raise StandardError("HTTP error: %d (%s) %s" % (response.status,
-                                                     response.reason,
-                                                     resp))
+        raise Exception("HTTP error: %d (%s) %s" % (response.status,
+                                                    response.reason,
+                                                    resp))
 
     # Get the response payload and return it.
     data = response.read()
