@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.148 2008-06-06 19:51:29 bkline Exp $
+# $Id: cdr.py,v 1.149 2008-06-06 20:16:04 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.148  2008/06/06 19:51:29  bkline
+# Moved new argument to setDocStatus to end; added comment argument
+# to unblockDoc().
+#
 # Revision 1.147  2008/06/06 19:17:54  bkline
 # Impvoved exception handling for getErrors(); added support for
 # comments in setDocStatus().
@@ -1627,8 +1631,8 @@ def addDoc(credentials, file = None, doc = None, comment = '',
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
            verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
            activeStatus = None, blob = None, blobFile = None,
-           errorLocators = 'N',
-           host = DEFAULT_HOST, port = DEFAULT_PORT):
+           host = DEFAULT_HOST, port = DEFAULT_PORT,
+           errorLocators = 'N'):
     """
     Add a document to the repository.
 
@@ -1652,11 +1656,11 @@ def addDoc(credentials, file = None, doc = None, comment = '',
                          Will be converted to base64 for transmission, so
                          don't convert before passing it to addDoc.
         blobFile      - Alternative way to get blob - from file of bytes.
+        host          - Computer.
+        port          - CdrServer listening port.
         errorLocators - 'Y' if information needed for finding the errors
                         in the document is requested; otherwise 'N' (the
                         default)
-        host          - Computer.
-        port          - CdrServer listening port.
 
     Return:
         CDR ID of newly stored document, in full "CDR0000nnnnnn" format.
@@ -1725,8 +1729,8 @@ def repDoc(credentials, file = None, doc = None, comment = '',
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
            verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
            activeStatus = None, blob = None, blobFile = None, delBlob=0,
-           errorLocators = 'N',
-           host = DEFAULT_HOST, port = DEFAULT_PORT):
+           host = DEFAULT_HOST, port = DEFAULT_PORT,
+           errorLocators = 'N'):
 
     """
     Replace an existing document.
@@ -1878,8 +1882,8 @@ def delDoc(credentials, docId, val = 'N', reason = '',
 #----------------------------------------------------------------------
 def valDoc(credentials, docType, docId = None, doc = None,
            valLinks = 'Y', valSchema = 'Y', validateOnly = 'Y',
-           errorLocators = 'N',
-           host = DEFAULT_HOST, port = DEFAULT_PORT):
+           host = DEFAULT_HOST, port = DEFAULT_PORT,
+           errorLocators = 'N'):
     """
     Validate a document, either in the database or passed to here.
 
@@ -1899,10 +1903,10 @@ def valDoc(credentials, docType, docId = None, doc = None,
                         table.
                       Only usable if docId passed.
                       Default is to leave val_status alone.
+        host/port   - The usual.
         errorLocators - 'Y' if information needed for finding the errors
                       in the document is requested; otherwise 'N' (the
                       default)
-        host/port   - The usual.
 
     Return:
         Results of server validation - may be list of error messages.
