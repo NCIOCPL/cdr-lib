@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.146 2008-06-03 21:14:49 bkline Exp $
+# $Id: cdr.py,v 1.147 2008-06-06 19:17:54 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,12 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.146  2008/06/03 21:14:49  bkline
+# Cleaned up code to extract error information from the Err elements
+# returned in CDR server responses.  Replaced StandardError exceptions
+# with Exception objects, as StandardError will be removed from the
+# exception heirarchy at some point.
+#
 # Revision 1.145  2008/05/28 21:26:29  bkline
 # Added errorLocators parameter to valDoc().
 #
@@ -874,8 +880,19 @@ def getErrors(xmlFragment, errorsExpected = True, asSequence = False,
                     return [u"Internal failure"]
                 return asObjects and errors or [e.message for e in errors]
             except Exception, e:
+                try:
+                    logwrite("failure parsing errors in '%s'" % xmlFragment)
+                except:
+                    pass
                 if asObjects:
                     raise Exception(u"getErrors(): %s" % e)
+            except:
+                try:
+                    logwrite("failure parsing errors in '%s'" % xmlFragment)
+                except:
+                    pass
+                if asObjects:
+                    raise Exception(u"getErrors() failure")
         errors = Error.getPattern().findall(xmlFragment)
         if not errors and errorsExpected:
             return [u"Internal failure"]
@@ -4378,12 +4395,14 @@ def addExternalMapping(credentials, usage, value, docId = None,
 #----------------------------------------------------------------------
 # Change the active_status column for a document.
 #----------------------------------------------------------------------
-def setDocStatus(credentials, docId, newStatus, host = DEFAULT_HOST,
-                 port = DEFAULT_PORT):
-    id   = "<DocId>%s</DocId>" % normalize(docId)
-    stat = "<NewStatus>%s</NewStatus>" % newStatus
-    cmd  = "<CdrSetDocStatus>%s%s</CdrSetDocStatus>" % (id, stat)
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+def setDocStatus(credentials, docId, newStatus, comment = None,
+                 host = DEFAULT_HOST, port = DEFAULT_PORT):
+    id   = u"<DocId>%s</DocId>" % normalize(docId)
+    stat = u"<NewStatus>%s</NewStatus>" % newStatus
+    cmt  = comment and (u"<Comment>%s</Comment>" % comment) or u""
+    cmd  = u"<CdrSetDocStatus>%s%s%s</CdrSetDocStatus>" % (id, stat, cmt)
+    resp = sendCommands(wrapCommand(cmd.encode('utf-8'), credentials),
+                        host, port)
     errs = getErrors(resp, errorsExpected = False, asSequence = True)
     if errs:
         raise Exception(errs)
