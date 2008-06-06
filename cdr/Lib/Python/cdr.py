@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.147 2008-06-06 19:17:54 bkline Exp $
+# $Id: cdr.py,v 1.148 2008-06-06 19:51:29 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.147  2008/06/06 19:17:54  bkline
+# Impvoved exception handling for getErrors(); added support for
+# comments in setDocStatus().
+#
 # Revision 1.146  2008/06/03 21:14:49  bkline
 # Cleaned up code to extract error information from the Err elements
 # returned in CDR server responses.  Replaced StandardError exceptions
@@ -4395,8 +4399,8 @@ def addExternalMapping(credentials, usage, value, docId = None,
 #----------------------------------------------------------------------
 # Change the active_status column for a document.
 #----------------------------------------------------------------------
-def setDocStatus(credentials, docId, newStatus, comment = None,
-                 host = DEFAULT_HOST, port = DEFAULT_PORT):
+def setDocStatus(credentials, docId, newStatus,
+                 host = DEFAULT_HOST, port = DEFAULT_PORT, comment = None):
     id   = u"<DocId>%s</DocId>" % normalize(docId)
     stat = u"<NewStatus>%s</NewStatus>" % newStatus
     cmt  = comment and (u"<Comment>%s</Comment>" % comment) or u""
@@ -4424,8 +4428,9 @@ def getDocStatus(credentials, docId, host = DEFAULT_HOST):
 #----------------------------------------------------------------------
 # Convenience wrapper for unblocking a document.
 #----------------------------------------------------------------------
-def unblockDoc(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
-    setDocStatus(credentials, docId, "A", host, port)
+def unblockDoc(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT,
+               comment = None):
+    setDocStatus(credentials, docId, "A", host, port, comment)
 
 #----------------------------------------------------------------------
 # Determine the last date a versioned blob changed.
