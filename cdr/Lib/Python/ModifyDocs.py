@@ -1,11 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.26 2007-10-26 04:45:34 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.27 2008-06-10 15:29:26 bkline Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.26  2007/10/26 04:45:34  ameyer
+# Made a number of tweaks to the statistical info that can be used
+# in a report.
+#
 # Revision 1.25  2007/10/16 21:21:39  ameyer
 # Beefed up getProcessed() to be able to do a lot more.
 #
@@ -105,10 +109,9 @@
 # Harness for one-off global changes.
 #
 #----------------------------------------------------------------------
-import cdr, cdrdb, cdrglblchg, sys, time, re, copy
+import cdr, cdrdb, cdrglblchg, sys, time, copy
 
 LOGFILE = 'd:/cdr/log/ModifyDocs.log'
-ERRPATT = re.compile(r"<Err>(.*?)</Err>", re.DOTALL)
 
 #----------------------------------------------------------------------
 # Custom exception indicating that we can't check out a document.
@@ -954,7 +957,7 @@ class Doc:
 
         # Second element contains XSLT filter warning(s), if any
         if response[1]:
-            warnings = ERRPATT.findall(response[1]) or response[1]
+            warnings = cdr.getErrors(response[1], asSequence = True)
             if logWarnings:
                 for warning in warnings:
                     logger.log("Warning for CDR%010d: %s" % (self.id,
