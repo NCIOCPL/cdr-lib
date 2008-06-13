@@ -1,11 +1,15 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
 #
-# $Id: CgiQuery.py,v 1.11 2008-06-13 17:33:15 bkline Exp $
+# $Id: CgiQuery.py,v 1.12 2008-06-13 20:09:50 bkline Exp $
 #
 # Base class for CGI database query interface.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.11  2008/06/13 17:33:15  bkline
+# Fixed handling of queries whose names contained special XML delimiter
+# characters.
+#
 # Revision 1.10  2008/06/03 21:14:49  bkline
 # Cleaned up code to extract error information from the Err elements
 # returned in CDR server responses.  Replaced StandardError exceptions
@@ -47,10 +51,6 @@ import cgi, re, sys, time, cdrdb
 
 class CgiQuery:
 
-    @staticmethod
-    def unescape(me):
-        if not me:
-            return u""
     def __init__(self, conn, system, script, timeout = 30):
         "Should be invoked by the derived class's constructor."
         self.conn          = conn
@@ -58,19 +58,27 @@ class CgiQuery:
         self.script        = script
         self.timeout       = timeout
         self.fields        = fields = cgi.FieldStorage()
-        self.doWhat        = fields and fields.getvalue("doWhat") or None
-        self.queryName     = fields and fields.getvalue("queries") or None
-        self.newName       = fields and fields.getvalue("newName") or None
-        self.newQuery      = fields and fields.getvalue("newQuery") or ""
-        self.queryText     = fields and fields.getvalue("queryText") or ""
+        self.doWhat        = fields.getvalue("doWhat") or None #"addQuery" or None
+        self.queryName     = fields.getvalue("queries") or None
+        self.newName       = fields.getvalue("newName") or None
+        self.newQuery      = fields.getvalue("newQuery") or ""
+        self.queryText     = fields.getvalue("queryText") or ""
         self.results       = ""
+        if self.queryName:
+            self.queryName = unicode(self.queryName, 'utf-8')
+        if self.newName:
+            self.newName = unicode(self.newName, 'utf-8')
 
     def run(self):
         if   self.doWhat == "addQuery"  and self.newName:   self.addQuery()
         elif self.doWhat == "saveQuery" and self.queryName: self.saveQuery()
         elif self.doWhat == "delQuery"  and self.queryName: self.delQuery()
         elif self.doWhat == "runQuery"  and self.queryText: self.runQuery()
-        self.sendPage(self.createPage())
+        try:
+            page = self.createPage()
+        except Exception, e:
+            self.bail(e)
+        self.sendPage(page)
 
     def sendPage(self, page):
         "Display the specified page and exit."
