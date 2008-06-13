@@ -1,11 +1,17 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
 #
-# $Id: CgiQuery.py,v 1.10 2008-06-03 21:14:49 bkline Exp $
+# $Id: CgiQuery.py,v 1.11 2008-06-13 17:33:15 bkline Exp $
 #
 # Base class for CGI database query interface.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2008/06/03 21:14:49  bkline
+# Cleaned up code to extract error information from the Err elements
+# returned in CDR server responses.  Replaced StandardError exceptions
+# with Exception objects, as StandardError will be removed from the
+# exception heirarchy at some point.
+#
 # Revision 1.9  2008/01/15 22:17:54  ameyer
 # Fixed dumb bug introduced in last version.
 #
@@ -41,6 +47,10 @@ import cgi, re, sys, time, cdrdb
 
 class CgiQuery:
 
+    @staticmethod
+    def unescape(me):
+        if not me:
+            return u""
     def __init__(self, conn, system, script, timeout = 30):
         "Should be invoked by the derived class's constructor."
         self.conn          = conn
@@ -100,13 +110,15 @@ Cache-control: no-cache, must-revalidate
     def getQueriesDict(self, queries):
         html = [u""]
         for q in queries.keys():
-            key = q.replace(u"\r", u"").replace(u"\n", u"\\n")
+            key = (q.replace(u"\r", u"").replace(u"\n", u"\\n").
+                   replace(u"&amp;", u"&").replace(u"&lt;", u"<").
+                   replace(u"&gt;", u">").replace(u"&quot;", u'"'))
             if queries[q]:
                 val = queries[q].replace(u"\r", u"").replace(u"\n", u"\\n")
             else:
                 val = u""
             html.append(u'queries["%s"] = "%s";\n' %
-                        (key, val.replace(u'"', u'\\"')))
+                        (key.replace(u'"', u'\\"'), val.replace(u'"', u'\\"')))
         return u"".join(html)
 
     def addQuery(self):
@@ -221,8 +233,7 @@ Cache-control: no-cache, must-revalidate
    select { background: beige; color: black; }
    textarea { background: beige; color: black; }
   </style>
-  <script language = 'JavaScript'>
-   <!--
+  <script language = 'JavaScript'><!--
     var queries = new Object();
 %s
     function selQuery() {
@@ -279,7 +290,7 @@ Cache-control: no-cache, must-revalidate
 
     function cloneQuery() { addQuery(document.forms[0].queryText.value); }
 
-   -->
+   // -->
   </script>
  </head>
  <body bgcolor='#eeeeee'>
@@ -316,11 +327,6 @@ Cache-control: no-cache, must-revalidate
   </form>
 %s
  </body>
- <!-- Don't know why this is down here.
- <HEAD>
-  <META HTTP-EQUIV="PRAGMA" CONTENT="NO-CACHE">
- </HEAD>
- -->
 </html>
 """ % (self.system, queriesDict, self.script, queriesHtml,
        self.queryText.replace(u"\r", u""), time.clock(), self.results)
