@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.149 2008-06-06 20:16:04 bkline Exp $
+# $Id: cdr.py,v 1.150 2008-06-13 14:49:17 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.149  2008/06/06 20:16:04  bkline
+# Moved new errorLocators argument to the end of addDoc(), etc.
+#
 # Revision 1.148  2008/06/06 19:51:29  bkline
 # Moved new argument to setDocStatus to end; added comment argument
 # to unblockDoc().
@@ -801,6 +804,10 @@ class Error:
         self.etype   = node.getAttribute('etype') or 'other'
         self.elevel  = node.getAttribute('elevel') or 'fatal'
         self.eref    = node.getAttribute('eref') or None
+    def getMessage(self, asUtf8 = False):
+        if asUtf8:
+            return self.message.encode('utf-8')
+        return self.message
     __pattern = None
     @classmethod
     def getPattern(cls):
@@ -814,7 +821,7 @@ class Error:
         every time this module is loaded.
         """
         if not cls.__pattern:
-            cls.__pattern = re.compile(u"<Err(?:\\s+[^>]*)?>(.*?)</Err>",
+            cls.__pattern = re.compile("<Err(?:\\s+[^>]*)?>(.*?)</Err>",
                                        re.DOTALL)
         return cls.__pattern
 
@@ -869,9 +876,16 @@ def checkErr(resp, asObject = False):
 #                    to get a DOM parse tree and asObjects is False,
 #                    then the function will fall back on extracting
 #                    the Err values using a regular expression
+#    asUtf8        - if True (the default, for backward compatibility
+#                    with existing code) the string(s) returned are
+#                    encoded as utf-8; ignored when objects are
+#                    requested (strings in Error objects are Unicode
+#                    objects); also ignored when we're not returning
+#                    a sequence (again, to preserve the original
+#                    behavior of the function)
 #----------------------------------------------------------------------
 def getErrors(xmlFragment, errorsExpected = True, asSequence = False,
-               asObjects = False, useDom = True):
+              asObjects = False, useDom = True, asUtf8 = True):
     
     if asSequence or asObjects:
 
@@ -880,13 +894,16 @@ def getErrors(xmlFragment, errorsExpected = True, asSequence = False,
             return []
         
         if useDom or asObjects:
+            if type(xmlFragment) == unicode:
+                xmlFragment = xmlFragment.encode('utf-8')
             try:
                 dom = xml.dom.minidom.parseString(xmlFragment)
                 errors = [Error(node)
                           for node in dom.getElementsByTagName('Err')]
                 if errorsExpected and not errors:
-                    return [u"Internal failure"]
-                return asObjects and errors or [e.message for e in errors]
+                    return ["Internal failure"]
+                return asObjects and errors or [e.getMessage(asUtf8)
+                                                for e in errors]
             except Exception, e:
                 try:
                     logwrite("failure parsing errors in '%s'" % xmlFragment)
@@ -901,14 +918,12 @@ def getErrors(xmlFragment, errorsExpected = True, asSequence = False,
                     pass
                 if asObjects:
                     raise Exception(u"getErrors() failure")
+        if asUtf8 and type(xmlFragment) == unicode:
+            xmlFragment = xmlFragment.encode('utf-8')
         errors = Error.getPattern().findall(xmlFragment)
         if not errors and errorsExpected:
-            return [u"Internal failure"]
+            return ["Internal failure"]
         return errors
-
-    # Make sure we have a string.
-    if type(xmlFragment) not in (str, unicode):
-        return ''
 
     # Compile the pattern for the regular expression.
     pattern = re.compile("<Errors[>\s].*</Errors>", re.DOTALL)
