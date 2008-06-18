@@ -1,10 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.18 2008-06-03 21:14:49 bkline Exp $
+# $Id: cdr2gk.py,v 1.19 2008-06-18 17:01:53 venglisc Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.18  2008/06/03 21:14:49  bkline
+# Cleaned up code to extract error information from the Err elements
+# returned in CDR server responses.  Replaced StandardError exceptions
+# with Exception objects, as StandardError will be removed from the
+# exception heirarchy at some point.
+#
 # Revision 1.17  2008/01/07 20:42:25  bkline
 # More cleanup of logging.
 #
@@ -693,7 +699,7 @@ def pubPreview(xml, typ):
 """ % (xml, typ)
     xmlString = sendRequest(
         request, 
-        app     = '/CDRPreview/WSProtocol.asmx',
+        app     = '/CDRPreviewWS/CDRPreview.asmx',
         host    = host,
         headers = { 'Content-type': 'text/xml; charset="utf-8"',
                     'SOAPAction'  :
