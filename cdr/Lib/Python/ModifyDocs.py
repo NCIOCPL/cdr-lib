@@ -1,11 +1,15 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.27 2008-06-10 15:29:26 bkline Exp $
+# $Id: ModifyDocs.py,v 1.28 2008-06-21 13:35:44 bkline Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.27  2008/06/10 15:29:26  bkline
+# Replaced regular-expression parsing of errors with call to
+# cdr.getErrors().
+#
 # Revision 1.26  2007/10/26 04:45:34  ameyer
 # Made a number of tweaks to the statistical info that can be used
 # in a report.
@@ -957,7 +961,8 @@ class Doc:
 
         # Second element contains XSLT filter warning(s), if any
         if response[1]:
-            warnings = cdr.getErrors(response[1], asSequence = True)
+            warnings = cdr.getErrors(response[1], asSequence = True,
+                                     errorsExpected = False)
             if logWarnings:
                 for warning in warnings:
                     logger.log("Warning for CDR%010d: %s" % (self.id,
