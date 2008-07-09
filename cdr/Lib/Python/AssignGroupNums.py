@@ -33,9 +33,12 @@ import sys, re, time, cdr, cdrdb
 # These assumptions mean that the class must be instantiated in the
 # push job that calls __createWorkPPC().
 #
-# $Id: AssignGroupNums.py,v 1.10 2008-04-11 02:55:08 ameyer Exp $
+# $Id: AssignGroupNums.py,v 1.11 2008-07-09 01:03:58 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.10  2008/04/11 02:55:08  ameyer
+# Added logging and exception management.
+#
 # Revision 1.9  2007/11/20 16:08:53  ameyer
 # Added logic to check SummaryURL attributes, determine whether they have
 # changed since the last publication and, if so, force the Summary with
@@ -314,7 +317,7 @@ SELECT id
 
     def __addChangedUrlIds(self):
         """
-        If any Summary has a changed SummaryURL, add it's ID to the
+        If any Summary has a changed SummaryURL, add its ID to the
         list of docs that function as heads of groups.
         """
         # Find any Summary docs published this run
@@ -344,19 +347,21 @@ SELECT ppcw.id
         for docId in docList:
             try:
                 self.__cursor.execute(
-                 "SELECT xml FROM pub_proc_cg WHERE id = %d" % docId)
-                # Extract unicode string from row and convert to utf-8
-                xml = self.__cursor.fetchone()[0].encode('utf-8')
+                    "SELECT xml FROM pub_proc_cg WHERE id = %d" % docId)
+                xmlRow = self.__cursor.fetchone()
+                # Null XML should never occur but we have evidence that it did
+                if xmlRow and xmlRow[0]:
+                    # Extract unicode string from row and convert to utf-8
+                    xml = xmlRow[0].encode('utf-8')
+                else:
+                    # If not found, it's a new Summary, never before published
+                    # We can skip it because it will already be in the
+                    #   __newDocs list
+                    continue
             except cdrdb.Error, info:
                 raise cdr.Exception(
                  "GroupNums: DB error fetching pub_proc_cg.xml for ID=%d: %s"
                     % (docId, str(info)))
-
-            # If not found, it's a new Summary, never before published
-            # We can skip it because it will already be in the __newDocs
-            #   list
-            if not xml:
-                continue
 
             # Get it's SummaryURL attribute value
             oldUrl = self.__getSummaryURL(xml)
@@ -364,9 +369,15 @@ SELECT ppcw.id
             # Get new XML and extract value
             try:
                 self.__cursor.execute(
-                 "SELECT xml FROM pub_proc_cg_work WHERE id = %d" % docId)
-                # Extract unicode string from row and convert to utf-8
-                xml = self.__cursor.fetchone()[0].encode('utf-8')
+                    "SELECT xml FROM pub_proc_cg_work WHERE id = %d" % docId)
+                xmlRow = self.__cursor.fetchone()
+                if xmlRow and xmlRow[0]:
+                    # Extract unicode string from row and convert to utf-8
+                    xml = xmlRow[0].encode('utf-8')
+                else:
+                    # Not found means doc is being removed
+                    # No group processing required
+                    continue
             except cdrdb.Error, info:
                 raise cdr.Exception(
              "GroupNums: DB error fetching pub_proc_cg_work.xml for ID=%d: %s"
