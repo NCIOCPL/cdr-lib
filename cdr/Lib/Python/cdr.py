@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.151 2008-08-01 17:07:46 bkline Exp $
+# $Id: cdr.py,v 1.152 2008-08-01 18:28:01 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.151  2008/08/01 17:07:46  bkline
+# Added new function calculateDateByOffset().
+#
 # Revision 1.150  2008/06/13 14:49:17  bkline
 # Made getErrors() return utf-8 strings when older version of function
 # did so; documented what we're doing.
@@ -510,7 +513,7 @@
 #----------------------------------------------------------------------
 import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
 import os, smtplib, time, atexit, cdrdb, tempfile, traceback, difflib
-import xml.sax.saxutils
+import xml.sax.saxutils, datetime
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -4623,8 +4626,37 @@ def importEtree():
 # second argument is False, in which case the 9-member tuple
 # for the new date is returned.
 #----------------------------------------------------------------------
-def calculateDateByOffset(offset, asString = True):
-    timePieces = list(time.localtime())
-    timePieces[2] += offset
-    newTime = time.localtime(time.mktime(timePieces))
-    return asString and time.strftime("%Y-%m-%d", newTime) or newTime
+def calculateDateByOffset(offset, referenceDate = None):
+    """
+    Find a date a specified number of days in the future (or in the
+    past, if a negative offset is passed).  We do this often enough
+    that it's worth creating a function in this module.  Returns
+    a datetime.date object, which knows how to format itself as an
+    ISO-formatted date string.  Example usage:
+
+        deadline = str(cdr.calculateDateByOffset(30))
+
+    Pass:
+
+        offset        - integer representing the number of days
+                        in the future (past for negative integers)
+                        to calculate
+        referenceDate - optional argument which can be passed
+                        as the date from which to calculate the
+                        returned date using the offset; this
+                        can be a string or a datetime.date object;
+                        defaults to the current date
+
+    Returns:
+
+        datetime.date object
+    """
+
+    if not referenceDate:
+        referenceDate = datetime.date.today()
+    elif type(referenceDate) in (str, unicode):
+        y, m, d = referenceDate.split('-')
+        referenceDate = datetime.date(int(y), int(m), int(d))
+    elif not isinstance(referenceDate, datetime.date):
+        raise Exception("invalid type for referenceDate")
+    return referenceDate + datetime.timedelta(offset)
