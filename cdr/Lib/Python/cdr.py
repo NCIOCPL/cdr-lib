@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.150 2008-06-13 14:49:17 bkline Exp $
+# $Id: cdr.py,v 1.151 2008-08-01 17:07:46 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.150  2008/06/13 14:49:17  bkline
+# Made getErrors() return utf-8 strings when older version of function
+# did so; documented what we're doing.
+#
 # Revision 1.149  2008/06/06 20:16:04  bkline
 # Moved new errorLocators argument to the end of addDoc(), etc.
 #
@@ -4610,3 +4614,17 @@ def importEtree():
         except:
             import xml.etree.ElementTree as etree
     return etree
+
+#----------------------------------------------------------------------
+# Find a date a specified number of days in the future (or in the
+# past, if a negative integer is passed).  We do this often enough
+# that it's worth creating a function in this module.  Returns
+# the value as an ISO-format date string, unless the optional
+# second argument is False, in which case the 9-member tuple
+# for the new date is returned.
+#----------------------------------------------------------------------
+def calculateDateByOffset(offset, asString = True):
+    timePieces = list(time.localtime())
+    timePieces[2] += offset
+    newTime = time.localtime(time.mktime(timePieces))
+    return asString and time.strftime("%Y-%m-%d", newTime) or newTime
