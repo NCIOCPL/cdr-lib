@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrmailcommon.py,v 1.12 2008-04-17 21:06:39 bkline Exp $
+# $Id: cdrmailcommon.py,v 1.13 2008-08-01 18:40:28 bkline Exp $
 #
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.12  2008/04/17 21:06:39  bkline
+# Added "SET NAMES utf8" setting to MySQL connection.
+#
 # Revision 1.11  2007/08/01 13:18:09  bkline
 # Added recordMailer() function.
 #
@@ -406,7 +409,8 @@ def fix(me):
 #----------------------------------------------------------------------
 def recordMailer(session, docId, recipId, mode, mailerType, sent,
                  address = u"", remailerFor = "", jobId = None, recipName = "",
-                 docTitle = "", protOrg = "", deadline = ""):
+                 docTitle = "", protOrg = "", deadline = "",
+                 host = cdr.DEFAULT_HOST, port = cdr.DEFAULT_PORT):
     docXml = [u"""\
 <CdrDoc Type='Mailer'>
  <CdrDocCtl>
@@ -459,7 +463,8 @@ def recordMailer(session, docId, recipId, mode, mailerType, sent,
 </CdrDoc>
 """)
     rsp = cdr.addDoc(session, doc = u"".join(docXml).encode('utf-8'),
-                     checkIn = "Y", ver = "Y", val = 'Y')
+                     checkIn = "Y", ver = "Y", val = 'Y',
+                     verPublishable = 'N', host = host, port = port)
     errors = cdr.getErrors(rsp, errorsExpected = False, asSequence = True)
     if errors:
         raise Exception("Failure saving mailer tracking document for CDR%d: %s"
