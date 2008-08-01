@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.65 2008-04-02 01:06:02 ameyer Exp $
+# $Id: cdrcgi.py,v 1.66 2008-08-01 00:46:01 venglisc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.65  2008/04/02 01:06:02  ameyer
+# Added some optional parameters to generateHtmlPicklist().
+#
 # Revision 1.64  2008/02/26 23:44:49  venglisc
 # Minor modifications to background color and FilterFailure error messages.
 # (Bug 3923)
@@ -277,6 +280,33 @@ HEADER   = """\
       <FONT SIZE='6' COLOR='white'>&nbsp;%s</FONT>
      </TH>
 """
+RPTHEADER   = """\
+<!DOCTYPE HTML PUBLIC '-//W3C//DTD HTML 4.01 Transitional//EN'
+                      'http://www.w3.org/TR/html4/loose.dtd'>
+<HTML>
+ <HEAD>
+  <TITLE>%s</TITLE>
+  <meta http-equiv='Content-Type' content='text/html;charset=utf-8'>
+  <link rel='shortcut icon' href='/favicon.ico'>
+  <LINK TYPE='text/css' REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
+  <style type='text/css'>
+    body         { font-family: Arial;
+                   background-color: #%s; }
+    *.banner     { background-color: silver;
+                   background-image: url(/images/nav1.jpg); }
+    *.DTDerror   { color: red;
+                   font-weight: bold; }
+    *.DTDwarning { color: green; }
+    tr.odd        { background-color: #F7F7F7; }
+    tr.even       { background-color: #DFDFDF; }
+    th           { font-size: 12pt;
+                   font-weight: bold;
+                   text-align: center;
+                   background-color: #ADADAD; }
+  </style>
+%s
+ </HEAD>
+"""
 B_CELL = """\
      <TD class='banner'
          VALIGN='middle'
@@ -313,6 +343,14 @@ def header(title, banner, subBanner, script = '', buttons = None,
         html = html + "     </TD>\n"
     html = html + SUBBANNER % subBanner
     return html + numBreaks * "   <BR>\n"
+
+#----------------------------------------------------------------------
+# Display the header for a CDR web report (no banner or buttons).
+# By default the background is white for reports.
+#----------------------------------------------------------------------
+def rptHeader(title, bkgd = 'FFFFFF', stylesheet=''):
+    html = RPTHEADER % (title, bkgd, stylesheet)
+    return html 
 
 #----------------------------------------------------------------------
 # Get a session ID based on current form field values.
