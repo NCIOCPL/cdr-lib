@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.152 2008-08-01 18:28:01 bkline Exp $
+# $Id: cdr.py,v 1.153 2008-08-01 22:15:14 venglisc Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.152  2008/08/01 18:28:01  bkline
+# Rewrote calculateDateByOffset() to use datetime module.
+#
 # Revision 1.151  2008/08/01 17:07:46  bkline
 # Added new function calculateDateByOffset().
 #
@@ -4660,3 +4663,69 @@ def calculateDateByOffset(offset, referenceDate = None):
     elif not isinstance(referenceDate, datetime.date):
         raise Exception("invalid type for referenceDate")
     return referenceDate + datetime.timedelta(offset)
+
+
+#----------------------------------------------------------------------
+# Gets a list of all board names.
+# This is frequently used to create reports by board.
+#----------------------------------------------------------------------
+def getBoardNames(boardType = 'all', display = 'full', host = 'localhost'):
+    """
+    Get the list of all board names (i.e. organizations with an 
+    organization type of 'PDQ Editorial Board' or 'PDQ Advisory Board').
+    Usage:
+         boardNames = cdr.getBoardNames()
+
+    Pass:
+         boardType:    optional string value of 
+                         editorial or advisory
+                       will return just those board names.  Any other 
+                       entry will return a combined list.
+         display:      optional string indicating the display format 
+                       of the board names
+                         full   - display as is 
+                         short  - display with preceeding 'PDQ ' stripped
+                         custom - same as short plus replace CAM
+    Returns:
+         Dictionary   {CdrI1:board1, CdrId2:board2, ...}
+    """
+    if boardType.lower() == 'editorial' or boardType.lower()== 'advisory':
+        boardTypes = "('PDQ %s Board')" % boardType.lower()
+    else:
+        boardTypes = "('PDQ Editorial Board', 'PDQ Advisory Board')"
+
+    # Get the board names and cdr-ids from the database
+    # -------------------------------------------------
+    conn = cdrdb.connect(dataSource = host)
+    cursor = conn.cursor()
+    cursor.execute("""\
+     SELECT d.id, 
+            n.value  AS BoardName,
+            t.value  AS BoardType
+       FROM query_term n
+       JOIN query_term t
+         ON t.doc_id = n.doc_id
+       JOIN document d
+         ON n.doc_id = d.id
+      WHERE t.value in %s
+        AND t.path  = '/Organization/OrganizationType'
+        AND n.path  = '/Organization/OrganizationNameInformation/' +
+                       'OfficialName/Name'
+        AND d.doc_type = 22
+        AND active_status = 'A'
+      ORDER BY t.value, n.value
+""" % boardTypes)
+
+    # Typically the full board name is rarely displayed
+    # We're removing the PDQ prefix and/or modify the display of the CAM
+    # ------------------------------------------------------------------
+    if display == 'short':
+        return dict((row[0], row[1].replace('PDQ ',''))
+                            for row in cursor.fetchall())
+    elif display == 'custom':
+        return dict((row[0], row[1].replace('PDQ ', '').replace(
+                            'Complementary and Alternative Medicine', 'CAM'))
+                            for row in cursor.fetchall())
+
+    return dict((row[0], row[1]) for row in cursor.fetchall())
+
