@@ -1,10 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.24 2008-06-03 21:14:49 bkline Exp $
+# $Id: cdr2cg.py,v 1.25 2008-08-05 14:49:02 venglisc Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.24  2008/06/03 21:14:49  bkline
+# Cleaned up code to extract error information from the Err elements
+# returned in CDR server responses.  Replaced StandardError exceptions
+# with Exception objects, as StandardError will be removed from the
+# exception heirarchy at some point.
+#
 # Revision 1.23  2007/04/12 20:03:53  venglisc
 # Modified name for MFP to Interim-Export.
 #
@@ -121,7 +127,7 @@ PUBTYPES = {
     'Hotfix (Remove)' : 'Delete individual documents from Cancer.gov',
     'Hotfix (Export)' : 'Send individual documents to Cancer.gov'
 }
-PDQDTD = "d:\\cdr\licensee\\PDQ.dtd"
+PDQDTD = "d:\\cdr\licensee\\pdqCG.dtd"
 
 #----------------------------------------------------------------------
 # XML wrappers.

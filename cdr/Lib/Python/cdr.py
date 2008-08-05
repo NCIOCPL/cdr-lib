@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.153 2008-08-01 22:15:14 venglisc Exp $
+# $Id: cdr.py,v 1.154 2008-08-05 14:49:02 venglisc Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.153  2008/08/01 22:15:14  venglisc
+# Added new function getBoardNames() to return all board names. (Bug 4207)
+#
 # Revision 1.152  2008/08/01 18:28:01  bkline
 # Rewrote calculateDateByOffset() to use datetime module.
 #
@@ -555,7 +558,7 @@ CONNECT_TRIES    = 10
 
 # Default DTD.  Can get overwritten using Subset parameter
 PDQDTDPATH       = "d:\\cdr\licensee"
-DEFAULT_DTD      = PDQDTDPATH + '\\pdq.dtd'
+DEFAULT_DTD      = PDQDTDPATH + '\\pdqCG.dtd'
 
 #----------------------------------------------------------------------
 # Module data used by publishing.py and cdrpub.py.
