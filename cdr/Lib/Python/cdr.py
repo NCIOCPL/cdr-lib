@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.154 2008-08-05 14:49:02 venglisc Exp $
+# $Id: cdr.py,v 1.155 2008-08-11 18:54:13 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.154  2008/08/05 14:49:02  venglisc
+# Modified DTD name to pdqCG.dtd.  The licensee DTD is going to be pdq.dtd
+# while the publishing DTD will be pdqCG.dtd. (Bug 4123)
+#
 # Revision 1.153  2008/08/01 22:15:14  venglisc
 # Added new function getBoardNames() to return all board names. (Bug 4207)
 #
@@ -2330,7 +2334,8 @@ def getDoctype(credentials, doctype, host = DEFAULT_HOST, port = DEFAULT_PORT):
     vvLists = []
     if enumSets:
         for enumSet in enumSets:
-            vvList = vvExpr.findall(enumSet[1])
+            vvList = [xml.sax.saxutils.unescape(v) for v in
+                      vvExpr.findall(enumSet[1])]
             vvLists.append((enumSet[0], vvList))
 
     # Return a dtinfo instance.
