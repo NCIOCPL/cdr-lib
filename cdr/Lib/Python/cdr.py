@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.155 2008-08-11 18:54:13 bkline Exp $
+# $Id: cdr.py,v 1.156 2008-08-12 17:56:24 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.155  2008/08/11 18:54:13  bkline
+# Added code to unescape valid values for document type.
+#
 # Revision 1.154  2008/08/05 14:49:02  venglisc
 # Modified DTD name to pdqCG.dtd.  The licensee DTD is going to be pdq.dtd
 # while the publishing DTD will be pdqCG.dtd. (Bug 4123)
@@ -903,13 +906,13 @@ def checkErr(resp, asObject = False):
 #----------------------------------------------------------------------
 def getErrors(xmlFragment, errorsExpected = True, asSequence = False,
               asObjects = False, useDom = True, asUtf8 = True):
-    
+
     if asSequence or asObjects:
 
         # Safety check.
         if type(xmlFragment) not in (str, unicode):
             return []
-        
+
         if useDom or asObjects:
             if type(xmlFragment) == unicode:
                 xmlFragment = xmlFragment.encode('utf-8')
@@ -922,17 +925,9 @@ def getErrors(xmlFragment, errorsExpected = True, asSequence = False,
                 return asObjects and errors or [e.getMessage(asUtf8)
                                                 for e in errors]
             except Exception, e:
-                try:
-                    logwrite("failure parsing errors in '%s'" % xmlFragment)
-                except:
-                    pass
                 if asObjects:
                     raise Exception(u"getErrors(): %s" % e)
             except:
-                try:
-                    logwrite("failure parsing errors in '%s'" % xmlFragment)
-                except:
-                    pass
                 if asObjects:
                     raise Exception(u"getErrors() failure")
         if asUtf8 and type(xmlFragment) == unicode:
@@ -950,7 +945,7 @@ def getErrors(xmlFragment, errorsExpected = True, asSequence = False,
     if errors:           return errors.group()
     elif errorsExpected: return "<Errors><Err>Internal failure</Err></Errors>"
     else:                return ""
-    
+
 #----------------------------------------------------------------------
 # Extract a piece of the CDR Server's response.
 #----------------------------------------------------------------------
@@ -3379,7 +3374,7 @@ def sendMailMime(sender, recips, subject, body, bodyType = 'plain'):
                         "email addresses")
     recips = [recip.encode('US-ASCII') for recip in recips]
     sender = sender.encode('US-ASCII')
-        
+
     from email.MIMEText import MIMEText
     from email.Header   import Header as EmailHeader
 
@@ -3418,12 +3413,12 @@ def sendMailMime(sender, recips, subject, body, bodyType = 'plain'):
         server.quit()
 
     except Exception, e:
-        
+
         # Log the error before re-throwing an exception.
         msg = "sendMail failure: %s" % e
         logwrite(msg, tback = True)
         raise Exception(msg)
-    
+
 #----------------------------------------------------------------------
 # Send email to a list of recipients.
 #----------------------------------------------------------------------
@@ -4679,19 +4674,19 @@ def calculateDateByOffset(offset, referenceDate = None):
 #----------------------------------------------------------------------
 def getBoardNames(boardType = 'all', display = 'full', host = 'localhost'):
     """
-    Get the list of all board names (i.e. organizations with an 
+    Get the list of all board names (i.e. organizations with an
     organization type of 'PDQ Editorial Board' or 'PDQ Advisory Board').
     Usage:
          boardNames = cdr.getBoardNames()
 
     Pass:
-         boardType:    optional string value of 
+         boardType:    optional string value of
                          editorial or advisory
-                       will return just those board names.  Any other 
+                       will return just those board names.  Any other
                        entry will return a combined list.
-         display:      optional string indicating the display format 
+         display:      optional string indicating the display format
                        of the board names
-                         full   - display as is 
+                         full   - display as is
                          short  - display with preceeding 'PDQ ' stripped
                          custom - same as short plus replace CAM
     Returns:
@@ -4707,7 +4702,7 @@ def getBoardNames(boardType = 'all', display = 'full', host = 'localhost'):
     conn = cdrdb.connect(dataSource = host)
     cursor = conn.cursor()
     cursor.execute("""\
-     SELECT d.id, 
+     SELECT d.id,
             n.value  AS BoardName,
             t.value  AS BoardType
        FROM query_term n
