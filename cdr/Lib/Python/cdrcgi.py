@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.66 2008-08-01 00:46:01 venglisc Exp $
+# $Id: cdrcgi.py,v 1.67 2008-08-13 01:49:15 ameyer Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.66  2008/08/01 00:46:01  venglisc
+# Added new function rptHeader() to create an HTML header for management
+# reports. (Bug 4205)
+#
 # Revision 1.65  2008/04/02 01:06:02  ameyer
 # Added some optional parameters to generateHtmlPicklist().
 #
@@ -350,7 +354,7 @@ def header(title, banner, subBanner, script = '', buttons = None,
 #----------------------------------------------------------------------
 def rptHeader(title, bkgd = 'FFFFFF', stylesheet=''):
     html = RPTHEADER % (title, bkgd, stylesheet)
-    return html 
+    return html
 
 #----------------------------------------------------------------------
 # Get a session ID based on current form field values.
@@ -392,6 +396,22 @@ def getRequest(fields):
 # Send an HTML page back to the client.
 #----------------------------------------------------------------------
 def sendPage(page, textType = 'html'):
+    """
+    Send a completed page of text to stdout, assumed to be piped by a
+    webserver to a web browser.
+
+    Pass:
+        page     - Text to send, assumed to be 16 bit unicode.
+        textType - HTTP Content-type, assumed to be html.
+
+    Return:
+        No return.  After writing to the browser, the process exits.
+    """
+    # For debugging
+    # If something sends other than unicode, let's track who did it
+    if type(page) != unicode:
+        cdr.logwrite("cdrcgi.sendPage got non-unicode page.  "
+                     "Stack trace follows", stackTrace=True)
     print """\
 Content-type: text/%s
 
@@ -446,6 +466,10 @@ def unicodeToLatin1(s):
     # Same as above, but with unicode input instead of utf-8
     # The unfortunate name is a historical artifact of our using 'latin-1'
     #   as the final encoding, but it's really just 7 bit ascii.
+    # If something sends other than unicode, let's track who did it
+    if type(s) != unicode:
+        cdr.logwrite("cdrcgi.unicodeToLatin1 got non-unicode string.  "
+                     "Stack trace follows", stackTrace=True)
     return re.sub(decodePattern,
                   lambda match: u"&#x%X;" % ord(match.group(0)[0]),
                   s).encode('ascii')
