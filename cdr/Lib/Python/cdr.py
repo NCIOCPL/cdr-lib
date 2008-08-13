@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.156 2008-08-12 17:56:24 ameyer Exp $
+# $Id: cdr.py,v 1.157 2008-08-13 01:21:21 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.156  2008/08/12 17:56:24  ameyer
+# Removed debug logging of dom processing failures in getErrors.  They are not
+# a real, production errors.
+#
 # Revision 1.155  2008/08/11 18:54:13  bkline
 # Added code to unescape valid values for document type.
 #
@@ -3675,7 +3679,7 @@ def cacheInit(credentials, cacheOn, cacheType,
 #----------------------------------------------------------------------
 # Write messages to a logfile.
 #----------------------------------------------------------------------
-def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback = 0):
+def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback=False, stackTrace=False):
     """
     Append one or messages to a log file - closing the file when done.
     Can also record traceback information.
@@ -3686,6 +3690,16 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback = 0):
         logfile - Optional log file path, else uses default.
         tback   - True = log the latest traceback object.
                    False = do not.
+                   See stack trace notes.
+        stack   - True = log a stack trace even if there is no traceback
+                   object.  Useful for logging the stack trace even though
+                   no exception occurred.
+                   See stack trace notes.
+
+    Stack trace notes:
+        For unconditional logging of a stack trace, use stackTrace=True,
+        not tback=True.  tback will _only_ print a stack trace if there was
+        an exception.
 
     Return:
         Void.  Does nothing at all if it can't open the logfile or
@@ -3711,10 +3725,17 @@ def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback = 0):
             f.write (msgs)
             f.write ("\n")
 
-        # If traceback is requested, include the last one
+        # If traceback of the last exception is requested
         if tback:
             try:
                 traceback.print_exc (999, f)
+            except:
+                pass
+
+        # If an unconditional stack trace (no exception required) is requested
+        if stackTrace:
+            try:
+                traceback.print_stack(file=f)
             except:
                 pass
 
