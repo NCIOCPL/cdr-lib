@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.19 2008-06-18 17:01:53 venglisc Exp $
+# $Id: cdr2gk.py,v 1.20 2008-08-15 18:30:44 venglisc Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.19  2008/06/18 17:01:53  venglisc
+# Fixed typo for publish preview.
+#
 # Revision 1.18  2008/06/03 21:14:49  bkline
 # Cleaned up code to extract error information from the Err elements
 # returned in CDR server responses.  Replaced StandardError exceptions
@@ -782,6 +785,8 @@ if __name__ == "__main__":
             docXml, self.docType, self.docVer = Doc.__cursor.fetchall()[0]
             if self.docType in ('InScopeProtocol', 'CTGovProtocol'):
                 self.docType = 'Protocol'
+            elif self.docType == 'GlossaryTermName':
+                self.docType = 'GlossaryTerm'
             docXml = re.sub(u"<\\?xml[^>]+>\\s*", u"", docXml)
             self.xml = re.sub(u"<!DOCTYPE[^>]*>\\s*", u"", docXml)
 

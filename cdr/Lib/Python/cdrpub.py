@@ -1,10 +1,16 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.107 2008-06-03 21:14:49 bkline Exp $
+# $Id: cdrpub.py,v 1.108 2008-08-15 18:30:44 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.107  2008/06/03 21:14:49  bkline
+# Cleaned up code to extract error information from the Err elements
+# returned in CDR server responses.  Replaced StandardError exceptions
+# with Exception objects, as StandardError will be removed from the
+# exception heirarchy at some point.
+#
 # Revision 1.106  2008/03/17 21:49:22  venglisc
 # Corrected the problem where a protocol that got deleted after the
 # publishing job started (but before it finished) caused the publishing
@@ -1530,6 +1536,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 docType = row[2]
                 if docType == "InScopeProtocol":
                     docType = "Protocol"
+                elif docType == "GlossaryTermName":
+                    docType = "GlossaryTerm"
                 xml = row[3].encode('utf-8')
                 xml = XmlDeclLine.sub("", xml)
                 xml = DocTypeLine.sub("", xml)
