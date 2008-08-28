@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrdocobject.py,v 1.4 2008-05-06 18:06:09 bkline Exp $
+# $Id: cdrdocobject.py,v 1.5 2008-08-28 15:02:08 bkline Exp $
 #
 # Types for data extracted from CDR documents of specific document types.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2008/05/06 18:06:09  bkline
+# Restored some portions of previous version which had inadvertently
+# been overwritten.
+#
 # Revision 1.3  2008/05/06 17:40:22  bkline
 # Added new classes for protocols and organizations.
 #
@@ -441,11 +445,12 @@ class Person:
             ContactInfo.__init__(self, result[0])
 
     class CipsContact(Contact):
-        def __init__(self, cdrId):
-            fragId = Person.getCipsContactId(cdrId)
+        def __init__(self, cdrId, conn = None,
+                     filt = 'Person Address Fragment'):
+            fragId = Person.getCipsContactId(cdrId, conn)
             if not fragId:
                 raise Exception("no CIPS Contact for %s" % cdrId)
-            Person.Contact.__init__(self, cdrId, fragId)
+            Person.Contact.__init__(self, cdrId, fragId, filt)
 
 #----------------------------------------------------------------------
 # Object for a CDR Organization.
@@ -472,11 +477,12 @@ class Organization:
             ContactInfo.__init__(self, result[0])
 
     class CipsContact(Contact):
-        def __init__(self, cdrId):
-            fragId = Organization.getCipsContactId(cdrId)
+        def __init__(self, cdrId, conn = None,
+                     filt = 'Organization Address Fragment'):
+            fragId = Organization.getCipsContactId(cdrId, conn)
             if not fragId:
                 raise Exception("no CIPS Contact for %s" % cdrId)
-            Organization.Contact.__init__(self, cdrId, fragId)
+            Organization.Contact.__init__(self, cdrId, fragId, filt)
 
 #----------------------------------------------------------------------
 # Object for a CDR InScopeProtocol document.
