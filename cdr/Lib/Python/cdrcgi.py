@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.67 2008-08-13 01:49:15 ameyer Exp $
+# $Id: cdrcgi.py,v 1.68 2008-08-29 04:20:33 ameyer Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.67  2008/08/13 01:49:15  ameyer
+# Added stack trace logging to sendPage and unicodeToLatin1 to catch any
+# programs that have not been converted to using unicode.
+#
 # Revision 1.66  2008/08/01 00:46:01  venglisc
 # Added new function rptHeader() to create an HTML header for management
 # reports. (Bug 4205)
@@ -535,7 +539,7 @@ def mainMenu(session, news = None):
     title    = "CDR Administration"
     section  = "Main Menu"
     buttons  = []
-    hdr      = header(title, title, section, "", buttons)
+    hdr      = u"" + header(title, title, section, "", buttons)
     extra    = news and ("<H2>%s</H2>\n" % news) or ""
     menu     = """\
     <ol>
