@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.68 2008-08-29 04:20:33 ameyer Exp $
+# $Id: cdrcgi.py,v 1.69 2008-09-02 21:34:21 ameyer Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.68  2008/08/29 04:20:33  ameyer
+# Forced mainMenu() output to unicode.
+#
 # Revision 1.67  2008/08/13 01:49:15  ameyer
 # Added stack trace logging to sendPage and unicodeToLatin1 to catch any
 # programs that have not been converted to using unicode.
@@ -261,7 +264,7 @@ ISPLAIN  = "." not in THISHOST
 DOMAIN   = ".nci.nih.gov"
 WEBSERVER= THISHOST + (ISPLAIN and DOMAIN or "")
 DAY_ONE  = cdr.URDATE
-HEADER   = """\
+HEADER   = u"""\
 <!DOCTYPE HTML PUBLIC '-//W3C//DTD HTML 4.01 Transitional//EN'
                       'http://www.w3.org/TR/html4/loose.dtd'>
 <HTML>
@@ -411,11 +414,6 @@ def sendPage(page, textType = 'html'):
     Return:
         No return.  After writing to the browser, the process exits.
     """
-    # For debugging
-    # If something sends other than unicode, let's track who did it
-    if type(page) != unicode:
-        cdr.logwrite("cdrcgi.sendPage got non-unicode page.  "
-                     "Stack trace follows", stackTrace=True)
     print """\
 Content-type: text/%s
 
