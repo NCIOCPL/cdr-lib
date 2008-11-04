@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.69 2008-09-02 21:34:21 ameyer Exp $
+# $Id: cdrcgi.py,v 1.70 2008-11-04 21:39:20 venglisc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.69  2008/09/02 21:34:21  ameyer
+# Removed unicode checking from sendPage().  It's done in unicodeToLatin1().
+# Made HEADER unicode to cause all forms that use it to be unicode.
+#
 # Revision 1.68  2008/08/29 04:20:33  ameyer
 # Forced mainMenu() output to unicode.
 #
@@ -1202,7 +1206,8 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
 """ % dt
 
         # XXX Consider using QcReport.py for all advanced search results pages.
-        if docType in ("Person", "Organization", "Glossary Term"):
+        if docType in ("Person", "Organization", "Glossary Term",
+                       "GlossaryTermName"):
             href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
         elif docType == 'Protocol' and dt == "CTGovProtocol":
             href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
