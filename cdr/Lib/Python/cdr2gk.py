@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.21 2008-10-06 19:32:48 venglisc Exp $
+# $Id: cdr2gk.py,v 1.22 2008-11-06 15:14:11 venglisc Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.21  2008/10/06 19:32:48  venglisc
+# Removed latest change since it was unnecessary. (Bug 4123)
+#
 # Revision 1.20  2008/08/15 18:30:44  venglisc
 # Needed to rename the docType name GlossaryTermName to GlossaryTerm since
 # that's what Cancer.gov expects to receive. (Bug 3491)
@@ -86,7 +89,7 @@ MAX_RETRIES         = 10
 RETRY_MULTIPLIER    = 1.0
 debuglevel          = 0
 localhost           = socket.gethostname()
-host                = "gatekeeper2.cancer.gov"
+host                = "gatekeeper.cancer.gov"
 testhost            = "test5.cancer.gov"
 port                = 80
 soapNamespace       = "http://schemas.xmlsoap.org/soap/envelope/"
