@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.70 2008-11-04 21:39:20 venglisc Exp $
+# $Id: cdrcgi.py,v 1.71 2008-12-15 22:54:23 venglisc Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.70  2008/11/04 21:39:20  venglisc
+# Added GlossaryTermName as a valid document type for QC reports.
+#
 # Revision 1.69  2008/09/02 21:34:21  ameyer
 # Removed unicode checking from sendPage().  It's done in unicodeToLatin1().
 # Made HEADER unicode to cause all forms that use it to be unicode.
@@ -696,25 +699,45 @@ SELECT DISTINCT s.id,
 # Generate picklist for GlossaryAudience.
 #----------------------------------------------------------------------
 def glossaryAudienceList(conn, fName):
+    defaultOpt = "<option value='' selected>Select an audience...</option>\n"
     query  = """\
 SELECT DISTINCT value, value
            FROM query_term
-          WHERE path = '/GlossaryTerm/TermDefinition/Audience'
+          WHERE path = '/GlossaryTermConcept/TermDefinition/Audience'
        ORDER BY value"""
     pattern = "<option value='%s'>%s&nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern)
+    return generateHtmlPicklist(conn, fName, query, pattern,
+                                firstOpt = defaultOpt)
 
 #----------------------------------------------------------------------
 # Generate picklist for GlossaryTermStatus.
 #----------------------------------------------------------------------
 def glossaryTermStatusList(conn, fName):
+    defaultOpt = "<option value='' selected>Select a status...</option>\n"
     query  = """\
 SELECT DISTINCT value, value
            FROM query_term
-          WHERE path = '/GlossaryTerm/TermStatus'
+          WHERE path = '/GlossaryTermName/TermNameStatus'
        ORDER BY value"""
     pattern = "<option value='%s'>%s&nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern)
+    return generateHtmlPicklist(conn, fName, query, pattern,
+                                firstOpt = defaultOpt)
+
+
+#----------------------------------------------------------------------
+# Generate picklist for GlossaryTermStatus.
+#----------------------------------------------------------------------
+def glossaryTermDictionaryList(conn, fName):
+    defaultOpt = "<option value='' selected>Select a dictionary...</option>\n"
+    query  = """\
+SELECT DISTINCT value, value
+           FROM query_term
+          WHERE path = '/GlossaryTermConcept/TermDefinition/Dictionary'
+       ORDER BY value"""
+    pattern = "<option value='%s'>%s&nbsp;</option>"
+    return generateHtmlPicklist(conn, fName, query, pattern,
+                                firstOpt = defaultOpt)
+
 
 #----------------------------------------------------------------------
 # Generic HTML picklist generator.
@@ -751,7 +774,7 @@ def generateHtmlPicklist(conn, fieldName, query, pattern,
     except cdrdb.Error, info:
         bail('Failure retrieving %s list from CDR: %s' % (fieldName,
                                                           info[1][0]))
-    html = "<select name='%s'" % fieldName
+    html = "  <select name='%s'" % fieldName
 
     # Add any requested attributes to the select
     if selAttrs:
@@ -760,7 +783,7 @@ def generateHtmlPicklist(conn, fieldName, query, pattern,
 
     # If there are user supplied options to put at the top
     if firstOpt:
-        html += firstOpt
+        html += "   " + firstOpt
     else:
         # Backwards compatibity requires this default firstOpt
         html += "   " + "<option value='' selected>&nbsp;</option>\n"
@@ -768,13 +791,13 @@ def generateHtmlPicklist(conn, fieldName, query, pattern,
     # Add data from the query
     for row in rows:
         option = pattern % tuple(row)
-        html += "%s\n" % option
+        html += "   %s\n" % option
 
     # Final options
     if lastOpt:
         html += lastOpt
     # Termination
-    html += "</select>\n"
+    html += "  </select>\n"
 
     return html
 
@@ -938,6 +961,156 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
 """
 
     return html
+
+
+#----------------------------------------------------------------------
+# Generate the top portion of an advanced search form.
+#----------------------------------------------------------------------
+def addNewFormOnPage(session, script, fields, buttons, subtitle,
+                            conn, errors = "", extraField = None):
+
+    html = """\
+  <FORM         METHOD      = "GET"
+                ACTION      = "%s/%s">
+   <INPUT       TYPE        = "hidden"
+                NAME        = "%s"
+                VALUE       = "%s">
+   <TABLE       WIDTH       = "100%%"
+                BORDER      = "0"
+                CELLSPACING = "0">
+    <!-- TR         BGCOLOR     = "#6699FF">
+     <TD        NOWRAP
+                HEIGHT      = "26"
+                COLSPAN     = "2">
+      <FONT     SIZE        = "+2"
+                CLASS       = "Page">CDR Advanced Search</FONT>
+     </TD>
+    </TR -->
+    <TR         BGCOLOR     = "#FFFFCC">
+     <TD        NOWRAP
+                COLSPAN     = "2">
+      <FONT     SIZE        = "+1"
+                CLASS       = "Page">%s</FONT>
+     </TD>
+    <TR>
+    <TR>
+     <TD        NOWRAP
+                COLSPAN     = "2">&nbsp;</TD>
+    </TR>
+""" % (BASE, script, SESSION, session, subtitle)
+
+    if errors:
+        html += """\
+    <TR>
+     <TD ALIGN="left" COLSPAN="2">
+      %s
+     </TD>
+    </TR>
+""" % errors
+
+    for field in fields:
+        if len(field) == 2:
+            html += """\
+    <TR>
+     <TD        NOWRAP
+                ALIGN       = "right"
+                CLASS       = "Page">%s &nbsp; </TD>
+     <TD        WIDTH       = "55%%"
+                ALIGN       = "left">
+      <INPUT    TYPE        = "text"
+                NAME        = "%s"
+                SIZE        = "60">
+     </TD>
+    </TR>
+""" % field
+        else:
+            html += """\
+    <TR>
+     <TD        NOWRAP
+                ALIGN       = "right"
+                CLASS       = "Page">%s &nbsp; </TD>
+     <TD        WIDTH       = "55%%"
+                ALIGN       = "left">
+%s
+     </TD>
+    </TR>
+""" % (field[0], field[2](conn, field[1]))
+
+    if len(fields) > 1:
+        html += """\
+    <TR>
+     <TD        NOWRAP
+                WIDTH       = "15%"
+                CLASS       = "Page"
+                VALIGN      = "top"
+                ALIGN       = "right">Search Connector &nbsp; </TD>
+     <TD        WIDTH       = "30%"
+                ALIGN       = "left">
+      <SELECT   NAME        = "Boolean"
+                SIZE        = "1">
+       <OPTION  SELECTED>AND</OPTION>
+       <OPTION>OR</OPTION>
+      </SELECT>
+     </TD>
+    </TR>"""
+
+    if extraField:
+        if type(extraField[0]) not in (type([]), type(())):
+            extraField = [extraField]
+        for ef in extraField:
+            html += """\
+    <TR>
+     <TD        NOWRAP
+                CLASS       = "Page"
+                VALIGN      = "top"
+                ALIGN       = "right">%s &nbsp; </TD>
+     <TD        WIDTH       = "55%%">
+%s
+     </TD>
+    </TR>
+""" % (ef[0], ef[1])
+
+    html += """\
+    <TR>
+     <TD        WIDTH       = "15%">&nbsp;</TD>
+     <TD        WIDTH       = "55%">&nbsp;</TD>
+    </TR>
+   </TABLE>
+   <TABLE       WIDTH       = "100%"
+                BORDER      = "0">
+    <TR>
+     <TD        COLSPAN     = "2">&nbsp; </TD>
+"""
+
+    for button in buttons:
+        if button[0].lower() == 'button':
+            html += """\
+     <TD        WIDTH       = "13%%"
+                ALIGN       = "center">
+      <INPUT    TYPE        = "button"
+                ONCLICK     = %s
+                VALUE       = "%s">
+     </TD>
+""" % (xml.sax.saxutils.quoteattr(button[1]), button[2])
+        else:
+            html += """\
+     <TD        WIDTH       = "13%%"
+                ALIGN       = "center">
+      <INPUT    TYPE        = "%s"
+                NAME        = "%s"
+                VALUE       = "%s">
+     </TD>
+""" % button
+
+    html += """\
+     <TD        WIDTH       = "33%">&nbsp;</TD>
+    </TR>
+   </TABLE>
+   <BR>
+"""
+
+    return html
+
 
 #----------------------------------------------------------------------
 # Construct query for advanced search page.
@@ -1119,7 +1292,7 @@ def constructAdvancedSearchQuery(searchFields, boolOp, docType):
 #----------------------------------------------------------------------
 # Construct top of HTML page for advanced search results.
 #----------------------------------------------------------------------
-def advancedSearchResultsPageTop(docType, nRows, strings):
+def advancedSearchResultsPageTop(subTitle, nRows, strings):
     return u"""\
 <!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
 <HTML>
@@ -1175,13 +1348,19 @@ def advancedSearchResultsPageTop(docType, nRows, strings):
              COLSPAN = "4"
                CLASS = "Page">&nbsp;</TD>
    </TR>
-""" % (docType, docType, nRows, unicode(strings, 'latin-1'))
+""" % (subTitle, subTitle, nRows, unicode(strings, 'latin-1'))
 
 #----------------------------------------------------------------------
 # Construct HTML page for advanced search results.
 #----------------------------------------------------------------------
 def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
-    html = advancedSearchResultsPageTop(docType, len(rows), strings)
+    # We like the display on the web to be pretty.  The docType has been 
+    # overloaded as title *and* docType.  I'm splitting the meaning here.
+    # --------------------------------------------------------------------
+    subTitle = docType
+    docType  = docType.replace(' ', '')
+
+    html = advancedSearchResultsPageTop(subTitle, len(rows), strings)
 
     session = session and ("&%s=%s" % (SESSION, session)) or ""
     for i in range(len(rows)):
@@ -1206,7 +1385,7 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
 """ % dt
 
         # XXX Consider using QcReport.py for all advanced search results pages.
-        if docType in ("Person", "Organization", "Glossary Term",
+        if docType in ("Person", "Organization", "GlossaryTermConcept",
                        "GlossaryTermName"):
             href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
         elif docType == 'Protocol' and dt == "CTGovProtocol":
