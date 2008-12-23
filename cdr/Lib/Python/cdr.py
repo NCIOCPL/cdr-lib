@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.157 2008-08-13 01:21:21 ameyer Exp $
+# $Id: cdr.py,v 1.158 2008-12-23 12:41:15 bkline Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.157  2008/08/13 01:21:21  ameyer
+# Added a new optional parameter "stackTrace" to logwrite.  It produces a
+# stack trace even in the absence of an exception.
+#
 # Revision 1.156  2008/08/12 17:56:24  ameyer
 # Removed debug logging of dom processing failures in getErrors.  They are not
 # a real, production errors.
@@ -4753,3 +4757,18 @@ def getBoardNames(boardType = 'all', display = 'full', host = 'localhost'):
 
     return dict((row[0], row[1]) for row in cursor.fetchall())
 
+#----------------------------------------------------------------------
+# Record an event which happened in a CDR client session.
+#----------------------------------------------------------------------
+def logClientEvent(session, desc, host = DEFAULT_HOST, port = DEFAULT_PORT):
+    cmd = (u"<CdrLogClientEvent>"
+           u"<EventDescription>%s</EventDescription>"
+           u"</CdrLogClientEvent>" % cgi.escape(desc))
+    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    errors = getErrors(resp, errorsExpected = False, asSequence = True)
+    if errors:
+        raise Exception(errors)
+    match = re.search("<EventId>(\\d+)</EventId>", resp)
+    if not match:
+        raise Exception(u"malformed response: %s" % resp)
+    return int(match.group(1))
