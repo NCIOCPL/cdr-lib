@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.108 2008-08-15 18:30:44 venglisc Exp $
+# $Id: cdrpub.py,v 1.109 2008-12-30 15:15:32 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.108  2008/08/15 18:30:44  venglisc
+# Needed to rename the docType name GlossaryTermName to GlossaryTerm since
+# that's what Cancer.gov expects to receive. (Bug 3491)
+#
 # Revision 1.107  2008/06/03 21:14:49  bkline
 # Cleaned up code to extract error information from the Err elements
 # returned in CDR server responses.  Replaced StandardError exceptions
@@ -1591,6 +1595,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 docType   = row[2]
                 if docType == "InScopeProtocol":
                     docType = "Protocol"
+                elif docType == "GlossaryTermName":
+                    docType = "GlossaryTerm"
                 response = cdr2gk.sendDocument(self.__jobId, docNum, "Remove",
                                                docType, docId, version,
                                                groupNums.genNewUniqueNum())
