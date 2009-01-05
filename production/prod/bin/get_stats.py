@@ -12,10 +12,14 @@
 # $Locker:  $
 # 
 # $Source: /usr/local/cvsroot/production/prod/bin/get_stats.py,v $
-# $Revision: 1.3 $
+# $Revision: 1.4 $
 #
 # History:
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2008/01/08 19:27:48  venglisc
+# Modified Week format for weeks to display between 01...53 instead of
+# 00...53.
+#
 # Revision 1.2  2007/09/07 16:17:53  venglisc
 # Replaced FTP process with Python ftplib commands.  Adjusting for more
 # frequent publishing.
@@ -40,7 +44,7 @@ FTPUSER   = 'operator'
 FTPPWD    = 'mars56'
 
 now     = time.time()
-lastWk  = time.time() - 5 * 24 * 60 * 60
+lastWk  = time.time() - 4 * 24 * 60 * 60
 relDate = time.strftime("%Y%V", time.localtime(lastWk))
 relDateHdr = time.strftime("Week %V, %Y", time.localtime(lastWk))
 rchanges= '%s.changes'     % relDate
