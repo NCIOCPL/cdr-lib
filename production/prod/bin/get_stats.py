@@ -12,10 +12,14 @@
 # $Locker:  $
 # 
 # $Source: /usr/local/cvsroot/production/prod/bin/get_stats.py,v $
-# $Revision: 1.4 $
+# $Revision: 1.5 $
 #
 # History:
 # $Log: not supported by cvs2svn $
+# Revision 1.4  2009/01/05 20:18:31  venglisc
+# Corrected the calculation for 'lastWk' since it displayed last year instead
+# of currect year (200801 instead 200901).
+#
 # Revision 1.3  2008/01/08 19:27:48  venglisc
 # Modified Week format for weeks to display between 01...53 instead of
 # 00...53.
@@ -44,9 +48,9 @@ FTPUSER   = 'operator'
 FTPPWD    = 'mars56'
 
 now     = time.time()
-lastWk  = time.time() - 4 * 24 * 60 * 60
-relDate = time.strftime("%Y%V", time.localtime(lastWk))
-relDateHdr = time.strftime("Week %V, %Y", time.localtime(lastWk))
+lastWk  = time.time() - 5 * 24 * 60 * 60
+relDate = time.strftime("%G%V", time.localtime(lastWk))
+relDateHdr = time.strftime("Week %V, %G", time.localtime(lastWk))
 rchanges= '%s.changes'     % relDate
 lchanges= '%s_changes.txt' % relDate
 
