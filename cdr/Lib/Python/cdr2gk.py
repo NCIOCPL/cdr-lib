@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2gk.py,v 1.22 2008-11-06 15:14:11 venglisc Exp $
+# $Id: cdr2gk.py,v 1.23 2009-02-20 21:23:25 venglisc Exp $
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.22  2008/11/06 15:14:11  venglisc
+# Updating host after Gatekeeper upgrade.
+#
 # Revision 1.21  2008/10/06 19:32:48  venglisc
 # Removed latest change since it was unnecessary. (Bug 4123)
 #
@@ -90,7 +93,7 @@ RETRY_MULTIPLIER    = 1.0
 debuglevel          = 0
 localhost           = socket.gethostname()
 host                = "gatekeeper.cancer.gov"
-testhost            = "test5.cancer.gov"
+testhost            = "gatekeepergk.cancer.gov"
 port                = 80
 soapNamespace       = "http://schemas.xmlsoap.org/soap/envelope/"
 gatekeeperNamespace = "http://www.cancer.gov/webservices/"
