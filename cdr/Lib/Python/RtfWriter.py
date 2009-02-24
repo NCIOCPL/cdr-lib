@@ -27,11 +27,14 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: RtfWriter.py,v 1.5 2008-03-18 12:40:16 bkline Exp $
+# $Id: RtfWriter.py,v 1.6 2009-02-24 21:07:02 bkline Exp $
 #
 # Module for generating RTF documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.5  2008/03/18 12:40:16  bkline
+# Added support for most common numbered list types.
+#
 # Revision 1.4  2005/03/03 14:42:30  bkline
 # Fixed documentation typos.
 #
@@ -279,6 +282,7 @@ class Document:
     SERIF     = 0
     SANSSERIF = 1
     FIXED     = 2
+    VERDANA   = 3
     BLACK     = 1
     WHITE     = 2
 
@@ -307,7 +311,8 @@ class Document:
                             (255, 255, 255)] # white
         self.fonts       = [Font(self.SERIF,     "Times New Roman", "roman"),
                             Font(self.SANSSERIF, "Arial",           "swiss"),
-                            Font(self.FIXED,     "Courier New",     "modern")]
+                            Font(self.FIXED,     "Courier New",     "modern"),
+                            Font(self.VERDANA,   "Verdana",         "swiss")]
         self.lists       = [List(List.NONE)]
         self.margL       = 1440              # 1-inch left margin
         self.margR       = 1440              # 1-inch right margin
