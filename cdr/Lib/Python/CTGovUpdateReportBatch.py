@@ -6,9 +6,13 @@
 #
 # Done for Bugzilla issue #1881
 #
-# $Id: CTGovUpdateReportBatch.py,v 1.3 2006-07-13 17:21:55 ameyer Exp $
+# $Id: CTGovUpdateReportBatch.py,v 1.4 2009-03-17 18:41:53 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.3  2006/07/13 17:21:55  ameyer
+# Fixed bug in retrieval of import job numbers.
+# Modified report header to correctly display job numbers.
+#
 # Revision 1.2  2006/07/03 20:17:23  ameyer
 # Removed a bit of debugging code.
 #
@@ -36,18 +40,25 @@ REPORT_PATH = REPORT_BASE + REPORT_FILE
 # Report buffer
 reportBuf = []
 
+# Globals hold job info in case of fatal error
+batchJobObj  = None
+jobStartTime = None
+
 #----------------------------------------------------------------------
 # Handle fatal errors
 #----------------------------------------------------------------------
-def fatal(msg, batchJob=None):
+def fatal(msg):
     """
     Report messages to the log file and to the output file so
     users will be sure to see them.
+
+    If possible, also mark the batch job as failed so it won't hang
+    up attempts to run again.
+
     Then exit.
 
     Pass:
         Single message string or tuple of strings.
-        Optional batch job object to fail.
     """
     global LF
 
@@ -59,9 +70,25 @@ def fatal(msg, batchJob=None):
     appendReport(msg)
     reportWrite()
 
-    if batchJob:
-        batchJob.fail("Job failed see debug log", logfile=LF)
+    # Mark the job as failed in the database table
+    if batchJobObj:
+        batchJobObj.fail("Job failed see debug log", exit=0, logfile=LF)
 
+    # Tell users
+    emailList = batchJobObj.getEmailList()
+    if len(emailList):
+        resp = cdr.sendMail("cdr@%s.nci.nih.gov" %hostName, emailList,
+                subject="CTGov Update Report has failed", body="""
+The CTGov Update report started at %s has failed.
+
+See: %s""" % (jobStartTime, REPORT_URL))
+
+    if resp:
+        # Returns None if no error
+        cdr.logwrite("Email of error notification failed: %s"\
+                      % resp, LF)
+
+    # That's all folks
     sys.exit(1)
 
 #----------------------------------------------------------------------
@@ -102,7 +129,7 @@ def reportWrite():
     try:
         outf = open(REPORT_PATH, "w")
     except IOError, e:
-        fatal(("%s unable to open output file %s" % (SCRIPT, REPORT_PATH),
+        fatal("%s unable to open output file %s: %s" % (SCRIPT, REPORT_PATH,
                str(e)))
 
     # header
@@ -201,7 +228,7 @@ def findImportedDocs(firstJob, lastJob):
             AND j.id <= %d
             AND j.id >= %d
        GROUP BY d.cdr_id
-            """ % (lastJob, firstJob))
+            """ % (lastJob, firstJob), timeout = 600)
     except cdrdb.Error, info:
         fatal("Unable to select doc IDs: %s" % str(info))
 
@@ -214,7 +241,7 @@ def findImportedDocs(firstJob, lastJob):
             AND v.dt > '%s'
             AND v.dt < '%s'
             AND v.comment LIKE 'ImportCTGovProtocols: %%'
-       GROUP BY v.id, t.dt""" % (firstDate, limitDate))
+       GROUP BY v.id, t.dt""" % (firstDate, limitDate), timeout = 600)
         docIdVer = cursor.fetchall()
     except cdrdb.Error, info:
         fatal("Unable to select version numbers: %s" % str(info))
@@ -244,14 +271,24 @@ except ValueError:
 # This loads a row from the batch_job table and sets the status
 #   to 'In process'
 try:
-    batchObj = cdrbatch.CdrBatch (jobId=jobId)
+    batchJobObj = cdrbatch.CdrBatch (jobId=jobId)
 except cdrbatch.BatchException, be:
     cdr.logwrite ("Unable to create batch job object: %s" % str(be), LF)
     sys.exit (1)
 
+# We now have the batch job object, save it globally for update on fatal error
+jobStartTime = time.asctime()
+
 # Parameters in job object
-importJobs = batchObj.getParm('importJobs')
-diffFmt    = batchObj.getParm('diffFmt')
+importJobs = batchJobObj.getParm('importJobs')
+diffFmt    = batchJobObj.getParm('diffFmt')
+
+# Create an object for differencing the docs
+diffObj = None
+if   diffFmt == "XDiff": diffObj = cdrxdiff.XDiff()
+elif diffFmt == "UDiff": diffObj = cdrxdiff.UDiff()
+if not diffObj:
+    fatal("Internal error: Unrecognized diffFmt '%s'" % diffFmt)
 
 # Convert job ids from strings to numbers for min/max check
 jobNums = []
@@ -264,13 +301,7 @@ else:
 
 # Generate list of docId, verNum pairs from user selected jobs
 idVerDt = findImportedDocs(min(jobNums), max(jobNums))
-
-# Create an object for differencing the docs
-diffObj = None
-if   diffFmt == "XDiff": diffObj = cdrxdiff.XDiff()
-elif diffFmt == "UDiff": diffObj = cdrxdiff.UDiff()
-if not diffObj:
-    fatal("Internal error: Unrecognized diffFmt '%s'" % diffFmt)
+sys.stderr.write("reporting on %d documents\n" % len(idVerDt))
 
 # Put color info in the diff buffer, then fetch it out again
 if diffFmt == "XDiff":
@@ -338,6 +369,7 @@ for (docId, docVer, docDt) in idVerDt:
     else:
         appendReport("[No significant differences]")
     docCount += 1
+    sys.stderr.write("\rdone %d of %d docs" % (docCount, len(idVerDt)))
 
 # Summary and termination
 appendReport("""
@@ -361,7 +393,7 @@ appendReport("""
 reportWrite()
 
 # Notify user by email
-emailList = batchObj.getEmailList()
+emailList = batchJobObj.getEmailList()
 if len(emailList):
     resp = cdr.sendMail("cdr@%s.nci.nih.gov" % hostName, emailList,
                      subject="CTGov Update Report has completed", body="""
@@ -375,6 +407,6 @@ The report can be viewed at: <a href="%s">%s</a>
                       % resp, LF)
 
 # Signify completion in the database
-batchObj.setStatus(cdrbatch.ST_COMPLETED)
+batchJobObj.setStatus(cdrbatch.ST_COMPLETED)
 
 sys.exit(0)
