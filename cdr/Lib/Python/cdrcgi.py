@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.71 2008-12-15 22:54:23 venglisc Exp $
+# $Id: cdrcgi.py,v 1.72 2009-03-24 14:32:52 bkline Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.71  2008/12/15 22:54:23  venglisc
+# Modified Advanced Search to adjust for modified document type strcuture
+# of the GlossaryTerms. (Bug 4381)
+#
 # Revision 1.70  2008/11/04 21:39:20  venglisc
 # Added GlossaryTermName as a valid document type for QC reports.
 #
@@ -703,7 +707,8 @@ def glossaryAudienceList(conn, fName):
     query  = """\
 SELECT DISTINCT value, value
            FROM query_term
-          WHERE path = '/GlossaryTermConcept/TermDefinition/Audience'
+          WHERE path IN ('/GlossaryTermConcept/TermDefinition/Audience',
+               '/GlossaryTermConcept/TranslatedTermDefinition/Audience')
        ORDER BY value"""
     pattern = "<option value='%s'>%s&nbsp;</option>"
     return generateHtmlPicklist(conn, fName, query, pattern,
@@ -712,13 +717,14 @@ SELECT DISTINCT value, value
 #----------------------------------------------------------------------
 # Generate picklist for GlossaryTermStatus.
 #----------------------------------------------------------------------
-def glossaryTermStatusList(conn, fName):
+def glossaryTermStatusList(conn, fName,
+                           path = '/GlossaryTermName/TermNameStatus'):
     defaultOpt = "<option value='' selected>Select a status...</option>\n"
     query  = """\
 SELECT DISTINCT value, value
            FROM query_term
-          WHERE path = '/GlossaryTermName/TermNameStatus'
-       ORDER BY value"""
+          WHERE path = '%s'
+       ORDER BY value""" % path
     pattern = "<option value='%s'>%s&nbsp;</option>"
     return generateHtmlPicklist(conn, fName, query, pattern,
                                 firstOpt = defaultOpt)
@@ -732,7 +738,8 @@ def glossaryTermDictionaryList(conn, fName):
     query  = """\
 SELECT DISTINCT value, value
            FROM query_term
-          WHERE path = '/GlossaryTermConcept/TermDefinition/Dictionary'
+          WHERE path IN ('/GlossaryTermConcept/TermDefinition/Dictionary',
+               '/GlossaryTermConcept/TranslatedTermDefinition/Dictionary')
        ORDER BY value"""
     pattern = "<option value='%s'>%s&nbsp;</option>"
     return generateHtmlPicklist(conn, fName, query, pattern,
