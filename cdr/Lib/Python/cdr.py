@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.158 2008-12-23 12:41:15 bkline Exp $
+# $Id: cdr.py,v 1.159 2009-05-22 02:36:16 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.158  2008/12/23 12:41:15  bkline
+# Added logClientEvent() function.
+#
 # Revision 1.157  2008/08/13 01:21:21  ameyer
 # Added a new optional parameter "stackTrace" to logwrite.  It produces a
 # stack trace even in the absence of an exception.
@@ -2013,6 +2016,51 @@ def valPair(session, docType, oldDoc, newDoc, host=DEFAULT_HOST,
 
     # Else return empty list
     return []
+
+#----------------------------------------------------------------------
+# Update a document title
+#----------------------------------------------------------------------
+def updateTitle(credentials, docId, host=DEFAULT_HOST, port=DEFAULT_PORT):
+    """
+    Tell the CdrServer to re-run the title filter for this document,
+    updating the title stored in the document table.
+
+    No locking is done since the this action does not change the document
+    itself.  If another user has the document checked out, no harm will
+    be done when and if he saves it.
+
+    Pass:
+        credentials - Logon credentials or session.
+        docId       - Document ID, any format is okay.
+        host        - Update on this host.
+        port        - Via this CdrServer port.
+
+    Return:
+        True  = Host says title was changed.
+        False = Host says regenerated title is the same as the old one.
+    """
+    docIdStr = exNormalize(docId)[0]
+
+    # Prepare transaction
+    cmd = """
+ <CdrUpdateTitle>
+  <DocId>%s</DocId>
+ </CdrUpdateTitle>
+""" % docIdStr
+    cmd = wrapCommand(cmd, credentials)
+
+    # Interact with the host
+    resp = sendCommands(cmd, host, port)
+
+    # Check response
+    if resp.find("unchanged") >= 0:
+        return False
+    if resp.find("changed") >= 0:
+        return True
+
+    # Should be here
+    raise Exception("cdr.updateTitle: Unexpected return from server:\n%s\n" %
+                    resp)
 
 #----------------------------------------------------------------------
 # De-duplicate and list a sequence of error messages
