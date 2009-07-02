@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.159 2009-05-22 02:36:16 ameyer Exp $
+# $Id: cdr.py,v 1.160 2009-07-02 21:09:18 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.159  2009/05/22 02:36:16  ameyer
+# Added updateTitle().
+#
 # Revision 1.158  2008/12/23 12:41:15  bkline
 # Added logClientEvent() function.
 #
@@ -2291,6 +2294,60 @@ def search(credentials, query, host = DEFAULT_HOST, port = DEFAULT_PORT):
     return ret
 
 #----------------------------------------------------------------------
+# Return all all_docs info for a CDR document specified by ID
+#----------------------------------------------------------------------
+def getAllDocsRow(docId):
+    """
+    Retrieve most info from the all_docs table for a document ID.
+    Does not get the XML, which could be very large.
+
+    Pass:
+        Document CDR ID.
+
+    Return:
+        Dictionary containing column name = column value.
+        Dictionary["doc_type"] is the doctype name string, not the id.
+        Raises cdr:Exception if error.
+    """
+    # Convert to integer, raise exception if error
+    idNum = exNormalize(docId)[1]
+
+    # Fields of interest
+    qry = """
+SELECT d.title, t.name, d.active_status, d.val_status, d.val_date, d.first_pub
+  FROM all_docs d
+  JOIN doc_type t
+    ON d.doc_type = t.id
+ WHERE d.id = ?
+ """
+
+    # Get all the data
+    try:
+        conn   = cdrdb.connect()
+        cursor = conn.cursor()
+        cursor.execute(qry, idNum)
+        row    = cursor.fetchone()
+        cursor.close()
+    except cdrdb.Error, info:
+        raise Exception("Database error in getAllDocsRow(%s): %s" %
+                        (docId, str(info)))
+
+    # Doc not found?
+    if not row:
+        raise Exception("getAllDocsRow() found no match for doc %s" % docId)
+
+    # Parse the results for the caller
+    docData = {}
+    docData["title"]         = row[0]
+    docData["doc_type"]      = row[1]
+    docData["active_status"] = row[2]
+    docData["val_status"]    = row[3]
+    docData["val_date"]      = row[4]
+    docData["first_pub"]     = row[5]
+
+    return docData
+
+
 # Class to contain CDR document type information.
 #----------------------------------------------------------------------
 class dtinfo:
