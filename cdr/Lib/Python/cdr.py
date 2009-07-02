@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.160 2009-07-02 21:09:18 ameyer Exp $
+# $Id: cdr.py,v 1.161 2009-07-02 22:27:43 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.160  2009/07/02 21:09:18  ameyer
+# Added getAllDocsRow().
+#
 # Revision 1.159  2009/05/22 02:36:16  ameyer
 # Added updateTitle().
 #
@@ -2296,13 +2299,14 @@ def search(credentials, query, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Return all all_docs info for a CDR document specified by ID
 #----------------------------------------------------------------------
-def getAllDocsRow(docId):
+def getAllDocsRow(docId, conn=None):
     """
     Retrieve most info from the all_docs table for a document ID.
     Does not get the XML, which could be very large.
 
     Pass:
-        Document CDR ID.
+        docId - Document CDR ID, any format recognized by exNormalize().
+        conn  - Optional connection object.
 
     Return:
         Dictionary containing column name = column value.
@@ -2314,16 +2318,23 @@ def getAllDocsRow(docId):
 
     # Fields of interest
     qry = """
-SELECT d.title, t.name, d.active_status, d.val_status, d.val_date, d.first_pub
+SELECT d.title, t.name, d.active_status,
+       d.val_status, d.val_date, d.first_pub
   FROM all_docs d
   JOIN doc_type t
     ON d.doc_type = t.id
  WHERE d.id = ?
  """
+    # Connection
+    if not conn:
+        try:
+            conn = cdrdb.connect()
+        except cdrdb.Error, info:
+            raise Exception("Error getting connection in getAllDocsRow(%s): %s"
+                             % (docId, str(info)))
 
     # Get all the data
     try:
-        conn   = cdrdb.connect()
         cursor = conn.cursor()
         cursor.execute(qry, idNum)
         row    = cursor.fetchone()
@@ -2338,6 +2349,7 @@ SELECT d.title, t.name, d.active_status, d.val_status, d.val_date, d.first_pub
 
     # Parse the results for the caller
     docData = {}
+    docData["id"]            = idNum
     docData["title"]         = row[0]
     docData["doc_type"]      = row[1]
     docData["active_status"] = row[2]
