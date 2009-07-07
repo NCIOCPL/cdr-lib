@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.161 2009-07-02 22:27:43 ameyer Exp $
+# $Id: cdr.py,v 1.162 2009-07-07 21:03:22 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.161  2009/07/02 22:27:43  ameyer
+# Added optional parameter conn to getAllDocsRow().
+#
 # Revision 1.160  2009/07/02 21:09:18  ameyer
 # Added getAllDocsRow().
 #
@@ -1449,9 +1452,9 @@ class Doc:
             raise Exception('missing document ID')
         if not self.type:
             raise Exception('missing document type')
-        id = exNormalize(self.id)[1]
+        docId = exNormalize(self.id)[1]
         if self.type != 'Media':
-            return "CDR%d.xml" % id
+            return "CDR%d.xml" % docId
         dom = xml.dom.minidom.parseString(self.xml)
         for node in dom.documentElement.childNodes:
             if node.nodeName == "PhysicalMedia":
@@ -1461,9 +1464,9 @@ class Doc:
                             if grandchild.nodeName == "ImageEncoding":
                                 encoding = getTextContent(grandchild)
                                 if encoding == 'JPEG':
-                                    return "CDR%010d.jpg" % id
+                                    return "CDR%010d.jpg" % docId
                                 elif encoding == 'GIF':
-                                    return "CDR%010d.gif" % id
+                                    return "CDR%010d.gif" % docId
         raise Exception("Media type not yet supported")
 
 #----------------------------------------------------------------------
@@ -2149,10 +2152,6 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
             verQual += " maxDate='%s'" % docDate
         docElem = "<Document href='%s'%s/>" % (normalize(docId), verQual)
     elif doc:
-        # Ensure that everything sent to host is properly encoded
-        # This is belt and suspenders.  Should be encoded okay already
-        if type(doc) == type(u""):
-            doc = doc.encode ("utf-8")
         docElem = "<Document><![CDATA[%s]]></Document>" % doc
     else: return "<Errors><Err>Document not specified.</Err></Errors>"
 
@@ -2219,6 +2218,11 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
 
     cmd = "<CdrFilter%s>%s%s%s</CdrFilter>" % (output, filterElem,
                                                docElem, parmElem)
+
+    # Everything must be utf-8.  Checking here will fix any unicode
+    #  encoding originating in filter, doc, or parms
+    if type(cmd) == type(u""):
+        cmd = cmd.encode("utf-8")
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -4229,9 +4233,9 @@ def getFilterSets(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
     sets     = []
     elems    = response.specificElement.getElementsByTagName('FilterSet')
     for elem in elems:
-        id       = int(elem.getAttribute('SetId'))
+        setId    = int(elem.getAttribute('SetId'))
         name     = getTextContent(elem)
-        sets.append(IdAndName(id, name))
+        sets.append(IdAndName(setId, name))
     return sets
 
 #----------------------------------------------------------------------
@@ -4354,18 +4358,18 @@ def expandFilterSet(session, name, level = 0,
         raise Exception('expandFilterSet', 'infinite nesting of sets')
     if _expandedFilterSetCache.has_key(name):
         return _expandedFilterSetCache[name]
-    set = getFilterSet(session, name, host, port)
+    filterSet = getFilterSet(session, name, host, port)
     newSetMembers = []
-    for member in set.members:
+    for member in filterSet.members:
         if type(member.id) == type(9):
             nestedSet = expandFilterSet(session, member.name, level + 1)
             newSetMembers += nestedSet.members
         else:
             newSetMembers.append(member)
-    set.members = newSetMembers
-    set.expanded = 1
-    _expandedFilterSetCache[name] = set
-    return set
+    filterSet.members = newSetMembers
+    filterSet.expanded = 1
+    _expandedFilterSetCache[name] = filterSet
+    return filterSet
 
 #----------------------------------------------------------------------
 # Returns a dictionary containing all of the CDR filter sets, rolled
@@ -4374,9 +4378,9 @@ def expandFilterSet(session, name, level = 0,
 #----------------------------------------------------------------------
 def expandFilterSets(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
     sets = {}
-    for set in getFilterSets(session):
-        sets[set.name] = expandFilterSet(session, set.name, host = host,
-                                         port = port)
+    for fSet in getFilterSets(session):
+        sets[fSet.name] = expandFilterSet(session, fSet.name, host = host,
+                                          port = port)
     return sets
 
 #----------------------------------------------------------------------
@@ -4575,10 +4579,10 @@ def addExternalMapping(credentials, usage, value, docId = None,
 #----------------------------------------------------------------------
 def setDocStatus(credentials, docId, newStatus,
                  host = DEFAULT_HOST, port = DEFAULT_PORT, comment = None):
-    id   = u"<DocId>%s</DocId>" % normalize(docId)
+    docId= u"<DocId>%s</DocId>" % normalize(docId)
     stat = u"<NewStatus>%s</NewStatus>" % newStatus
     cmt  = comment and (u"<Comment>%s</Comment>" % comment) or u""
-    cmd  = u"<CdrSetDocStatus>%s%s%s</CdrSetDocStatus>" % (id, stat, cmt)
+    cmd  = u"<CdrSetDocStatus>%s%s%s</CdrSetDocStatus>" % (docId, stat, cmt)
     resp = sendCommands(wrapCommand(cmd.encode('utf-8'), credentials),
                         host, port)
     errs = getErrors(resp, errorsExpected = False, asSequence = True)
@@ -4592,8 +4596,8 @@ def getDocStatus(credentials, docId, host = DEFAULT_HOST):
     conn = cdrdb.connect('CdrGuest', dataSource = host)
     cursor = conn.cursor()
     idTuple = exNormalize(docId)
-    id = idTuple[1]
-    cursor.execute("SELECT active_status FROM all_docs WHERE id = ?", id)
+    docId = idTuple[1]
+    cursor.execute("SELECT active_status FROM all_docs WHERE id = ?", docId)
     rows = cursor.fetchall()
     if not rows:
         raise Exception(['Invalid document ID %s' % docId])
