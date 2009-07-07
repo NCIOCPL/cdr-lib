@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.162 2009-07-07 21:03:22 ameyer Exp $
+# $Id: cdr.py,v 1.163 2009-07-07 21:07:22 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,13 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.162  2009/07/07 21:03:22  ameyer
+# Changed filterDoc() to ensure that command sent to the host is utf-8
+# encoded.  This should work even if the filter is unicode - which the
+# old version of filterDoc() did not check.
+# Also changed multiple variable names in various parts of the code to
+# eliminate pychecker "... shadows builtin" warnings.
+#
 # Revision 1.161  2009/07/02 22:27:43  ameyer
 # Added optional parameter conn to getAllDocsRow().
 #
@@ -4579,10 +4586,10 @@ def addExternalMapping(credentials, usage, value, docId = None,
 #----------------------------------------------------------------------
 def setDocStatus(credentials, docId, newStatus,
                  host = DEFAULT_HOST, port = DEFAULT_PORT, comment = None):
-    docId= u"<DocId>%s</DocId>" % normalize(docId)
+    docIdStr = u"<DocId>%s</DocId>" % normalize(docId)
     stat = u"<NewStatus>%s</NewStatus>" % newStatus
     cmt  = comment and (u"<Comment>%s</Comment>" % comment) or u""
-    cmd  = u"<CdrSetDocStatus>%s%s%s</CdrSetDocStatus>" % (docId, stat, cmt)
+    cmd  = u"<CdrSetDocStatus>%s%s%s</CdrSetDocStatus>" % (docIdStr, stat, cmt)
     resp = sendCommands(wrapCommand(cmd.encode('utf-8'), credentials),
                         host, port)
     errs = getErrors(resp, errorsExpected = False, asSequence = True)
