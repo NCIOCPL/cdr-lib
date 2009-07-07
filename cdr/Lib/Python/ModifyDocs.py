@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.28 2008-06-21 13:35:44 bkline Exp $
+# $Id: ModifyDocs.py,v 1.29 2009-07-07 21:00:14 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.28  2008/06/21 13:35:44  bkline
+# Passed in errorsExpected = False for call to getErrors().
+#
 # Revision 1.27  2008/06/10 15:29:26  bkline
 # Replaced regular-expression parsing of errors with call to
 # cdr.getErrors().
@@ -132,8 +135,8 @@ _errCount  = 0
 
 # Caller can alter this
 def setMaxErrors(maxErrs):
-    global _errCount
-    _errCount = maxErrs
+    global _maxErrors
+    _maxErrors = maxErrs
 
 #----------------------------------------------------------------------
 # Module level variables (statics)
