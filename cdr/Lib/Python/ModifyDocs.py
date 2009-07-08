@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.29 2009-07-07 21:00:14 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.30 2009-07-08 03:05:50 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.29  2009/07/07 21:00:14  ameyer
+# Fixed bug in setMaxErrors(), was modifying the wrong global variable.
+#
 # Revision 1.28  2008/06/21 13:35:44  bkline
 # Passed in errorsExpected = False for call to getErrors().
 #
@@ -130,8 +133,9 @@ class DocumentLocked(Exception): pass
 # Error controls
 # If global _errCount > _maxErrors, halt processing
 #----------------------------------------------------------------------
-_maxErrors = 0
-_errCount  = 0
+_maxErrors   = 0
+_errCount    = 0
+_lockedCount = 0
 
 # Caller can alter this
 def setMaxErrors(maxErrs):
@@ -309,6 +313,10 @@ class Job:
     def getCountVersionsSaved(self):
         return self.__countVersionsSaved
 
+    def getCountDocsLocked(self):
+        global _lockedCount
+        return _lockedCount
+
     def getNotCheckedOut(self, markup=False):
         """
         Get a list or an HTML table of docs not checked out, with
@@ -349,6 +357,43 @@ class Job:
 
         # Or no results
         return None
+
+    def getSummary(self, markup=False):
+        """
+        Produce a summary of the run.
+
+        Pass:
+            markup - True = return data as an HTML table, else text.
+
+        Return:
+            String of text or HTML.
+        """
+        if not markup:
+            report = """
+           Selected docs: %d
+          Processed docs: %d
+              Docs saved: %d
+          Versions saved: %d
+   Docs locked by others: %d
+""" % (self.getCountDocsSelected(), self.getCountDocsProcessed(),
+       self.getCountDocsSaved(), self.getCountVersionsSaved(),
+       self.getCountDocsLocked())
+
+        else:
+            report = """
+<table border="1">
+ <tr><td align='right'>Selected docs: </td><td>%d</td></tr>
+ <tr><td align='right'>Processed docs: </td><td>%d</td></tr>
+ <tr><td align='right'>Docs saved: </td><td>%d</td></tr>
+ <tr><td align='right'>Versions saved: </td><td>%d</td></tr>
+ <tr><td align='right'>Locked by others: </td><td>%d</td></tr>
+</table>
+""" % (self.getCountDocsSelected(), self.getCountDocsProcessed(),
+       self.getCountDocsSaved(), self.getCountVersionsSaved(),
+       self.getCountDocsLocked())
+
+        return report
+
 
     def getProcessed(self, changed=True, unchanged=True, countOnly=False,
                      docIdOnly=False, markup=False):
@@ -471,7 +516,7 @@ class Job:
     # then call self.run().
     #------------------------------------------------------------------
     def run(self):
-        global _errCount, _maxErrors
+        global _errCount, _maxErrors, _lockedCount
 
         # In test mode, create output directory for files
         if _testMode:
@@ -524,6 +569,7 @@ class Job:
             except DocumentLocked, info:
                 # Lock failed
                 lockedDoc = False
+                _lockedCount += 1
                 # Log it, but always continue
                 self.log("Document %d: %s" % (docId, str(info)))
             except Exception, info:
@@ -565,9 +611,11 @@ class Job:
    Docs processed = %d
    Docs saved     = %d
    Versions saved = %d
+   Could not lock = %d
    Errors         = %d
- %s""" % (self.__countDocsProcessed, self.__countDocsSaved,
-          self.__countVersionsSaved, _errCount, "".join(msgReport)))
+ %s""" % (self.getCountDocsProcessed(), self.getCountDocsSaved(),
+          self.getCountVersionsSaved(), self.getCountDocsLocked(), _errCount,
+          "".join(msgReport)))
 
 
     #------------------------------------------------------------------
