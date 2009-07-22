@@ -1,9 +1,12 @@
 #----------------------------------------------------------------------
 # Batch portion of GlobalChangeSimpleLink.py
 #
-# $Id: SimpleLinkGlobalChangeBatch.py,v 1.1 2009-07-08 03:04:55 ameyer Exp $
+# $Id: SimpleLinkGlobalChangeBatch.py,v 1.2 2009-07-22 01:23:09 ameyer Exp $
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.1  2009/07/08 03:04:55  ameyer
+# Initial version.
+#
 #----------------------------------------------------------------------
 import sys, socket, cgi, re, cdr, cdrdb, cdrcgi, cdrbatch, ModifyDocs
 
@@ -78,9 +81,9 @@ class SimpleLinkVars:
 
         else:
             # We running as part of a CGI program, get vars from web form
-            fields = cgi.FieldStorage()
+            self.__fields = cgi.FieldStorage()
             for varName in SimpleLinkVars.fieldList:
-                self.vars[varName] = fields.getfirst(varName, None)
+                self.vars[varName] = self.__fields.getfirst(varName, None)
 
             # Doc ID fields have to be normalized to full form
             for varName in ("oldLinkRefIdStr", "newLinkRefIdStr"):
@@ -92,10 +95,10 @@ class SimpleLinkVars:
                         self.error("Can't convert %s to a valid CDR Doc ID" %
                                      self.vars[varName])
             # CDR Session
-            self.session = cdrcgi.getSession(fields) or ""
+            self.session = cdrcgi.getSession(self.__fields) or ""
 
             # User command/request
-            self.request = cdrcgi.getRequest(fields) or None
+            self.request = cdrcgi.getRequest(self.__fields) or None
 
     def error(self, errMsg):
         """
@@ -273,7 +276,7 @@ class SimpleLinkVars:
             subBanner   - Under banner header.
             haveVars    - Container of form variable names included in
                           formContent.  See saveContext().
-            buttons     - Buttons for banner header, default=Submit/Cancel
+            buttons     - Buttons for banner header, default=Next/Cancel
 
         Return:
             No return.  Exits to the browser.
@@ -285,7 +288,7 @@ class SimpleLinkVars:
         # Control width of select boxes
         # Fixed header values
         if buttons == 'default':
-            buttons = ('Submit', 'Cancel')
+            buttons = ('Next', 'Cancel')
         title   = "CDR Global Change Simple Links"
         script  = "GlobalChangeSimpleLink.py"
         if not subBanner:
@@ -338,7 +341,7 @@ SELECT DISTINCT t.name, t.name
         # Present it to the user
         html = """
 <p>Select the name of the document type containing links to be globally
-changed and click "Submit".</p>
+changed and click "Next".</p>
 """ + pickList
         self.sendPage(html, "Select document type",
                       haveVars=("srcDocTypeName",))
@@ -366,7 +369,7 @@ SELECT DISTINCT x.element, x.element
                           qry, pattern, selAttrs="size='10'")
         html = """
 <p>Select the name of the XML element containing links to be globally
-changed and click "Submit".</p>
+changed and click "Next".</p>
 """ + pickList
         self.sendPage(html, "Select document type", haveVars=("srcFieldName",))
 
@@ -387,7 +390,7 @@ changed and click "Submit".</p>
             prompt   = "old (existing)"
             noteMsg  = """
 <p>If you enter a trailing fragment id, e.g., "#F1", only links
-with that ID will be changed.  Otherwise no links with trailing 
+with that ID will be changed.  Otherwise no links with trailing
 fragments will be changed.</p>
 """
         else:
@@ -399,19 +402,31 @@ fragments will be changed.</p>
 fragment ID.  Otherwise no new links will have trailing fragment IDs.</p>
 """
 
+        # If user entered both an ID and a string, warn him
+        # We must know that we're processing real input, not saved input
+        #   from a previous screen, e.g., checking old ref when new is entered
+        if self.__fields.getvalue("linkPhase") == refType:
+            # cdrcgi.bail(u"refIdVar=%s *refIdVar=%s refName=%s *refName=%s" %
+            #     (refIdVar, self.getVar(refIdVar), refName,
+            #      self.getVar(refName).decode("utf-8")))
+            if self.getVar(refIdVar) and self.getVar(refName):
+                cdrcgi.bail("Please enter either an id OR a string, not both.")
+
         # If we have neither an ID nor a title, prompt for them
         if not self.getVar(refIdVar) and not self.getVar(refName):
             html = """
 <p>Enter the CDR ID or leading characters of the title string for the
-%s linked document and click "Submit".</p>
+%s linked document and click "Next".</p>
 <table>
  <tr><td align='right'>Linked document CDR ID: </td>
      <td><input type='text' name='%s' size='20' /></tr>
- <tr><td align='right'>or Leading chars from the title: </td>
+ <tr><td colspan='2' align='center'>OR</td</tr>
+ <tr><td align='right'>Leading chars from the title: </td>
      <td><input type='text' name='%s' size='40' /></tr>
 </table>
+<input type='hidden' name='linkPhase' value='%s' />
 %s
-""" % (prompt, refIdVar, refName, noteMsg)
+""" % (prompt, refIdVar, refName, refType, noteMsg)
             self.sendPage(html, "Enter link value",
                           haveVars=(refIdVar, refName))
 
@@ -464,7 +479,7 @@ SELECT title, doc_type
                         str(info))
 
         if not row:
-            self.error("I cannot find any document matching CDR ID=%d" %
+            self.error("I cannot find any document matching CDR ID=%s" %
                         self.getVar(refIdVar))
 
         if not row[1]:
@@ -491,7 +506,7 @@ SELECT title, doc_type
         html = u"""
 <p>Check 'cdr:ref' to modify cdr:ref links and/or<br />
 Check 'cdr:href' to modify cdr:href links
-Then click "Submit".</p>
+Then click "Next".</p>
 <p> Reference types to modify:
     <input type='checkbox' name='doRefs' value='Yes'>cdr:refs</input>
     <input type='checkbox' name='doHrefs' value='Yes'>cdr:hrefs</input>
@@ -511,7 +526,7 @@ Then click "Submit".</p>
 
         html = u"""
 <p>Enter one or more email address, separated by spaces, to be notified
-when the global change batch job completes, then click "Submit".</p>
+when the global change batch job completes, then click "Next".</p>
 </p>
 <p>Email addresses: <input type='text' name='emailList' size='80' /></p>
 """
@@ -529,7 +544,8 @@ when the global change batch job completes, then click "Submit".</p>
 
         html = u"""
 <p>Select 'Live' to modify data in the database, or 'Test' to make
-no changes to live data - just produce a Global Change test report.</p>
+no changes to live data - just produce a Global Change test report.
+Then click 'Next'.</p>
 <p> Run mode:
     <input type='radio' name='runMode' value='Live'>Live</input>
     <input type='radio' name='runMode' value='Test'>Test</input>
@@ -702,7 +718,8 @@ SELECT %s
             # If submitted, this variable will move us on
             html+="<input type='hidden' name='approved' value='approved' />\n"
 
-            self.sendPage(html, "Ready to submit global change")
+            self.sendPage(html, "Ready to submit global change",
+                          buttons=("Submit", "Cancel"))
         else:
             self.error("No documents found matching the old link criteria")
 
