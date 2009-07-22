@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.164 2009-07-22 01:27:30 ameyer Exp $
+# $Id: cdr.py,v 1.165 2009-07-22 20:01:10 venglisc Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.164  2009/07/22 01:27:30  ameyer
+# Assured correct unicode->utf-8 encoding for reason & comment in add/repDoc.
+#
 # Revision 1.163  2009/07/07 21:07:22  ameyer
 # Minor variable name change to last change to avoid programmer confusion.
 #
@@ -556,7 +559,7 @@
 #----------------------------------------------------------------------
 import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
 import os, smtplib, time, atexit, cdrdb, tempfile, traceback, difflib
-import xml.sax.saxutils, datetime
+import xml.sax.saxutils, datetime, subprocess
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -4095,9 +4098,10 @@ def logout(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # Object for results of an external command.
 #----------------------------------------------------------------------
 class CommandResult:
-    def __init__(self, code, output):
+    def __init__(self, code, output, error = None):
         self.code   = code
         self.output = output
+        self.error  = error
 
 #----------------------------------------------------------------------
 # Run an external command.
@@ -4107,6 +4111,25 @@ def runCommand(command):
     output = commandStream.read()
     code = commandStream.close()
     return CommandResult(code, output)
+
+#----------------------------------------------------------------------
+# Run an external command.
+# The os.popen is depricated and replaced by the subprocess method.
+# Note:  The return code is now 0 for a process without error and the 
+#        stdout and stderr output is split into output and error.
+#----------------------------------------------------------------------
+def runCommand0(command):
+    debugLog("runCommand(%s)" % command)
+    try:
+        commandStream = subprocess.Popen('%s' % command, 
+                                         stdout = subprocess.PIPE, 
+                                         stderr = subprocess.PIPE)
+        output, error = commandStream.communicate()
+        code          = commandStream.returncode
+        return CommandResult(code, output, error)
+    except Exception, info:
+        debugLog("failure running command: %s" % str(info))
+
 
 #----------------------------------------------------------------------
 # Create a temporary working area.
