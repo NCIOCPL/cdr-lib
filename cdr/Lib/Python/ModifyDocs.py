@@ -1,11 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.30 2009-07-08 03:05:50 ameyer Exp $
+# $Id: ModifyDocs.py,v 1.31 2009-07-22 01:22:00 ameyer Exp $
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.30  2009/07/08 03:05:50  ameyer
+# Added some functions to provide more reporting capability.
+#
 # Revision 1.29  2009/07/07 21:00:14  ameyer
 # Fixed bug in setMaxErrors(), was modifying the wrong global variable.
 #
@@ -573,6 +576,7 @@ class Job:
                 # Log it, but always continue
                 self.log("Document %d: %s" % (docId, str(info)))
             except Exception, info:
+                cdr.logwrite("Exception traceback", tback=True)
                 self.log("Document %d: %s" % (docId, str(info)))
                 _errCount += 1
                 if _errCount > _maxErrors:
