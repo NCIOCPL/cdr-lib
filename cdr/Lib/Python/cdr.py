@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.163 2009-07-07 21:07:22 ameyer Exp $
+# $Id: cdr.py,v 1.164 2009-07-22 01:27:30 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.163  2009/07/07 21:07:22  ameyer
+# Minor variable name change to last change to avoid programmer confusion.
+#
 # Revision 1.162  2009/07/07 21:03:22  ameyer
 # Changed filterDoc() to ensure that command sent to the host is utf-8
 # encoded.  This should work even if the filter is unicode - which the
@@ -1728,7 +1731,9 @@ def addDoc(credentials, file = None, doc = None, comment = '',
         else:    return "<Errors><Err>Document missing.</Err></Errors>"
 
     # Ensure that unicode appears as utf-8
-    if type(doc)==type(u""): doc = doc.encode('utf-8')
+    if type(doc)==type(u""):     doc     = doc.encode('utf-8')
+    if type(comment)==type(u""): comment = comment.encode('utf-8')
+    if type(reason)==type(u""):  reason  = reason.encode('utf-8')
 
     # If comment passed, filter doc to add DocComment to CdrDocCtl
     # Raises exception if fails
@@ -1805,7 +1810,9 @@ def repDoc(credentials, file = None, doc = None, comment = '',
         else:    return "<Errors><Err>Document missing.</Err></Errors>"
 
     # Ensure that unicode appears as utf-8
-    if type(doc)==type(u""): doc = doc.encode('utf-8')
+    if type(doc)==type(u""):     doc     = doc.encode('utf-8')
+    if type(comment)==type(u""): comment = comment.encode('utf-8')
+    if type(reason)==type(u""):  reason  = reason.encode('utf-8')
 
     # If comment passed, filter doc to add DocComment to CdrDocCtl
     # Raises exception if fails
