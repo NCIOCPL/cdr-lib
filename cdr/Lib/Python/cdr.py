@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.165 2009-07-22 20:01:10 venglisc Exp $
+# $Id: cdr.py,v 1.166 2009-07-27 18:02:59 venglisc Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.165  2009/07/22 20:01:10  venglisc
+# Added runCommand0() to split the stdout and stderr output.  This will also
+# return 0 (instead of None) for a successful process.
+#
 # Revision 1.164  2009/07/22 01:27:30  ameyer
 # Assured correct unicode->utf-8 encoding for reason & comment in add/repDoc.
 #
@@ -4106,11 +4110,11 @@ class CommandResult:
 #----------------------------------------------------------------------
 # Run an external command.
 #----------------------------------------------------------------------
-def runCommand(command):
-    commandStream = os.popen('%s 2>&1' % command)
-    output = commandStream.read()
-    code = commandStream.close()
-    return CommandResult(code, output)
+#def runCommand(command):
+#    commandStream = os.popen('%s 2>&1' % command)
+#    output = commandStream.read()
+#    code = commandStream.close()
+#    return CommandResult(code, output)
 
 #----------------------------------------------------------------------
 # Run an external command.
@@ -4118,17 +4122,67 @@ def runCommand(command):
 # Note:  The return code is now 0 for a process without error and the 
 #        stdout and stderr output is split into output and error.
 #----------------------------------------------------------------------
-def runCommand0(command):
-    debugLog("runCommand(%s)" % command)
-    try:
-        commandStream = subprocess.Popen('%s' % command, 
-                                         stdout = subprocess.PIPE, 
-                                         stderr = subprocess.PIPE)
-        output, error = commandStream.communicate()
-        code          = commandStream.returncode
-        return CommandResult(code, output, error)
-    except Exception, info:
-        debugLog("failure running command: %s" % str(info))
+def runCommand(command, joinErr2Out = True, osPopen = True):
+    """
+    Run a shell command
+
+    The deprecated function os.popen() has been replaced with the
+    subprocess method.  This method allows the stdout and stderr to
+    be piped independently.
+
+    Pass:
+        command     - The string of the shell command to be run
+        joinErr2Out - optional value, default TRUE
+                      This parameter, when true (for downward compatibility)
+                      pipes both, stdout and stderr to stdout.
+                      Otherwise stdout and stderr are split.
+        osPopen     - optional value, default TRUE
+                      This parameter, when true (for downward compatibility)
+                      returns 'None' as a successful returncode.
+                      Otherwise the returncode for a successful command is 0.
+    Return:
+        CommandResult object
+            output  - output from stdout (or stdout and stderr if joinErr2Out
+                      is True)
+            error   - output from stderr (or a warning message if joinErr2Out
+                      is True)
+            code    - 0 or None (if osPopen is True) for successful completion
+    """
+    # Default mode - Pipe stdout and stderr to stdout
+    # -----------------------------------------------
+    if joinOutErr:
+        try:
+            commandStream = subprocess.Popen(command,
+                                             stdout = subprocess.PIPE,
+                                             stderr = subprocess.STDOUT)
+            output, error = commandStream.communicate()
+            code          = commandStream.returncode
+            error         = '*** Warning: stderr piped to stdout'
+
+            # For downward compatibility we return None for a successful
+            # command return code
+            # ----------------------------------------------------------
+            if osMode and code == 0:
+                return CommandResult(None, output)
+        except Exception, info:
+            return("failure running command: %s\n%s" % (command, str(info)))
+    else:
+        try:
+            commandStream = subprocess.Popen(command, 
+                                             stdout = subprocess.PIPE, 
+                                             stderr = subprocess.PIPE)
+            output, error = commandStream.communicate()
+            code = commandStream.returncode
+
+            # For downward compatibility we return None for a successful
+            # command return code
+            # ----------------------------------------------------------
+            if osMode and code == 0:
+                return CommandResult(None, output, error)
+        except Exception, info:
+            debugLog("failure running command: %s\n%s" % (command, str(info)))
+
+    return CommandResult(code, output, error)
 
 
 #----------------------------------------------------------------------
