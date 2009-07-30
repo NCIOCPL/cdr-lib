@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.166 2009-07-27 18:02:59 venglisc Exp $
+# $Id: cdr.py,v 1.167 2009-07-30 20:30:02 venglisc Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,10 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.166  2009/07/27 18:02:59  venglisc
+# Combined the functions runCommand() and runCommand0() and kept
+# runCommand() for backward compatibility.
+#
 # Revision 1.165  2009/07/22 20:01:10  venglisc
 # Added runCommand0() to split the stdout and stderr output.  This will also
 # return 0 (instead of None) for a successful process.
@@ -4150,7 +4154,7 @@ def runCommand(command, joinErr2Out = True, osPopen = True):
     """
     # Default mode - Pipe stdout and stderr to stdout
     # -----------------------------------------------
-    if joinOutErr:
+    if joinErr2Out:
         try:
             commandStream = subprocess.Popen(command,
                                              stdout = subprocess.PIPE,
@@ -4162,7 +4166,7 @@ def runCommand(command, joinErr2Out = True, osPopen = True):
             # For downward compatibility we return None for a successful
             # command return code
             # ----------------------------------------------------------
-            if osMode and code == 0:
+            if osPopen and code == 0:
                 return CommandResult(None, output)
         except Exception, info:
             return("failure running command: %s\n%s" % (command, str(info)))
@@ -4177,7 +4181,7 @@ def runCommand(command, joinErr2Out = True, osPopen = True):
             # For downward compatibility we return None for a successful
             # command return code
             # ----------------------------------------------------------
-            if osMode and code == 0:
+            if osPopen and code == 0:
                 return CommandResult(None, output, error)
         except Exception, info:
             debugLog("failure running command: %s\n%s" % (command, str(info)))
