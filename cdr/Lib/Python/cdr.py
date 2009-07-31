@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.168 2009-07-31 15:00:52 venglisc Exp $
+# $Id: cdr.py,v 1.169 2009-07-31 15:40:32 venglisc Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,11 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.168  2009/07/31 15:00:52  venglisc
+# Modified runCommand() to add the Shell parameter to subprocess.  Without it
+# some of our programs were failing.  Also renamed the parameter osPopen to
+# returnNoneOnSuccess.
+#
 # Revision 1.167  2009/07/30 20:30:02  venglisc
 # Fixed renamed parameter values in runCommand().
 #
@@ -4148,6 +4153,9 @@ def runCommand(command, joinErr2Out = True, returnNoneOnSuccess = True):
                       This parameter, when true (for downward compatibility)
                       returns 'None' as a successful returncode.
                       Otherwise the returncode for a successful command is 0.
+                      Note:  This is the return code of the command
+                             submitted and not the return code of runCommand()
+                             itself!
     Return:
         CommandResult object
             output  - output from stdout (or stdout and stderr if joinErr2Out
