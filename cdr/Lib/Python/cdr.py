@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.167 2009-07-30 20:30:02 venglisc Exp $
+# $Id: cdr.py,v 1.168 2009-07-31 15:00:52 venglisc Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.167  2009/07/30 20:30:02  venglisc
+# Fixed renamed parameter values in runCommand().
+#
 # Revision 1.166  2009/07/27 18:02:59  venglisc
 # Combined the functions runCommand() and runCommand0() and kept
 # runCommand() for backward compatibility.
@@ -4126,7 +4129,7 @@ class CommandResult:
 # Note:  The return code is now 0 for a process without error and the 
 #        stdout and stderr output is split into output and error.
 #----------------------------------------------------------------------
-def runCommand(command, joinErr2Out = True, osPopen = True):
+def runCommand(command, joinErr2Out = True, returnNoneOnSuccess = True):
     """
     Run a shell command
 
@@ -4140,7 +4143,8 @@ def runCommand(command, joinErr2Out = True, osPopen = True):
                       This parameter, when true (for downward compatibility)
                       pipes both, stdout and stderr to stdout.
                       Otherwise stdout and stderr are split.
-        osPopen     - optional value, default TRUE
+        returnNoneOnSuccess     
+                    - optional value, default TRUE
                       This parameter, when true (for downward compatibility)
                       returns 'None' as a successful returncode.
                       Otherwise the returncode for a successful command is 0.
@@ -4156,7 +4160,7 @@ def runCommand(command, joinErr2Out = True, osPopen = True):
     # -----------------------------------------------
     if joinErr2Out:
         try:
-            commandStream = subprocess.Popen(command,
+            commandStream = subprocess.Popen(command, shell = True,
                                              stdout = subprocess.PIPE,
                                              stderr = subprocess.STDOUT)
             output, error = commandStream.communicate()
@@ -4166,13 +4170,13 @@ def runCommand(command, joinErr2Out = True, osPopen = True):
             # For downward compatibility we return None for a successful
             # command return code
             # ----------------------------------------------------------
-            if osPopen and code == 0:
+            if returnNoneOnSuccess and code == 0:
                 return CommandResult(None, output)
         except Exception, info:
             return("failure running command: %s\n%s" % (command, str(info)))
     else:
         try:
-            commandStream = subprocess.Popen(command, 
+            commandStream = subprocess.Popen(command, shell = True,
                                              stdout = subprocess.PIPE, 
                                              stderr = subprocess.PIPE)
             output, error = commandStream.communicate()
@@ -4181,7 +4185,7 @@ def runCommand(command, joinErr2Out = True, osPopen = True):
             # For downward compatibility we return None for a successful
             # command return code
             # ----------------------------------------------------------
-            if osPopen and code == 0:
+            if returnNoneOnSuccess and code == 0:
                 return CommandResult(None, output, error)
         except Exception, info:
             debugLog("failure running command: %s\n%s" % (command, str(info)))
