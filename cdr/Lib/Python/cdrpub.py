@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.109 2008-12-30 15:15:32 venglisc Exp $
+# $Id: cdrpub.py,v 1.110 2009-08-19 17:48:24 venglisc Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.109  2008/12/30 15:15:32  venglisc
+# Fixed error of sending a document type of GlossaryTermName to Gatekeeper
+# for a removed document.  Gatekeeper only accepts document type GlossaryTerm.
+#
 # Revision 1.108  2008/08/15 18:30:44  venglisc
 # Needed to rename the docType name GlossaryTermName to GlossaryTerm since
 # that's what Cancer.gov expects to receive. (Bug 3491)
@@ -2915,8 +2919,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     raise Exception(msg)
 
             except cdrdb.Error, info:
-                msg = 'Failure adding or updating row for document %d: %s' % \
-                      (self.__jobId, info[1][0])
+                msg = 'Failure adding or updating row for document %d-%d: %s' % \
+                      (doc.getDocId(), doc.getVersion(), info[1][0])
+                #msg='Failure adding or updating row for document %d: %s' % \
+                      #(self.__jobId, info[1][0])
                 raise Exception(msg)
 
     #------------------------------------------------------------------
@@ -3844,8 +3850,8 @@ def findLinkedDocs(docPairList):
         # Return what we have got.
         return [msg, linkedDocHash]
 
-    except:
-        raise Exception("Failure finding linked docs.<BR>")
+    except Exception, e:
+        raise Exception("Failure finding linked docs: %s<BR>" % e)
 
 #----------------------------------------------------------------------
 # Test driver.
