@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.72 2009-03-24 14:32:52 bkline Exp $
+# $Id: cdrcgi.py,v 1.73 2009-08-21 03:01:25 ameyer Exp $
 #
 # Common routines for creating CDR web forms.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.72  2009/03/24 14:32:52  bkline
+# Made picklist generation functions more intelligent about glossary paths.
+#
 # Revision 1.71  2008/12/15 22:54:23  venglisc
 # Modified Advanced Search to adjust for modified document type strcuture
 # of the GlossaryTerms. (Bug 4381)
@@ -250,6 +253,7 @@
 # Import external modules needed.
 #----------------------------------------------------------------------
 import cgi, cdr, cdrdb, sys, re, string, socket, xml.sax.saxutils, textwrap
+import time
 
 #----------------------------------------------------------------------
 # Get some help tracking down CGI problems.
@@ -613,6 +617,108 @@ def getQueryOp(query):
 #----------------------------------------------------------------------
 def getQueryVal(val):
     return val.replace("'", "''")
+
+#----------------------------------------------------------------------
+# Helper function to reduce SQL injection possibilities in input
+#----------------------------------------------------------------------
+def sanitize(formStr, dType='str', maxLen=None, noSemis=True,
+             quoteQuotes=True, noDashDash=True, excp=False):
+    """
+    Validate and/or sanitize a string to try to prevent SQL injection
+    attacks using SQL inserted into formData.
+
+    Pass:
+        formStr      - String received from a form.
+        dType        - Expected data type, one of:
+                        'str'     = string, i.e., any data entry okay
+                        'int'     = integer
+                        'date'    = ISO date format YYYY-MM-DD
+                        'datetime'= ISO datetime YYYY-MM-DD HH:MM:SS
+                        'cdrID'   = One of our IDs with optional frag ID
+                                    All forms are okay, including plain int.
+        maxLen       - Max allowed string length.
+        noSemis      - True = remove semicolons.
+        quoteQuotes  - True = double single quotes, i.e., "'" -> "''"
+        noDashDash   - True = convert runs of "-" to single "-"
+        excp         - True = raise ValueError with a specific message.
+
+    Return:
+        Possibly modified string.
+        If validation fails, return None unless excp=True.
+          [Note: raising an exception will break some existing code, but
+           returning None will be safe and most existing code will behave
+           as if there were no user input.]
+    """
+    newStr = formStr
+
+    # Data type checking
+    if dType != 'str':
+        if dType == 'int':
+            try:
+                int(newStr)
+            except ValueError, info:
+                if excp:
+                    raise
+                return None
+        elif dType == 'date':
+            try:
+                time.strptime(newStr, '%Y-%m-%d')
+            except ValueError:
+                if excp:
+                    raise
+                return None
+        elif dType == 'datetime':
+            try:
+                time.strptime(newStr, '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                try:
+                    time.strptime(newStr, '%Y-%m-%d %H:%M')
+                except ValueError:
+                    try:
+                        time.strptime(newStr, '%Y-%m-%d %H')
+                    except ValueError:
+                        try:
+                            time.strptime(newStr, '%Y-%m-%d')
+                        except ValueError:
+                            if excp:
+                                raise
+                            return None
+        elif dType == 'cdrID':
+            try:
+                cdr.exNormalize(newStr)
+            except cdr.Exception, info:
+                if excp:
+                    raise ValueError(info)
+                return None
+
+    # Maximum string length
+    if maxLen:
+        if len(newStr) > maxLen:
+            if excp:
+                raise ValueError("Max value length exceeded.")
+            return None
+
+    # Semicolons forbidden
+    # This version just strips them out
+    # XXX Is that safe?
+    if noSemis:
+        newStr = newStr.replace(";", "")
+
+    # Double single quotation marks
+    if quoteQuotes:
+        newStr = newStr.replace("'", "''")
+
+    # Convert any substring of 2 or more dashes (SQL comment) to single dash
+    if noDashDash:
+        while True:
+            pos = newStr.find("--")
+            if pos >= 0:
+                newStr = newStr[:pos] + newStr[pos+1:]
+            else:
+                break
+
+    # Return (possibly modified) string
+    return newStr
 
 #----------------------------------------------------------------------
 # Query components.
@@ -1361,7 +1467,7 @@ def advancedSearchResultsPageTop(subTitle, nRows, strings):
 # Construct HTML page for advanced search results.
 #----------------------------------------------------------------------
 def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
-    # We like the display on the web to be pretty.  The docType has been 
+    # We like the display on the web to be pretty.  The docType has been
     # overloaded as title *and* docType.  I'm splitting the meaning here.
     # --------------------------------------------------------------------
     subTitle = docType
@@ -1483,7 +1589,7 @@ def getFullUserName(session, conn):
 #----------------------------------------------------------------------
 # Borrowed from ActiveState's online Python cookbook.
 #----------------------------------------------------------------------
-def int_to_roman(input):
+def int_to_roman(inNum):
    """
    Convert an integer to Roman numerals.
 
@@ -1527,17 +1633,17 @@ def int_to_roman(input):
    >>> print int_to_roman(1999)
    MCMXCIX
    """
-   if type(input) != type(1):
-      raise TypeError, "expected integer, got %s" % type(input)
-   if not 0 < input < 4000:
+   if type(inNum) != type(1):
+      raise TypeError, "expected integer, got %s" % type(inNum)
+   if not 0 < inNum < 4000:
       raise ValueError, "Argument must be between 1 and 3999"
    ints = (1000, 900,  500, 400, 100,  90, 50,  40, 10,  9,   5,  4,   1)
    nums = ('M',  'CM', 'D', 'CD','C', 'XC','L','XL','X','IX','V','IV','I')
    result = ""
    for i in range(len(ints)):
-      count = int(input / ints[i])
+      count = int(inNum / ints[i])
       result += nums[i] * count
-      input -= ints[i] * count
+      inNum -= ints[i] * count
    return result
 
 #--------------------------------------------------------------------
