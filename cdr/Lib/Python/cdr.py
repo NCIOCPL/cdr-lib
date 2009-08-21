@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr.py,v 1.169 2009-07-31 15:40:32 venglisc Exp $
+# $Id: cdr.py,v 1.170 2009-08-21 02:10:17 ameyer Exp $
 #
 # Module of common CDR routines.
 #
@@ -8,6 +8,9 @@
 #   import cdr
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.169  2009/07/31 15:40:32  venglisc
+# Modified comments to runCommand() per request.
+#
 # Revision 1.168  2009/07/31 15:00:52  venglisc
 # Modified runCommand() to add the Shell parameter to subprocess.  Without it
 # some of our programs were failing.  Also renamed the parameter osPopen to
@@ -733,7 +736,7 @@ def exNormalize(id):
 
     else:
         # Parse the string
-        pat = re.compile (r"(^(CDR0*)?)(?P<num>(\d+))\#?(?P<frag>(.*))$")
+        pat = re.compile (r"(^(CDR0*)?)(?P<num>(\d+))(\#(?P<frag>(.*)))?$")
         # pat = re.compile (r"(?P<num>(\d+))\#?(?P<frag>(.*))")
         result = pat.search (id)
 
@@ -744,7 +747,7 @@ def exNormalize(id):
         frag  = result.group ('frag')
 
     # Sanity check on number
-    if idNum < 1:
+    if idNum < 1 or idNum > 9999999999:
         raise Exception("Invalid CDR ID number: " + str(idNum))
 
     # Construct full id
