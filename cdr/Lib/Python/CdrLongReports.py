@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.41 2008-01-16 12:10:53 kidderc Exp $
+# $Id: CdrLongReports.py,v 1.42 2009-09-04 12:19:35 bkline Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.41  2008/01/16 12:10:53  kidderc
+# Added importing of NCIT terms.
+#
 # Revision 1.40  2008/01/14 18:31:26  bkline
 # Modified protocol processing report to skip malformed documents.
 #
@@ -146,9 +149,9 @@
 # by CGI.
 #
 #----------------------------------------------------------------------
-import cdr, cdrdb, xml.dom.minidom, time, cdrcgi, cgi, sys, socket, cdrbatch, NCIThes
+import cdr, cdrdb, xml.dom.minidom, time, cdrcgi, cgi, sys, socket, cdrbatch
 import string, re, urlparse, httplib, traceback, xml.sax.saxutils
-import ExcelWriter
+import ExcelWriter, NCIThes
 
 #----------------------------------------------------------------------
 # Module values.
@@ -2117,11 +2120,11 @@ class GlossaryTermSearch:
             cursor.execute("""\
                 SELECT value
                   FROM query_term
-                 WHERE path = '/GlossaryTerm/TermName'
+                 WHERE path = '/GlossaryTermName/TermName/TermNameString'
                    AND doc_id = ?""", id)
             rows = cursor.fetchall()
             if not rows:
-                raise Exception("GlossaryTerm %d not found" % id)
+                raise Exception("GlossaryTermName %d not found" % id)
             self.id = id
             self.name = rows[0][0]
             cursor.execute("""\
@@ -3286,12 +3289,6 @@ def checkUrls(job):
 #----------------------------------------------------------------------
 # Run a report of protocols connected with a specific organization.
 #----------------------------------------------------------------------
-def nonRespondentsReport(job):
-    age         = job.getParm("Age")
-    baseDocType = job.getParm("BaseDocType")
-    host        = job.getParm("Host")
-    report      = NonRespondentsReport(age, baseDocType, host)
-    report.createSpreadsheet(job)
 def orgProtocolReview(job):
     docId  = job.getParm("id")
     digits = re.sub(r"[^\d]", "", docId)
