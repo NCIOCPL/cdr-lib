@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.42 2009-09-04 12:19:35 bkline Exp $
+# $Id: CdrLongReports.py,v 1.43 2009-09-16 16:44:33 venglisc Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.42  2009/09/04 12:19:35  bkline
+# Removed redundant copy of nonRespondentsReport function.
+#
 # Revision 1.41  2008/01/16 12:10:53  kidderc
 # Added importing of NCIT terms.
 #
@@ -3279,6 +3282,537 @@ The report you requested on Spanish Glossary Terms by Status can be viewed at:
                         if comment:
                             self.comment = xml.sax.saxutils.escape(comment)
 
+# ---------------------------------------------------------------------
+# This Protocol Owner Transfer report takes a long time because 
+# several elements have to be displayed for which we need to identify
+# the node location.  When a function has to be used within the query
+# the indeces are not being used.
+# ---------------------------------------------------------------------
+class ProtocolOwnershipTransfer:
+    def __init__(self, host = 'localhost'):
+        #--------------------------------------------------------------
+        # Set up a database connection and cursor.
+        #--------------------------------------------------------------
+        self.conn = cdrdb.connect('CdrGuest', dataSource = host)
+        self.cursor = self.conn.cursor()
+
+    # -------------------------------------------------------------------
+    # Transferred Protocols class to identify the elements requested
+    # The information for blocked and CTGov blocked protocols is being
+    # populated by calling a function for each protocol found.
+    # -------------------------------------------------------------------
+    class TransferredProtocols:
+        def __init__(self, cursor):
+            self.protocols = {}
+
+            cursor.execute("""\
+               SELECT t.doc_id, pid.value AS "Primary ID", n.value AS "NCT-ID",
+                      t.value AS "Owner Org", p.value AS "PRS User", 
+                      d.value AS "Tr Date", s.value AS "Status"
+                 FROM query_term t
+                 JOIN query_term pid
+                   ON t.doc_id  = pid.doc_id
+                  AND pid.path  = '/InScopeProtocol/ProtocolIDs/PrimaryID' +
+                                  '/IDString'
+                 JOIN query_term n
+                   ON t.doc_id  = n.doc_id
+                  AND n.path = '/InScopeProtocol/ProtocolIDs/OtherID/IDString'
+                 JOIN query_term nct
+                   ON t.doc_id  = nct.doc_id
+                  AND nct.path  = '/InScopeProtocol/ProtocolIDs/OtherID/IDType'
+                  AND nct.value = 'ClinicalTrials.gov ID'
+                  AND left(n.node_loc, 8) = left(nct.node_loc, 8)
+                 JOIN query_term p
+                   ON t.doc_id  = p.doc_id
+                  AND p.path = '/InScopeProtocol/CTGovOwnershipTransferInfo' +
+                               '/PRSUserName'
+                 JOIN query_term d
+                   ON t.doc_id  = d.doc_id
+                  AND d.path = '/InScopeProtocol/CTGovOwnershipTransferInfo' +
+                               '/CTGovOwnershipTransferDate'
+                 JOIN query_term s
+                   ON t.doc_id  = s.doc_id
+                  AND s.path = '/InScopeProtocol/ProtocolAdminInfo'          +
+                               '/CurrentProtocolStatus'
+                where t.path = '/InScopeProtocol/CTGovOwnershipTransferInfo' +
+                               '/CTGovOwnerOrganization' """)
+
+            rows = cursor.fetchall()
+
+            # Assign all the elements to the protocols dictionary
+            # ---------------------------------------------------
+            for row in rows:
+                cdrId = row[0]
+                self.protocols[row[0]] = {u'pId' : row[1],
+                                          u'nctId'  : row[2],
+                                          u'trOrg'  : row[3],
+                                          u'trUser'  : row[4],
+                                          u'trDate'  : row[5],
+                                          u'status'  : row[6]}
+
+                self.protocols[row[0]][u'blocked']  = \
+                                          self.checkBlocked(cdrId, cursor)
+                self.protocols[row[0]][u'ctgovBlk'] = \
+                                          self.checkCtgovBlocked(cdrId, cursor)
+
+        # --------------------------------------
+        # Check if a protocol is blocked or not
+        # --------------------------------------
+        def checkBlocked(self, id, cursor):
+            cursor.execute("""\
+               SELECT *
+                 FROM document
+                WHERE id = %s
+                  AND active_status = 'A' """ % id)
+            row = cursor.fetchone()
+
+            if row:  return 'No'
+            return 'Yes'
+
+        # -------------------------------------------------
+        # Check if a protocol is blocked from CTGov or not
+        # -------------------------------------------------
+        def checkCtgovBlocked(self, id, cursor):
+            cursor.execute("""\
+               SELECT *
+                 FROM query_term
+                WHERE doc_id = %s
+                  AND path = '/InScopeProtocol/BlockedFromCTGov' """ % id)
+            row = cursor.fetchone()
+
+            if row: return 'Yes'
+            return 'No'
+
+
+    # -------------------------------------------------------------------
+    # Not Transferred Protocols class to identify the elements requested
+    # Only PUP information needs to get populated.  We're doing this by
+    # sending the vendor filter output through a new filter extracting 
+    # this information.
+    # -------------------------------------------------------------------
+    class NotTransferredProtocols:
+
+        # ---------------------------------------------------------------
+        # PUP class to identify the protocol update person information
+        # If the personRole is specified as 'Protocol chair' the chair's
+        # information is selected instead.
+        # ---------------------------------------------------------------
+        class PUP:
+            def __init__(self, id, cursor, persRole = 'Update person'):
+                self.cdrId       = id
+                self.persId      = None
+                self.persFname   = None
+                self.persLname   = None
+                self.persPhone   = None
+                self.persEmail   = None
+                self.persContact = None
+                self.persRole    = persRole
+
+                # Get the person name
+                # -------------------
+                cursor.execute("""\
+                  SELECT q.doc_id, u.int_val, 
+                         g.value as "FName", l.value as "LName", 
+                         c.value as Contact  
+                    FROM query_term_pub q
+                    JOIN query_term_pub u
+                      ON q.doc_id = u.doc_id
+                     AND u.path   = '/InScopeProtocol/ProtocolAdminInfo' +
+                                    '/ProtocolLeadOrg/LeadOrgPersonnel'  +
+                                    '/Person/@cdr:ref'
+                     AND left(q.node_loc, 12) = left(u.node_loc, 12)
+                    JOIN query_term g
+                      ON u.int_val = g.doc_id
+                     AND g.path   = '/Person/PersonNameInformation/GivenName'
+                    JOIN query_term l
+                      ON g.doc_id = l.doc_id
+                     AND l.path   = '/Person/PersonNameInformation/SurName'
+                    JOIN query_term c
+                      ON g.doc_id = c.doc_id
+                     AND c.path   = '/Person/PersonLocations/CIPSContact'
+                   WHERE q.doc_id = %s
+                     AND q.value  = '%s'
+                """ % (self.cdrId, self.persRole))
+
+                rows = cursor.fetchall()
+
+                for row in rows:
+                    self.cdrId       = row[0]
+                    self.persId      = row[1]
+                    self.persFname   = row[2]
+                    self.persLname   = row[3]
+                    self.persContact = row[4]
+
+                # Get the person's email and phone if a PUP was found
+                # ---------------------------------------------------
+                if self.persId:
+                    cursor.execute("""\
+                  SELECT q.doc_id, c.value, p.value, e.value
+                    FROM query_term q
+                    JOIN query_term c
+                      ON c.doc_id = q.doc_id
+                     AND c.path = '/Person/PersonLocations' +
+                                  '/OtherPracticeLocation/@cdr:id'
+         LEFT OUTER JOIN query_term p
+                      ON c.doc_id = p.doc_id
+                     AND p.path = '/Person/PersonLocations' +
+                                  '/OtherPracticeLocation/SpecificPhone'
+                     AND LEFT(c.node_loc, 8) = LEFT(p.node_loc, 8)
+         LEFT OUTER JOIN query_term e
+                      ON c.doc_id = e.doc_id
+                     AND e.path = '/Person/PersonLocations' +
+                                  '/OtherPracticeLocation/SpecificEmail'
+                     AND LEFT(c.node_loc, 8) = LEFT(e.node_loc, 8)
+                   WHERE q.path = '/Person/PersonLocations/CIPSContact'
+                     AND q.value = c.value
+                     AND q.doc_id = %s
+                    """ % self.persId)
+
+                    rows = cursor.fetchall()
+
+                    for row in rows:
+                        self.persPhone   = row[2]
+                        self.persEmail   = row[3]
+
+
+        # -----------------------------------------------------
+        # Create the dictionary holding all protocols with the 
+        # information to display on the spreadsheet.
+        # -----------------------------------------------------
+        def __init__(self, cursor):
+            self.protocols = {}
+
+            cursor.execute("""\
+                SELECT s.doc_id, pid.value AS "Primary ID", n.value AS "NCT-ID",
+                       r.value as "TResponse", d.value as "TR date", 
+                       s.value AS "Status",  sd.value AS "Status Date" --,
+                       -- ln.value AS "OrgName"
+                  FROM query_term_pub s
+                  JOIN query_term pid
+                    ON s.doc_id  = pid.doc_id
+                   AND pid.path  = '/InScopeProtocol/ProtocolIDs/PrimaryID' +
+                                   '/IDString'
+                  JOIN query_term n
+                    ON s.doc_id  = n.doc_id
+                   AND n.path    = '/InScopeProtocol/ProtocolIDs/OtherID'   +
+                                   '/IDString'
+                  JOIN query_term nct
+                    ON s.doc_id  = nct.doc_id
+                   AND nct.path  = '/InScopeProtocol/ProtocolIDs/OtherID'   +
+                                   '/IDType'
+                   AND nct.value = 'ClinicalTrials.gov ID'
+                   AND left(n.node_loc, 8) = left(nct.node_loc, 8)
+                  JOIN query_term sd
+                    ON s.doc_id  = sd.doc_id
+                   AND sd.path   = '/InScopeProtocol/ProtocolAdminInfo'     +
+                                   '/ProtocolLeadOrg/LeadOrgProtocolStatuses' +
+                                   '/CurrentOrgStatus/StatusDate'
+                  JOIN query_term sp
+                    ON s.doc_id  = sp.doc_id
+                   AND sp.path   = '/InScopeProtocol/ProtocolAdminInfo'      +
+                                   '/ProtocolLeadOrg/LeadOrgRole'
+                   AND sp.value  = 'Primary'
+                   AND left(sp.node_loc, 8) = left(sd.node_loc, 8)
+       LEFT OUTER JOIN query_term d
+                    ON s.doc_id  = d.doc_id
+                   AND d.path    = '/InScopeProtocol'                        +
+                                   '/CTGovOwnershipTransferInfo'             +
+                                   '/CTGovOwnershipTransferDate'
+                   AND d.value is null
+       LEFT OUTER JOIN query_term r
+                    ON s.doc_id  = r.doc_id
+                   AND r.path    = '/InScopeProtocol'                        + 
+                                   '/CTGovOwnershipTransferContactLog'       + 
+                                   '/CTGovOwnershipTransferContactResponse'
+                 WHERE s.path    = '/InScopeProtocol/ProtocolAdminInfo'      +
+                                   '/CurrentProtocolStatus'
+            """, timeout = 300)
+
+            rows = cursor.fetchall()
+
+            job.setProgressMsg("Selecting PUP, Org Name, and Source")
+            for row in rows:
+                cdrId = row[0]
+                self.protocols[cdrId] = {u'pId'      : row[1],
+                                         u'nctId'    : row[2],
+                                         u'tResponse': row[3],
+                                         u'trDate'   : row[4],
+                                         u'status'   : row[5],
+                                         u'statDate' : row[6]}
+
+                # Populate the Orgname
+                # --------------------
+                self.protocols[cdrId][u'orgName'] = \
+                                      self.getOrgName(cdrId, cursor)
+
+                # Populate the PUP information
+                pup = self.PUP(cdrId, cursor)
+                if pup.persId:
+                    self.protocols[cdrId][u'pup'] = pup 
+                else:
+                    pup = self.PUP(cdrId, cursor, 'Protocol chair')
+                    self.protocols[cdrId][u'pup'] = pup
+                    
+                # Populate the Source information
+                # -------------------------------
+                self.protocols[cdrId][u'protSource'] = \
+                                      self.getSource(cdrId, cursor)
+
+
+        # ---------------------------------------
+        # Getting the official organization name
+        # ---------------------------------------
+        def getOrgName(self, id, cursor):
+            cursor.execute("""\
+                SELECT ln.value
+                  FROM query_term lo
+                  JOIN query_term ln
+                    ON lo.int_val = ln.doc_id
+                   AND ln.path = '/Organization/OrganizationNameInformation' +
+                                 '/OfficialName/Name'
+                  JOIN query_term sp
+                    ON lo.doc_id = sp.doc_id
+                   AND sp.path = '/InScopeProtocol/ProtocolAdminInfo' +
+                                 '/ProtocolLeadOrg/LeadOrgRole'
+                   AND sp.value = 'Primary'
+                   AND left(sp.node_loc, 8) = left(lo.node_loc, 8)
+                 WHERE lo.doc_id = %s
+                   AND lo.path = '/InScopeProtocol/ProtocolAdminInfo' +
+                                 '/ProtocolLeadOrg/LeadOrganizationId/@cdr:ref'
+            """ % id)
+            row = cursor.fetchone()
+
+            return row[0]
+
+
+        # -------------------------------------------
+        # Getting the Protocol SourceName information
+        # -------------------------------------------
+        def getSource(self, id, cursor):
+            cursor.execute("""\
+                SELECT value 
+                  FROM query_term 
+                 WHERE doc_id = %s
+                   AND path = '/InScopeProtocol/ProtocolSources' +
+                              '/ProtocolSource/SourceName'
+            """ % id)
+            rows = cursor.fetchall()
+            sourceNames = []
+            for row in rows:
+                sourceNames.append(row[0])
+
+            sourceNames.sort()
+
+            return ", ".join(["%s" % s for s in sourceNames])
+
+
+    # ----------------------------------------------------------------
+    # Creating a spreadsheet for displaying the protocols transferred
+    # and not yet transferred to CT.gov
+    # ----------------------------------------------------------------
+    def createTransferSpreadsheet(self, job):
+
+        now = time.localtime()
+        startDate = list(now)
+        endDate   = list(now)
+
+        job.setProgressMsg("Job started")
+       
+        # Transferred Protocols
+        job.setProgressMsg("Selecting transferred protocols")
+        tps  = self.TransferredProtocols(self.cursor)
+
+        # Not Transferred Protocols
+        job.setProgressMsg("Selecting non-transferred protocols")
+        ntps = self.NotTransferredProtocols(self.cursor)
+
+        job.setProgressMsg("Creating spreadsheet")
+
+        # Create the spreadsheet and define default style, etc.
+        # -----------------------------------------------------
+        wsTitle = {u'tr':u'Transferred',
+                   u'ntr':u'Not Transferred'}
+        wb      = ExcelWriter.Workbook()
+        b       = ExcelWriter.Border()
+        borders = ExcelWriter.Borders(b, b, b, b)
+        font    = ExcelWriter.Font(name = 'Times New Roman', size = 11)
+        align   = ExcelWriter.Alignment('Left', 'Top', wrap = True)
+        style1  = wb.addStyle(alignment = align, font = font)
+        urlFont = ExcelWriter.Font('blue', None, 'Times New Roman', size = 11)
+        style4  = wb.addStyle(alignment = align, font = urlFont)
+        style2  = wb.addStyle(alignment = align, font = font, 
+                                 numFormat = 'YYYY-mm-dd')
+        alignH  = ExcelWriter.Alignment('Left', 'Bottom', wrap = True)
+        headFont= ExcelWriter.Font(bold=True, name = 'Times New Roman', 
+                                                                    size = 12)
+        boldFont= ExcelWriter.Font(bold=True, name = 'Times New Roman', 
+                                                                    size = 11)
+        styleH  = wb.addStyle(alignment = alignH, font = headFont)
+        style1b = wb.addStyle(alignment = align,  font = boldFont)
+            
+        for key in wsTitle.keys():
+            ws      = wb.addWorksheet(wsTitle[key], style1, 45, 1)
+            
+            # Set the column width
+            # --------------------
+            if key == 'ntr':
+                ws.addCol( 1,   60)
+                ws.addCol( 2,   90)
+                ws.addCol( 3,   80)
+                ws.addCol( 4,  100)
+                ws.addCol( 5,   60)
+                ws.addCol( 6,   60)
+                ws.addCol( 7,   60)
+                ws.addCol( 8,   60)
+                ws.addCol( 9,  120)
+                ws.addCol( 10,  90)
+                ws.addCol( 11,  90)
+                ws.addCol( 12, 140)
+            else:
+                ws.addCol( 1,  60)
+                ws.addCol( 2,  90)
+                ws.addCol( 3,  80)
+                ws.addCol( 4,  90)
+                ws.addCol( 5,  70)
+                ws.addCol( 6,  70)
+                ws.addCol( 7,  60)
+                ws.addCol( 8,  60)
+                ws.addCol( 9,  90)
+
+            # Create the Header row
+            # ---------------------
+            if key == 'ntr':
+                exRow = ws.addRow(1, styleH)
+                exRow.addCell(1,  'CDR-ID')
+                exRow.addCell(2,  'Primary ID')
+                exRow.addCell(3,  'NCT-ID')
+                exRow.addCell(4,  'Source')
+                exRow.addCell(5,  'Transfer Response')
+                exRow.addCell(6,  'Date')
+                exRow.addCell(7,  'Protocol Status')
+                exRow.addCell(8,  'Status Date')
+                exRow.addCell(9,  'Primary Lead Org Name')
+                exRow.addCell(10, 'PUP')
+                exRow.addCell(11, 'Phone')
+                exRow.addCell(12, 'Email')
+            else:
+                exRow = ws.addRow(1, styleH)
+                exRow.addCell(1, 'CDR-ID')
+                exRow.addCell(2, 'Primary ID')
+                exRow.addCell(3, 'NCT-ID')
+                exRow.addCell(4, 'CTGov Owner Organization')
+                exRow.addCell(5, 'PRS User Name')
+                exRow.addCell(6, 'CTGov Ownership Transfer Date')
+                exRow.addCell(7, 'Blocked From CTGov')
+                exRow.addCell(8, 'Blocked From Publication')
+                exRow.addCell(9, 'Current Protocol Status')
+
+            # Add the protocol data one record at a time beginning after 
+            # the header row
+            # ----------------------------------------------------------
+            rowNum = 1
+            if key == 'ntr':
+                Prot = ntps
+            else:
+                Prot = tps
+
+            if key == 'ntr':
+                for row in Prot.protocols:
+                    # print rowNum
+                    rowNum += 1
+                    exRow = ws.addRow(rowNum, style1, 40)
+                    exRow.addCell(1, row)
+                    exRow.addCell(2, Prot.protocols[row][u'pId'])
+                    exRow.addCell(3, Prot.protocols[row][u'nctId'])
+
+                    if Prot.protocols[row].has_key('protSource'):
+                        exRow.addCell(4, Prot.protocols[row][u'protSource'])
+
+                    if Prot.protocols[row].has_key('tResponse'):
+                        exRow.addCell(5, Prot.protocols[row][u'tResponse'])
+
+                    if Prot.protocols[row].has_key('trDate'):
+                        exRow.addCell(6, Prot.protocols[row][u'trDate'])
+
+                    exRow.addCell(7, Prot.protocols[row][u'status'])
+
+                    if Prot.protocols[row].has_key('statDate'):
+                        exRow.addCell(8, Prot.protocols[row][u'statDate'])
+
+                        exRow.addCell(9, Prot.protocols[row][u'orgName'])
+                    if Prot.protocols[row].has_key('pup'):
+                        if Prot.protocols[row][u'pup'].persFname and \
+                           Prot.protocols[row][u'pup'].persLname:
+                            exRow.addCell(10, 
+                                 Prot.protocols[row][u'pup'].persFname + \
+                                  " " + Prot.protocols[row][u'pup'].persLname)
+
+                        exRow.addCell(11, Prot.protocols[row][u'pup'].persPhone)
+                        exRow.addCell(12, Prot.protocols[row][u'pup'].persEmail)
+            else:
+                for row in Prot.protocols:
+                    rowNum += 1
+                    exRow = ws.addRow(rowNum, style1, 40)
+                    exRow.addCell(1, row)
+                    exRow.addCell(2, Prot.protocols[row][u'pId'])
+                    exRow.addCell(3, Prot.protocols[row][u'nctId'])
+
+                    if Prot.protocols[row].has_key('trOrg'):
+                        exRow.addCell(4, Prot.protocols[row][u'trOrg'])
+                        
+                    if Prot.protocols[row].has_key('trUser'):
+                        exRow.addCell(5, Prot.protocols[row][u'trUser'])
+
+                    if Prot.protocols[row].has_key('trDate'):
+                        exRow.addCell(6, Prot.protocols[row][u'trDate'])
+
+                    if Prot.protocols[row].has_key('blocked'):
+                        exRow.addCell(7, Prot.protocols[row][u'blocked'])
+
+                    if Prot.protocols[row].has_key('ctgovBlk'):
+                        exRow.addCell(8, Prot.protocols[row][u'ctgovBlk'])
+                    exRow.addCell(9, Prot.protocols[row][u'status'])
+
+        t = time.strftime("%Y%m%d%H%M%S")                                               
+        job.setProgressMsg("Saving spreadsheet")
+
+        # Save the report.
+        # ----------------
+        name = "/ProtocolOwnershipTransferReport-%d.xls" % job.getJobId()
+        f = open(REPORTS_BASE + name, 'wb')
+        wb.write(f, True)
+        f.close()
+
+        cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
+        url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+                                                            cdrcgi.BASE,
+                                                            name)
+        cdr.logwrite("url: %s" % url, LOGFILE)
+        msg = "Report available at <br><a href='%s'><u>%s</u></a>." % (
+            url, url)
+
+        # Tell the user where to find it.
+        # -------------------------------
+        body = """\
+The Protocol Ownership Transfer Report you requested can be viewed at 
+
+  %s
+""" % (url)
+        sendMail(job, "Protocol Transfer Report results", body)
+        job.setProgressMsg(msg)
+        job.setStatus(cdrbatch.ST_COMPLETED)
+        cdr.logwrite("Completed report", LOGFILE)
+
+ 
+#----------------------------------------------------------------------
+# Run a report of protocols that have been transferred to the NLM and
+# that still have to get transferred.
+#----------------------------------------------------------------------
+def protOwnershipTransfer(job):
+    host        = job.getParm("Host")
+    report      = ProtocolOwnershipTransfer(host)
+    report.createTransferSpreadsheet(job)
+
 #----------------------------------------------------------------------
 # Run a report of dead URLs.
 #----------------------------------------------------------------------
@@ -3426,6 +3960,8 @@ if __name__ == "__main__":
             NCITTermUpdate(job)
         elif jobName == "Update all Disease Terms from NCI Thesaurus":
             NCITTermUpdate(job)
+        elif jobName == "Protocol Ownership Transfer":
+            protOwnershipTransfer(job)
         # That's all we know how to do right now.
         else:
             job.fail("CdrLongReports: unknown job name '%s'" % jobName,
