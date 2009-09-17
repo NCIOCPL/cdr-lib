@@ -1,10 +1,14 @@
 #----------------------------------------------------------------------
 #
-# $Id: CdrLongReports.py,v 1.43 2009-09-16 16:44:33 venglisc Exp $
+# $Id: CdrLongReports.py,v 1.44 2009-09-17 21:09:56 venglisc Exp $
 #
 # CDR Reports too long to be run directly from CGI.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.43  2009/09/16 16:44:33  venglisc
+# Added class ProtocolOwnershipTransfer to create the 'Transfer of Ownership'
+# report as a batch job. (Bug 4626)
+#
 # Revision 1.42  2009/09/04 12:19:35  bkline
 # Removed redundant copy of nonRespondentsReport function.
 #
@@ -3485,6 +3489,7 @@ class ProtocolOwnershipTransfer:
             cursor.execute("""\
                 SELECT s.doc_id, pid.value AS "Primary ID", n.value AS "NCT-ID",
                        r.value as "TResponse", d.value as "TR date", 
+                       t.value as "Log date",
                        s.value AS "Status",  sd.value AS "Status Date" --,
                        -- ln.value AS "OrgName"
                   FROM query_term_pub s
@@ -3518,14 +3523,19 @@ class ProtocolOwnershipTransfer:
                    AND d.path    = '/InScopeProtocol'                        +
                                    '/CTGovOwnershipTransferInfo'             +
                                    '/CTGovOwnershipTransferDate'
-                   AND d.value is null
        LEFT OUTER JOIN query_term r
                     ON s.doc_id  = r.doc_id
                    AND r.path    = '/InScopeProtocol'                        + 
                                    '/CTGovOwnershipTransferContactLog'       + 
                                    '/CTGovOwnershipTransferContactResponse'
+       LEFT OUTER JOIN query_term t
+                    ON s.doc_id  = t.doc_id
+                   AND t.path    = '/InScopeProtocol'                        +
+                                   '/CTGovOwnershipTransferContactLog'       + 
+                                   '/Date'
                  WHERE s.path    = '/InScopeProtocol/ProtocolAdminInfo'      +
                                    '/CurrentProtocolStatus'
+                   AND d.value is null
             """, timeout = 300)
 
             rows = cursor.fetchall()
@@ -3537,8 +3547,9 @@ class ProtocolOwnershipTransfer:
                                          u'nctId'    : row[2],
                                          u'tResponse': row[3],
                                          u'trDate'   : row[4],
-                                         u'status'   : row[5],
-                                         u'statDate' : row[6]}
+                                         u'logDate'  : row[5],
+                                         u'status'   : row[6],
+                                         u'statDate' : row[7]}
 
                 # Populate the Orgname
                 # --------------------
@@ -3731,8 +3742,8 @@ class ProtocolOwnershipTransfer:
                     if Prot.protocols[row].has_key('tResponse'):
                         exRow.addCell(5, Prot.protocols[row][u'tResponse'])
 
-                    if Prot.protocols[row].has_key('trDate'):
-                        exRow.addCell(6, Prot.protocols[row][u'trDate'])
+                    if Prot.protocols[row].has_key('logDate'):
+                        exRow.addCell(6, Prot.protocols[row][u'logDate'])
 
                     exRow.addCell(7, Prot.protocols[row][u'status'])
 
