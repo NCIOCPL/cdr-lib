@@ -1,10 +1,13 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.110 2009-08-19 17:48:24 venglisc Exp $
+# $Id: cdrpub.py,v 1.111 2009-10-02 18:35:11 bkline Exp $
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # $Log: not supported by cvs2svn $
+# Revision 1.110  2009/08/19 17:48:24  venglisc
+# Fixed exception message.  Message displayed jobId instead of document ID.
+#
 # Revision 1.109  2008/12/30 15:15:32  venglisc
 # Fixed error of sending a document type of GlossaryTermName to Gatekeeper
 # for a removed document.  Gatekeeper only accepts document type GlossaryTerm.
@@ -24,7 +27,7 @@
 # publishing job started (but before it finished) caused the publishing
 # job to fail since it would try to insert a record for the updated as well
 # as the removed document into a temporary table with a primary key of the
-# CDR-ID.  (Bug 3951)CVS: ----------------------------------------------------------------------
+# CDR-ID.  (Bug 3951)
 #
 # Revision 1.105  2008/02/26 23:42:29  venglisc
 # Replaced PyXML validator with Lxml. (Bug 3923)
