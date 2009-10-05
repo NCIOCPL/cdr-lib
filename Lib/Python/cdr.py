@@ -594,6 +594,7 @@ EMAILER_PROD     = 'pdqupdate.cancer.gov'
 EMAILER_DEV      = 'verdi.nci.nih.gov'
 EMAILER_CGI      = '/PDQUpdate/cgi-bin'
 CVSROOT          = "verdi.nci.nih.gov:/usr/local/cvsroot"
+SVNBASE          = 'https://imbncipf01.nci.nih.gov/svn/CDR/trunk'
 DEFAULT_HOST     = 'localhost'
 DEFAULT_PORT     = 2019
 BATCHPUB_PORT    = 2020
