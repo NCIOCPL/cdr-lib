@@ -4,6 +4,8 @@
 #
 # Common routines for creating CDR web forms.
 #
+# BZIssue::4653 CTRO Access to CDR Admin 
+#
 # $Log: not supported by cvs2svn $
 # Revision 1.72  2009/03/24 14:32:52  bkline
 # Made picklist generation functions more intelligent about glossary paths.
@@ -566,16 +568,36 @@ def mainMenu(session, news = None):
 """ % (BASE, session)
     except:
         pass
-    for item in (
-        ('BoardManagers.py', 'OCCM Board Managers'             ),
-        ('CiatCipsStaff.py', 'CIAT/OCCM Staff'                 ),
-        ('DevSA.py',         'Developers/System Administrators'),
-        ('AdvancedSearch.py', 'Guest User'                     ),
-        ('Logout.py',        'Log Out'                         )
-        ):
-        menu += """\
+    try:
+        # Identify the groups of the user
+        # -------------------------------
+        userInfo = cdr.getUser((userPair[0], userPair[1]), userPair[0])
+    except:
+        cdrcgi.bail('Unable identifying permissions for user')
+
+    # Creating a menu for users with only GUEST permission and one
+    # for all others
+    # ------------------------------------------------------------
+    if 'GUEST' in userInfo.groups and len(userInfo.groups) < 2:
+        for item in (
+            ('GuestUsers.py',    'Guest User'                      ),
+            ('Logout.py',        'Log Out'                         )
+            ):
+            menu += """\
      <li><a href='%s/%s%s'>%s</a></li>
 """ % (BASE, item[0], session, item[1])
+    else:
+        for item in (
+            ('BoardManagers.py', 'OCCM Board Managers'             ),
+            ('CiatCipsStaff.py', 'CIAT/OCCM Staff'                 ),
+            ('DevSA.py',         'Developers/System Administrators'),
+            ('GuestUsers.py',    'Guest User'                      ),
+            ('Logout.py',        'Log Out'                         )
+            ):
+            menu += """\
+     <li><a href='%s/%s%s'>%s</a></li>
+""" % (BASE, item[0], session, item[1])
+
     sendPage(hdr + extra + menu + """\
     </ol>
   </form>
