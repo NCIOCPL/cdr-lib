@@ -833,7 +833,7 @@ class Publish:
             # In the first pass a document on the user's list is published
             # only once, for the first specification which allows the user to
             # list documents of that document's type.
-            self.__alreadyPublished = {}
+            self.__alreadyPublished = set()
             specFilters             = []
             specSubdirs             = []
             userListedDocsRemaining = len(self.__userDocList)
@@ -894,7 +894,7 @@ class Publish:
                             msg = "%d docs failed so far.<BR>" % numFailures
                             self.__updateMessage(msg)
 
-                        self.__alreadyPublished[doc.getDocId()] = 1
+                        self.__alreadyPublished.add(doc.getDocId())
                         userListedDocsRemaining -= 1
                         if not userListedDocsRemaining: break
 
@@ -3008,8 +3008,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     # See if we have a version column.
                     haveVersion = len(cursor.description) > 1
 
-                    row = cursor.fetchone()
-                    while row:
+                    rows = cursor.fetchall()
+                    for row in rows:
                         oneId = row[0]
                         if oneId in self.__alreadyPublished: continue
                         ver = haveVersion and row[1] or None
@@ -3031,8 +3031,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             # XXX Why are we falling through to the following
                             #     code if the call to get doc fails???
                         docs.append(Doc(doc[0], doc[1], doc[2]))
-                        self.__alreadyPublished[oneId] = 1
-                        row = cursor.fetchone()
+                        self.__alreadyPublished.add(oneId)
 
                 except cdrdb.Error, info:
                     msg = 'Failure retrieving document IDs for job %d: %s' % \
@@ -3061,7 +3060,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                 raise
                         self.__addJobMessages(arg[0])
                     docs.append(Doc(doc[0], doc[1], doc[2]))
-                    self.__alreadyPublished[oneId] = 1
+                    self.__alreadyPublished.add(oneId)
 
         self.__debugLog("SubsetSpecification queries selected %d documents."
                         % len(docs))
