@@ -1,4 +1,4 @@
-# $Id: cdrglblchg.py,v 1.39 2008-06-03 21:14:49 bkline Exp $
+# $Id$
 #
 # Common routines and classes for global change scripts.
 #

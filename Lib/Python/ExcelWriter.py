@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: ExcelWriter.py,v 1.11 2007-09-18 15:39:01 ameyer Exp $
+# $Id$
 #
 # Generates Excel workbooks using 2003 XML format.
 #

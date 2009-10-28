@@ -144,7 +144,7 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: ExcelReader.py,v 1.12 2005-05-26 15:08:20 bkline Exp $
+# $Id$
 #
 # Module for extracting cell values from Excel spreadsheets.
 #

@@ -24,7 +24,7 @@ r"""
 
 #----------------------------------------------------------------------
 #
-# $Id: UnicodeToLatex.py,v 1.6 2004-02-03 18:40:46 bkline Exp $
+# $Id$
 #
 # $Log: not supported by cvs2svn $
 # Revision 1.5  2004/02/03 18:30:08  bkline

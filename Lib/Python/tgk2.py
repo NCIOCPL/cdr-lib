@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: tgk2.py,v 1.1 2006-06-01 20:08:43 bkline Exp $
+# $Id$
 #
 # Test program to confirm that we can now send documents for a push
 # job to the Cancer.gov GateKeeper with delays interspersed and without

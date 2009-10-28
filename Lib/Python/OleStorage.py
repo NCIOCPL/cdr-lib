@@ -27,7 +27,7 @@ Example usage:
 
 #----------------------------------------------------------------------
 #
-# $Id: OleStorage.py,v 1.4 2005-05-26 15:07:59 bkline Exp $
+# $Id$
 #
 # Module for reading OLE2 structured storage files.
 #

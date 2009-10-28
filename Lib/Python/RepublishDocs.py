@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: RepublishDocs.py,v 1.7 2007-05-18 19:37:16 bkline Exp $
+# $Id$
 #
 # Module for republishing a set of documents, regardless of whether
 # what we would send to Cancer.gov is identical with what we sent

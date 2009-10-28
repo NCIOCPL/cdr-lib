@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeCTGovMappingBatch.py,v 1.6 2007-10-19 00:34:40 ameyer Exp $
+# $Id$
 #
 # Examine CTGovProtocol documents and map any unmapped Facility/Name
 # and LeadSponsor/Name fields for which mappings exist in the

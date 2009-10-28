@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrdocobject.py,v 1.5 2008-08-28 15:02:08 bkline Exp $
+# $Id$
 #
 # Types for data extracted from CDR documents of specific document types.
 #

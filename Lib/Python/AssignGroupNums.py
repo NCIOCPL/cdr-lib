@@ -33,7 +33,7 @@ import sys, re, time, cdr, cdrdb
 # These assumptions mean that the class must be instantiated in the
 # push job that calls __createWorkPPC().
 #
-# $Id: AssignGroupNums.py,v 1.11 2008-07-09 01:03:58 ameyer Exp $
+# $Id$
 #
 # $Log: not supported by cvs2svn $
 # Revision 1.10  2008/04/11 02:55:08  ameyer

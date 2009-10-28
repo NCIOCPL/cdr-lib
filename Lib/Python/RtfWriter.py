@@ -27,7 +27,7 @@
 
 #----------------------------------------------------------------------
 #
-# $Id: RtfWriter.py,v 1.6 2009-02-24 21:07:02 bkline Exp $
+# $Id$
 #
 # Module for generating RTF documents.
 #

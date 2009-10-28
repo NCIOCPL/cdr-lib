@@ -29,7 +29,7 @@
 # parameter list to be invoked in pre-filtering documents before diff'ing
 # them.
 #
-# $Id: cdrxdiff.py,v 1.4 2008-06-03 21:14:49 bkline Exp $
+# $Id$
 #
 # $Log: not supported by cvs2svn $
 # Revision 1.3  2005/12/16 05:22:52  ameyer

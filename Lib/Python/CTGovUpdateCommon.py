@@ -2,7 +2,7 @@
 # Import module to hold common information needed by both
 # CTGovUpdateReport.py and CTGovUpdateReportBatch.py.
 #
-# $Id: CTGovUpdateCommon.py,v 1.1 2006-07-03 20:09:35 ameyer Exp $
+# $Id$
 #
 # $Log: not supported by cvs2svn $
 #----------------------------------------------------------------------

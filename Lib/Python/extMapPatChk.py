@@ -10,7 +10,7 @@
 # needed to update the database and or produce reports.  The caller
 # then calls specific methods to do what he wants with the info.
 #
-# $Id: extMapPatChk.py,v 1.1 2008-08-22 04:03:14 ameyer Exp $
+# $Id$
 #
 # $Log: not supported by cvs2svn $
 #----------------------------------------------------------------------

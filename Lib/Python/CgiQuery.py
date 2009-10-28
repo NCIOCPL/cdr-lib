@@ -1,7 +1,7 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
 #
-# $Id: CgiQuery.py,v 1.12 2008-06-13 20:09:50 bkline Exp $
+# $Id$
 #
 # Base class for CGI database query interface.
 #

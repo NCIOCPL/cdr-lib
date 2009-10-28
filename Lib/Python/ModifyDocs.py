@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: ModifyDocs.py,v 1.31 2009-07-22 01:22:00 ameyer Exp $
+# $Id$
 #
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.

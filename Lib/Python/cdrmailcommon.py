@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrmailcommon.py,v 1.13 2008-08-01 18:40:28 bkline Exp $
+# $Id$
 #
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.

@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: GlobalChangeBatch.py,v 1.28 2005-08-03 03:49:58 ameyer Exp $
+# $Id$
 #
 # Perform a global change
 #

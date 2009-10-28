@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------
-# $Id: cdrbatch.py,v 1.17 2007-09-14 17:11:49 ameyer Exp $
+# $Id$
 #
 # Internal module defining a CdrBatch class for managing batch jobs.
 #

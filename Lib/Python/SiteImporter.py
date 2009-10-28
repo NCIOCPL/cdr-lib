@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: SiteImporter.py,v 1.30 2008-05-29 20:32:55 bkline Exp $
+# $Id$
 #
 # Base class for importing protocol site information from external sites.
 #

@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrcgi.py,v 1.73 2009-08-21 03:01:25 ameyer Exp $
+# $Id$
 #
 # Common routines for creating CDR web forms.
 #

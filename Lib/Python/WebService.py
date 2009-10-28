@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
-# $Id: WebService.py,v 1.3 2008-05-15 13:19:48 bkline Exp $
+# $Id$
 #
 # Simple Web service helper classes.
 #

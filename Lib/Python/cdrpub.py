@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrpub.py,v 1.111 2009-10-02 18:35:11 bkline Exp $
+# $Id$
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #

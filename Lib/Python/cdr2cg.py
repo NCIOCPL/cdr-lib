@@ -1,6 +1,6 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdr2cg.py,v 1.25 2008-08-05 14:49:02 venglisc Exp $
+# $Id$
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #

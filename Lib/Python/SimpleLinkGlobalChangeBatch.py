@@ -1,7 +1,7 @@
 #----------------------------------------------------------------------
 # Batch portion of GlobalChangeSimpleLink.py
 #
-# $Id: SimpleLinkGlobalChangeBatch.py,v 1.2 2009-07-22 01:23:09 ameyer Exp $
+# $Id$
 #
 # $Log: not supported by cvs2svn $
 # Revision 1.1  2009/07/08 03:04:55  ameyer
