@@ -5,6 +5,8 @@
 # Contains routines for updating Drug Term documents from the NCI thesaurus
 # and routines for adding new terms to CDR from the NCI thesaurus.
 #
+# BZIssue::4656
+#
 #----------------------------------------------------------------------
 
 import cgi, cdr, cdrdb, xml.dom.minidom, httplib, time, cdrcgi
