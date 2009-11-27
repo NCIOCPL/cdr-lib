@@ -5,49 +5,10 @@
 #
 # Base class for CGI database query interface.
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.11  2008/06/13 17:33:15  bkline
-# Fixed handling of queries whose names contained special XML delimiter
-# characters.
-#
-# Revision 1.10  2008/06/03 21:14:49  bkline
-# Cleaned up code to extract error information from the Err elements
-# returned in CDR server responses.  Replaced StandardError exceptions
-# with Exception objects, as StandardError will be removed from the
-# exception heirarchy at some point.
-#
-# Revision 1.9  2008/01/15 22:17:54  ameyer
-# Fixed dumb bug introduced in last version.
-#
-# Revision 1.8  2008/01/10 22:33:15  ameyer
-# Bob changed the output format to send utf-8 to the browser instead of
-# Latin-1.  This version incorporates Bob's changes and removes the older
-# encoding logic that he commented out.
-#
-# Revision 1.7  2007/11/02 01:28:08  ameyer
-# Added summary count at the bottom of the output display.
-#
-# Revision 1.6  2005/01/24 23:03:22  bkline
-# Fixed quotes in queries.
-#
-# Revision 1.5  2003/09/11 12:34:27  bkline
-# Made it possible to override the default timeout for queries.
-#
-# Revision 1.4  2003/07/29 13:10:26  bkline
-# Removed redundant cgi escaping.
-#
-# Revision 1.3  2003/04/09 21:57:40  bkline
-# Fixed encoding bug; fixed exception bug.
-#
-# Revision 1.2  2003/03/04 22:52:36  bkline
-# Added test to make sure object was not null before doing string
-# replacement.
-#
-# Revision 1.1  2002/12/10 13:35:58  bkline
-# Base class for ad-hoc SQL query tool with WEB interface.
+# BZIssue::4710
 #
 #----------------------------------------------------------------------
-import cgi, re, sys, time, cdrdb
+import cgi, sys, time, cdrdb
 
 class CgiQuery:
 
@@ -58,7 +19,7 @@ class CgiQuery:
         self.script        = script
         self.timeout       = timeout
         self.fields        = fields = cgi.FieldStorage()
-        self.doWhat        = fields.getvalue("doWhat") or None #"addQuery" or None
+        self.doWhat        = fields.getvalue("doWhat") or None
         self.queryName     = fields.getvalue("queries") or None
         self.newName       = fields.getvalue("newName") or None
         self.newQuery      = fields.getvalue("newQuery") or ""
@@ -74,6 +35,9 @@ class CgiQuery:
         elif self.doWhat == "saveQuery" and self.queryName: self.saveQuery()
         elif self.doWhat == "delQuery"  and self.queryName: self.delQuery()
         elif self.doWhat == "runQuery"  and self.queryText: self.runQuery()
+        elif self.doWhat == "createSS"  and self.queryText:
+            self.createSS()
+            return
         try:
             page = self.createPage()
         except Exception, e:
@@ -212,6 +176,52 @@ Cache-control: no-cache, must-revalidate
                 cgi.escape(self.queryText),
                 cgi.escape(info[1][0])))
 
+    def createSS(self):
+        "Create Excel spreadsheet from query results"
+        try:
+            import ExcelWriter
+            if sys.platform == "win32":
+                import os, msvcrt
+                msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+            book = ExcelWriter.Workbook()
+            sheet = book.addWorksheet("Ad-hoc Query Report")
+            cursor = self.conn.cursor()
+            start = time.time()
+            cursor.execute(self.queryText, timeout = self.timeout)
+            secs = time.time() - start
+            if not cursor.description:
+                raise Exception('No query results')
+            colNum = 1
+            style = book.addStyle(font=ExcelWriter.Font(bold=True))
+            row = sheet.addRow(1, style)
+            for col in cursor.description:
+                row.addCell(colNum, col and col[0] or u"")
+                colNum += 1
+            vals = cursor.fetchone()
+            rowNum = 2
+            while vals:
+                row = sheet.addRow(rowNum)
+                rowNum += 1
+                colNum = 1
+                for val in vals:
+                    row.addCell(colNum, val or u"")
+                    colNum += 1
+                vals = cursor.fetchone()
+            row = sheet.addRow(rowNum)
+            footer = u"%d row(s) retrieved (%.3f seconds)" % (rowNum - 2, secs)
+            row.addCell(1, footer)
+            now = time.strftime("%Y%m%d%H%M%S")
+            print "Content-type: application/vnd.ms-excel"
+            print "Content-Disposition: attachment; filename=sdlm-%s.xls" % now
+            print
+            book.write(sys.stdout, True)
+        except cdrdb.Error, info:
+            self.bail("Failure executing query:\n%s\n%s" % (
+                cgi.escape(self.queryText),
+                cgi.escape(info[1][0])))
+        except Exception, e:
+            self.bail("Failure generating spreadsheet: %s" % e)
+
     def createPage(self):
         queries     = self.getQueries()
         queryKeys   = queries.keys()
@@ -220,10 +230,10 @@ Cache-control: no-cache, must-revalidate
         queriesDict = self.getQueriesDict(queries)
 
         # If we don't already have a selected query, select the first one.
-        if queryKeys and not self.queryText and not self.queryName:
-            queryName = queryKeys[0]
-            if queries.has_key(queryName):
-                queryText = cgi.escape(queries[queryName])
+        #if queryKeys and not self.queryText and not self.queryName:
+        #    queryName = queryKeys[0]
+        #    if queries.has_key(queryName):
+        #        self.queryText = cgi.escape(queries[queryName])
         html = u"""\
 <html>
  <head>
@@ -260,6 +270,12 @@ Cache-control: no-cache, must-revalidate
     function runQuery() {
         var frm = document.forms[0];
         frm.doWhat.value = "runQuery";
+        frm.submit();
+    }
+
+    function excel() {
+        var frm = document.forms[0];
+        frm.doWhat.value = "createSS";
         frm.submit();
     }
 
@@ -321,6 +337,7 @@ Cache-control: no-cache, must-revalidate
     <tr>
      <td colspan = '2' align = 'center'>
       <input type = 'button' onClick = 'runQuery()' value = 'Submit' />&nbsp;
+      <input type = 'button' onClick = 'excel()' value = 'Excel' />&nbsp;
       <input type = 'button' onClick = 'saveQuery()' value = 'Save' />&nbsp;
       <input type = 'button' onClick = 'delQuery()' value = 'Delete' />&nbsp;
       <input type = 'button' onClick = 'addNewQuery()' value = 'New' />&nbsp;
