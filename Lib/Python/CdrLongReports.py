@@ -4,7 +4,8 @@
 #
 # CDR Reports too long to be run directly from CGI.
 #
-# $Log: not supported by cvs2svn $
+# BZIssue::4711 - Adding GrantNo column to report output
+#
 # Revision 1.43  2009/09/16 16:44:33  venglisc
 # Added class ProtocolOwnershipTransfer to create the 'Transfer of Ownership'
 # report as a batch job. (Bug 4626)
@@ -202,6 +203,35 @@ def getDocTitleFromId(id, conn):
         return rows[0][0]
     except:
         return "ERROR: DATABASE FAILURE RETRIEVING TITLE FOR CDR%010d" % id
+
+# -------------------------------------------
+# Getting the Protocol Grant information
+# -------------------------------------------
+def getGrantNo(id, cursor):
+    cursor.execute("""\
+        SELECT t.value, g.value
+          FROM query_term g
+          JOIN query_term t
+            on t.doc_id = g.doc_id
+           AND t.path = '/InScopeProtocol/FundingInfo' +
+                        '/NIHGrantContract/NIHGrantContractType'
+           AND left(g.node_loc, 8) = left(t.node_loc, 8)
+         WHERE g.doc_id = %s
+           AND g.path = '/InScopeProtocol/FundingInfo' +
+                        '/NIHGrantContract/GrantContractNo'
+    """ % id)
+    rows = cursor.fetchall()
+    grantNo = []
+    for row in rows:
+        if row[1].startswith(row[0]):
+            grantNo.append(u'%s' % row[1])
+        else:
+            grantNo.append(u'%s-%s' % (row[0], row[1]))
+
+    grantNo.sort()
+
+    return ", ".join(["%s" % g for g in grantNo])
+
 
 #----------------------------------------------------------------------
 # Examine a protocol site node to see whether it has a phone.
@@ -3358,6 +3388,8 @@ class ProtocolOwnershipTransfer:
                                           self.checkBlocked(cdrId, cursor)
                 self.protocols[row[0]][u'ctgovBlk'] = \
                                           self.checkCtgovBlocked(cdrId, cursor)
+                self.protocols[row[0]][u'grantNo'] = \
+                                          getGrantNo(cdrId, cursor)
 
         # --------------------------------------
         # Check if a protocol is blocked or not
@@ -3569,6 +3601,10 @@ class ProtocolOwnershipTransfer:
                 self.protocols[cdrId][u'protSource'] = \
                                       self.getSource(cdrId, cursor)
 
+                # Populate the GrantNo information
+                # --------------------------------
+                self.protocols[cdrId][u'grantNo'] = \
+                                      getGrantNo(cdrId, cursor)
 
         # ---------------------------------------
         # Getting the official organization name
@@ -3679,6 +3715,7 @@ class ProtocolOwnershipTransfer:
                 ws.addCol( 10,  90)
                 ws.addCol( 11,  90)
                 ws.addCol( 12, 140)
+                ws.addCol( 13,  90)
             else:
                 ws.addCol( 1,  60)
                 ws.addCol( 2,  90)
@@ -3689,6 +3726,7 @@ class ProtocolOwnershipTransfer:
                 ws.addCol( 7,  60)
                 ws.addCol( 8,  60)
                 ws.addCol( 9,  90)
+                ws.addCol(10,  90)
 
             # Create the Header row
             # ---------------------
@@ -3706,6 +3744,7 @@ class ProtocolOwnershipTransfer:
                 exRow.addCell(10, 'PUP')
                 exRow.addCell(11, 'Phone')
                 exRow.addCell(12, 'Email')
+                exRow.addCell(13, 'GrantNo')
             else:
                 exRow = ws.addRow(1, styleH)
                 exRow.addCell(1, 'CDR-ID')
@@ -3717,6 +3756,7 @@ class ProtocolOwnershipTransfer:
                 exRow.addCell(7, 'Blocked From CTGov')
                 exRow.addCell(8, 'Blocked From Publication')
                 exRow.addCell(9, 'Current Protocol Status')
+                exRow.addCell(10, 'GrantNo')
 
             # Add the protocol data one record at a time beginning after 
             # the header row
@@ -3760,6 +3800,8 @@ class ProtocolOwnershipTransfer:
 
                         exRow.addCell(11, Prot.protocols[row][u'pup'].persPhone)
                         exRow.addCell(12, Prot.protocols[row][u'pup'].persEmail)
+                    if Prot.protocols[row].has_key('grantNo'):
+                        exRow.addCell(13, Prot.protocols[row][u'grantNo'])
             else:
                 for row in Prot.protocols:
                     rowNum += 1
@@ -3782,7 +3824,11 @@ class ProtocolOwnershipTransfer:
 
                     if Prot.protocols[row].has_key('ctgovBlk'):
                         exRow.addCell(8, Prot.protocols[row][u'ctgovBlk'])
+
                     exRow.addCell(9, Prot.protocols[row][u'status'])
+
+                    if exRow.addCell(10, Prot.protocols[row][u'grantNo']):
+                        exRow.addCell(10, Prot.protocols[row][u'grantNo'])
 
         t = time.strftime("%Y%m%d%H%M%S")                                               
         job.setProgressMsg("Saving spreadsheet")
