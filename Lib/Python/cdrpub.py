@@ -1160,7 +1160,6 @@ class Publish:
             try:
                 os.rename(dest, dest_base + ".FAILURE")
             except:
-                self.__debugLog('Error renaming directory', tb=1)
                 pass
 
         return None
@@ -1701,12 +1700,15 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             qry = """
                 SELECT ppc.id, t.name, ppc.xml, ppd2.subdir, ppd2.doc_version,
                        ppc.force_push
-                  FROM pub_proc_cg ppc, doc_type t, document d,
-                       pub_proc_doc ppd2
-                 WHERE d.id = ppc.id
-                   AND d.doc_type = t.id
-                   AND ppd2.doc_id = d.id
-                   AND ppd2.pub_proc = %d
+                  FROM pub_proc_cg ppc
+                  JOIN pub_proc_doc ppd2
+                    ON ppd2.doc_id = ppc.id
+                  JOIN doc_version d
+                    ON d.id = ppc.id
+                   AND d.num = ppd2.doc_version
+                  JOIN doc_type t
+                    ON t.id = d.doc_type
+                 WHERE ppd2.pub_proc = %d
                    AND t.name NOT IN (%s)
                    AND EXISTS (
                            SELECT *
@@ -1778,10 +1780,13 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             cursor.execute ("""
                      SELECT DISTINCT ppd.doc_id, t.name, ppd.subdir,
                             ppd.doc_version
-                       FROM pub_proc_doc ppd, doc_type t, document d
+                       FROM pub_proc_doc ppd
+                       JOIN doc_version d
+                         ON d.id = ppd.doc_id
+                        AND d.num = ppd.doc_version
+                       JOIN doc_type t
+                         ON d.doc_type = t.id
                       WHERE ppd.pub_proc = %d
-                        AND d.id = ppd.doc_id
-                        AND d.doc_type = t.id
                         AND ppd.failure IS NULL
                         AND t.name NOT IN (%s)
                         AND NOT EXISTS (
@@ -1995,12 +2000,15 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             qry = """
                 SELECT ppc.id, t.name, ppc.xml, ppd2.subdir, ppd2.doc_version,
                        ppc.force_push
-                  FROM pub_proc_cg ppc, doc_type t, document d,
-                       pub_proc_doc ppd2
-                 WHERE d.id = ppc.id
-                   AND d.doc_type = t.id
-                   AND ppd2.doc_id = d.id
-                   AND ppd2.pub_proc = %d
+                  FROM pub_proc_cg ppc
+                  JOIN pub_proc_doc ppd2
+                    ON ppd2.doc_id = ppc.id
+                  JOIN doc_version d
+                    ON d.id = ppd2.doc_id
+                   AND d.num = ppd2.doc_version
+                  JOIN doc_type t
+                    ON d.doc_type = t.id
+                 WHERE ppd2.pub_proc = %d
                    AND t.name NOT IN (%s)
                    AND EXISTS (
                            SELECT *
