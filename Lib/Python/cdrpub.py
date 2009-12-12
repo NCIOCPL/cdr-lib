@@ -1160,6 +1160,7 @@ class Publish:
             try:
                 os.rename(dest, dest_base + ".FAILURE")
             except:
+                self.__debugLog('Error renaming directory', tb=1)
                 pass
 
         return None
@@ -2830,10 +2831,15 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             if self.__errorsBeforeAborting != -1:
                 if self.__errorCount > self.__errorsBeforeAborting:
                     if self.__errorsBeforeAborting:
-                      msg = "Aborting on error detected in CDR%010d.<BR>" % \
-                             doc.getDocId()
+                      msg  = "Aborting: too many errors detected "
+                      msg += "at CDR%d.<BR>" % doc.getDocId()
                     else:
                       msg = "Aborting: too many errors encountered"
+
+                    # This message is being printed twice. Why? VE, 2009-12-09
+                    dbMsg = "Aborting: more than %d errors encountered<BR>" % \
+                             self.__errorsBeforeAborting
+                    self.__updateMessage(dbMsg)
 
         # Check warnings
         if warnings:
