@@ -4,7 +4,8 @@
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
-# $Log: not supported by cvs2svn $
+# BZIssue::4629 - Vendor Filter Changes for GenProf publishing
+#
 # Revision 1.110  2009/08/19 17:48:24  venglisc
 # Fixed exception message.  Message displayed jobId instead of document ID.
 #
@@ -535,7 +536,7 @@ class Publish:
     __logDocModulus     = LOG_MODULUS
 
     # Document types provided to licensees but not to Cancer.gov
-    __excludeDocTypes   = ('Country', 'Person')
+    __excludeDocTypes   = ('Country',)
 
     # Used in SQL SELECT statements to exclude documents of those types.
     __excludeDT         = ",".join(["'%s'" % t for t in __excludeDocTypes])
@@ -1549,6 +1550,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     docType = "Protocol"
                 elif docType == "GlossaryTermName":
                     docType = "GlossaryTerm"
+                elif docType == "Person":
+                    docType = "GeneticsProfessional"
                 xml = row[3].encode('utf-8')
                 xml = XmlDeclLine.sub("", xml)
                 xml = DocTypeLine.sub("", xml)
@@ -1557,6 +1560,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 grpNum = groupNums.getDocGroupNum(docId)
                 # grpNum = groupNums.genNewUniqueNum()
 
+                #self.__debugLog("DocType: %s  DocId: %d" % (docType, docId))
                 response = cdr2gk.sendDocument(self.__jobId, docNum,
                             "Export", docType, docId, version, grpNum, xml)
 
