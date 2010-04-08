@@ -134,11 +134,9 @@ class DocumentLocked(Exception): pass
 
 #----------------------------------------------------------------------
 # Error controls
-# If global _errCount > _maxErrors, halt processing
+# If Doc._self.countErrors > _maxErrors, halt processing
 #----------------------------------------------------------------------
 _maxErrors   = 0
-_errCount    = 0
-_lockedCount = 0
 
 # Caller can alter this
 def setMaxErrors(maxErrs):
@@ -148,10 +146,10 @@ def setMaxErrors(maxErrs):
 #----------------------------------------------------------------------
 # Module level variables (statics)
 #----------------------------------------------------------------------
-_testMode  = True   # True=Output to files only, not database
-_outputDir = None   # Files go in this directory
-_validate  = False  # True=Check that change didn't invalidate valid doc
-_haltOnErr = False  # True=Don't save any doc if change invalidate a version
+_testMode    = True   # True=Output to files only, not database
+_outputDir   = None   # Files go in this directory
+_validate    = False  # True=Check that change didn't invalidate valid doc
+_noSaveOnErr = False  # True=Don't save any doc if change invalidate a version
 
 #----------------------------------------------------------------------
 # Class to track the disposition of a single document
@@ -182,23 +180,9 @@ class Disposition:
 # Class for one modification job.
 #----------------------------------------------------------------------
 class Job:
-
-    #------------------------------------------------------------------
-    # Nested class for job control information.
-    #------------------------------------------------------------------
-    class Control:
-        def __init__(self, transformANY = True, transformPUB = True,
-                     maxDocs = 9999999):
-            self.__transformANY = transformANY
-            self.__transformPUB = transformPUB
-            self.__maxDocs      = maxDocs
-        def __getTransformANY(self): return self.__transformANY
-        def __getTransformPUB(self): return self.__transformPUB
-        def __getMaxDocs     (self): return self.__maxDocs
-        transformANY = property(__getTransformANY)
-        transformPUB = property(__getTransformPUB)
-        maxDocs      = property(__getMaxDocs)
-
+    """
+    The main class for global changes.
+    """
     def __init__(self, uid, pwd, filter, transform, comment, testMode=True,
                  logFile=LOGFILE, validate=False, haltOnValErr=False):
         """
@@ -207,23 +191,33 @@ class Job:
 
         Pass:
             uid        - CDR user ID of operator
-            pwd        - password for CDR account
-            filter     - object with method to get document IDs to be
+            pwd        - Password for CDR account
+            filter     - Object with method to get document IDs to be
                          processed; must have method getDocIds()
-            transform  - object which knows how to take the old XML
+            transform  - Object which knows how to take the old XML
                          for a CDR document and transform it using
                          the algorithm appropriate to this job; the
                          name of this method must be run()
-            comment    - string to be stored with new versions
+            comment    - String to be stored with new versions
             testMode   - True = write output to files, do not update database.
                          False = Modify the database.
-            logFile    - optional path for logfile
+            logFile    - Optional path for logfile
+            validate   - True=validate that the transform did not invalidate
+                         a previously valid document.  NB: if the original
+                         document was invalid, we assume that the transformed
+                         one will be invalid and don't validate it.  We
+                         will ignore haltOnValErr.
+          haltOnValErr - True  = If the transform invalidates a valid doc,
+                                 don't save any versions of that doc.
+                         False = Save anyway.
+                         sets _noSaveOnErr
         """
         global _testMode
         global _validate
-        global _haltOnErr
+        global _noSaveOnErr
 
         self.logFile   = open(logFile, 'a')
+        self.logOpen   = True
         self.uid       = uid
         self.pwd       = pwd
         self.filter    = filter
@@ -239,14 +233,16 @@ class Job:
         self.noStdErr  = False
         _testMode      = testMode
         _validate      = validate
-        _haltOnErr     = haltOnValErr
+        _noSaveOnErr   = haltOnValErr
 
         # Controls for which versions are transformed, with defaults
-        self.__transformANY = True   # Last version of any kind
-        self.__transformPUB = True   # Last publishable version
+        # To override, call Job.setTransformVER() before calling run().
+        self.__transformVER = True   # Transform CWD plus lastp and lastv
+                                     # False = transform CWD only
 
         # Max docs to process, call setMaxDocs to use a lower number for
         #   debugging or to prevent runaways
+        # To override, call Job.setMaxDocs() before calling run().
         self.__maxDocs = 9999999
 
         # Statistics
@@ -254,6 +250,8 @@ class Job:
         self.__countDocsProcessed = 0
         self.__countDocsSaved     = 0
         self.__countVersionsSaved = 0
+        self.__countLocked        = 0
+        self.__countErrors        = 0
 
         # Sequence of Dispositions, one for each doc examined
         self.__dispositions = []
@@ -271,32 +269,32 @@ class Job:
         self.log("Running in test mode.  Output to: %s" % _outputDir)
 
     #------------------------------------------------------------------
-    # Setters for transform version controls
+    # Setter for transform version control
     #
-    # The way these controls work is ONLY to gate the output, not the
-    # transformations.  The problem is that some complex logic occurs
-    # in which one version can move through to become a new version of a
-    # different type.  We allow ALL of that to happen without interference
-    # and just gate the outputs.
+    # If set False, no versions will be transformed or saved.
     #
     # There is no _transformCWD or setTransformCWD().
     # It isn't possible to save a version without overwriting the current
     # working document.  Therefore the program ALWAYS modifies the current
-    # working document.  Only the last version and/or last publishable
+    # working document.  Only the last version and last publishable
     # version can be blocked from change.
     #
     # Note however that a change to the CWD will always create a new last,
-    # non-publishable version.  That is by design to avoid complete
-    # obliteration of the previous CWD.
+    # non-publishable version if it is different from the current last
+    # version (whether publishable or not.)  That is by design to avoid
+    # complete, unrecoverable obliteration of the previous CWD.
+    #
+    # This MUST be called before calling Job.run() or it is too late to
+    # set it False.
     #------------------------------------------------------------------
-    def setTransformANY(self, setting):
-        self.__transformANY = setting
-
-    def setTransformPUB(self, setting):
-        self.__transformPUB = setting
+    def setTransformVER(self, setting):
+        self.__transformVER = setting
 
     #------------------------------------------------------------------
     # Limit processing to no more than this number of docs
+    #
+    # This MUST be called before calling Job.run() or it is too late to
+    # set it False.
     #------------------------------------------------------------------
     def setMaxDocs(self, maxDocs):
         self.__maxDocs = maxDocs
@@ -317,8 +315,10 @@ class Job:
         return self.__countVersionsSaved
 
     def getCountDocsLocked(self):
-        global _lockedCount
-        return _lockedCount
+        return self.__countLocked
+
+    def getCountErrors(self):
+        return self.__countErrors
 
     def getNotCheckedOut(self, markup=False):
         """
@@ -519,7 +519,7 @@ class Job:
     # then call self.run().
     #------------------------------------------------------------------
     def run(self):
-        global _errCount, _maxErrors, _lockedCount
+        global _maxErrors
 
         # In test mode, create output directory for files
         if _testMode:
@@ -542,9 +542,6 @@ class Job:
         self.__countDocsSelected = len(ids)
 
         # Change all docs
-        jobControl = Job.Control(transformANY = self.__transformANY,
-                                 transformPUB = self.__transformPUB,
-                                 maxDocs      = self.__maxDocs)
         logger = self
         for docId in ids:
             lockedDoc = True
@@ -552,14 +549,23 @@ class Job:
                 # Process doc
                 self.log("Processing CDR%010d" % docId)
                 doc = None
-                doc = Doc(docId, self.session, self.transform, self.comment)
-                doc.saveChanges(self.cursor, logger, jobControl)
+
+                # Instantiation of the ModifyDocs.Doc object runs all of
+                # the retrievals and performs all of the transforms for
+                # all versions needing transformation.
+                doc = Doc(docId, self.session, self.transform, self.comment,
+                          self.__transformVER)
+
+                # Transforms are now complete and cached in memory
+                # saveChanges() writes whatever must be written to the
+                # database (run mode) or file system (test mode)
+                doc.saveChanges(self.cursor, logger)
 
                 # One distinct doc saved
                 if doc.versionMessages:
                     self.__countDocsSaved += 1
 
-                # Number of distinct versions of this doc sved
+                # Number of distinct versions of this doc saved
                 if doc.disp.cwdChanged:
                     self.__countVersionsSaved += 1
                 if doc.disp.lastvChanged:
@@ -572,20 +578,21 @@ class Job:
             except DocumentLocked, info:
                 # Lock failed
                 lockedDoc = False
-                _lockedCount += 1
+                self.__countLocked += 1
                 # Log it, but always continue
                 self.log("Document %d: %s" % (docId, str(info)))
             except Exception, info:
                 cdr.logwrite("Exception traceback", tback=True)
                 self.log("Document %d: %s" % (docId, str(info)))
-                _errCount += 1
-                if _errCount > _maxErrors:
+                self.__countErrors += 1
+                if self.__countErrors > _maxErrors:
                     raise
 
             # Save disposition
             if doc:
                 self.__dispositions.append(doc.disp)
             else:
+                # If exception prevented creation of a Doc object
                 self.__dispositions.append(Disposition(docId, str(info)))
 
             # Unlock, but only if we locked it
@@ -618,7 +625,8 @@ class Job:
    Could not lock = %d
    Errors         = %d
  %s""" % (self.getCountDocsProcessed(), self.getCountDocsSaved(),
-          self.getCountVersionsSaved(), self.getCountDocsLocked(), _errCount,
+          self.getCountVersionsSaved(), self.getCountDocsLocked(),
+          self.getCountErrors(),
           "".join(msgReport)))
 
 
@@ -638,30 +646,35 @@ class Job:
         if not self.noStdErr:
             sys.stderr.write(what)
 
+    # Flush and close logfile
     def __del__(self):
         try:
-            self.logFile.close()
+            if self.logOpen:
+                self.logFile.close()
+                self.logOpen = False
         except:
             pass
 
 #----------------------------------------------------------------------
 # Class for a CDR document.
 #----------------------------------------------------------------------
-class Doc:
+class Doc(object):
 
-    def __init__(self, id, session, transform, comment):
-        self.id         = id
-        self.session    = session
-        self.transform  = transform
-        self.comment    = comment
-        self.versions   = cdr.lastVersions('guest', "CDR%010d" % id)
-        self.__messages = []
-        self.disp       = Disposition(id)
+    def __init__(self, id, session, transform, comment, transformVER=True):
+
+        self.id           = id
+        self.session      = session
+        self.transform    = transform
+        self.comment      = comment
+        self.versions     = cdr.lastVersions('guest', "CDR%010d" % id)
+        self.__messages   = []
+        self.disp         = Disposition(id)
+        self.transformVER = transformVER
         self.loadAndTransform()
 
         global _testMode
         global _validate
-        global _haltOnErr
+        global _noSaveOnErr
 
     #------------------------------------------------------------------
     # Class to expose read-only access to messages used to describe
@@ -699,17 +712,16 @@ class Doc:
     #------------------------------------------------------------------
     def loadAndTransform(self):
 
-        self.debugCwdXml = None
         # Stored versions
-        self.cwd       = None
-        self.lastv     = None
-        self.lastp     = None
-        self.newCwd    = None
-        self.newLastv  = None
-        self.newLastp  = None
-        self.cwdVals   = None
-        self.lastvVals = None
-        self.lastpVals = None
+        self.cwd          = None
+        self.lastv        = None
+        self.lastp        = None
+        self.newCwdXml    = None
+        self.newLastvXml  = None
+        self.newLastpXml  = None
+        self.cwdVals      = None
+        self.lastvVals    = None
+        self.lastpVals    = None
         (lastAny, lastPub, changedYN) = self.versions
 
         # Checkout current working document to get doc and lock
@@ -718,7 +730,6 @@ class Doc:
             err = cdr.checkErr(self.cwd) or self.cwd
             raise DocumentLocked("Unable to check out CWD for CDR%010d: %s" %
                                  (self.id, err))
-        self.debugCwdXml = self.cwd.xml
 
         # If the cwd is not the same as the last version, or there is no
         #   saved version, we'll save the cwd and store it as a version
@@ -731,76 +742,78 @@ class Doc:
             self.saveThisDocFirst = None
 
         # Run the transformation filter on current working doc
-        self.newCwd = self.transform.run(self.cwd)
+        self.newCwdXml = self.transform.run(self.cwd)
 
         # If (and only if) old version was valid, validate new version
         # cwdVal is array of error messages or empty array
         if (_validate):
             self.cwdVals = cdr.valPair(self.session, self.cwd.type,
-                                       self.cwd.xml, self.newCwd)
+                                       self.cwd.xml, self.newCwdXml)
 
-        # If there is a last version
-        if lastAny > 0:
+        # If we're processing versions
+        if self.transformVER:
 
-            # And it's not the same as the CWD
-            if changedYN == 'Y':
-                self.lastv = cdr.getDoc(self.session, self.id, 'Y',
-                                        str(lastAny),
-                                        getObject = 1)
-                if type(self.lastv) in (type(""), type(u"")):
-                    err = cdr.checkErr(self.lastv) or self.lastv
-                    raise Exception("Failure retrieving lastv (%d) "
-                                    "for CDR%010d: %s" % (lastAny,
-                                                       self.id, err))
+            # If there is a last version
+            if lastAny > 0:
 
-                # We'll do another test to be sure that CWD is not
-                #   the same.  changedYN only compares the dates, not
-                #   the bytes
-                if not self.compare(self.cwd.xml, self.lastv.xml):
-                    # No need to save cwd, it's same as lastv
-                    # self.saveThisDocFirst = None
-                    pass
+                # And it's not the same as the CWD
+                if changedYN == 'Y':
+                    self.lastv = cdr.getDoc(self.session, self.id, 'Y',
+                                            str(lastAny),
+                                            getObject = 1)
+                    if type(self.lastv) in (type(""), type(u"")):
+                        err = cdr.checkErr(self.lastv) or self.lastv
+                        raise Exception("Failure retrieving lastv (%d) "
+                                        "for CDR%010d: %s" % (lastAny,
+                                                           self.id, err))
 
-                # Transform
-                self.newLastv = self.transform.run(self.lastv)
-                if _validate:
-                    self.lastvVals= cdr.valPair(self.session, self.lastv.type,
-                                                self.lastv.xml, self.newLastv)
-            else:
-                # Copy references lastv is now cwd
-                self.lastv     = self.cwd
-                self.newLastv  = self.newCwd
-                self.lastvVals = self.cwdVals
+                    # Transform
+                    self.newLastvXml = self.transform.run(self.lastv)
+                    if _validate:
+                        self.lastvVals = cdr.valPair(self.session,
+                            self.lastv.type, self.lastv.xml, self.newLastvXml)
+                else:
+                    # Lastv was same as cwd, don't need to load it, just
+                    #   reference the existing self.cwd
+                    # See warning ("BEWARE") below
+                    # After this, any change to lastv.xml changes cwd.xml
+                    self.lastv       = self.cwd
+                    self.newLastvXml = self.newCwdXml
+                    self.lastvVals   = self.cwdVals
 
-        # If there is a last publishable version
-        if lastPub > 0:
+            # If there is a last publishable version
+            if lastPub > 0:
 
-            # If it's not the same as the last version
-            if lastPub != lastAny:
-                self.lastp = cdr.getDoc(self.session, self.id, 'Y',
-                                        str(lastPub),
-                                        getObject = 1)
-                if type(self.lastp) in (type(""), type(u"")):
-                    err = cdr.checkErr(self.lastp) or self.lastp
-                    raise Exception("Failure retrieving lastp (%d) "
-                                    "for CDR%010d: %s" % (lastPub,
-                                                       self.id, err))
+                # If it's not the same as the last version
+                if lastPub != lastAny:
+                    self.lastp = cdr.getDoc(self.session, self.id, 'Y',
+                                            str(lastPub),
+                                            getObject = 1)
+                    if type(self.lastp) in (type(""), type(u"")):
+                        err = cdr.checkErr(self.lastp) or self.lastp
+                        raise Exception("Failure retrieving lastp (%d) "
+                                        "for CDR%010d: %s" % (lastPub,
+                                                           self.id, err))
 
-                # Transform
-                self.newLastp = self.transform.run(self.lastp)
-                if _validate:
-                    # Original plan was to validate pub version even if
-                    #   last pub was invalid, but this is safe since
-                    #   attempt to save an invalid pub version will cause
-                    #   it to be marked non-publishable
-                    self.lastpVals= cdr.valPair(self.session, self.lastp.type,
-                                                self.lastp.xml, self.newLastp)
+                    # Transform
+                    self.newLastpXml = self.transform.run(self.lastp)
+                    if _validate:
+                        # Original plan was to validate pub version even if
+                        #   last pub was invalid, but this is safe since
+                        #   attempt to save an invalid pub version will cause
+                        #   it to be marked non-publishable
+                        self.lastpVals = cdr.valPair(self.session,
+                            self.lastp.type, self.lastp.xml, self.newLastpXml)
 
-            else:
-                # Copy references lastp is lastv, and maybe also cwd
-                self.lastp     = self.lastv
-                self.newLastp  = self.newLastv
-                self.lastpVals = self.lastvVals
+                else:
+                    # Lastp was same as lastv, don't need to load it, just
+                    #   reference the existing self.lastv
+                    # See warning ("BEWARE") below
+                    # After this, any change to lastp.xml changes lastv.xml
+                    #   and maybe also cwd.xml
+                    self.lastp       = self.lastv
+                    self.newLastpXml = self.newLastvXml
+                    self.lastpVals   = self.lastvVals
 
 
     class DummyLogger:
@@ -810,8 +823,7 @@ class Doc:
         """
         def log(): pass
 
-    def saveChanges(self, cursor, logger = DummyLogger(),
-                    jobControl = Job.Control()):
+    def saveChanges(self, cursor, logger = DummyLogger()):
         """
         In run mode, saves all versions of a document needing to be saved.
         In test mode, writes to output files, leaving the database alone.
@@ -821,7 +833,6 @@ class Doc:
             cursor     - cursor for connection to CDR database
             logger     - object with a single log() method, taking a
                          string to be logged (without trailing newline)
-            jobControl - object with settings for job processing logic
 
         Uses the following logic:
 
@@ -879,26 +890,27 @@ class Doc:
         if _testMode:
             # Write new/original CWDs
             cdrglblchg.writeDocs(_outputDir, docId,
-                                 self.cwd.xml, self.newCwd, 'cwd',
+                                 self.cwd.xml, self.newCwdXml, 'cwd',
                                  self.cwdVals)
 
         # If publishable version changed ...
-        if self.lastp and self.compare(self.lastp.xml, self.newLastp):
-            if jobControl.transformPUB and _testMode:
+        # When self.transformVER is False, self.lastp is always None
+        if self.lastp and self.compare(self.lastp.xml, self.newLastpXml):
+            if _testMode:
                 # Write new/original last pub version
                 cdrglblchg.writeDocs(_outputDir, docId,
-                                     self.lastp.xml, self.newLastp, 'pub',
+                                     self.lastp.xml, self.newLastpXml, 'pub',
                                      self.lastpVals)
             else:
-                self.lastp.xml = self.newLastp
+                # See "BEWARE" above.
+                # self.lastp may be a reference to
+                self.lastp.xml = self.newLastpXml
                 # If not validating or passed validation,
                 #   save new last pub version
-                if jobControl.transformPUB and not (vals and _haltOnErr):
+                if not (vals and _noSaveOnErr):
                     self.__saveDoc(str(self.lastp), ver='Y', pub='Y',
-                                   logger=logger,
-                                   val=(everValidated and 'Y' or 'N'),
-                                   msg=' new pub')
-                    lastSavedXml = self.newLastp
+                                   logger=logger, val='Y', msg=' new pub')
+                    lastSavedXml = self.newLastpXml
 
             # Record versions that were changed
             self.disp.cwdChanged = self.disp.lastpChanged = True
@@ -907,32 +919,36 @@ class Doc:
         # Note that in the very common case in which the last created
         # version and the most recent publishable version are the same
         # version, the test below will report no differences between
-        # self.lastv.xml and self.newLastv.  This is because in this
+        # self.lastv.xml and self.newLastvXml.  This is because in this
         # case self.lastv and self.lastp are references to the same
-        # cdr.Doc object, and the assignment above of self.newLastp
+        # cdr.Doc object, and the assignment above of self.newLastpXml
         # to self.lastp.xml also changes self.lastv.xml.  This is
         # almost too clever and tricky (it has confused the author
         # of this code on at least one occasion -- hence this comment),
         # but it's more efficient than doing deep copies of the cdr.Doc
         # objects, and (equally important) it does the Right Thing.
         #--------------------------------------------------------------
-        if self.lastv and self.compare(self.lastv.xml, self.newLastv):
-            if jobControl.transformANY and _testMode:
+        # When self.transformVER is False, self.lastv is always None
+        if self.lastv and self.compare(self.lastv.xml, self.newLastvXml):
+            if _testMode:
                 # Write new/original last non-pub version results
                 cdrglblchg.writeDocs(_outputDir, docId,
-                                     self.lastv.xml, self.newLastv, 'lastv',
+                                     self.lastv.xml, self.newLastvXml, 'lastv',
                                      self.lastvVals)
             # Reflect the changes
-            self.lastv.xml = self.newLastv
+            self.lastv.xml = self.newLastvXml
 
             if not _testMode:
                 # Save new last non-pub version
-                if jobControl.transformANY and not (vals and _haltOnErr):
+                # If doc was never validated, we don't validate this
+                #   time because of validation side effects, e.g., stripping
+                #   XMetal PIs.
+                if not (vals and _noSaveOnErr):
                     self.__saveDoc(str(self.lastv), ver='Y', pub='N',
                                    logger=logger,
                                    val=(everValidated and 'Y' or 'N'),
                                    msg=' new ver')
-                    lastSavedXml = self.newLastv
+                    lastSavedXml = self.newLastvXml
 
             # Record versions that were changed
             self.disp.cwdChanged = self.disp.lastvChanged = True
@@ -942,12 +958,12 @@ class Doc:
         # If last XML saved is not the same as the new cwd
         #   then
         # Save the new current working document
-        if ((not lastSavedXml and self.compare(self.newCwd, self.cwd.xml)) or
-                (lastSavedXml and self.compare(self.newCwd, lastSavedXml))):
+        if ((not lastSavedXml and self.compare(self.newCwdXml, self.cwd.xml))
+             or (lastSavedXml and self.compare(self.newCwdXml, lastSavedXml))):
             if not _testMode:
                 # Save new CWD
-                self.cwd.xml = self.newCwd
-                if not (vals and _haltOnErr):
+                self.cwd.xml = self.newCwdXml
+                if not (vals and _noSaveOnErr):
                     self.__saveDoc(str(self.cwd), ver='N', pub='N',
                                    logger=logger,
                                    val=(everValidated and 'Y' or 'N'),
