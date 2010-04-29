@@ -391,7 +391,9 @@ changed and click "Next".</p>
             noteMsg  = """
 <p>If you enter a trailing fragment id, e.g., "#F1", only links
 with that ID will be changed.  Otherwise no links with trailing
-fragments will be changed.</p>
+fragments will be changed, e.g. if all actual links include "#F1"
+but you enter a plain CDR ID without "#F1", no links will be
+found or changed.</p>
 """
         else:
             refIdVar = "newLinkRefIdStr"
@@ -654,7 +656,7 @@ SELECT %s
  %s
 """ % (selector, whereClause, matcher, orderBy)
         # DEBUG
-        # cdr.logwrite(qry)
+        cdr.logwrite(qry)
 
         return qry
 
