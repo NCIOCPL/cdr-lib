@@ -672,10 +672,6 @@ class Doc(object):
         self.transformVER = transformVER
         self.loadAndTransform()
 
-        global _testMode
-        global _validate
-        global _noSaveOnErr
-
     #------------------------------------------------------------------
     # Class to expose read-only access to messages used to describe
     # versions of the document being saved, without the overhead of
