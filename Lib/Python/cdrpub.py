@@ -1608,6 +1608,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     docType = "Protocol"
                 elif docType == "GlossaryTermName":
                     docType = "GlossaryTerm"
+                elif docType == "Person":
+                    docType = "GeneticsProfessional"
                 response = cdr2gk.sendDocument(self.__jobId, docNum, "Remove",
                                                docType, docId, version,
                                                groupNums.genNewUniqueNum())
