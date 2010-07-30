@@ -546,8 +546,15 @@ class Job:
         for docId in ids:
             lockedDoc = True
             try:
+                # We're now reporting blocked doc info in the log
+                docStatus = cdr.getDocStatus("guest", docId)
+                if docStatus == u"I":
+                    dstat = " (BLOCKED)"
+                else:
+                    dstat = ""
+
                 # Process doc
-                self.log("Processing CDR%010d" % docId)
+                self.log("Processing CDR%010d%s" % (docId, dstat))
                 doc = None
 
                 # Instantiation of the ModifyDocs.Doc object runs all of
@@ -669,6 +676,7 @@ class Doc(object):
         self.versions     = cdr.lastVersions('guest', "CDR%010d" % id)
         self.__messages   = []
         self.disp         = Disposition(id)
+        self.activeStatus = None
         self.transformVER = transformVER
         self.loadAndTransform()
 
@@ -701,6 +709,25 @@ class Doc(object):
     #------------------------------------------------------------------
     def compare(self, a, b):
         return cdr.compareXmlDocs(a, b)
+
+    #------------------------------------------------------------------
+    # Force a change in active_status, e.g., to block this document
+    # during a __saveDoc operation.
+    #
+    # This should be called in the derived class run() method, before
+    # returning XML to the ModifyDocs module for saving.
+    #
+    # Unless a Doc object is reused for multiple documents (not currently
+    # done in this module), the change in active_status will only affect
+    # the one document represented by this Doc object.
+    #------------------------------------------------------------------
+    def setActiveStatus(self, status):
+        # Only allow valid values
+        if status not in ('A', 'I', 'D', None):
+            raise cdr.Exception(
+                "Invalid status '%s' in ModifyDocs.Doc.setActiveStatus" %
+                 status)
+        self.activeStatus = status
 
     #------------------------------------------------------------------
     # Check out the CWD, last version, and last publishable version,
@@ -742,7 +769,7 @@ class Doc(object):
 
         # If (and only if) old version was valid, validate new version
         # cwdVal is array of error messages or empty array
-        if (_validate):
+        if _validate:
             self.cwdVals = cdr.valPair(self.session, self.cwd.type,
                                        self.cwd.xml, self.newCwdXml)
 
@@ -1018,7 +1045,8 @@ class Doc(object):
                               val = val,
                               verPublishable = pub,
                               reason = self.comment, comment = self.comment,
-                              showWarnings = 'Y')
+                              showWarnings = 'Y',
+                              activeStatus = self.activeStatus)
 
         # Response missing first element means save failed
         # Almost certainly caused by locked doc
