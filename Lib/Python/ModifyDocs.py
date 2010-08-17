@@ -240,6 +240,12 @@ class Job:
         self.__transformVER = True   # Transform CWD plus lastp and lastv
                                      # False = transform CWD only
 
+        # Control to change the active_status of all documents in this job
+        # Used for blocking docs, though could conceivably used for other
+        #   purposes.
+        # None = no change.
+        self.__docActiveStatus = None
+
         # Max docs to process, call setMaxDocs to use a lower number for
         #   debugging or to prevent runaways
         # To override, call Job.setMaxDocs() before calling run().
@@ -289,6 +295,17 @@ class Job:
     #------------------------------------------------------------------
     def setTransformVER(self, setting):
         self.__transformVER = setting
+
+    #------------------------------------------------------------------
+    # Setter to force all documents saved to have a particular active_status.
+    # Typically used for blocking documents.
+    #
+    # Call before calling job.run().
+    #
+    # See Doc.setActiveStatus() and Doc.__saveDoc().
+    #------------------------------------------------------------------
+    def setActiveStatus(self, setting):
+        self.__docActiveStatus = setting
 
     #------------------------------------------------------------------
     # Limit processing to no more than this number of docs
@@ -562,6 +579,12 @@ class Job:
                 # all versions needing transformation.
                 doc = Doc(docId, self.session, self.transform, self.comment,
                           self.__transformVER)
+
+                # If caller wants to change document status (e.g., block
+                #   all docs), signify that here.  Doc.__saveDoc() will
+                #   use this.
+                if self.__docActiveStatus is not None:
+                    doc.setActiveStatus(self.__docActiveStatus)
 
                 # Transforms are now complete and cached in memory
                 # saveChanges() writes whatever must be written to the
