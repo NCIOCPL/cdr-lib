@@ -7,569 +7,10 @@
 # Usage:
 #   import cdr
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.169  2009/07/31 15:40:32  venglisc
-# Modified comments to runCommand() per request.
-#
-# Revision 1.168  2009/07/31 15:00:52  venglisc
-# Modified runCommand() to add the Shell parameter to subprocess.  Without it
-# some of our programs were failing.  Also renamed the parameter osPopen to
-# returnNoneOnSuccess.
-#
-# Revision 1.167  2009/07/30 20:30:02  venglisc
-# Fixed renamed parameter values in runCommand().
-#
-# Revision 1.166  2009/07/27 18:02:59  venglisc
-# Combined the functions runCommand() and runCommand0() and kept
-# runCommand() for backward compatibility.
-#
-# Revision 1.165  2009/07/22 20:01:10  venglisc
-# Added runCommand0() to split the stdout and stderr output.  This will also
-# return 0 (instead of None) for a successful process.
-#
-# Revision 1.164  2009/07/22 01:27:30  ameyer
-# Assured correct unicode->utf-8 encoding for reason & comment in add/repDoc.
-#
-# Revision 1.163  2009/07/07 21:07:22  ameyer
-# Minor variable name change to last change to avoid programmer confusion.
-#
-# Revision 1.162  2009/07/07 21:03:22  ameyer
-# Changed filterDoc() to ensure that command sent to the host is utf-8
-# encoded.  This should work even if the filter is unicode - which the
-# old version of filterDoc() did not check.
-# Also changed multiple variable names in various parts of the code to
-# eliminate pychecker "... shadows builtin" warnings.
-#
-# Revision 1.161  2009/07/02 22:27:43  ameyer
-# Added optional parameter conn to getAllDocsRow().
-#
-# Revision 1.160  2009/07/02 21:09:18  ameyer
-# Added getAllDocsRow().
-#
-# Revision 1.159  2009/05/22 02:36:16  ameyer
-# Added updateTitle().
-#
-# Revision 1.158  2008/12/23 12:41:15  bkline
-# Added logClientEvent() function.
-#
-# Revision 1.157  2008/08/13 01:21:21  ameyer
-# Added a new optional parameter "stackTrace" to logwrite.  It produces a
-# stack trace even in the absence of an exception.
-#
-# Revision 1.156  2008/08/12 17:56:24  ameyer
-# Removed debug logging of dom processing failures in getErrors.  They are not
-# a real, production errors.
-#
-# Revision 1.155  2008/08/11 18:54:13  bkline
-# Added code to unescape valid values for document type.
-#
-# Revision 1.154  2008/08/05 14:49:02  venglisc
-# Modified DTD name to pdqCG.dtd.  The licensee DTD is going to be pdq.dtd
-# while the publishing DTD will be pdqCG.dtd. (Bug 4123)
-#
-# Revision 1.153  2008/08/01 22:15:14  venglisc
-# Added new function getBoardNames() to return all board names. (Bug 4207)
-#
-# Revision 1.152  2008/08/01 18:28:01  bkline
-# Rewrote calculateDateByOffset() to use datetime module.
-#
-# Revision 1.151  2008/08/01 17:07:46  bkline
-# Added new function calculateDateByOffset().
-#
-# Revision 1.150  2008/06/13 14:49:17  bkline
-# Made getErrors() return utf-8 strings when older version of function
-# did so; documented what we're doing.
-#
-# Revision 1.149  2008/06/06 20:16:04  bkline
-# Moved new errorLocators argument to the end of addDoc(), etc.
-#
-# Revision 1.148  2008/06/06 19:51:29  bkline
-# Moved new argument to setDocStatus to end; added comment argument
-# to unblockDoc().
-#
-# Revision 1.147  2008/06/06 19:17:54  bkline
-# Impvoved exception handling for getErrors(); added support for
-# comments in setDocStatus().
-#
-# Revision 1.146  2008/06/03 21:14:49  bkline
-# Cleaned up code to extract error information from the Err elements
-# returned in CDR server responses.  Replaced StandardError exceptions
-# with Exception objects, as StandardError will be removed from the
-# exception heirarchy at some point.
-#
-# Revision 1.145  2008/05/28 21:26:29  bkline
-# Added errorLocators parameter to valDoc().
-#
-# Revision 1.144  2008/02/25 15:32:52  bkline
-# Added optional bodyType parameter to sendMailMime(); added importEtree().
-#
-# Revision 1.143  2007/11/06 15:44:49  bkline
-# Fixed a problem with putGroup(): getGroup() returns [None] as the
-# list of doctypes connected with actions which are independent of
-# document types, which was causing the function to send None
-# as a document type.
-#
-# Revision 1.142  2007/08/22 01:01:42  venglisc
-# Added PUB_NAME parameter needed for More Frequent Publishing.
-#
-# Revision 1.141  2007/08/06 17:24:46  bkline
-# Added code to escape parameter values passed to cdr.filterDoc().
-#
-# Revision 1.140  2007/08/01 20:30:49  bkline
-# Added Mime support to sendEmail().
-#
-# Revision 1.139  2007/07/04 03:53:17  ameyer
-# Oops.  Another fix to checkOutDoc.
-#
-# Revision 1.137  2007/07/03 23:56:25  ameyer
-# Trivial change to Log.write() for better newline formatting on stderr writes.
-#
-# Revision 1.136  2007/06/22 04:41:24  ameyer
-# Added checkOutDoc command.  It invokes the server command CdrCheckOut.  I
-# cannot find any uses of that server command and am not sure yet that it
-# really works perfectly.
-#
-# Revision 1.135  2007/05/31 23:21:00  ameyer
-# Added strptime() wrapper for time.strptime().
-#
-# Revision 1.134  2007/05/09 18:26:15  venglisc
-# Moved the definition of PUBTYPES and PDQDTD from cdr2gk.py to this module.
-# PDQDTD has been renamed to DEFAULT_DTD because we are now able to pass
-# a parameter for the file name of the DTD.
-#
-# Revision 1.133  2007/03/15 22:12:38  venglisc
-# Adding OPERATOR as a new constant for the operator email address.
-#
-# Revision 1.132  2007/01/26 04:08:24  ameyer
-# Upgraded Log class: Can now request logging to file and stdout or stderr.
-# Revised banner management for greater clarity in the logfiles.
-#
-# Revision 1.131  2006/11/07 21:06:00  ameyer
-# Added exception handling to sendCommands to try to recover from connect errors.
-#
-# Revision 1.130  2006/10/25 16:04:38  bkline
-# Fixed typo in new Exception class.
-#
-# Revision 1.129  2006/10/25 16:03:33  bkline
-# Added Exception class, derived from standard class of same name.
-#
-# Revision 1.128  2006/10/20 16:29:30  venglisc
-# Removed the cdr. prefix from the new logwrite calls. (Bug 2231)
-#
-# Revision 1.127  2006/10/20 04:21:10  ameyer
-# Added logging of publishing job start.
-#
-# Revision 1.126  2006/10/06 02:43:01  ameyer
-# Modifications to CdrLink class, putLinkType, getLinkType to support
-# link target version type management.
-#
-# Revision 1.125  2006/09/01 04:02:51  ameyer
-# Updated addExternalMapping() for "bogus" and "mappable" parameters.
-#
-# Revision 1.124  2006/06/30 21:19:35  ameyer
-# Added getHostName().
-#
-# Revision 1.123  2006/05/04 21:08:53  ameyer
-# Modified filtering to support limits on document and filter update dates.
-# Allows publishing to freeze or even backdate the date/time of documents
-# to be filtered.  Host supports this by limiting date time of docs from
-# which denormalized data is extracted also - under publishing conditions.
-# Added comments too.
-#
-# Revision 1.122  2006/03/14 19:17:19  ameyer
-# Added Log class for enhanced logging.
-#
-# Revision 1.121  2005/12/28 15:55:44  bkline
-# Added function getEmailList().
-#
-# Revision 1.120  2005/12/27 23:30:15  ameyer
-# Modified getTextContent() to support recursive retrieval.
-#
-# Revision 1.119  2005/12/23 01:45:40  ameyer
-# Fixed bug in new function getCWDDate().
-#
-# Revision 1.118  2005/12/16 04:50:44  ameyer
-# Added getCWDDate().
-#
-# Revision 1.117  2005/11/03 15:25:55  bkline
-# Renamed manifest file.
-#
-# Revision 1.116  2005/08/15 21:03:03  ameyer
-# Bug fix in valPair.
-#
-# Revision 1.115  2005/08/05 03:09:20  ameyer
-# Modified valDoc to accept naked XML, or XML as CDATA wrapped in a CdrDoc.
-#
-# Revision 1.114  2005/08/03 03:48:11  ameyer
-# Added new functions: makeCdrDocXml(), deDupErrs().
-# Made previously untested valPair() function work.
-#
-# Revision 1.113  2005/08/02 20:14:40  ameyer
-# Fixed bug in still unused valPair() function.
-#
-# Revision 1.112  2005/07/02 12:20:06  bkline
-# Sped up StringSink class by two orders of magnitude.
-#
-# Revision 1.111  2005/07/01 00:33:36  ameyer
-# Enhanced create/remove lock files to avoid possible conflicts.
-#
-# Revision 1.110  2005/06/30 23:12:32  ameyer
-# Added createLockFile / removeLockFile.
-#
-# Revision 1.109  2005/06/21 23:48:11  ameyer
-# Added valPair for future use in global change.
-#
-# Revision 1.108  2005/06/02 21:55:03  venglisc
-# Removed getEmail module that was added in previous version since it did
-# already exist.  Corrected the existing getEmail() module to work
-# as designed. (Bug 1664)
-#
-# Revision 1.107  2005/05/13 22:45:59  venglisc
-# Added module to select the email address based on the session ID.
-#
-# Revision 1.106  2005/05/03 23:32:20  ameyer
-# Converted output of diffXmlDocs to utf-8.
-#
-# Revision 1.105  2005/04/26 21:42:31  ameyer
-# Modified unlock to normalize its doc id input.  It now accepts ids
-# in any form and converts them to canonical "CDR##########".
-#
-# Revision 1.104  2005/04/18 22:13:37  bkline
-# Added named strings for client file location and manifest.
-#
-# Revision 1.103  2005/03/03 14:03:22  bkline
-# New function emailerCgi() added.
-#
-# Revision 1.102  2005/03/03 13:57:10  bkline
-# Moved determination of emailer host to cdr module.
-#
-# Revision 1.101  2004/11/29 19:55:23  bkline
-# Added getPublicationFilename() method to Doc class; added function
-# getVersionedBlobChangeDate().  Added optimization to compareXmlDocs().
-#
-# Revision 1.100  2004/11/17 02:11:10  ameyer
-# Added blob functionality to addDoc and repDoc using the common subroutine,
-# _addDocBlob().
-# Also beefed up the addDoc and (by reference) the repDoc documentation.
-#
-# Revision 1.99  2004/11/05 05:54:35  ameyer
-# Modified getDoc() to retrieve xml and/or blob, with default to xml only.
-# Currently returning blob as base64.  Will probably change this later.
-#
-# Revision 1.98  2004/11/05 05:16:52  ameyer
-# Added some new support for blobs, including zero length blobs (indicating
-# that a blob should be deleted/dissociated from a document).
-# Added makeDocBlob() function.
-# Added some documentation to the Doc class.
-#
-# Revision 1.97  2004/10/14 22:05:20  ameyer
-# If sendMail fails, log the error message as well as return it.
-#
-# Revision 1.96  2004/09/21 20:35:58  ameyer
-# Changes to new diffXmlDoc() function and subroutines - supporting output
-# of entire doc with changes in context, or differences only.
-#
-# Revision 1.95  2004/09/15 03:14:36  ameyer
-# Changed getCDATA() to accept docs with no CDATA, returning them unmodified.
-#
-# Revision 1.94  2004/09/15 01:02:58  ameyer
-# Added stripBlankLines() and diffXmlDocs().
-#
-# Revision 1.93  2004/08/27 13:47:46  bkline
-# Added document status functions.
-#
-# Revision 1.92  2004/08/11 17:54:07  bkline
-# Added new function addExternalMapping().
-#
-# Revision 1.91  2004/07/08 19:03:44  bkline
-# Made logwrite() a little more bulletproof by ignoring all exceptions,
-# not just the ones we expect.
-#
-# Revision 1.90  2004/06/30 20:44:56  ameyer
-# Added new cacheInit() function.
-#
-# Revision 1.89  2004/05/17 16:17:37  bkline
-# Modified getTextContent() to accomodate change in the parser's handling
-# of CDATA sections.
-#
-# Revision 1.88  2004/05/17 15:21:11  bkline
-# Added function getEmail().
-#
-# Revision 1.87  2004/05/06 18:40:47  ameyer
-# Changed getPubPort to check for env var first, then default and batch
-# pub ports.  Also checking to be sure there is a CdrServer listening on
-# any port before returning it.
-#
-# Revision 1.86  2004/04/02 17:06:54  bkline
-# Added (and used) new function _addRepDocActiveStatus().
-#
-# Revision 1.85  2004/03/31 13:29:04  bkline
-# Made _addRepDocComment() function more robust in the face of unusual
-# conditions.
-#
-# Revision 1.84  2004/02/26 21:03:40  bkline
-# Expanded, generalized support for dynamic discovery of host name.
-#
-# Revision 1.83  2004/02/03 15:38:21  bkline
-# Plugged in cgitb debugging help.
-#
-# Revision 1.82  2003/12/19 22:07:39  ameyer
-# Added utf-8 encoding of filterDoc doc and parameters, in case of need.
-#
-# Revision 1.81  2003/11/04 17:00:18  bkline
-# Added check to getErrors() to make sure we were passed a string.
-#
-# Revision 1.80  2003/11/04 16:55:54  bkline
-# Fixed bug in regular expression to extract <Err> content.  Added
-# option for extracting error strings as a sequence.
-#
-# Revision 1.78  2003/08/26 17:36:26  bkline
-# Added new functions expandFilterSet() and expandFilterSets().
-#
-# Revision 1.77  2003/08/21 19:27:02  bkline
-# Added functions for normalizing and comparing XML for CDR documents;
-# added code to do XML escaping of character entities in control
-# elements of Doc class when serializing.
-#
-# Revision 1.76  2003/07/29 13:02:03  bkline
-# Added function to retrieve lists of valid values.  Changed CVSROOT
-# to point to verdi.
-#
-# Revision 1.75  2003/04/26 16:32:36  bkline
-# Eliminated assumptions about encoding for Doc class.
-#
-# Revision 1.74  2003/04/25 20:26:40  ameyer
-# Added line each to addDoc, repDoc to ensure unicode->utf-8 encoding.
-#
-# Revision 1.73  2003/03/14 01:35:03  bkline
-# Suppressed version attribute for filter in filterDoc() when version is
-# empty.
-#
-# Revision 1.72  2003/02/24 21:18:35  bkline
-# Added version attribute to Filter element.
-#
-# Revision 1.71  2003/02/10 17:21:40  bkline
-# Added function mailerCleanup().
-#
-# Revision 1.70  2003/01/31 01:00:04  ameyer
-# Modified _sysValue to distinguish between null value and "".
-#
-# Revision 1.69  2003/01/31 00:08:20  ameyer
-# Added functions to add/replace/delete/get values in server sys_value table.
-#
-# Revision 1.68  2002/12/05 18:33:39  bkline
-# Fixed some ternary logic syntax in the publish() command.
-#
-# Revision 1.67  2002/11/22 14:40:48  bkline
-# Removed superfluous space before body in sendMail().
-#
-# Revision 1.66  2002/11/13 20:36:05  bkline
-# Plugged in filter set mechanism for filterDoc().
-#
-# Revision 1.65  2002/11/13 16:57:54  bkline
-# Added delFilterSet().
-#
-# Revision 1.64  2002/11/12 11:43:57  bkline
-# Added filter set support.
-#
-# Revision 1.63  2002/10/29 21:00:16  pzhang
-# Added allowInActive parameter to publish() to handle Hotfix-Remove.
-#
-# Revision 1.62  2002/10/24 19:57:19  ameyer
-# Fixed bug in getQueryTermValueForId().
-#
-# Revision 1.61  2002/10/23 02:32:12  ameyer
-# Made getQueryTermValueForId() return single sequence.
-#
-# Revision 1.60  2002/10/23 02:21:55  ameyer
-# Added getQueryTermValueForId()
-#
-# Revision 1.59  2002/10/04 00:41:14  ameyer
-# Enhanced logwrite to accept tuple or list.
-#
-# Revision 1.58  2002/10/01 21:29:21  ameyer
-# Added parameter allowNonPub to publish().  Passes it to the server to
-# allow the publishing system to publish documents not marked publishable.
-# Fixed parameter error in call to traceback.print_exc().
-#
-# Revision 1.57  2002/09/19 18:04:24  ameyer
-# Added check/convert for unicode comments in _addDocComment.
-# Changed print_tb to print_exc to get more info in traceback log.
-#
-# Revision 1.56  2002/09/18 18:56:48  ameyer
-# Fixed misspelling in comment.
-#
-# Revision 1.55  2002/09/18 18:28:43  ameyer
-# Added traceback capability to logwrite.
-#
-# Revision 1.54  2002/09/15 16:58:53  bkline
-# Replaced mmdb2 with mahler for CVS server name macro.
-#
-# Revision 1.53  2002/09/13 02:36:03  ameyer
-# Fixed bug in valDoc, wrong attribute spelling.
-#
-# Revision 1.52  2002/09/12 20:59:26  bkline
-# Added missing import for tempfile package.
-#
-# Revision 1.51  2002/09/12 20:47:49  bkline
-# Added makeTempDir() function.
-#
-# Revision 1.50  2002/09/12 20:20:06  bkline
-# Added runCommand function and accompanying CommandResult class.
-#
-# Revision 1.49  2002/09/12 00:46:14  bkline
-# Added URDATE for final PDQ to CDR conversion of documents.
-#
-# Revision 1.48  2002/09/05 16:30:05  pzhang
-# Added getPubPort().
-#
-# Revision 1.47  2002/09/02 00:37:22  bkline
-# Added CVSROOT and PROD_HOST.
-#
-# Revision 1.46  2002/08/16 03:13:23  ameyer
-# Added comment parameter to addDoc and repDoc.
-# Added optional html formatting to sendMail.
-# Made a number of trivial changes to reduce the number of warning messages
-# produced by pychecker.
-#
-# Revision 1.45  2002/08/15 23:35:32  ameyer
-# Added html parameter to sendMail.
-# Made a number of trivial revisions to silence pychecker warnings.
-#
-# Revision 1.44  2002/07/31 05:03:11  ameyer
-# Fixed idSessionUser.
-#
-# Revision 1.43  2002/07/25 17:21:30  bkline
-# Added comment about the reason argument in addDoc/repDoc.
-#
-# Revision 1.42  2002/07/24 02:40:38  bkline
-# Added PERL constant.
-#
-# Revision 1.41  2002/07/16 14:26:51  ameyer
-# Added process id to logwrite, and changed format of message header.
-#
-# Revision 1.40  2002/07/11 21:04:31  ameyer
-# Added date/time stamp to logwrite.
-#
-# Revision 1.39  2002/07/11 14:52:26  ameyer
-# Added logwrite function.
-#
-# Revision 1.38  2002/07/05 20:55:04  bkline
-# Added reindex() command.
-#
-# Revision 1.37  2002/07/02 23:49:21  ameyer
-# Added extended cdr id normalizer exNormalize().
-#
-# Revision 1.36  2002/07/01 21:39:59  bkline
-# Corrected filter to Filter in getDoctypes().
-#
-# Revision 1.35  2002/06/26 02:24:58  ameyer
-# Added lastVersions().
-#
-# Revision 1.34  2002/06/18 22:19:16  ameyer
-# Added canDo() to check authorization to do something.
-#
-# Revision 1.33  2002/06/08 02:02:35  bkline
-# Added getCssFiles() (and changed some .* patterns to .*?).
-#
-# Revision 1.32  2002/05/14 12:56:55  bkline
-# Added listVersions() function.
-#
-# Revision 1.31  2002/04/16 21:10:24  bkline
-# Added missing %s argument in publish().
-#
-# Revision 1.30  2002/04/09 21:02:23  bkline
-# Fixed typo in addDoc and repDoc (missing : after else).
-#
-# Revision 1.29  2002/04/09 20:19:53  bkline
-# Modified addDoc() and repDoc to optionally return a tuple with the
-# document ID string and any warnings.
-#
-# Revision 1.28  2002/04/02 20:03:17  bkline
-# Added stub for pubStatus command; added docTime parameter to publish().
-#
-# Revision 1.27  2002/04/02 14:30:13  bkline
-# Added publish command.
-#
-# Revision 1.26  2002/03/19 00:33:06  bkline
-# Added validateOnly parameter to valDoc().
-#
-# Revision 1.25  2002/03/04 15:04:53  bkline
-# Replaced verAttr with qual in filterDoc().
-#
-# Revision 1.24  2002/03/01 22:20:21  bkline
-# Added docDate parameter to filterDoc() function.
-#
-# Revision 1.23  2002/02/27 20:27:08  bkline
-# Removed extra logout function definition.
-#
-# Revision 1.22  2002/02/19 23:16:51  ameyer
-# Eliminated SCRIPTS.  Now using BASEDIR - pointing to a more generic place.
-#
-# Revision 1.21  2002/02/19 22:09:40  bkline
-# Added docVer parameter to filterDoc().
-#
-# Revision 1.20  2002/02/19 18:37:50  bkline
-# Preserved docId passed to filterDoc if string.
-#
-# Revision 1.19  2002/02/15 06:56:31  ameyer
-# Modified putLinkType to detect add/modify transactions in a different
-# way.
-#
-# Revision 1.18  2002/02/14 21:42:14  mruben
-# Fixed log comment [bkline for mruben].
-#
-# Revision 1.17  2002/02/14 21:25:49  mruben
-# Added no_output option to filterDoc() [committed by RMK].
-#
-# Revision 1.16  2002/02/06 13:38:20  bkline
-# Fixed definition of SCRIPTS.
-#
-# Revision 1.15  2002/01/31 21:39:26  bkline
-# Exposed ability to pass a filter directly in memory as XML doc string.
-#
-# Revision 1.14  2002/01/22 22:30:59  bkline
-# Added depth argument to getTree() function.
-#
-# Revision 1.13  2001/12/24 19:35:04  bkline
-# Added valDoc function.
-#
-# Revision 1.12  2001/12/19 20:23:18  bkline
-# Added options to doc save commands; added email support; added unlock()
-# function.
-#
-# Revision 1.11  2001/10/04 14:34:49  bkline
-# Added delDoc() function.
-#
-# Revision 1.10  2001/09/27 19:15:45  bkline
-# Added constants for PYTHON and SCRIPTS.
-#
-# Revision 1.9  2001/09/17 16:08:39  bkline
-# Fixed bug in filterDoc (added missing "</Parm>" tag.
-#
-# Revision 1.8  2001/08/08 18:23:49  mruben
-# improved interface to CdrFilter
-#
-# Revision 1.7  2001/07/31 17:23:07  bkline
-# Added versioning flag to addDoc() and repDoc() functions.
-#
-# Revision 1.6  2001/06/13 22:37:17  bkline
-# Added DOM support.  Added QueryResult and Doc classes.  Added support
-# for commands to manipulate the query_term_def table.
-#
-# Revision 1.5  2001/05/18 19:19:06  bkline
-# Added routines for link management, schema documents, and adding
-# document types.
-#
-# Revision 1.4  2001/05/03 20:17:11  bkline
-# Stub versions of link command wrappers added.
-#
-# Revision 1.3  2001/04/08 22:50:06  bkline
-# Replaced getTerm implementation with version that uses results from
-# stored procedure.
-#
-# Revision 1.2  2001/04/08 16:31:53  bkline
-# Added report, search, doctype, and term tree support.
+# BZIssue::1664
+# BZIssue::2231
+# BZIssue::4123
+# BZIssue::4207
 #
 #----------------------------------------------------------------------
 
@@ -5004,3 +4445,189 @@ def logClientEvent(session, desc, host = DEFAULT_HOST, port = DEFAULT_PORT):
     if not match:
         raise Exception(u"malformed response: %s" % resp)
     return int(match.group(1))
+
+#----------------------------------------------------------------------
+# Support for finding trials having certain statuses at any point in
+# time for a specified time period.  Used more frequently than you
+# might think!
+#----------------------------------------------------------------------
+class ProtocolStatusHistory:
+    """
+    Represents laboriously assembled evolution of an InScopeProtocol's
+    overall status.
+    """
+
+    # When Lakshmi says "active trials" she (almost) always means
+    # "trials with overall status of 'Active' or 'Approved-not yet active'".
+    activeStatuses = set(['Active', 'Approved-not yet active'])
+
+    # When not all of the lead organizations for a trial have the
+    # same protocol status at a given moment in time, this is the
+    # order in which the protocol's overall status is selected from
+    # those present in the set of lead org protocol statuses.
+    statusPrecedence = ('Active', 'Temporarily closed', 'Closed',
+                        'Approved-not yet active')
+
+    class Status:
+        "Protocol status for a given range of dates."
+        def __init__(self, status, startDate = None):
+            self.endDate = None
+            if isinstance(status, basestring):
+                self.name = status
+                self.startDate = startDate
+            else:
+                self.name = self.startDate = None
+                for child in status:
+                    if child.tag == 'StatusName':
+                        self.name = child.text
+                    elif child.tag == 'StatusDate':
+                        self.startDate = child.text
+        def __cmp__(self, other):
+            diff = cmp(self.startDate, other.startDate)
+            if diff:
+                return diff
+            return cmp(self.endDate, other.endDate)
+
+    class LeadOrg:
+        """
+        Lead organization for a protocol, with all its status history.
+        Note that we don't need the status sequence sorted, nor do we
+        need to have the end dates filled in.  We'll do that for the
+        sequence we create for the overall statuses of the protocol
+        itself.
+        """
+        statusTags = set(['PreviousOrgStatus', 'CurrentOrgStatus'])
+        def __init__(self, node):
+            self.statuses = []
+            for child in node.findall('LeadOrgProtocolStatuses'):
+                for grandchild in child:
+                    if grandchild.tag in self.statusTags:
+                        status = ProtocolStatusHistory.Status(grandchild)
+                        if status.name and status.startDate:
+                            self.statuses.append(status)
+
+    def __init__(self, doc):
+        """
+        This is a moderately tricky piece of code.  We're trying to assemble
+        the information we need in order to answer the question "What was
+        the status of this protocol at any given point in time?"  In order
+        to do this we must first assemble the sequence of status values
+        each lead organization had for the protocol every time the
+        organization changed that value.  Then we assemble all of the
+        unique dates on which any of the organizations changed its
+        status value for the protocol.  Then we need to determine, for
+        each of those dates, what the status value was for each of
+        the lead organizations.  We do this be creating an array of
+        status value strings, one string for each lead organization
+        found in the protocol document.  We initialize each string
+        in the array to an empty string, and the string for a given
+        lead organization will remain empty until the first date on
+        which a value was found associated with that organization.
+        Then for each date we apply the logic for determining what
+        the overall status value for the protocol is based on the
+        combinations of values held by the lead organizations at that
+        point in time.  See the getProtocolStatus() method for a
+        description of this logic.
+
+        The constructor accepts either a parsed XML tree object
+        (as created by the lxml.etree package) or a Unicode or
+        utf-8 string serialization of the CDR InScopeProtocol
+        document.
+        """
+
+        #-------------------------------------------------------------------
+        # Parse the document if that hasn't already been done.
+        #-------------------------------------------------------------------
+        if isinstance(doc, basestring):
+            import lxml.etree as etree
+            if type(doc) is str:
+                tree = etree.XML(doc)
+            else:
+                tree = etree.XML(doc.encode('utf-8'))
+        else:
+            tree = doc
+
+        #-------------------------------------------------------------------
+        # Assemble a sequence of the lead organization histories for the
+        # trial.
+        #-------------------------------------------------------------------
+        leadOrgs = []
+        for node in tree.findall('ProtocolAdminInfo/ProtocolLeadOrg'):
+            leadOrgs.append(ProtocolStatusHistory.LeadOrg(node))
+
+        #-------------------------------------------------------------------
+        # Create a dictionary of the unique dates on which one or more
+        # lead organizations changed its status for the protocol.  The
+        # keys for the dictionary are the strings for these dates.  The
+        # values are lists of tuples with the index position of the lead 
+        # org in the leadOrgs array and the status the lead org assigned 
+        # to the protocol on the date for this list of tuples.
+        #-------------------------------------------------------------------
+        statusesByDate = {}
+        for i, leadOrg in enumerate(leadOrgs):
+            for orgStatus in leadOrg.statuses:
+                val = (i, orgStatus.name)
+                statusesByDate.setdefault(orgStatus.startDate, []).append(val)
+        startDates = statusesByDate.keys()
+        startDates.sort()
+
+        #-------------------------------------------------------------------
+        # Create an array of status values, one for each lead organization.
+        # We will simulate a walk through time, updating the the values
+        # in this array at each point in time when one or more lead org
+        # changed its status for the protocol, and then determining what
+        # the overall status was at that point in time for the protocol.
+        # As we go along, the start date for each node in the array except
+        # the first is used as the end date for the previous node in the
+        # array.
+        #-------------------------------------------------------------------
+        orgStatuses = [''] * len(leadOrgs)
+        self.statuses = []
+        for startDate in startDates:
+            for i, orgStatus in statusesByDate[startDate]:
+                orgStatuses[i] = orgStatus
+            protStatus = ProtocolStatusHistory.getProtocolStatus(orgStatuses)
+            if self.statuses:
+                self.statuses[-1].endDate = startDate
+            self.statuses.append(self.Status(protStatus, startDate))
+
+        #-------------------------------------------------------------------
+        # Fill in the endDate member of the protocol's last Status object.
+        #-------------------------------------------------------------------
+        if self.statuses:
+            self.statuses[-1].endDate = time.strftime("%Y-%m-%d")
+
+    def hadStatus(self, statusSet, startDate, endDate = '2099-12-31'):
+        """
+        Answers the question "Did this protocol ever have any of the
+        specified statuses at any time between a specified range of
+        dates?"
+        """
+        for status in self.statuses:
+            if status.endDate >= startDate:
+                if status.startDate <= endDate:
+                    if status.name in statusSet:
+                        return True
+        return False
+
+    def wasActive(self, startDate, endDate = '2099-12-31'):
+        return self.hadStatus(self.activeStatuses, startDate, endDate)
+
+    @staticmethod
+    def getProtocolStatus(statuses):
+        """
+        If all of the lead organizations have the same status value for
+        a protocol on a given date, then that value is used as the overall
+        status for the protocol.  Otherwise a prioritized list of values
+        is tested in order, and the first value in that list which is
+        present for any of the lead organizations is used as the value
+        for the protocol's overall status.  If none of the values in the
+        prioritized list is found, then an empty string is returned.
+        """
+        statusSet = set([s.upper() for s in statuses])
+        if len(statusSet) == 1:
+            return statuses[0]
+        for value in ProtocolStatusHistory.statusPrecedence:
+            if value.upper() in statusSet:
+                return value
+        return ""
