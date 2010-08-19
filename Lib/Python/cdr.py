@@ -4465,11 +4465,20 @@ class ProtocolStatusHistory:
     # same protocol status at a given moment in time, this is the
     # order in which the protocol's overall status is selected from
     # those present in the set of lead org protocol statuses.
+    # I'm aware that this is an incomplete list of protocol status
+    # values; when we asked the users what we should do if none
+    # of these values is found, we never got past the "that can't
+    # happen" response.
     statusPrecedence = ('Active', 'Temporarily closed', 'Closed',
                         'Approved-not yet active')
 
     class Status:
-        "Protocol status for a given range of dates."
+        """
+        Protocol status for a given range of dates.  Can be invoked
+        with strings for a status value and the effective date for
+        the status, or with just one argument for a node in the
+        parsed tree for the XML document.
+        """
         def __init__(self, status, startDate = None):
             self.endDate = None
             if isinstance(status, basestring):
@@ -4482,11 +4491,6 @@ class ProtocolStatusHistory:
                         self.name = child.text
                     elif child.tag == 'StatusDate':
                         self.startDate = child.text
-        def __cmp__(self, other):
-            diff = cmp(self.startDate, other.startDate)
-            if diff:
-                return diff
-            return cmp(self.endDate, other.endDate)
 
     class LeadOrg:
         """
@@ -4597,7 +4601,7 @@ class ProtocolStatusHistory:
         if self.statuses:
             self.statuses[-1].endDate = time.strftime("%Y-%m-%d")
 
-    def hadStatus(self, statusSet, startDate, endDate = '2099-12-31'):
+    def hadStatus(self, statusSet, startDate, endDate = '9999-12-31'):
         """
         Answers the question "Did this protocol ever have any of the
         specified statuses at any time between a specified range of
@@ -4610,7 +4614,7 @@ class ProtocolStatusHistory:
                         return True
         return False
 
-    def wasActive(self, startDate, endDate = '2099-12-31'):
+    def wasActive(self, startDate, endDate = '9999-12-31'):
         return self.hadStatus(self.activeStatuses, startDate, endDate)
 
     @staticmethod
