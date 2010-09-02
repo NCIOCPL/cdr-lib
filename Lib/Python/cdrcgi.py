@@ -4,7 +4,7 @@
 #
 # Common routines for creating CDR web forms.
 #
-# BZIssue::4653 CTRO Access to CDR Admin 
+# BZIssue::4653 CTRO Access to CDR Admin
 #
 # $Log: not supported by cvs2svn $
 # Revision 1.72  2009/03/24 14:32:52  bkline
@@ -573,7 +573,8 @@ def mainMenu(session, news = None):
         # -------------------------------
         userInfo = cdr.getUser((userPair[0], userPair[1]), userPair[0])
     except:
-        cdrcgi.bail('Unable identifying permissions for user')
+        bail('Unable to identify permissions for user. '
+             'Has your session timed out?')
 
     # Creating a menu for users with only GUEST permission and one
     # for all others
