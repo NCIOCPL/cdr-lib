@@ -300,6 +300,34 @@ def strptime(str, format):
     return tm
 
 #----------------------------------------------------------------------
+# Report elapsed time.
+#----------------------------------------------------------------------
+def getElapsed(startSecs, endSecs=None):
+    """
+    Human readable report of time between two points.
+    This is taken from Bob's original in CdrLongReports.py.
+
+    Pass:
+        startSecs - Starting time from time.time().
+        endSecs   - Ending time, use now if None.
+
+    Return:
+        String of "HH:MM:SS"
+    """
+    if endSecs is None:
+        endSecs = time.time()
+
+    # Convert to hours, minutes, seconds
+    delta = endSecs - startSecs
+    secs  = delta % 60
+    delta /= 60
+    mins  = delta % 60
+    hours = delta / 60
+
+    return "%02d:%02d:%02d" % (hours, mins, secs)
+
+
+#----------------------------------------------------------------------
 # Information about an error returned by the CDR server API.  Provides
 # access to the new attributes attached to some Err elements.  As of
 # this writing, only the CDR commands involving validation assign
@@ -1340,6 +1368,118 @@ def getDoc(credentials, docId, checkout = 'N', version = "Current",
     doc = extract("(<CdrDoc[>\s].*</CdrDoc>)", resp)
     if doc.startswith("<Errors") or not getObject: return doc
     return Doc(doc, encoding = 'utf-8')
+
+
+#----------------------------------------------------------------------
+# Determine if a document is checked out without retrieving it
+#----------------------------------------------------------------------
+class lockedDoc(object):
+    """
+    Container object for information about the checkout status of a doc.
+    """
+    def __init__(self, userId, userAbbrev, userFullName,
+                 docId, docVersion, docType, docTitle, dateOut):
+        self.__userId       = userId
+        self.__userAbbrev   = userAbbrev
+        self.__userFullName = userFullName
+        self.__docId        = docId
+        self.__docVersion   = docVersion
+        self.__docType      = docType
+        self.__docTitle     = docTitle
+        self.__dateOut      = dateOut
+
+    # Read-only property accessors
+    def getUserId(self): return self.__userId
+    userId = property(getUserId)
+
+    def getUserAbbrev(self): return self.__userAbbrev
+    userAbbrev = property(getUserAbbrev)
+
+    def getUserFullName(self): return self.__userFullName
+    userFullName = property(getUserFullName)
+
+    def getDocId(self): return self.__docId
+    docId = property(getDocId)
+
+    def getDocType(self): return self.__docType
+    docType = property(getDocType)
+
+    def getDocTitle(self):
+        # Conversion for use in log files and messages
+        if type(self.__docTitle) == type(u""):
+            return self.__docTitle.encode('ascii', 'replace')
+        return self.__docTitle
+    docTitle = property(getDocTitle)
+
+    def getDateOut(self): return self.__dateOut
+    dateOut = property(getDateOut)
+
+    def __str__(self):
+        """ Human readable form """
+        s = \
+"""       docId: %s
+     docType: %s
+    docTitle: %s
+  docVersion: %s
+      userId: %s
+  userAbbrev: %s
+userFullName: %s
+     dateOut: %s""" % (self.__docId, self.__docType, self.__docTitle,
+     self.__docVersion, self.__userId, self.__userAbbrev,
+     self.userFullName, self.dateOut)
+
+        return s
+
+
+def isCheckedOut(docId, conn=None):
+    """
+    Determine if a document is checked out.
+
+    Pass:
+        docId - Doc ID, any exNormal'izable format.
+        conn  - Optional connection object, to optimize many checks in a row
+
+    Return:
+        If locked: returns a lockedDoc object.
+        Else: returns None
+    """
+    # DB connection
+    if not conn:
+        conn = cdrdb.connect()
+    cursor = conn.cursor()
+
+    # Normalize id
+    docId = exNormalize(docId)[1]
+
+    # Data for lockedDoc object
+    try:
+        cursor.execute("""
+        SELECT d.id, d.title, t.name,
+               c.usr, c.version, c.dt_out, u.name, u.fullname
+          FROM document d
+          JOIN doc_type t on d.doc_type = t.id
+          JOIN checkout c on d.id = c.id
+          JOIN usr      u on c.usr = u.id
+         WHERE c.id = ?
+           AND c.dt_in IS NULL
+        """, docId)
+
+        row = cursor.fetchone()
+
+        cursor.close()
+    except cdrdb.Error, info:
+        raise Exception("Database error in isCheckedOut. docId=%d:\n%s" %
+                             (docId, str(info)))
+
+    # No hits means not checked out
+    if row is None:
+        return None
+
+    # Else return full info
+    lockObj = lockedDoc(row[3], row[6], row[7], row[0], row[4], row[2],
+                        row[1], row[5])
+    return lockObj
+
 
 #----------------------------------------------------------------------
 # Checkout a document without retrieving it
@@ -3576,7 +3716,7 @@ class CommandResult:
 #----------------------------------------------------------------------
 # Run an external command.
 # The os.popen is depricated and replaced by the subprocess method.
-# Note:  The return code is now 0 for a process without error and the 
+# Note:  The return code is now 0 for a process without error and the
 #        stdout and stderr output is split into output and error.
 #----------------------------------------------------------------------
 def runCommand(command, joinErr2Out = True, returnNoneOnSuccess = True):
@@ -3593,7 +3733,7 @@ def runCommand(command, joinErr2Out = True, returnNoneOnSuccess = True):
                       This parameter, when true (for downward compatibility)
                       pipes both, stdout and stderr to stdout.
                       Otherwise stdout and stderr are split.
-        returnNoneOnSuccess     
+        returnNoneOnSuccess
                     - optional value, default TRUE
                       This parameter, when true (for downward compatibility)
                       returns 'None' as a successful returncode.
@@ -3626,11 +3766,11 @@ def runCommand(command, joinErr2Out = True, returnNoneOnSuccess = True):
             if returnNoneOnSuccess and code == 0:
                 return CommandResult(None, output)
         except Exception, info:
-            return("failure running command: %s\n%s" % (command, str(info)))
+            logwrite("failure running command: %s\n%s" % (command, str(info)))
     else:
         try:
             commandStream = subprocess.Popen(command, shell = True,
-                                             stdout = subprocess.PIPE, 
+                                             stdout = subprocess.PIPE,
                                              stderr = subprocess.PIPE)
             output, error = commandStream.communicate()
             code = commandStream.returncode
@@ -3641,7 +3781,7 @@ def runCommand(command, joinErr2Out = True, returnNoneOnSuccess = True):
             if returnNoneOnSuccess and code == 0:
                 return CommandResult(None, output, error)
         except Exception, info:
-            debugLog("failure running command: %s\n%s" % (command, str(info)))
+            logwrite("failure running command: %s\n%s" % (command, str(info)))
 
     return CommandResult(code, output, error)
 
@@ -4563,8 +4703,8 @@ class ProtocolStatusHistory:
         # Create a dictionary of the unique dates on which one or more
         # lead organizations changed its status for the protocol.  The
         # keys for the dictionary are the strings for these dates.  The
-        # values are lists of tuples with the index position of the lead 
-        # org in the leadOrgs array and the status the lead org assigned 
+        # values are lists of tuples with the index position of the lead
+        # org in the leadOrgs array and the status the lead org assigned
         # to the protocol on the date for this list of tuples.
         #-------------------------------------------------------------------
         statusesByDate = {}
