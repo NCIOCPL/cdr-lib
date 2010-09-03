@@ -148,7 +148,7 @@ def setMaxErrors(maxErrs):
 #----------------------------------------------------------------------
 _testMode    = True   # True=Output to files only, not database
 _outputDir   = None   # Files go in this directory
-_validate    = False  # True=Check that change didn't invalidate valid doc
+_validate    = True   # True=Check that change didn't invalidate valid doc
 _noSaveOnErr = False  # True=Don't save any doc if change invalidate a version
 
 #----------------------------------------------------------------------
@@ -184,7 +184,7 @@ class Job:
     The main class for global changes.
     """
     def __init__(self, uid, pwd, filter, transform, comment, testMode=True,
-                 logFile=LOGFILE, validate=False, haltOnValErr=False):
+                 logFile=LOGFILE, validate=True, haltOnValErr=False):
         """
         Create a new one-off job to apply a custom modification to
         a group of CDR documents.
@@ -530,6 +530,52 @@ class Job:
         return None
 
     #------------------------------------------------------------------
+    # Check for locked documents
+    #------------------------------------------------------------------
+    def checkLocks(self):
+        """
+        Check each document selected for the global.
+        Report any that are locked to the logfile and standard out.
+
+        Typical usage:
+            if job.checkLocks() != 0:
+                job.log("Documents were locked.  See log file.  Exiting.")
+                sys.exit(1)
+
+        Return:
+            Count of currently locked docs.  0 if none.
+        """
+        # Begin logging
+        self.log("\nChecking document locks for global change:\n%s" %
+                  self.comment)
+
+        idList = self.filter.getDocIds()
+        totalCount  = len(idList)
+        lockedCount = 0
+
+        for docId in idList:
+            lockObj = cdr.isCheckedOut(docId)
+            if lockObj:
+                # Report and count each one
+                msg = "Locked %7s: %s: %s\n" % \
+                      (lockObj.docId, lockObj.docType, lockObj.docTitle)
+                msg += "            by: %s Since: %s" % \
+                      (lockObj.userFullName, lockObj.dateOut)
+                self.log(msg)
+                lockedCount += 1
+
+        # Report summary
+
+        msg = """Checkout summary:
+            Total documents processed: %5d
+      Total currently locked by users: %5d
+      Total unlocked, okay for global: %5d
+""" % (totalCount, lockedCount, totalCount - lockedCount)
+        self.log(msg)
+
+        return lockedCount
+
+    #------------------------------------------------------------------
     # Run a transformation.
     #
     # Create the job, set any desired post constructor settings,
@@ -543,6 +589,9 @@ class Job:
             self.createOutputDir()
         else:
             self.log("Running in real mode.  Updating the database")
+
+        # For reporting time
+        startTime = time.time()
 
         # Get docs
         ids = self.filter.getDocIds()
@@ -558,22 +607,38 @@ class Job:
                                                            self.comment))
         self.__countDocsSelected = len(ids)
 
+
         # Change all docs
         logger = self
         for docId in ids:
             lockedDoc = True
             try:
-                # We're now reporting blocked doc info in the log
-                docStatus = cdr.getDocStatus("guest", docId)
-                if docStatus == u"I":
-                    dstat = " (BLOCKED)"
-                else:
-                    dstat = ""
+                # Need this info for logging
+                # Getting it again in Doc constructor, but it's cheap,
+                #   cached in the DB, and offers less disturbance to
+                #   existing division of labor to fetch it twice
+                # XXX might just pass it in
+                # XXX might pass in reference to job and put it in self
+                (lastAny, lastPub, changedYN) = \
+                    cdr.lastVersions('guest', "CDR%010d" % docId)
+
+                # Log doc ID, active status, version info
+                # Format of version info is:
+                #   [lastPubVerNum/lastVerNum/changedYN]
+                #   changedYN: 'y' = CWD changed from last version.
+                msg = "Processing CDR%010d" % docId
+                if cdr.getDocStatus("guest", docId) == 'I':
+                    msg += " (BLOCKED)"
+                msg += " ["
+                if lastPub >=0:
+                    msg += "pub:%d" % lastPub
+                msg += '/'
+                if lastAny >=0:
+                    msg += "last:%d" % lastAny
+                msg += "/cwd:%s]" % ('New' if changedYN=='y' else str(lastAny))
+                self.log(msg)
 
                 # Process doc
-                self.log("Processing CDR%010d%s" % (docId, dstat))
-                doc = None
-
                 # Instantiation of the ModifyDocs.Doc object runs all of
                 # the retrievals and performs all of the transforms for
                 # all versions needing transformation.
@@ -649,14 +714,15 @@ class Job:
         # Report results
         self.log(
 """Run completed.
-   Docs processed = %d
-   Docs saved     = %d
-   Versions saved = %d
-   Could not lock = %d
-   Errors         = %d
+   Docs examined    = %d
+   Docs changed     = %d
+   Versions changed = %d
+   Could not lock   = %d
+   Errors           = %d
+   Time (hh:mm:ss)  = %s
  %s""" % (self.getCountDocsProcessed(), self.getCountDocsSaved(),
           self.getCountVersionsSaved(), self.getCountDocsLocked(),
-          self.getCountErrors(),
+          self.getCountErrors(), cdr.getElapsed(startTime),
           "".join(msgReport)))
 
 
@@ -770,8 +836,15 @@ class Doc(object):
         self.lastpVals    = None
         (lastAny, lastPub, changedYN) = self.versions
 
+        # We only need to checkout the docs in live runs
+        # Test mode won't save anything, so we don't need checkouts
+        if _testMode:
+            checkout = False
+        else:
+            checkout = True
+
         # Checkout current working document to get doc and lock
-        self.cwd = cdr.getDoc(self.session, self.id, 'Y', getObject = True)
+        self.cwd = cdr.getDoc(self.session, self.id, checkout, getObject = True)
         if type(self.cwd) in (str, unicode):
             err = cdr.checkErr(self.cwd) or self.cwd
             raise DocumentLocked("Unable to check out CWD for CDR%010d: %s" %
@@ -804,7 +877,7 @@ class Doc(object):
 
                 # And it's not the same as the CWD
                 if changedYN == 'Y':
-                    self.lastv = cdr.getDoc(self.session, self.id, 'Y',
+                    self.lastv = cdr.getDoc(self.session, self.id, checkout,
                                             str(lastAny),
                                             getObject = 1)
                     if type(self.lastv) in (type(""), type(u"")):
@@ -832,7 +905,7 @@ class Doc(object):
 
                 # If it's not the same as the last version
                 if lastPub != lastAny:
-                    self.lastp = cdr.getDoc(self.session, self.id, 'Y',
+                    self.lastp = cdr.getDoc(self.session, self.id, checkout,
                                             str(lastPub),
                                             getObject = 1)
                     if type(self.lastp) in (type(""), type(u"")):
