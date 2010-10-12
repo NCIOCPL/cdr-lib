@@ -5,6 +5,7 @@
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # BZIssue::4629 - Vendor Filter Changes for GenProf publishing
+# BZIssue::4869 - [Internal] Remove Parameter IncludeLinkedDocs
 #
 # Revision 1.110  2009/08/19 17:48:24  venglisc
 # Fixed exception message.  Message displayed jobId instead of document ID.
@@ -530,7 +531,7 @@ class Publish:
     __cdrHttp  = "http://%s.nci.nih.gov/cgi-bin/cdr" % socket.gethostname()
     __interactiveMode   = 0
     __checkPushedDocs   = 0
-    __includeLinkedDocs = 0
+    ## __includeLinkedDocs = 0
     __reportOnly        = 0
     __validateDocs      = 0
     __logDocModulus     = LOG_MODULUS
@@ -747,9 +748,15 @@ class Publish:
             raise Exception(msg)
 
         # Reset some class private variables based on user input.
-        if self.__params.has_key("IncludeLinkedDocs"):
-            self.__includeLinkedDocs = \
-                self.__params["IncludeLinkedDocs"] == "Yes"
+        #   
+        # Note: The 'IncludeLinkedDocs' parameter has been removed
+        #       from the publishing document since it has never
+        #       and shouldn't be used anymore but caused confusions
+        #       when publishing had to be run by "backup publishers"
+        # ----------------------------------------------------------
+        ## if self.__params.has_key("IncludeLinkedDocs"):
+        ##     self.__includeLinkedDocs = \
+        ##         self.__params["IncludeLinkedDocs"] == "Yes"
         if self.__params.has_key("InteractiveMode"):
             self.__interactiveMode = \
                 self.__params["InteractiveMode"] == "Yes"
@@ -807,9 +814,14 @@ class Publish:
             # when specified by user input. The linked documents will
             # be inserted into table pub_proc_doc and appended to list
             # __userDocList.
-            if self.__isPrimaryJob() and self.__subsetName == "Hotfix-Export":
-                if self.__includeLinkedDocs:
-                    self.__addLinkedDocsToPPD()
+            #
+            ### Hotfix-Export requirements changed again.
+            ### The parameter IncludeLinkedDocs has been removed and is
+            ### not being used anymore.  __addLinkedDocsToPPD will not 
+            ### be called.
+            ##if self.__isPrimaryJob() and self.__subsetName == "Hotfix-Export":
+            ##    if self.__includeLinkedDocs:
+            ##        self.__addLinkedDocsToPPD()
 
             # Turn on cacheing.
             # This is an optimization that, at the time of writing
@@ -2455,56 +2467,58 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                      cg_job: %s<BR>""" % info[1][0]
             raise Exception(msg)
 
-    #------------------------------------------------------------------
-    # Update pub_proc_doc table and __userDocList with all linked
-    # documents.
-    #------------------------------------------------------------------
-    def __addLinkedDocsToPPD(self):
-
-        # Build the input hash.
-        docPairList = {}
-        for doc in self.__userDocList:
-            docPairList[doc.getDocId()] = doc.getVersion()
-
-        # Find all the linked documents.
-        resp      = findLinkedDocs(docPairList)
-        msg       = resp[0]
-        idVerHash = resp[1]
-        self.__updateMessage(msg)
-
-        # Insert all pairs into PPD. Because these linked documents are
-        # not in PPD yet, it should succeed with all insertions.
-        try:
-            cursor = self.__conn.cursor()
-            for docId in idVerHash.keys():
-
-                # Update the PPD table.
-                cursor.execute ("""
-                    INSERT INTO pub_proc_doc
-                                (pub_proc, doc_id, doc_version)
-                         VALUES  (?, ?, ?)
-                                """, (self.__jobId, docId, idVerHash[docId])
-                               )
-
-                # Update the __userDocList.
-                cursor.execute ("""
-                         SELECT t.name
-                           FROM doc_type t, document d
-                          WHERE d.doc_type = t.id
-                            AND d.id = ?
-                                """, docId
-                               )
-                row = cursor.fetchone()
-                if row and row[0]:
-                    self.__userDocList.append(Doc(docId, idVerHash[docId],
-                                                  row[0], recorded=True))
-                else:
-                    msg = "Failed in adding docs to __userDocList.<BR>"
-                    raise Exception(msg)
-        except cdrdb.Error, info:
-            msg = 'Failure adding linked docs to PPD for job %d: %s' % (
-                  self.__jobId, info[1][0])
-            raise Exception(msg)
+##    #------------------------------------------------------------------
+##    # Update pub_proc_doc table and __userDocList with all linked
+##    # documents.
+##    #
+##    # Note: See comment above.  This function is not used anymore.
+##    #------------------------------------------------------------------
+##    def __addLinkedDocsToPPD(self):
+##
+##        # Build the input hash.
+##        docPairList = {}
+##        for doc in self.__userDocList:
+##            docPairList[doc.getDocId()] = doc.getVersion()
+##
+##        # Find all the linked documents.
+##        resp      = findLinkedDocs(docPairList)
+##        msg       = resp[0]
+##        idVerHash = resp[1]
+##        self.__updateMessage(msg)
+##
+##        # Insert all pairs into PPD. Because these linked documents are
+##        # not in PPD yet, it should succeed with all insertions.
+##        try:
+##            cursor = self.__conn.cursor()
+##            for docId in idVerHash.keys():
+##
+##                # Update the PPD table.
+##                cursor.execute ("""
+##                    INSERT INTO pub_proc_doc
+##                                (pub_proc, doc_id, doc_version)
+##                         VALUES  (?, ?, ?)
+##                                """, (self.__jobId, docId, idVerHash[docId])
+##                               )
+##
+##                # Update the __userDocList.
+##                cursor.execute ("""
+##                         SELECT t.name
+##                           FROM doc_type t, document d
+##                          WHERE d.doc_type = t.id
+##                            AND d.id = ?
+##                                """, docId
+##                               )
+##                row = cursor.fetchone()
+##                if row and row[0]:
+##                    self.__userDocList.append(Doc(docId, idVerHash[docId],
+##                                                  row[0], recorded=True))
+##                else:
+##                    msg = "Failed in adding docs to __userDocList.<BR>"
+##                    raise Exception(msg)
+##        except cdrdb.Error, info:
+##            msg = 'Failure adding linked docs to PPD for job %d: %s' % (
+##                  self.__jobId, info[1][0])
+##            raise Exception(msg)
 
     #------------------------------------------------------------------
     # Launch some number of publishing threads.
