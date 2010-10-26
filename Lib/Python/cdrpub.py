@@ -553,10 +553,11 @@ class Publish:
 
     # Thread locking objects.
     # All threads share this one instance of a Publish object.
-    __lockNextDoc  = threading.Lock()
-    __lockLog      = threading.Lock()
-    __lockManifest = threading.Lock()
-    __lockDb       = threading.Lock()
+    __lockNextDoc  = threading.Lock()  # Get next doc id to pub from queue
+    __lockLog      = threading.Lock()  # Writing a log message
+    __lockManifest = threading.Lock()  # Append to a manifest of media
+    __lockDb       = threading.Lock()  # Server access to blob change date
+    __lockMakeDir  = threading.Lock()  # Creating or renaming a directory
 
     # Publish this many docs in parallel
     __numThreads  = PUB_THREADS
@@ -564,6 +565,9 @@ class Publish:
     # An error in any thread updates this
     # Other threads will see it and exit
     __threadError = None
+
+    # Set this flag if a thread fails, tells other threads not to continue
+    __cleanupFailureCalled = False
 
     # Rows to be written to the image manifest file.
     __mediaManifest = []
@@ -748,7 +752,7 @@ class Publish:
             raise Exception(msg)
 
         # Reset some class private variables based on user input.
-        #   
+        #
         # Note: The 'IncludeLinkedDocs' parameter has been removed
         #       from the publishing document since it has never
         #       and shouldn't be used anymore but caused confusions
@@ -817,7 +821,7 @@ class Publish:
             #
             ### Hotfix-Export requirements changed again.
             ### The parameter IncludeLinkedDocs has been removed and is
-            ### not being used anymore.  __addLinkedDocsToPPD will not 
+            ### not being used anymore.  __addLinkedDocsToPPD will not
             ### be called.
             ##if self.__isPrimaryJob() and self.__subsetName == "Hotfix-Export":
             ##    if self.__includeLinkedDocs:
@@ -1155,27 +1159,45 @@ class Publish:
         Return:
             Void.
         """
-        # Log message
-        msg = "publish: %s<BR>" % msg
         try:
-            self.__debugLog(msg, tb=1)
-        except:
-            pass
+            # Synchronize this with other threads that may call this
+            #   or attempt to create a directory
+            self.__lockMakeDir.acquire(1)
 
-        # Set status
-        try:
-            self.__updateStatus(Publish.FAILURE, msg)
-        except:
-            pass
+            # Don't do this twice
+            if self.__cleanupFailureCalled:
+                return
 
-        # Rename output directory to indicate failure
-        if self.__no_output != "Y":
+            # Log message
+            msg = "publish: %s<BR>" % msg
             try:
-                os.rename(dest, dest_base + ".FAILURE")
+                self.__debugLog(msg, tb=1)
             except:
                 pass
 
-        return None
+            # Set status in database
+            try:
+                self.__updateStatus(Publish.FAILURE, msg)
+            except:
+                pass
+
+            # Rename output directory to indicate failure
+            if self.__no_output != "Y":
+                try:
+                    os.rename(dest, dest_base + ".FAILURE")
+                except:
+                    pass
+
+            # Cleanup is done
+            self.__cleanupFailureCalled = True
+        except:
+            pass
+
+        finally:
+            # End synchronization
+            self.__lockMakeDir.release()
+
+        return
 
 
     #------------------------------------------------------------------
@@ -2782,7 +2804,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             if self.__validateDocs and filteredDoc:
                 pdqdtd = str(os.path.join(cdr.PDQDTDPATH,
                                           self.__params['DTDFileName']))
-                errObj = validateDoc(filteredDoc, docId = docId, 
+                errObj = validateDoc(filteredDoc, docId = docId,
                                                         dtd = pdqdtd)
 
                 for error in errObj:
@@ -2792,7 +2814,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                         dtdClass = 'DTDwarning'
 
                     errors += "<span class='%s'>%s</span><BR>%s<BR>" % (
-                                              dtdClass, error.level_name, 
+                                              dtdClass, error.level_name,
                                               error.message)
                     invalDoc = "InvalidDocs"
 
@@ -2813,7 +2835,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                         self.__saveDoc(filteredDoc, destDir,
                                        "CDR%d.xml" % docId)
                 except:
-                    # It appears that the system fails occasionally to 
+                    # It appears that the system fails occasionally to
                     # write one of the first two documents processed
                     # to disk even though all other disk writes finish
                     # successfully.  If we run into a failure we want
@@ -2823,8 +2845,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                         warnings += 'document CDR%010d<BR/>' % docId
                         warnings += 'Trying again...'
                         time.sleep(2)
-                        # We always use destType = Publish.DOC for 
-                        # publishing.  So I ignore the fact that a 
+                        # We always use destType = Publish.DOC for
+                        # publishing.  So I ignore the fact that a
                         # single file holding all publishing results
                         # may fail to write as well and we just retry
                         # writing that single document.
@@ -3456,16 +3478,23 @@ Please do not reply to this message.
     #----------------------------------------------------------------
     def __saveDoc(self, document, dir, fileName, mode = "w"):
         if not os.path.isdir(dir):
-            # Ignore failures, which are almost certainly artificially
-            # caused by multiple threads trying to create the same
-            # directory at the same time.
+            # Create output subdirectory but don't create it twice
+            self.__lockMakeDir.acquire(1)
+
+            # Another thread might have created the directory while we
+            #   waited for the lock
+            # Or another thread might have renamed it to .FAILURE
+            #   while we waited
             try:
-                os.makedirs(dir)
-            except:
-                pass
-        fileObj = open(dir + "/" + fileName, mode)
-        fileObj.write(document)
-        fileObj.close()
+                if not os.path.isdir(dir) and not self.__cleanupFailureCalled:
+                    os.makedirs(dir)
+            finally:
+                self.__lockMakeDir.release()
+
+        if not self.__cleanupFailureCalled:
+            fileObj = open(dir + "/" + fileName, mode)
+            fileObj.write(document)
+            fileObj.close()
 
     #----------------------------------------------------------------
     # Handle process script, if one is specified, in which case
