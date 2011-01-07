@@ -578,6 +578,10 @@ Then click "Next".</p>
     <input type='checkbox' name='doRefs' value='Yes'
            checked='checked'>cdr:refs</input>
     <input type='checkbox' name='doHrefs' value='Yes'>cdr:hrefs</input>
+<br />
+<font size='-1'>
+(Note: href global changes preserve the old visible text content.  Be careful!)
+</font>
 </p>
 """
         self.sendPage(html, "Select 'refs' and/or 'hrefs' to modify",
