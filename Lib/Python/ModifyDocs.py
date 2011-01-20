@@ -393,7 +393,7 @@ class Job:
            Selected docs: %d
           Processed docs: %d
               Docs saved: %d
-          Versions saved: %d
+        Versions changed: %d
    Docs locked by others: %d
 """ % (self.getCountDocsSelected(), self.getCountDocsProcessed(),
        self.getCountDocsSaved(), self.getCountVersionsSaved(),
@@ -405,7 +405,7 @@ class Job:
  <tr><td align='right'>Selected docs: </td><td>%d</td></tr>
  <tr><td align='right'>Processed docs: </td><td>%d</td></tr>
  <tr><td align='right'>Docs saved: </td><td>%d</td></tr>
- <tr><td align='right'>Versions saved: </td><td>%d</td></tr>
+ <tr><td align='right'>Versions changed: </td><td>%d</td></tr>
  <tr><td align='right'>Locked by others: </td><td>%d</td></tr>
 </table>
 """ % (self.getCountDocsSelected(), self.getCountDocsProcessed(),
@@ -611,6 +611,7 @@ class Job:
         # Change all docs
         logger = self
         for docId in ids:
+            doc = None
             lockedDoc = True
             try:
                 # Need this info for logging
@@ -677,7 +678,6 @@ class Job:
                 # Log it, but always continue
                 self.log("Document %d: %s" % (docId, str(info)))
             except Exception, info:
-                cdr.logwrite("Exception traceback", tback=True)
                 self.log("Document %d: %s" % (docId, str(info)))
                 self.__countErrors += 1
                 if self.__countErrors > _maxErrors:
@@ -839,9 +839,9 @@ class Doc(object):
         # We only need to checkout the docs in live runs
         # Test mode won't save anything, so we don't need checkouts
         if _testMode:
-            checkout = False
+            checkout = 'N'
         else:
-            checkout = True
+            checkout = 'Y'
 
         # Checkout current working document to get doc and lock
         self.cwd = cdr.getDoc(self.session, self.id, checkout, getObject = True)
