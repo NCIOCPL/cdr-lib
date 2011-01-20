@@ -476,7 +476,9 @@ fragment ID.  Otherwise no new links will have trailing fragment IDs.</p>
             #     (refIdVar, self.getVar(refIdVar), refName,
             #      self.getVar(refName).decode("utf-8")))
             if self.getVar(refIdVar) and self.getVar(refName):
-                cdrcgi.bail("Please enter either an id OR a string, not both.")
+                cdrcgi.bail("Please enter either an id OR a string, not both."
+                            "  ID=%s  Name=%s" % (self.getVar(refIdVar),
+                                                  self.getVar(refName)))
 
         # If we have neither an ID nor a title, prompt for them
         if not self.getVar(refIdVar) and not self.getVar(refName):
@@ -726,7 +728,7 @@ SELECT %s
  %s
 """ % (selector, whereClause, matcher, orderBy)
         # DEBUG
-        cdr.logwrite(qry)
+        # cdr.logwrite(qry)
 
         return qry
 
@@ -827,7 +829,7 @@ class SimpleLinkTransform:
             rows = cursor.fetchall()
             cursor.close()
         except cdrdb.Error, info:
-            cdrcgi.bail("Database error fetching docIds to change: %s"
+            self.linkVars.error("Database error fetching docIds to change: %s"
                          % str(info))
 
         # DEBUG
@@ -879,16 +881,12 @@ class SimpleLinkTransform:
         nsType = "{cips.nci.nih.gov/cdr}%s" % refType
 
         # Get a list of all elements with this reference in them
-        # Should always be at least one, could be more than one
+        # May be 0 or more of them:
+        #  0 can occur either if the selection is intentionally loose
+        #    or if the CWD has the term but lastv or lastp does not
         elemList = tree.xpath("//%s[@cdr:%s='%s']" %
                               (elemName, refType, oldVal),
                               namespaces={"cdr": "cips.nci.nih.gov/cdr",})
-
-        # If selection was right, there should always be at least one
-        if not elemList:
-            msg = "No elements to change in doc ID = %s." % docId
-            msg += "  Bad selection?"
-            fatal(msg, self.linkVars.__batchJobObj)
 
         # For each one found
         for oldElem in elemList:
@@ -897,8 +895,7 @@ class SimpleLinkTransform:
             # These check should never fail
             refAttr = oldElem.get(nsType, None)
             if refAttr is None:
-                fatal("No %s in link in %s.  Can't happen" %
-                      refType, docId)
+                fatal("No %s in link in %s.  Can't happen" % (refType, docId))
             elif refAttr != oldVal:
                 fatal("Wrong %s=%s in docId=%s. Can't happen" %
                       (refType, refAttr, docId))
@@ -951,8 +948,8 @@ if __name__ == "__main__":
         fatal("Unable to load batch job: %s" % info)
 
     # Construct global change specific the objects we need
-    linkVars   = SimpleLinkVars(jobObj)
-    filtTrans  = SimpleLinkTransform(linkVars)
+    linkVars  = SimpleLinkVars(jobObj)
+    filtTrans = SimpleLinkTransform(linkVars)
 
     # Construct the ModifyDocs job
     userId, pw = cdr.idSessionUser(linkVars.session, linkVars.session)
@@ -995,7 +992,7 @@ if __name__ == "__main__":
     except Exception, info:
         # Report to global change log file and fail job
         msg = "%s failed: %s" % (JOB_NAME, str(info))
-        cdr.logwrite(msg, LF)
+        cdr.logwrite(msg, LF, tback=True)
         jobObj.fail(msg)
 
     # Successful completion
