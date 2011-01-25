@@ -178,7 +178,8 @@ def exNormalize(id):
 
     else:
         # Parse the string
-        pat = re.compile (r"(^(CDR0*)?)(?P<num>(\d+))(\#(?P<frag>(.*)))?$")
+        pat = re.compile (
+            r"(^([Cc][Dd][Rr]0*)?)(?P<num>(\d+))(\#(?P<frag>(.*)))?$")
         # pat = re.compile (r"(?P<num>(\d+))\#?(?P<frag>(.*))")
         result = pat.search (id)
 
