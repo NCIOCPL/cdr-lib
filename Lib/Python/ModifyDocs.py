@@ -134,9 +134,14 @@ class DocumentLocked(Exception): pass
 
 #----------------------------------------------------------------------
 # Error controls
-# If Doc._self.countErrors > _maxErrors, halt processing
+# If exception caught at top level and Job._self.countErrors > _maxErrors,
+#   halt processing
+# NOTES: Global change program that instantiates a ModifyDocs.Job may
+#        have its own exception handlers in its own run() callback
+#        routine.  Hence some exceptions may never reach the Job level
+#        error counter, never increment the count, and never stop the Job.
 #----------------------------------------------------------------------
-_maxErrors   = 0
+_maxErrors = 0
 
 # Caller can alter this
 def setMaxErrors(maxErrs):
