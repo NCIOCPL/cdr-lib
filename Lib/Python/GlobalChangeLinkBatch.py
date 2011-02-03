@@ -198,8 +198,14 @@ class SimpleLinkVars:
                     docIdStr = cdr.exNormalize(docId)[0]
                     docData  = cdr.getAllDocsRow(docIdStr)
                     docTitle = docData["title"]
+
+                    # Check for duplications and prepare warning if any
+                    warning = self.chkNewLinkDupes(i)
+
+                    # Add line for this link to the progress display
                     html += self.addProgress('New link',
-                                          "%s / %s" % (docIdStr, docTitle))
+                            "%s / %s%s" % (docIdStr, docTitle, warning))
+
         if self.getVar('doRefs'):
             html += self.addProgress('Change cdr:refs', 'Yes')
         if self.getVar('doHrefs'):
@@ -215,6 +221,33 @@ class SimpleLinkVars:
         html += "</table>\n<hr />\n"
 
         return html
+
+    def chkNewLinkDupes(self, refNum):
+        """
+        Check to be sure new links up to refNum don't duplicate any previous
+        links, old or new.  If they do, issue warning.
+
+        Pass:
+            refNum - new link to check, 0..MAX_ADD_LINKS
+
+        Return:
+            Warning string, "" if none.
+        """
+        warning = ""
+        cdrIdStr = self.getVar("newLinkRefIdStr%d" % refNum)
+
+        # Check old link
+        if cdrIdStr == self.getVar("oldLinkRefIdStr"):
+            warning = " <strong>WARNING, duplicates old link</strong>"
+
+        # Check any new links prior to this one
+        for i in range(refNum):
+            if cdrIdStr == self.getVar("newLinkRefIdStr%d" % i):
+                warning += \
+                    " <strong>WARNING, duplicates previous new link</strong>"
+                break
+
+        return warning
 
     def addProgress(self, prompt, value):
         """
@@ -472,9 +505,6 @@ fragment ID.  Otherwise no new links will have trailing fragment IDs.</p>
         # We must know that we're processing real input, not saved input
         #   from a previous screen, e.g., checking old ref when new is entered
         if self.__fields.getvalue("linkPhase") == callingPhase:
-            # cdrcgi.bail(u"refIdVar=%s *refIdVar=%s refName=%s *refName=%s" %
-            #     (refIdVar, self.getVar(refIdVar), refName,
-            #      self.getVar(refName).decode("utf-8")))
             if self.getVar(refIdVar) and self.getVar(refName):
                 cdrcgi.bail("Please enter either an id OR a string, not both."
                             "  ID=%s  Name=%s" % (self.getVar(refIdVar),
@@ -560,6 +590,8 @@ SELECT title, doc_type
                          self.getVar(refIdVar))
 
         # Save the title
+        # cdr.logwrite("Resolved %s: CdrID=%s Title=%s" % (refName,
+        #        self.getVar(refIdVar), row[0]))
         self.vars[refName] = row[0]
 
 
