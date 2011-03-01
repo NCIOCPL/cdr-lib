@@ -4254,8 +4254,8 @@ def addExternalMapping(credentials, usage, value, docId = None,
         value = value.encode("utf-8")
     docId = docId and ("<CdrId>%s</CdrId>" % normalize(docId)) or ""
     cmd = ("<CdrAddExternalMapping>" +
-            "<Usage>" + usage + "</Usage>" +
-            "<Value>" + value + "</Value>" +
+            "<Usage>" + cgi.escape(usage) + "</Usage>" +
+            "<Value>" + cgi.escape(value) + "</Value>" +
             "<Bogus>" + bogus + "</Bogus>" +
             "<Mappable>" + mappable + "</Mappable>" +
                     docId +
