@@ -3960,11 +3960,12 @@ class FilterSet:
 # addFilterSet() and repFilterSet()).
 #----------------------------------------------------------------------
 def packFilterSet(filterSet):
-    elems = "<FilterSetName>%s</FilterSetName>" % filterSet.name
+    elems = "<FilterSetName>%s</FilterSetName>" % cgi.escape(filterSet.name)
     elems += "<FilterSetDescription>%s</FilterSetDescription>" % \
-            filterSet.desc
+            cgi.escape(filterSet.desc)
     if filterSet.notes is not None:
-        elems += "<FilterSetNotes>%s</FilterSetNotes>" % filterSet.notes
+        elems += ("<FilterSetNotes>%s</FilterSetNotes>" %
+                  cgi.escape(filterSet.notes))
     for member in filterSet.members:
         if type(member.id) == type(9):
             elems += "<FilterSet SetId='%d'/>" % member.id
@@ -4000,7 +4001,7 @@ def repFilterSet(session, filterSet, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 def getFilterSet(session, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
     cmd          = "<CdrGetFilterSet><FilterSetName>%s" \
-                   "</FilterSetName></CdrGetFilterSet>" % name
+                   "</FilterSetName></CdrGetFilterSet>" % cgi.escape(name)
     response     = sendCommands(wrapCommand(cmd, session), host, port)
     responseNode = extractResponseNode('getFilterSet', response)
     name         = None
@@ -4081,7 +4082,7 @@ def expandFilterSets(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 def delFilterSet(session, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
     cmd  = "<CdrDelFilterSet><FilterSetName>%s" \
-           "</FilterSetName></CdrDelFilterSet>" % name
+           "</FilterSetName></CdrDelFilterSet>" % cgi.escape(name)
     resp = sendCommands(wrapCommand(cmd, session), host, port)
     extractResponseNode('delFilterSet', resp)
 
