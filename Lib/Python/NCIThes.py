@@ -6,29 +6,45 @@
 # and routines for adding new terms to CDR from the NCI thesaurus.
 #
 # BZIssue::4656
+# BZIssue::5004
 #
 #----------------------------------------------------------------------
 
-import cgi, cdr, cdrdb, xml.dom.minidom, httplib, time, cdrcgi
+import cgi, cdr, cdrdb, urllib2, time, cdrcgi, re, lxml.etree as etree
 
+#----------------------------------------------------------------------
+# Charlie used globals here.  I'm keeping them in case outside code
+# depends on them. :-(
+#----------------------------------------------------------------------
 err = ""
 bChanged = False
 changes = ''
 
 #----------------------------------------------------------------------
-# Prepare string for living in an XML document.
+# Macros used for parsing the NCIt concept document.
 #----------------------------------------------------------------------
-def fix(s):
-    return s and cgi.escape(s) or u''
+CONCEPTS = "org.LexGrid.concepts"
+COMMON   = "org.LexGrid.commonTypes"
+ENTITY   = "%s.Entity" % CONCEPTS
+PRES     = "%s.Presentation" % CONCEPTS
+DEF      = "%s.Definition" % CONCEPTS
+TEXT     = "%s.Text" % COMMON
+SOURCE   = "%s.Source" % COMMON
+PROPERTY = "%s.Property" % COMMON
+CDRNS    = "cips.nci.nih.gov/cdr"
+NSMAP    = { "cdr" : CDRNS }
 
+#----------------------------------------------------------------------
+# Prepare string for comparison of term names.
+#----------------------------------------------------------------------
 def normalize(me):
     if not me:
         return u""
     return me.upper().strip()
 
-def extractError(node):
-    return node.toxml()
-
+#----------------------------------------------------------------------
+# Convert NCI/t type to CDR term type; used for FullSynonym term groups.
+#----------------------------------------------------------------------
 def mapType(nciThesaurusType):
     return {
         "PT"               : "Synonym", # "Preferred term",
@@ -44,184 +60,86 @@ def mapType(nciThesaurusType):
         "CAS_Registry_Name": "CAS Registry name" 
     }.get(nciThesaurusType, "????")
 
-def makeOtherName(name, termType, sourceTermType, code = None):
-    xmlFrag = u"""\
- <OtherName>
-  <OtherTermName>%s</OtherTermName>
-  <OtherNameType>%s</OtherNameType>
-  <SourceInformation>
-   <VocabularySource>
-    <SourceCode>NCI Thesaurus</SourceCode>
-    <SourceTermType>%s</SourceTermType>
-""" % (fix(name), fix(termType), fix(sourceTermType))
+#----------------------------------------------------------------------
+# Construct an OtherName block.
+#----------------------------------------------------------------------
+def makeOtherNameNode(name, termType, sourceTermType, code=None,
+                      reviewed="Reviewed"):
+    otherName = etree.Element("OtherName")
+    etree.SubElement(otherName, "OtherTermName").text = fix(name)
+    etree.SubElement(otherName, "OtherNameType").text = fix(termType)
+    info = etree.SubElement(otherName, "SourceInformation")
+    vocabularySource = etree.SubElement(info, "VocabularySource")
+    etree.SubElement(vocabularySource, "SourceCode").text = "NCI Thesaurus"
+    etree.SubElement(vocabularySource,
+                     "SourceTermType").text = fix(sourceTermType)
     if code:
-        xmlFrag += """\
-    <SourceTermId>%s</SourceTermId>
-""" % fix(code)
-    xmlFrag += """\
-   </VocabularySource>
-  </SourceInformation>
-  <ReviewStatus>Reviewed</ReviewStatus>
- </OtherName>
-"""
-    return xmlFrag
+        etree.SubElement(vocabularySource, "SourceTermId").text = fix(code)
+    etree.SubElement(otherName, "ReviewStatus").text = reviewed
+    return otherName
 
 #----------------------------------------------------------------------
 # Object for a thesaurus concept definition.
 #----------------------------------------------------------------------
 class Definition:
-    def __init__(self, value, source):
-        self.drugTerm = True # XXX Why??? Charlie doesn't explain this default.
-        self.source = source
-        self.text   = value
-        self.removeTrailingParenText()
-        self.removePrecedingNCIText()
+    def __init__(self, node, isDrugTerm=True):
+        self.drugTerm = isDrugTerm
+        self.source = Concept.extractSource(node)
+        self.text = Concept.extractValue(node)
 
-    # remove the opening text 'NCI|' , if it exists
-    def removePrecedingNCIText(self):
-        self.text = self.text.strip()
-        if self.text.startswith("NCI|"):
-            self.text = self.text[4:]
-        return        
+    #------------------------------------------------------------------
+    # Remove leading 'NCI|' and trailing (NCI[...])
+    #------------------------------------------------------------------
+    def fixText(self):
+        text = re.sub(r"^NCI\|", "", self.text.strip())
+        return re.sub(r"\s*\(NCI[^)]*\)", "", text)
 
-    # remove the trailing paren text like (NCI04), if it exists
-    def removeTrailingParenText(self):
-        self.text = self.text.strip()
-        if self.text[-1] == ')':
-            i = -2
-            while self.text[i] != '(':
-                i = i - 1
-                posi = 0 - i
-                if posi > len(self.text) - 2:
-                    return
-            tempStr = self.text[i:]
-            if len(tempStr) > 8:
-                return
-            if tempStr.startswith("(NCI"):
-                self.text = self.text[:i]
-                self.text = self.text.strip()
-        return
-        
-    def toXml(self):
-        if self.drugTerm:
-            reviewedTxt = 'Unreviewed'
-        else:
-            reviewedTxt = 'Reviewed'
-        return """\
- <Definition>
-  <DefinitionText>%s</DefinitionText>
-  <DefinitionType>Health professional</DefinitionType>
-  <DefinitionSource>
-   <DefinitionSourceName>NCI Thesaurus</DefinitionSourceName>
-  </DefinitionSource>
-  <ReviewStatus>%s</ReviewStatus>
- </Definition>
-""" % (fix(self.text), reviewedTxt)
-
-    def toNode(self,dom):
-        node = dom.createElement('Definition')
-        
-        child = dom.createElement('DefinitionText')
-        text = dom.createTextNode(self.text)
-        child.appendChild(text)        
-        node.appendChild(child)
-
-        child = dom.createElement('DefinitionType')
-        text = dom.createTextNode('Health professional')
-        child.appendChild(text)        
-        node.appendChild(child)
-
-        child = dom.createElement('DefinitionSource')
-        child2 = dom.createElement('DefinitionSourceName')
-        text = dom.createTextNode('NCI Thesaurus')
-        child2.appendChild(text)
-        child.appendChild(child2)
-        node.appendChild(child)
-
-        child = dom.createElement('ReviewStatus')
-        if self.drugTerm:
-            text = dom.createTextNode('Unreviewed')
-        else:
-            text = dom.createTextNode('Reviewed')
-        child.appendChild(text)
-        node.appendChild(child)     
-        
+    #------------------------------------------------------------------
+    # Build a Definition node for insertion into a CDR document.
+    #------------------------------------------------------------------
+    def toNode(self):
+        reviewed = self.drugTerm and "Unreviewed" or "Reviewed"
+        node = etree.Element("Definition")
+        etree.SubElement(node, "DefinitionText").text = self.fixText()
+        etree.SubElement(node, "DefinitionType").text = "Health professional"
+        source = etree.SubElement(node, "DefinitionSource")
+        etree.SubElement(source, "DefinitionSourceName").text = "NCI Thesaurus"
+        etree.SubElement(node, "ReviewStatus").text = reviewed
         return node
 
 #----------------------------------------------------------------------
 # Object for an articulated synonym from the NCI thesaurus.
 #----------------------------------------------------------------------
 class FullSynonym:
-    def __init__(self, value, group, source):
-        self.termName        = value
-        self.termGroup       = group
+    def __init__(self, node):
+        self.termName = Concept.extractValue(node)
+        self.termGroup = Concept.getFieldValue(node, "_representationalForm")
         self.mappedTermGroup = mapType(group)
-        self.termSource      = source
+        self.termSource = Concept.extractSource(node)
 
-    def toDescription(self):
-        return self.termName + ' (' + self.termGroup + ')'
+    #------------------------------------------------------------------
+    # For informing the user about inserted other name blocks.
+    #------------------------------------------------------------------
+    def __str__(self):
+        s = (u"%s (%s)" % (self.termName, self.termGroup)).encode("utf-8")
 
-    def toNode(self, dom, conceptCode, drugTerm, cdrPreferredName):
-        termName = self.termName
-        mappedTermGroup = self.mappedTermGroup
-        termGroup = self.termGroup
+    #------------------------------------------------------------------
+    # Build an OtherName node for insertion into a CDR Term document.
+    #------------------------------------------------------------------
+    def toNode(self, conceptCode, drugTerm, cdrPreferredName):
         sourceCode = None
-        
-        if drugTerm:
-            if self.termGroup == 'PT':
-                mappedTermGroup = 'Lexical variant'
-                sourceCode = conceptCode
-        else:
-            if self.termGroup == 'PT':
+        termType = self.mappedTermGroup
+        if self.termGroup == "PT":
+            sourceCode = conceptCode
+            termType = "Lexical variant"
+            if not drugTerm:
                 if normalize(cdrPreferredName) != normalize(termName):
-                    mappedTermGroup = 'Synonym'
-                else:
-                    mappedTermGroup = 'Lexical variant'
-                sourceCode = conceptCode
-        
-        node = dom.createElement('OtherName')
-        
-        child = dom.createElement('OtherTermName')
-        text = dom.createTextNode(termName)
-        child.appendChild(text)
-        node.appendChild(child)
-
-        child = dom.createElement('OtherNameType')
-        text = dom.createTextNode(mappedTermGroup)
-        child.appendChild(text)        
-        node.appendChild(child)
-
-        child = dom.createElement('SourceInformation')
-        child2 = dom.createElement('VocabularySource')
-        
-        child3 = dom.createElement('SourceCode')        
-        text = dom.createTextNode('NCI Thesaurus')
-        child3.appendChild(text)
-        child2.appendChild(child3)
-
-        child3 = dom.createElement('SourceTermType')
-        text = dom.createTextNode(termGroup)
-        child3.appendChild(text)
-        child2.appendChild(child3)
-
-        if sourceCode:
-            child3 = dom.createElement('SourceTermId')
-            text = dom.createTextNode(sourceCode)
-            child3.appendChild(text)
-            child2.appendChild(child3)
-        
-        child.appendChild(child2)
-        node.appendChild(child)
-
-        child = dom.createElement('ReviewStatus')
-        text = dom.createTextNode('Unreviewed')
-        child.appendChild(text)
-        node.appendChild(child)     
-        
-        return node            
+                    termType = "Synonym"
+        return makeOtherNameNode(self.termName, termType, self.termGroup,
+                                 sourceCode, "Unreviewed")
 
 #----------------------------------------------------------------------
-# Object for the other name element in the document
+# Object for the OtherName element extracted from a CDR document.
 #----------------------------------------------------------------------
 class OtherName:
     def __init__(self, termName, nameType):
@@ -229,47 +147,74 @@ class OtherName:
         self.nameType   = nameType
 
 #----------------------------------------------------------------------
-# Object for a NCI Thesaurus concept.
+# Object for an NCI Thesaurus concept.
 #----------------------------------------------------------------------
 class Concept:
-    def __init__(self, node):
-        if node.nodeName != 'Concept':
-            cdrcgi.bail(extractError(node))
-        self.code          = node.getAttribute('code')
-        self.preferredName = None
-        self.semanticType  = None
-        self.fullSyn       = []
-        self.definitions   = []
-        self.synonyms      = []
-        self.casCodes      = []
-        self.nscCodes      = []
-        self.indCodes      = []
-        for child in node.childNodes:
-            if child.nodeName == 'Property':
-                name = value = group = source = None
-                for grandchild in child.childNodes:
-                    if grandchild.nodeName == 'Name':
-                        name = cdr.getTextContent(grandchild)
-                    elif grandchild.nodeName == 'Value':
-                        value = cdr.getTextContent(grandchild)
-                    elif grandchild.nodeName == 'Group':
-                        group = cdr.getTextContent(grandchild)
-                    elif grandchild.nodeName == 'Source':
-                        source = cdr.getTextContent(grandchild)
-                if name == 'Preferred_Name':
-                    self.preferredName = value
-                elif name == 'Semantic_Type':
-                    self.semanticType = value
-                elif name == 'Synonym':
-                    self.synonyms.append(value)
-                elif name == 'CAS_Registry':
-                    self.casCodes.append(value)
-                elif name == 'NSC_Code':
-                    self.nscCodes.append(value)
-                elif name == 'DEFINITION':
-                    self.definitions.append(Definition(value, source))
-                elif name == 'FULL_SYN':
-                    self.fullSyn.append(FullSynonym(value, group, source))
+    def __init__(self, tree):
+        self.code = self.preferredName = self.semanticType = None
+        self.fullSyn = []
+        self.definitions = []
+        self.synonyms = []
+        self.casCodes = []
+        self.nscCodes = []
+        self.indCodes = []
+        for entity in tree.findall("queryResponse/class[@name='%s']" % ENTITY):
+            self.code = Concept.getFieldValue(entity, '_entityCode')
+            for field in entity.findall("field[@name='_presentationList']"):
+                self.__extractNames(field)
+            for field in entity.findall("field[@name='_definitionList']"):
+                self.__extractDefinitions(field)
+            for field in entity.findall("field[@name='_propertyList']"):
+                self.__extractProperties(field)
+    def __extractNames(self, node):
+        for child in node.findall("class[@name='%s']" % PRES):
+            name = Concept.getPropertyName(child)
+            if name == "Preferred_Name":
+                self.preferredName = Concept.extractValue(child)
+            elif name == "FULL_SYN":
+                self.fullSyn.append(FullSynonym(child))
+    def __extractDefinitions(self, node):
+        for child in node.findall("class[@name='%s']" % DEF):
+            if Concept.getPropertyName(child) == "DEFINITION":
+                self.definitions.append(Definition(child))
+    def __extractProperties(self, node):
+        for child in node.findall("class[@name='%s']" % PROPERTY):
+            name = Concept.getPropertyName(child)
+            if name == "Semantic_Type":
+                self.semanticType = Concept.extractValue(child)
+            elif name == "Synonym":
+                self.synonyms.append(Concept.extractValue(child))
+            elif name == "CAS_Registry":
+                self.casCodes.append(Concept.extractValue(child))
+            elif name == "NSC_Code":
+                self.nscCodes.append(Concept.extractValue(child))
+            elif name == "IND_Code":
+                self.indCodes.append(Concept.extractValue(child))
+    @staticmethod
+    def getFieldValue(node, name):
+        for child in node.findall("field[@name='%s']" % name):
+            return child.text
+        return None
+    @staticmethod
+    def getPropertyName(node):
+        return Concept.getFieldValue(node, "_propertyName")
+    @staticmethod
+    def extractValue(node):
+        pieces = []
+        for value in node.findall("field[@name='_value']"):
+            for text in value.findall("class[@name='%s']" % TEXT):
+                for content in text.findall("field[@name='_content']"):
+                    if content.text is not None:
+                        pieces.append(content.text)
+        return u"".join(pieces) or None
+    @staticmethod
+    def extractSource(node):
+        pieces = []
+        for sourceList in node.findall("field[@name='_sourceList']"):
+            for source in sourceList.findall("class[@name='%s']" % SOURCE):
+                for content in source.findall("field[@name='_content']"):
+                    pieces.append(content.text)
+        return u"".join(pieces) or None
 
 #----------------------------------------------------------------------
 # Connect to the CDR database.
@@ -285,78 +230,53 @@ def connectToDB():
         return None
 
 #----------------------------------------------------------------------
+# Store what we got from the EVS service.
+#----------------------------------------------------------------------
+def storeEvsResponse(code, response):
+    try:
+        now  = time.strftime("%Y%m%d%H%M%S")
+        name = cdr.DEFAULT_LOGDIR + "/ncit-%s-%s.html" % (code, now)
+        fp = open(name, "wb")
+        fp.write(page)
+        fp.close()
+    except:
+        pass
+
+#----------------------------------------------------------------------
 # Retrieve a concept document from the NCI Thesaurus.
 #----------------------------------------------------------------------
 def fetchConcept(code):
     global err
     err   = ""
     code  = code.strip()
-    host  = "lexevsapi.nci.nih.gov"
-    port  = httplib.HTTP_PORT
-    app   = "/lexevsapi50/GetXML"
-    parms = "query=org.LexGrid.concepts.Concept[@_entityCode=%s]" % code
-    url   = "%s?%s" % (app, parms)
-    tries = 3
-    while tries:
-        try:
-            conn = httplib.HTTPConnection(host, port)
-
-            # Submit the request and get the headers for the response.
-            conn.request("GET", url)
-            response = conn.getresponse()
-
-            # Skip past any "Continue" responses.
-            while response.status == httplib.CONTINUE:
-                response.msg = None
-                response.begin()
-
-            # Check for failure.
-            if response.status != httplib.OK:
-                try:
-                    page = response.read()
-                    now  = time.strftime("%Y%m%d%H%M%S")
-                    name = cdr.DEFAULT_LOGDIR + "/ncit-%s-%s.html" % (code, now)
-                    f = open(name, "wb")
-                    f.write(page)
-                    f.close()
-                except:
-                    pass
-                err =  ("<error>Failure retrieving concept %s; "
-                        "HTTP response %s: %s</error>" %
-                        (code, response.status, response.reason))
-                return None
-
-            # We can stop trying now, we got it.
-            docXml = response.read()
-            tries = 0
-
-        except Exception, e:
-            tries -= 1
-            if not tries:
-                err =  "<error>EVS server unavailable: %s</error>" % e
-                return None
-
-    filt = ["name:EVS Concept Filter"]
-    result = cdr.filterDoc('guest', filt, doc = docXml)
-    if type(result) in (str, unicode):
-        now = time.strftime("%Y%m%d%H%M%S")
-        f = open("d:/tmp/ConceptDoc-%s-%s.xml" % (code, now), "wb")
-        f.write(docXml)
-        f.close()
-        err =  "<error>Error in EVS response: %s</error>" % result
-        return None
-    docXml = result[0]
+    host  = "lexevsapi60.nci.nih.gov"
+    app   = "/lexevsapi60/GetXML"
+    parms = "query=org.LexGrid.concepts.Entity[@_entityCode=%s]" % code
+    url   = "http://%s/%s?%s" % (host, app, parms)
     try:
-        dom = xml.dom.minidom.parseString(docXml)
-        return Concept(dom.documentElement)
+        conn = urllib2.urlopen(url)
+        doc  = conn.read()
     except Exception, e:
-        err =  "<error>Failure parsing concept: %s</error>" % str(e)
+        err = "<error>EVS server unavailable: %s</error>" % e
         return None
+    try:
+        tree    = etree.XML(doc)
+        concept = Concept(tree)
+    except Exception, e:
+        err = "<error>Failure parsing concept: %s</error>" % e
+        storeEvsResponse(code, doc)
+        return None
+    if not concept.code:
+        err = "<error>Concept document for %s not found</error>" % code
+        storeEvsResponse(code, doc)
+        return None
+    return concept
 
 #----------------------------------------------------------------------
-# See if citation already exists.
+# See if citation already exists.  XXX Modify after we populate the
+# new NCIThesaurusConcept element.
 #----------------------------------------------------------------------
-def findExistingConcept(conn,code):
+def findExistingConcept(conn, code):
     global err
     try:
         err = ""
@@ -382,129 +302,86 @@ def findExistingConcept(conn,code):
         return None
 
 #----------------------------------------------------------------------
-# Get the preferred name for the cdr document
+# Prepare definition for comparison.
 #----------------------------------------------------------------------
-def getPreferredName(dom):
-    docElem = dom.documentElement
-    for node in docElem.childNodes:
-        if node.nodeName == 'PreferredName':
-            return cdr.getTextContent(node)
-    return ""
-
-#----------------------------------------------------------------------
-# Get the semantic type text for the cdr document
-#----------------------------------------------------------------------
-def getSemanticType(dom):
-    docElem = dom.documentElement
-    for node in docElem.childNodes:
-        if node.nodeName == 'SemanticType':
-            return cdr.getTextContent(node)
-    return ""
-
-def removeAllSpaces(strToRemove):
-    if not strToRemove:
-        return ""
-    return strToRemove.replace(' ', '')
+def normalizeDefinitionText(definitionText):
+    if not definitionText:
+        return u""
+    return re.sub(r"\s+", " ", definitionText.strip())
 
 #----------------------------------------------------------------------
 # Update the definition
 #----------------------------------------------------------------------
-def updateDefinition(dom, definition):
+def updateDefinition(tree, definition):
     global bChanged
     global changes
-    bFound = False
-    docElem = dom.documentElement
+    for node in tree.findall("Definition"):
+        for text in node.findall("DefinitionText"):
+            oldText = normalizeDefinitionText(child.text)
+            newText = definition.fixText()
+            if oldText != normalizeDefinitionText(newText):
+                bChanged = True
+                changes += " Definition update."
+                child.text = newText
+                for status in node.findall("ReviewStatus"):
+                    status.text = "Unreviewed"
+            return
+
+    #------------------------------------------------------------------
+    # Definition not found, so add it.
+    #------------------------------------------------------------------
     insertPosition = 0
-    for node in docElem.childNodes:
-        if node.nodeName == 'OtherName':
-            insertPosition = docElem.childNodes.index(node) + 1
-        elif node.nodeName == 'TermType':
-            insertPosition = docElem.childNodes.index(node)
-        elif node.nodeName == 'Definition':
-            for n in node.childNodes:
-                if n.nodeName == 'DefinitionText':
-                    for nn in n.childNodes:
-                        if nn.nodeType == nn.TEXT_NODE:
-                            dt = removeAllSpaces(nn.nodeValue)
-                            if dt != removeAllSpaces(definition.text):
-                                bChanged = True
-                                changes += ' Definition updated.'
-                                nn.nodeValue = definition.text
-                                bFound = True
-                elif n.nodeName == 'ReviewStatus':
-                    for nn in n.childNodes:
-                        if nn.nodeType == xml.dom.minidom.Node.TEXT_NODE:
-                            if bChanged:
-                                nn.nodeValue = 'Unreviewed'
-
-    # Definition not found, need to add it
-    if not bFound:
-        bChanged = True
-        changes += ' Definition added.'
-        docElem.childNodes.insert(insertPosition, definition.toNode(dom))
+    for node in tree:
+        if node.tag == "TermType":
+            break
+        insertPosition += 1
+    bChanged = True
+    changes += ' Definition added.'
+    tree.insert(insertPosition, definition.toNode())
 
 #----------------------------------------------------------------------
-# addOtherName
+# Determine correct position and add new OtherName element there.
 #----------------------------------------------------------------------
-def addOtherName(dom, fullSyn, conceptCode, drugTerm, cdrPreferredName):
+def addOtherName(tree, fullSyn, conceptCode, drugTerm, cdrPreferredName):
     global bChanged
     global changes
     bChanged = True
-    docElem = dom.documentElement
-    for node in docElem.childNodes:
-        if node.nodeName == 'OtherName':
-            changes += ' Other Name: ' + fullSyn.toDescription() + ' added.'
-            docElem.insertBefore(fullSyn.toNode(dom, conceptCode, drugTerm,
-                                                cdrPreferredName), node);
-            return;
-        
-    docElem.appendChild(fullSyn.toNode(dom, conceptCode, drugTerm,
-                                       cdrPreferredName))
+    changes += (" Other Name: %s added" % fullSyn)
+    position = 0
+    for node in tree:
+        if node.tag not in ("PreferredName", "ReviewStatus", "Comment",
+                            "OtherName"):
+            break
+        position += 1
+    newNode = fullSyn.toNode(conceptCode, drugTerm, cdrPreferredName)
+    tree.insert(position, newNode)
 
 #----------------------------------------------------------------------
-# getOtherNames
+# Extract OtherName information from a CDR document.
 #----------------------------------------------------------------------
-def getOtherNames(dom):
+def getOtherNames(tree):
     otherNames = []
-    docElem = dom.documentElement
-    for node in docElem.childNodes:
-        if node.nodeName == 'OtherName':
-            for n in node.childNodes:
-                if n.nodeName == 'OtherTermName':
-                    termName = cdr.getTextContent(n)
-                elif n.nodeName == 'OtherNameType':
-                    nameType = cdr.getTextContent(n)
-                    if (nameType == 'Lexical variant'):
-                        nameType = 'Synonym'
-                    otherNames.append(OtherName(termName, nameType))
+    for node in tree.findall("OtherName"):
+        termName = nameType = None
+        for child in node:
+            if child.tag == "OtherTermName":
+                termName = child.text
+            elif child.tag == "OtherNameType":
+                nameType = child.text
+                if nameType == "Lexical variant":
+                    nameType = "Synonym"
+        otherNames.append(OtherName(termName, nameType))
     return otherNames
 
 #----------------------------------------------------------------------
-# updateTermStatus
+# Change the text content of a CDR Term document's TermStatus element.
 #----------------------------------------------------------------------
-def updateTermStatus(dom,status):
-    docElem = dom.documentElement
-    elems = docElem.getElementsByTagName("TermStatus")
-    for elem in elems:
-        for node in elem.childNodes:
-            if node.nodeType == xml.dom.minidom.Node.TEXT_NODE:
-                node.nodeValue = status
+def updateTermStatus(tree, status):
+    for node in tree.findall("TermStatus"):
+        node.text = status
 
 #----------------------------------------------------------------------
-# getCDRSemanticType
-#----------------------------------------------------------------------
-def getCDRSemanticType(session,CDRID):
-    docId = cdr.normalize(CDRID)
-    oldDoc = cdr.getDoc(session, docId, 'N')
-    if oldDoc.startswith("<Errors"):
-        return "<error>Unable to retrieve %s - %s</error>" % (CDRID,oldDoc)
-    oldDoc = cdr.getDoc(session, docId, 'N',getObject=1)
-    dom = xml.dom.minidom.parseString(oldDoc.xml)
-    semanticType = getSemanticType(dom)
-    return semanticType
-
-#----------------------------------------------------------------------
-# getNCITPreferredName
+# Get the preferred name of a concept in the NCI Thesaurus.
 #----------------------------------------------------------------------
 def getNCITPreferredName(conceptCode):
     concept = fetchConcept(conceptCode)
@@ -513,17 +390,197 @@ def getNCITPreferredName(conceptCode):
     return concept.preferredName
 
 #----------------------------------------------------------------------
-# getCDRPreferredName
+# Get the semantic type value for a CDR document.  Some of these
+# functions are no longer used in this module, but I'm keeping them
+# in case outside code depends on them (RMK, 2011-03-12).
 #----------------------------------------------------------------------
-def getCDRPreferredName(session, CDRID):
-    docId = cdr.normalize(CDRID)
-    oldDoc = cdr.getDoc(session, docId, 'N')
-    if oldDoc.startswith("<Errors"):
-        return "<error>Unable to retrieve %s - %s</error>" % (CDRID, oldDoc)
-    oldDoc = cdr.getDoc(session, docId, 'N', getObject=True)
-    dom = xml.dom.minidom.parseString(oldDoc.xml)
-    preferredName = getPreferredName(dom)
-    return preferredName
+def getCDRSemanticType(session, docId):
+    doc = cdr.getDoc(session, docId, 'N', getObject=True)
+    error = cdr.checkErr(doc)
+    if error:
+        return "<error>Unable to retrieve %s - %s</error>" % (docId, error)
+    tree = etree.XML(doc.xml)
+    for node in tree.findall("SemanticType"):
+        return node.text
+    return ""
+
+#----------------------------------------------------------------------
+# Retrieve the preferred name of a CDR Term document.
+#----------------------------------------------------------------------
+def getCDRPreferredName(session, docId):
+    doc = cdr.getDoc(session, docId, 'N', getObject=True)
+    error = cdr.checkErr(doc)
+    if error:
+        return "<error>Unable to retrieve %s - %s</error>" % (docId, error)
+    tree = etree.XML(doc.xml)
+    for node in tree.findall("PreferredName"):
+        return node.text
+    return ""
+
+
+#----------------------------------------------------------------------
+# Update an existing CDR Term document.
+#----------------------------------------------------------------------
+def updateTerm(session, cdrId, conceptCode, doUpdate=False,
+               doUpdateDefinition=True, doImportTerms=True, drugTerm=True):
+
+    #------------------------------------------------------------------
+    # Initialize global variables.
+    #------------------------------------------------------------------
+    global bChanged
+    global err
+    global changes
+    bChanged = False
+    err = ""
+    changes = ''
+
+    #------------------------------------------------------------------
+    # Fetch the Thesaurus concept and the CDR document.
+    #------------------------------------------------------------------
+    concept = fetchConcept(conceptCode)
+    if err:
+        return err
+    docId = cdr.normalize(cdrId)
+    doc = cdr.getDoc(session, docId, doUpdate and "Y" or "N", getObject=True)
+    error = cdr.checkErr(doc)
+    if error:
+        return "<error>Unable to retrieve %s - %s</error>" % (docId, error)
+    tree = etree.XML(docObject.xml)
+    
+    #------------------------------------------------------------------
+    # This check may be obsolete, but Charlie left no documentation
+    # behind, so I'm leaving it in place.  XXX Check with the users.
+    #------------------------------------------------------------------
+    if drugTerm:
+        semanticType = None
+        for node in tree.findall("SemanticType"):
+            semanticType = node.text
+        if (semanticType != "Drug/agent"):
+            return ("<error>Semantic Type is %s. The importing only works "
+                    "for Drug/agent</error>" % semanticType)
+
+    #------------------------------------------------------------------
+    # If the user wants the definition updated and we have one, do it.
+    #------------------------------------------------------------------
+    if doUpdateDefinition:
+        for definition in concept.definitions:
+            if definition.source == 'NCI':
+                definition.drugTerm = drugTerm
+                updateDefinition(tree, definition)
+                break
+
+    #------------------------------------------------------------------
+    # Plug in any new names if we're asked to.
+    #------------------------------------------------------------------
+    if doImportTerms:
+        otherNames = getOtherNames(tree)
+        for syn in concept.fullSyn:
+            if syn.termSource != 'NCI-GLOSS':
+                found = False
+                for otherName in otherNames:
+                    if syn.termName.upper() == otherName.termName.upper():
+                        if syn.mappedTermGroup == otherName.nameType:
+                            found = True
+                            break
+                                
+                #------------------------------------------------------
+                # It's not already in the document; add it.
+                #------------------------------------------------------
+                if not found:
+                    cdrPreferredName = ''
+                    if not drugTerm:
+                        for node in tree.findall("PreferredName"):
+                            cdrPreferredName = node.text
+                    addOtherName(tree, syn, conceptCode, drugTerm,
+                                 cdrPreferredName)
+
+    #------------------------------------------------------------------
+    # If the document changed update the status and store it if requested.
+    #------------------------------------------------------------------
+    if bChanged:
+        updateTermStatus(dom, 'Unreviewed')
+
+        oldDoc.xml = dom.toxml().encode('utf-8')
+          
+        if doUpdate:
+            doc.xml = etree.tostring(tree, pretty_print=True)
+            
+            #--------------------------------------------------------------
+            # Charlie's code never made publishable versions for drug terms.
+            # I'm assuming that was a mistake.  XXX Check with the users.
+            #--------------------------------------------------------------
+            versions = cdr.lastVersions(session, docId)
+            publishVer = versions[1] == -1 and "N" or "Y"
+            updateComment = "NCI Thesaurus Update"
+            resp = cdr.repDoc(session, doc=str(doc), val='Y', ver='Y',
+                              verPublishable=publishVer, showWarnings=True,
+                              comment=updateComment)
+            cdr.unlock(session, docId)
+            if not resp[0]:
+                return ("<error>Failure adding concept %s: %s</error>" %
+                        (cdrId, cdr.checkErr(resp[1])))
+            return ("Term %s updated. Publishable = %s. %s" %
+                    (cdrId, publishVer, changes))
+        return ("Term %s will change. Publishable = %s. %s" %
+                (cdrId, publishVer, changes))
+    else:
+        cdr.unlock(session,docId)
+        return "No updates needed for term %s." % cdrId
+
+#----------------------------------------------------------------------
+# Add a new CDR Term document.
+#----------------------------------------------------------------------
+def addNewTerm(session, conceptCode, updateDefinition=True, importTerms=True):
+    conn = connectToDB()
+    if err:
+        return err
+    concept = fetchConcept(conceptCode)
+    if err:
+        return err
+    docId = findExistingConcept(conn, conceptCode)
+    if err:
+        return err
+    if docId:
+        return ("<error>Concept has already been imported as CDR%010d</error>"
+                % docId)
+    root = etree.Element("Term", nsmap=NSMAP)
+    preferredName == concept.preferredName or u""
+    etree.SubElement(root, "PreferredName").text = preferredName
+    if importTerms:
+        for syn in concept.fullSyn:
+            if syn.termSource == "NCI":
+                code = syntermGroup == "PT" and conceptCode or None
+                termType = mapType(syn.termGroup)
+                root.append(makeOtherNameNode(syn.termName, termType,
+                                              syn.termGroup, code))
+        for code in concept.indCodes:
+            root.append(makeOtherNameNode(code, "IND code", "IND_Code"))
+        for code in concept.nscCodes:
+            root.append(makeOtherNameNode(code, "NSC code", "NSC_Code"))
+        for code in concept.casCodes:
+            root.append(makeOtherNameNode(code, "CAS Registry name",
+                                          "CAS_Registry"))
+    if updateDefinition:
+        for definition in concept.definitions:
+            if definition.source == 'NCI':
+                root.append(definition.toNode())
+    termTypeNode = etree.SubElement(root, "TermType")
+    etree.SubElement(termTypeNode, "TermTypeName").text = "Index term"
+    etree.SubElement(root, "TermStatus").text = "Unreviewed"
+    docXml = etree.tostring(root, pretty_print=True)
+    doc = cdr.Doc(docXml, "Term")
+    comment = "Importing Term document from NCI Thesaurus"
+    resp = cdr.addDoc(session, doc=str(doc), val='Y', showWarnings=True,
+                      comment=comment)
+    if not resp[0]:
+        cdrcgi.bail("Failure adding new term document: %s" % resp[1])
+    cdr.unlock(session, resp[0])
+    return "Concept added as %s" % resp[0]
+
+#----------------------------------------------------------------------
+# The rest of the code in this module is Charlie's, and I'm leaving it
+# pretty much the way I found it.  Not sure it's still used any more.
+#----------------------------------------------------------------------
 
 class DocConceptPair:
     def __init__(self, doc_id, concept, updateDef):
@@ -537,7 +594,7 @@ def getThingsToUpdate(isDrugUpdate, excelSSName):
     import os.path, ExcelReader
     if isDrugUpdate:
 
-        #first, get a list of all the drug/agent concept codes
+        #first get a list of all the drug/agent concept codes
         query = """\
             SELECT distinct qt.doc_id,qt.value
               FROM query_term qt
@@ -549,9 +606,7 @@ def getThingsToUpdate(isDrugUpdate, excelSSName):
                AND semantic.int_val = 256166
           ORDER BY qt.doc_id"""
 
-        #----------------------------------------------------------------------
-        # Submit the query to the database.
-        #----------------------------------------------------------------------
+        #submit the query to the database.
         try:
             conn = cdrdb.connect('CdrGuest')
             cursor = conn.cursor()
@@ -573,9 +628,7 @@ def getThingsToUpdate(isDrugUpdate, excelSSName):
             book = ExcelReader.Workbook(excelSSName)
             sheet = book[0]
             for row in sheet.rows:
-                cell = row[0]
-                rawValue = cell.val
-                cdridsToSkipDef.append(rawValue)
+                cdridsToSkipDef.append(row[0].val)
      
         for doc_id, value in rows:
             value = value.strip()
@@ -678,180 +731,5 @@ def updateAllTerms(job, session, excelNoDefFile, excelOutputFile, doUpdate,
         row.addCell(3, result)
 
     fobj = file(excelOutputFile, "wb")
-    wb.write(fobj, asXls = True, big = True)
+    wb.write(fobj, asXls=True, big=True)
     fobj.close()
-
-#----------------------------------------------------------------------
-# Update an existing concept/term
-#----------------------------------------------------------------------
-def updateTerm(session, CDRID, conceptCode, doUpdate=False,
-               doUpdateDefinition=True, doImportTerms=True, drugTerm=True):
-    global bChanged
-    global err
-    global changes
-    checkOut = 'N'
-    bChanged = False
-    err = ""
-    changes = ''
-    publishVer = 'N'
-
-    if doUpdate:
-        checkOut = 'Y'
-
-    docId = cdr.normalize(CDRID)
-    cdr.unlock(session,docId)
-    
-    if drugTerm:
-        semanticType = getCDRSemanticType(session, CDRID)
-        if (semanticType != "Drug/agent"):
-            return ("<error>Semantic Type is %s. The importing only works "
-                    "for Drug/agent</error>" % semanticType)
-    else:
-        query = """SELECT publishable
-                     FROM doc_version
-                    WHERE num = (SELECT max(num)
-                                   FROM doc_version
-                                  WHERE id = %s)
-                      AND id = %s""" % (CDRID, CDRID)
-        try:
-            conn = cdrdb.connect('CdrGuest')
-            cursor = conn.cursor()
-            cursor.execute(query, timeout=300)
-            rows = cursor.fetchall()
-        except cdrdb.Error, info:
-            return 'Failure retrieving Summary documents: %s' % info[1][0]
-             
-        if not rows:
-            return 'No Records Found for Selection'
-
-        for publishableVer in rows:
-            publishVer =  publishableVer[0]
-
-    #conn = connectToDB()
-    if err:
-        return err
-    oldDoc = cdr.getDoc(session, docId, checkOut)
-    if oldDoc.startswith("<Errors"):
-        return ("<error>Unable to retrieve %s - %s, "
-                "session = %s</error>" % (CDRID,oldDoc,session))
-    cdr.unlock(session, docId)
-    oldDoc = cdr.getDoc(session, docId, checkOut, getObject=True)
-
-    concept = fetchConcept(conceptCode)
-    if err:
-        return err
-
-    dom = xml.dom.minidom.parseString(oldDoc.xml)
-    # update the definition, if there is one.
-    if doUpdateDefinition:
-        for definition in concept.definitions:
-            if definition.source == 'NCI':
-                definition.drugTerm = drugTerm
-                updateDefinition(dom, definition)
-                break
-
-    if doImportTerms:
-        # fetch the other names
-        otherNames = getOtherNames(dom)
-        for syn in concept.fullSyn:
-            if syn.termSource != 'NCI-GLOSS':
-                bfound = False
-                for otherName in otherNames:
-                    if syn.termName.upper() == otherName.termName.upper():
-                        if syn.mappedTermGroup == otherName.nameType:
-                            bfound = True
-                                
-                # Other Name not found, add it
-                if not bfound:
-                    cdrPreferredName = ''
-                    if not drugTerm:
-                        cdrPreferredName = getCDRPreferredName(session, CDRID)
-                    addOtherName(dom, syn, conceptCode, drugTerm,
-                                 cdrPreferredName)
-
-    #set the TermStatus to Unreviewed, if a change was made
-    if bChanged:
-        updateTermStatus(dom, 'Unreviewed')
-
-        oldDoc.xml = dom.toxml().encode('utf-8')
-          
-        if doUpdate:
-            strDoc = str(oldDoc)
-            updateComment = "NCI Thesaurus Update"
-            resp = cdr.repDoc(session, doc=strDoc, val='Y', ver='Y',
-                              verPublishable=publishVer, showWarnings=True,
-                              comment=updateComment)
-            cdr.unlock(session, docId)
-            if not resp[0]:
-                return ("<error>Failure adding concept %s: %s</error>" %
-                        (CDRID, cdr.checkErr(resp[1])))
-            return ("Term %s updated. Publishable = %s. %s" %
-                    (CDRID, publishVer, changes))
-        return ("Term %s will change. Publishable = %s. %s" %
-                (CDRID, publishVer, changes))
-    else:
-        cdr.unlock(session,docId)
-        return "No updates needed for term %s." % CDRID
-
-#----------------------------------------------------------------------
-# Add a new Term
-#----------------------------------------------------------------------
-def addNewTerm(session, conceptCode, updateDefinition=True, importTerms=True):
-    conn = connectToDB()
-    if err:
-        return err
-    concept = fetchConcept(conceptCode)
-    if err:
-        return err
-    docId = findExistingConcept(conn,conceptCode)
-    if err:
-        return err
-    if docId:
-        return ("<error>Concept has already been imported as CDR%010d</error>"
-                % docId)
-    doc = [u"""\
-<Term xmlns:cdr='cips.nci.nih.gov/cdr'>
- <PreferredName>%s</PreferredName>
-""" % fix(concept.preferredName)]
-    if importTerms:
-        for syn in concept.fullSyn:
-            if syn.termSource == 'NCI':
-                code = syn.termGroup == 'PT' and conceptCode or None
-                termType = mapType(syn.termGroup)
-                doc.append(makeOtherName(syn.termName, termType, syn.termGroup,
-                                         code))
-        for indCode in concept.indCodes:
-            doc.append(makeOtherName(indCode, 'IND code', 'IND_Code'))
-        for nscCode in concept.nscCodes:
-            doc.append(makeOtherName(nscCode, 'NSC code', 'NSC_Code'))
-        for casCode in concept.casCodes:
-            doc.append(makeOtherName(casCode, 'CAS Registry name',
-                                     'CAS_Registry'))
-            
-    if updateDefinition:
-        for definition in concept.definitions:
-            if definition.source == 'NCI':
-                doc.append(definition.toXml())
-                
-    doc.append(u"""\
- <TermType>
-  <TermTypeName>Index term</TermTypeName>
- </TermType>
- <TermStatus>Unreviewed</TermStatus>
-</Term>
-""")
-    wrapper = u"""\
-<CdrDoc Type='Term' Id=''>
- <CdrDocCtl>
-  <DocType>Term</DocType>
-  <DocTitle>%s</DocTitle>
- </CdrDocCtl>
- <CdrDocXml><![CDATA[%%s]]></CdrDocXml>
-</CdrDoc>
-""" % fix(concept.preferredName)
-    doc = (wrapper % u"".join(doc)).encode('utf-8')
-    resp = cdr.addDoc(session, doc = doc, val = 'Y', showWarnings = True)
-    if not resp[0]:
-        cdrcgi.bail("Failure adding new term document: %s" % resp[1])
-    cdr.unlock(session, resp[0])
-    return "Concept added as %s" % resp[0]
