@@ -2007,6 +2007,16 @@ class dtinfo:
         self.vvLists        = vvLists
         self.comment        = comment
         self.error          = error
+    def getChildren(self, parent=None):
+        if not self.dtd:
+            raise Exception("document type %s has no DTD" % self.type)
+        parent = parent or self.type
+        pattern = r"<!ELEMENT\s+%s\s+([^>]+)>" % (parent)
+        match = re.search(pattern, self.dtd)
+        if not match:
+            raise Exception("definition of element %s not found" % parent)
+        return [c for c in re.split(r"\W+", match.group(1))
+                if c and c != "CdrDocCtl"]
     def __repr__(self):
         if self.error: return self.error
         return """\
