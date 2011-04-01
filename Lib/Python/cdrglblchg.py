@@ -256,7 +256,7 @@ CDR_TERM_FIELDS = {\
 # Map of field display names for CTGovProtocols
 CTG_TERM_FIELDS = {\
  TERM_FLD_DIAG: "/CTGovProtocol/PDQIndexing/Eligibility/Diagnosis/@cdr:ref",
- TERM_FLD_EXC:  "/CTGovProtocol/Eligibility/ExclusionCriteria/@cdr:ref",
+ TERM_FLD_EXC:  "/CTGovProtocol/PDQIndexing/Eligibility/ExclusionCriteria/@cdr:ref",
  TERM_FLD_INTV: "/CTGovProtocol/PDQIndexing/StudyCategory/Intervention" +\
                 "/InterventionType/@cdr:ref",
  TERM_FLD_INTN: "/CTGovProtocol/PDQIndexing/StudyCategory/Intervention" +\
