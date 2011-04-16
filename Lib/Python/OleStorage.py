@@ -31,17 +31,6 @@ Example usage:
 #
 # Module for reading OLE2 structured storage files.
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.3  2004/10/20 12:58:11  bkline
-# Fixed comment typo.
-#
-# Revision 1.2  2004/10/12 12:57:11  bkline
-# Added alternate method of invoking the OleStorage constructor, passing
-# an in-memory buffer instead of the pathname of a disk file.
-#
-# Revision 1.1  2004/10/10 19:09:50  bkline
-# Support for reading Excel workbooks.
-#
 #----------------------------------------------------------------------
 import struct, sys
 
@@ -99,16 +88,15 @@ class OleStorage:
             name  - absolute or relative path name for disk file; or
             buf   - in-memory contents of structured storage file
         """
+        self.__name = name
         if name:
-            self.__name = name
             self.__file = open(name, 'rb')
-            buf         = self.__file.read(HEADER_SIZE)
-        elif buf:
-            self.__name = None
-            self.__file = None
-            buf         = fileBuf
+        elif fileBuf:
+            import cStringIO
+            self.__file = cStringIO.StringIO(fileBuf)
         else:
             raise Exception("must provide filename or buffer")
+        buf              = self.__file.read(HEADER_SIZE)
         self.__magicId   = self.__checkMagic(buf[0:8])
         self.__uid       = buf[8:24]
         self.__revNum    = buf[24:26]
