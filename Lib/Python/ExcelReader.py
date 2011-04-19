@@ -148,49 +148,6 @@
 #
 # Module for extracting cell values from Excel spreadsheets.
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.11  2005/05/04 17:48:58  bkline
-# Added more debug logging; added support for 5-digit zipcode formats.
-#
-# Revision 1.10  2005/03/10 20:33:30  bkline
-# Fixed fontIndex adjustment (need to subtract instead of add).
-#
-# Revision 1.9  2005/03/05 05:54:13  bkline
-# "The font with index 4 is omitted in all BIFF versions.  This means the
-# first four fonts have zero-based indexes, and the fifth font and all
-# following fonts are referenced with one-based indexes." - OpenOffice
-# documentation for Excel BIFF formats.  Fixed code to conform to this
-# specification.
-#
-# Revision 1.8  2005/03/04 22:09:59  bkline
-# Fixed font indexing problem.
-#
-# Revision 1.7  2005/03/03 14:42:30  bkline
-# Fixed documentation typos.
-#
-# Revision 1.6  2005/01/06 22:55:55  bkline
-# Added more debugging information; fixed RTF and Far East length
-# calculation bugs.
-#
-# Revision 1.5  2004/11/04 13:13:58  bkline
-# Removed superfluous quote mark in doc string.
-#
-# Revision 1.4  2004/10/12 11:36:29  bkline
-# Fixed name of fileBuf argument to OleStorage constructor.
-#
-# Revision 1.3  2004/10/12 01:27:09  bkline
-# Sped up the XML document generation by almost two orders of magnitude,
-# by using the string join operator on a list of strings for the pieces
-# of the document rather than string concatenation.  Fleshed out the
-# module's documentation.
-#
-# Revision 1.2  2004/10/11 00:14:52  bkline
-# Added support for CONTINUE records.  Fixed an encoding bug (str(cell)
-# now returns a UTF-8--encoded string).
-#
-# Revision 1.1  2004/10/10 19:09:50  bkline
-# Support for reading Excel workbooks.
-#
 #----------------------------------------------------------------------
 
 import OleStorage, struct, sys
@@ -368,7 +325,7 @@ class Workbook:
         if fileName:
             oleStorage = OleStorage.OleStorage(name = fileName)
         elif fileBuf:
-            oleStorage = OleStorage.OleStorage(buf = fileBuf)
+            oleStorage = OleStorage.OleStorage(fileBuf = fileBuf)
         else:
             raise Exception("fileName or fileBuf must be specified")
         bookStream = oleStorage.getRootDirectory().open("Workbook")
