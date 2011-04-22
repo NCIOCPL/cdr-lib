@@ -425,7 +425,6 @@
 
 import cdr, cdrdb, os, re, string, sys, xml.dom.minidom
 import socket, cdr2gk, time, threading, glob, base64, AssignGroupNums
-from xml.parsers.xmlproc import xmlval, xmlproc
 import lxml.etree
 
 #-----------------------------------------------------------------------
@@ -3778,48 +3777,6 @@ class ErrHandler:
                                          msg,
                                          xmlString))
 
-#----------------------------------------------------------------------
-# Set a parser instance to validate filtered documents.
-#----------------------------------------------------------------------
-# __parser     = xmlval.XMLValidator()
-# __app        = xmlproc.Application()
-# __errHandler = ErrHandler(__parser)
-# __parser.set_application(__app)
-# __parser.set_error_handler(__errHandler)
-
-#----------------------------------------------------------------------
-# Validate a given document against its DTD.
-#----------------------------------------------------------------------
-def validateDocpyXML(filteredDoc, docId = 0, dtd = cdr.DEFAULT_DTD):
-
-    # These used to be global.  Now local to ensure expat thread safety
-    __parser     = xmlval.XMLValidator()
-    __app        = xmlproc.Application()
-    __errHandler = ErrHandler(__parser)
-    __parser.set_application(__app)
-    __parser.set_error_handler(__errHandler)
-
-    errObj      = ErrObject()
-    docTypeExpr = re.compile(r"<!DOCTYPE\s+(.*?)\s+.*?>", re.DOTALL)
-    docType     = """<!DOCTYPE %s SYSTEM "%s">
-                  """
-
-    match = docTypeExpr.search(filteredDoc)
-    if match:
-        topElement = match.group(1)
-        docType    = docType % (topElement, dtd)
-        doc        = docTypeExpr.sub(docType, filteredDoc)
-    else:
-        errObj.Errors.append(
-            "%d.xml:0:0:DOCTYPE declaration is missing." % docId)
-        return errObj
-
-    __errHandler.set_sysid("%d.xml" % docId)
-    __errHandler.set_errobj(errObj)
-    __parser.feed(doc)
-    __parser.reset()
-
-    return errObj
 
 #----------------------------------------------------------------------
 # Validate a given document against its DTD.
