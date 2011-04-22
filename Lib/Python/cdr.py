@@ -3549,15 +3549,16 @@ class Log:
         # Can get the PID once and save it, formatted
         self.__pid = "!%d: " % os.getpid()
 
-        # Open for append, unbuffered
-        self.__filename = dirname + '/' + filename
-        self.__fp = open(self.__filename, "a", 0)
-
         # Save parms
         self.__banner  = banner
         self.__logTime = logTime
         self.__logPID  = logPID
         self.__level   = level
+        self.__fp      = None
+
+        # Open for append, unbuffered
+        self.__filename = dirname + '/' + filename
+        self.__fp = open(self.__filename, "a", 0)
 
         # If there's a banner, write it with stamps
         if banner:
@@ -3647,10 +3648,16 @@ class Log:
             self.__logTime  = True
             self.__logPID   = True
             self.__level    = DEFAULT_LOGLVL
-            self.writeRaw("\n%s\n" % time.ctime())
-            self.writeRaw("=========== Closing Log ===========\n\n")
+            if type(self.__fp) == 'file':
+                self.writeRaw("\n%s\n" % time.ctime())
+                self.writeRaw("=========== Closing Log ===========\n\n")
 
-        self.__fp.close()
+        # Can only close the file if we were able to open it earlier.
+        # Permission problems exist and file pointer is None.
+        # -----------------------------------------------------------
+        if type(self.__fp) == 'file':
+            self.__fp.close()
+
 #----------------------------------------------------------------------
 # Create an HTML table from a passed data
 #----------------------------------------------------------------------
