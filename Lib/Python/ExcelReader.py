@@ -719,6 +719,11 @@ class Worksheet:
                         offset += record.size + 4
                         record = Record(book.buf, offset)
 
+                        # Skip over any SHAREDFMLA records
+                        while record.id == 0x04BC:
+                            offset += record.size + 4
+                            record = Record(book.buf, offset)
+
                         # STRING record
                         if record.id == 0x0207:
                             v = UnicodeString(record.data).value
@@ -915,7 +920,7 @@ class Cell:
         """Creates a Unicode representation of the Cell, suitable
         for debugging output."""
         rep = u"[Cell: row=%d col=%d value=%s" % (self.row, self.col,
-                                                  self.format())
+                                                  repr(self.format()))
         if self.hlink:
             rep += u"hlink=%s" % self.hlink
         return rep + u"]"
@@ -953,7 +958,16 @@ class Cell:
             else:
                 return u"%s" % self.val
         else:
-            return u"%s" % self.val
+            try:
+                return u"%s" % self.val
+            except:
+                try:
+                    return unicode(self.val, 'utf-8')
+                except:
+                    try:
+                        return unicode(self.val, 'latin-1')
+                    except:
+                        return unicode(self.val, 'ascii', 'ignore')
 
 class Font:
     """
