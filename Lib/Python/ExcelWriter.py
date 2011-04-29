@@ -139,7 +139,11 @@ class Workbook:
         Pass:
             fobj  - open Python file object.
             asXls - write in Excel 97 .xls binary format (uses Perl module).
-            big   -  used to write large excel files.
+            big   - used to write large excel files.
+
+        Note:
+            You MUST use asXls = True if the sheet has to be read back in
+            by ExcelReader.py.  ExcelReader does not read the XML format.
         """
         if asXls:
             baseName = os.path.join(tempfile.gettempdir(),
