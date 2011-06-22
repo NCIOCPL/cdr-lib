@@ -7,6 +7,7 @@
 #
 # BZIssue::4656
 # BZIssue::5004
+# BZIssue::5073
 #
 #----------------------------------------------------------------------
 
@@ -66,15 +67,15 @@ def mapType(nciThesaurusType):
 def makeOtherNameNode(name, termType, sourceTermType, code=None,
                       reviewed="Reviewed"):
     otherName = etree.Element("OtherName")
-    etree.SubElement(otherName, "OtherTermName").text = fix(name)
-    etree.SubElement(otherName, "OtherNameType").text = fix(termType)
+    etree.SubElement(otherName, "OtherTermName").text = name
+    etree.SubElement(otherName, "OtherNameType").text = termType
     info = etree.SubElement(otherName, "SourceInformation")
     vocabularySource = etree.SubElement(info, "VocabularySource")
     etree.SubElement(vocabularySource, "SourceCode").text = "NCI Thesaurus"
     etree.SubElement(vocabularySource,
-                     "SourceTermType").text = fix(sourceTermType)
+                     "SourceTermType").text = sourceTermType
     if code:
-        etree.SubElement(vocabularySource, "SourceTermId").text = fix(code)
+        etree.SubElement(vocabularySource, "SourceTermId").text = code
     etree.SubElement(otherName, "ReviewStatus").text = reviewed
     return otherName
 
@@ -114,14 +115,14 @@ class FullSynonym:
     def __init__(self, node):
         self.termName = Concept.extractValue(node)
         self.termGroup = Concept.getFieldValue(node, "_representationalForm")
-        self.mappedTermGroup = mapType(group)
+        self.mappedTermGroup = mapType(self.termGroup)
         self.termSource = Concept.extractSource(node)
 
     #------------------------------------------------------------------
     # For informing the user about inserted other name blocks.
     #------------------------------------------------------------------
     def __str__(self):
-        s = (u"%s (%s)" % (self.termName, self.termGroup)).encode("utf-8")
+        return (u"%s (%s)" % (self.termName, self.termGroup)).encode("utf-8")
 
     #------------------------------------------------------------------
     # Build an OtherName node for insertion into a CDR Term document.
@@ -316,7 +317,7 @@ def updateDefinition(tree, definition):
     global bChanged
     global changes
     for node in tree.findall("Definition"):
-        for text in node.findall("DefinitionText"):
+        for child in node.findall("DefinitionText"):
             oldText = normalizeDefinitionText(child.text)
             newText = definition.fixText()
             if oldText != normalizeDefinitionText(newText):
@@ -445,11 +446,13 @@ def updateTerm(session, cdrId, conceptCode, doUpdate=False,
     error = cdr.checkErr(doc)
     if error:
         return "<error>Unable to retrieve %s - %s</error>" % (docId, error)
-    tree = etree.XML(docObject.xml)
+    tree = etree.XML(doc.xml)
     
     #------------------------------------------------------------------
     # This check may be obsolete, but Charlie left no documentation
     # behind, so I'm leaving it in place.  XXX Check with the users.
+    # How does this semantic type get into the documents anyway?
+    # The import isn't doing it.
     #------------------------------------------------------------------
     if drugTerm:
         semanticType = None
@@ -498,10 +501,8 @@ def updateTerm(session, cdrId, conceptCode, doUpdate=False,
     # If the document changed update the status and store it if requested.
     #------------------------------------------------------------------
     if bChanged:
-        updateTermStatus(dom, 'Unreviewed')
+        updateTermStatus(tree, 'Unreviewed')
 
-        oldDoc.xml = dom.toxml().encode('utf-8')
-          
         if doUpdate:
             doc.xml = etree.tostring(tree, pretty_print=True)
             
@@ -544,12 +545,12 @@ def addNewTerm(session, conceptCode, updateDefinition=True, importTerms=True):
         return ("<error>Concept has already been imported as CDR%010d</error>"
                 % docId)
     root = etree.Element("Term", nsmap=NSMAP)
-    preferredName == concept.preferredName or u""
+    preferredName = concept.preferredName or u""
     etree.SubElement(root, "PreferredName").text = preferredName
     if importTerms:
         for syn in concept.fullSyn:
             if syn.termSource == "NCI":
-                code = syntermGroup == "PT" and conceptCode or None
+                code = syn.termGroup == "PT" and conceptCode or None
                 termType = mapType(syn.termGroup)
                 root.append(makeOtherNameNode(syn.termName, termType,
                                               syn.termGroup, code))
@@ -578,8 +579,7 @@ def addNewTerm(session, conceptCode, updateDefinition=True, importTerms=True):
     return "Concept added as %s" % resp[0]
 
 #----------------------------------------------------------------------
-# The rest of the code in this module is Charlie's, and I'm leaving it
-# pretty much the way I found it.  Not sure it's still used any more.
+# I'm leaving the rest of Charlie's code pretty much as it was for now.
 #----------------------------------------------------------------------
 
 class DocConceptPair:
