@@ -1690,12 +1690,12 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             msg = ""
 
         except cdrdb.Error, info:
-            self.__debugLog("Caught database error in __pushDocs2CG: %s" %
+            self.__debugLog("Caught database error in __pushDocsToCG: %s" %
                             str(info))
             msg = "__pushDocsToCG() failed: %s<BR>" % info[1][0]
             raise Exception(msg)
         except Exception, arg:
-            self.__debugLog("Caught Exception in __pushDocs2CG: %s" %
+            self.__debugLog("Caught Exception in __pushDocsToCG: %s" %
                             str(arg))
             raise Exception(str(arg))
         except:
@@ -1715,6 +1715,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         cg_job = self.__jobId
         cursor = self.__conn.cursor()
         cursor2 = self.__conn.cursor()
+        cursor3 = self.__conn.cursor()
 
         # Wipe out all rows in pub_proc_cg_work. Only one job can be run
         # for Cancer.gov transaction. This is guaranteed by calling
@@ -1757,6 +1758,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                               AND ppd.failure IS NULL
                               )
                   """ % (vendor_job, self.__excludeDT, vendor_job)
+                #and ppc.id in (
             cursor.execute(qry, timeout = self.__timeOut)
             row = cursor.fetchone()
             idsInserted = {}
@@ -1764,9 +1766,18 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             # Regexp for normalizing whitespace for compares
             spNorm = re.compile (ur"\s\s+")
 
+            # Setting parameters to slow down the writing and prevent
+            # SQL connection failure.
+            # -------------------------------------------------------
+            ibrake = 1
+            ifailure = 0
+            brakeLevel = 500
+            brakeTime  = 30
+
             # Fetch each doc
             while row:
                 docId  = row[0]
+                #self.__debugLog("*** processing %d ..." % docId)
                 if idsInserted.has_key(docId):
                     row = cursor.fetchone()
                     continue
@@ -1791,19 +1802,67 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                         needsPush = True
 
                 if needsPush:
-                    # New xml is different or CG wants it sent anyway
-                    cursor2.execute("""
-                        INSERT INTO pub_proc_cg_work (id, vendor_job,
-                                        cg_job, doc_type, xml, num)
-                             VALUES (?, ?, ?, ?, ?, ?)
-                                    """, (docId, vendor_job, cg_job, dType,
-                                          fileTxt, ver),
-                                         timeout = self.__timeOut
-                                   )
+                    # If many small documents are being inserted (i.e.
+                    # GlossaryTerms we need to slow down the process
+                    # of inserting rows or the job will fail.
+                    # ------------------------------------------------
+                    if ibrake > brakeLevel:
+                        self.__debugLog("Processed %d documents" % (ibrake - 1))
+                        self.__debugLog("Resting %d seconds" % brakeTime)
+                        time.sleep(brakeTime)
+                        ibrake = 1
+
+                    try:
+                        # New xml is different or CG wants it sent anyway
+                        #self.__debugLog("*** Inserting  %d ..." % docId)
+                        cursor2.execute("""
+                            INSERT INTO pub_proc_cg_work (id, vendor_job,
+                                            cg_job, doc_type, xml, num)
+                                 VALUES (?, ?, ?, ?, ?, ?)
+                                        """, (docId, vendor_job, cg_job, dType,
+                                              fileTxt, ver),
+                                             timeout = self.__timeOut
+                                       )
+                        ibrake += 1
+                        # self.__debugLog("*** Getting Next ID")
+                    except cdrdb.Error, info:
+                        # If the INSERT failed take a brake and try again
+                        # after a few seconds.  If the second insert fails
+                        # again exit, otherwise continue.
+                        # ------------------------------------------------
+                        ifailure += 1
+                        self.__debugLog("*** DB Insert Error for %d" % docId)
+                        self.__debugLog("*** Written %d records" % ibrake)
+                        self.__debugLog("*** Retry after %d seconds" %
+                                                                 brakeTime)
+                        time.sleep(brakeTime)
+                        try:
+                            self.__debugLog("*** inserting %d ..." % docId)
+                            cursor3.execute("""
+                                INSERT INTO pub_proc_cg_work (id, vendor_job,
+                                                cg_job, doc_type, xml, num)
+                                     VALUES (?, ?, ?, ?, ?, ?)
+                                            """, (docId, vendor_job, cg_job,
+                                                  dType, fileTxt, ver),
+                                                 timeout = self.__timeOut
+                                           )
+                            self.__debugLog("*** inserting %d OK" % docId)
+                        except cdrdb.Error, info:
+                            self.__debugLog("*** Second failure inserting")
+                            raise Exception("Second Failure inserting %d to "
+                                            "PPCG<BR>" % info[1][0])
+                        except:
+                            self.__debugLog("*** Non-DB Failure at second insert")
+                            raise Exception("Non-DB Failure at second"
+                                            "insertion")
+                    except:
+                        self.__debugLog("*** Some Non-DB Error")
+                        #pass
 
                 row = cursor.fetchone()
 
         except cdrdb.Error, info:
+            self.__debugLog("*** Failure at %d" % docId)
             raise Exception("Setting U to pub_proc_cg_work failed: %s<BR>" %
                             info[1][0])
         except:
@@ -1954,6 +2013,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             mediaType = 'image/jpeg'
         elif name.endswith('.gif'):
             mediaType = 'image/gif'
+        elif name.endswith('.mp3'):
+            mediaType = 'audio/mpeg'
         else:
             raise Exception("Unsupported media type: %s" % name)
         fp = file(name, 'rb')
@@ -2096,11 +2157,11 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 row = cursor.fetchone()
 
         except cdrdb.Error, info:
-            raise Exception("Setting U to pub_proc_cg_work failed: %s<BR>" %
+            raise Exception("Setting U to pub_proc_cg_work (HE) failed: %s<BR>" %
                             info[1][0])
         except:
             raise Exception("Unexpected failure in setting U to "
-                            "pub_proc_cg_work.")
+                            "pub_proc_cg_work (HE).")
         msg = "%s: Finished insertion for updating.<BR>" % time.ctime()
         self.__updateMessage(msg)
 
