@@ -601,6 +601,63 @@ def writeDocs (dirName, docId, oldDoc, newDoc, verType, valErrs=None):
         raise Exception("Error writing global change output files: %s" %
                         str(e))
 
+
+#------------------------------------------------------------
+# Check correspondence between a filter and a schema
+#------------------------------------------------------------
+def checkSchema(docType, parentElem, filterName, filterElems):
+    """
+    We have damaged data in the past when new elements were included in
+    a schema but a filter that processed the documents of that type didn't
+    know about those elements and failed them.  This can happen when a
+    filter copies a known list of elements, inserts a new one, then copies
+    another known list - in order to get the new element in the right place.
+    Adding an element to the document that is unknown to the filter causes
+    it to be lost after copying.
+
+    This function checks the expected list against the schema.  It requires
+    that code be inserted in cdrglblchg to perform the check.  If the check
+    fails:
+        The program will raise an exception.
+        A programmer must fix this Python program and the XSLT filter.
+
+    Pass:
+        docType     - Document type name to find the schema.
+        parentElem  - Name of parent element whose children will be checked.
+        filterName  - Name of the filter - only used to report errors.
+        filterElems - A sequence of element names expected by the filter.
+
+    Return:
+        Void.
+
+    Raises:
+        Exception - if a mismatch is detected.
+        Also writes to the debug log.
+    """
+    # Get doctype object encapsulating the schema
+    dti = cdr.getDoctype('guest', docType)
+
+    # Get list of children of the node we want.  Node must have unique name.
+    schemaElems = dti.getChildren(parentElem)
+
+    # Compare, irrespective of sequence types
+    if list(filterElems) != list(schemaElems):
+
+        msg = """\
+Schema/XSLT filter mismatch error!<br />
+The filter %s expects a schema for doc type "%s"
+to have children of the parent element "%s":<br />
+%s.<br />
+But the schema reports that the children are:<br />
+%s<br />
+Please contact a programmer to modify the filter before re-running this program.
+""" % (filterName, docType, parentElem, filterElems, schemaElems)
+        cdr.logwrite(msg)
+        raise Exception(msg)
+
+    # Else all okay
+
+
 #------------------------------------------------------------
 # Function return object contains information returned by a
 # function called to execute a stage of processing.
@@ -2924,6 +2981,61 @@ class TermChg (GlblChg):
     def __init__(self):
         GlblChg.__init__(self)
 
+        # Let's stop right at the beginning if the Add Term filter is
+        # out of sync with the protocol schemas.
+        # This will blow up before the batch job starts
+        # Note: The filter includes some elements for both doc types, when
+        #       only one of them has that element.  However that does no
+        #       because the only danger we need to guard against is an
+        #       element in the document that is not in filter and will
+        #       fail to be copied from input to output.
+        self.addFilter = \
+                    ["name:Global Change: Add Terminology Link to Protocol"]
+
+        # This is what the schemas looked like on 2011-07-05
+        schemaAssumptions = (
+         ('InScopeProtocol', 'Eligibility',
+            ['HealthyVolunteers', 'LowAge', 'HighAge', 'AgeText', 'Gender',
+            'Diagnosis', 'ExclusionCriteria', 'Comment']),
+         ('CTGovProtocol', 'Eligibility',
+            ['HealthyVolunteers', 'LowAge', 'HighAge', 'AgeText',
+            'Diagnosis', 'ExclusionCriteria', 'Comment']),
+
+         ('InScopeProtocol', 'StudyCategory',
+            ['StudyCategoryType', 'StudyCategoryName', 'StudyFocus',
+            'Intervention', 'Comment']),
+         ('CTGovProtocol', 'StudyCategory',
+            ['StudyCategoryType', 'StudyCategoryName', 'Intervention']),
+
+         ('InScopeProtocol', 'Intervention',
+            ['InterventionType', 'InterventionNameLink', 'ArmOrGroupLink',
+            'InterventionDescription']),
+         ('CTGovProtocol', 'Intervention',
+            ['InterventionType', 'InterventionNameLink']),
+
+         ('InScopeProtocol', 'ProtocolDetail',
+            ['StudyType', 'StudyCategory', 'Condition',
+            'Gene', 'EnteredBy', 'EntryDate']),
+         ('CTGovProtocol', 'PDQIndexing',
+            ['StudyType', 'StudyCategory', 'ProtocolDesign', 'Condition',
+            'Gene', 'Eligibility', 'EnteredBy', 'EntryDate']),
+        )
+
+        # Check all of the assumptions against the filter
+        msgs = []
+        for data in schemaAssumptions:
+            docType = data[0]
+            parent  = data[1]
+            want    = data[2]
+            try:
+                checkSchema(docType, parent, self.addFilter, want)
+            except Exception as e:
+                # Cumulate any errors
+                msgs += "\n<hr />%s<hr />\n" % e
+
+        if msgs:
+            raise Exception(msgs)
+
         # Need two dictionaries of all filters already executed
         # One dictionary used for processing CWD, one for PUB version
         # Simple self.filtered boolean isn't always enough because
@@ -2951,6 +3063,10 @@ class TermChg (GlblChg):
         """
         See PersonChg.selDocs()
         """
+        ### DEBUG, one CTGov and one InScope doc ###
+        # return([648354, 'Test title 1'],
+        #        [584262, 'Test title 2'])
+
         # Pairs of doc id + doc title
         idTitles = []
 
@@ -3228,11 +3344,10 @@ WHERE path='%s/StudyCategory/StudyCategoryName'
                     self.doneChgs[filterVer][keyId] = 1
 
                     # Setup the filter info for adding
-                    filterName  = \
-                     ["name:Global Change: Add Terminology Link to Protocol"]
-                    trmOption= self.ssVars['trmAddField%d' % termNum]
-                    trmField = TERM_ELEMENT[trmOption]
-                    trmId    = cdr.exNormalize(self.ssVars[addId])[0]
+                    filterName = self.addFilter
+                    trmOption  = self.ssVars['trmAddField%d' % termNum]
+                    trmField   = TERM_ELEMENT[trmOption]
+                    trmId      = cdr.exNormalize(self.ssVars[addId])[0]
                     parms.append (['addElement', trmField])
                     parms.append (['addTermID', trmId])
 
