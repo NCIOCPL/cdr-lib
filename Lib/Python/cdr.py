@@ -970,6 +970,12 @@ class Doc:
                                     return "CDR%010d.jpg" % docId
                                 elif encoding == 'GIF':
                                     return "CDR%010d.gif" % docId
+                    elif child.nodeName == "SoundData":
+                        for grandchild in child.childNodes:
+                            if grandchild.nodeName == "SoundEncoding":
+                                encoding = getTextContent(grandchild)
+                                if encoding == 'MP3':
+                                    return "CDR%010d.mp3" % docId
         raise Exception("Media type not yet supported")
 
 #----------------------------------------------------------------------
@@ -3955,6 +3961,8 @@ class FilterSet:
     def __init__(self, name, desc, notes = None, members = None):
         self.name     = name
         self.desc     = desc
+        ###if type(self.desc) == type(u""):
+        ###    self.desc = self.desc.encode('utf-8')
         self.notes    = notes
         self.members  = members or []
         self.expanded = 0
