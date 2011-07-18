@@ -5,6 +5,7 @@
 # CDR Reports too long to be run directly from CGI.
 #
 # BZIssue::4711 - Adding GrantNo column to report output
+# BZIssue::5086 - Changes to the Transferred Protocols Report (Issue 4626)
 #
 # Revision 1.43  2009/09/16 16:44:33  venglisc
 # Added class ProtocolOwnershipTransfer to create the 'Transfer of Ownership'
@@ -239,6 +240,50 @@ def getGrantNo(id, docType, cursor):
     grantNo.sort()
 
     return ", ".join(["%s" % g for g in grantNo])
+
+
+# -------------------------------------------
+# Getting the Protocol Phase information
+# -------------------------------------------
+def getPhase(id, cursor):
+    query = """
+        SELECT value
+          FROM query_term
+         WHERE doc_id = %s
+           AND path = '/InScopeProtocol/ProtocolPhase'
+               """ % (id)
+
+    cursor.execute(query)
+
+    rows = cursor.fetchall()
+    protPhase = []
+
+    return ", ".join(["%s" % g[0] for g in rows])
+
+
+# -------------------------------------------
+# Getting the FDA information
+# -------------------------------------------
+def getFdaInfo(id, cursor):
+    # Getting the RegulatoryInformation
+    # ---------------------------------
+    query = """
+         SELECT f.value, s.value, i.value
+           FROM query_term f
+LEFT OUTER JOIN query_term s
+             ON s.doc_id = f.doc_id
+            AND s.path = '/InScopeProtocol/RegulatoryInformation/Section801'
+LEFT OUTER JOIN query_term i
+             ON i.doc_id = f.doc_id
+            AND i.path = '/InScopeProtocol/FDAINDInfo/INDNumber'
+          WHERE f.doc_id = %s
+            AND f.path = '/InScopeProtocol/RegulatoryInformation/FDARegulated'
+               """ % id
+
+    cursor.execute(query)
+    row = cursor.fetchone()
+    
+    return row
 
 
 #----------------------------------------------------------------------
@@ -3683,6 +3728,19 @@ class ProtocolOwnershipTransfer:
                                                      'InScopeProtocol', 
                                                      cursor)
 
+                # Populate the Phase information
+                # --------------------------------
+                self.protocols[cdrId][u'phase'] = \
+                                          getPhase(cdrId, cursor)
+
+                # Populate the FDA information
+                # --------------------------------
+                fdaInfo = getFdaInfo(cdrId, cursor)
+                if fdaInfo:
+                    self.protocols[cdrId][u'fdaReg'] = fdaInfo[0]
+                    self.protocols[cdrId][u'fda801'] = fdaInfo[1]
+                    self.protocols[cdrId][u'fdaInd'] = fdaInfo[2]
+
         # ---------------------------------------
         # Getting the official organization name
         # ---------------------------------------
@@ -3823,7 +3881,11 @@ class ProtocolOwnershipTransfer:
                 exRow.addCell(10, 'PUP')
                 exRow.addCell(11, 'Phone')
                 exRow.addCell(12, 'Email')
-                exRow.addCell(13, 'GrantNo')
+                exRow.addCell(13, 'FDA Regulated')
+                exRow.addCell(14, 'Section 801')
+                exRow.addCell(15, 'FDA IND')
+                exRow.addCell(16, 'Phase')
+                exRow.addCell(17, 'GrantNo')
             else:
                 exRow = ws.addRow(1, styleH)
                 exRow.addCell(1, 'CDR-ID')
@@ -3837,6 +3899,10 @@ class ProtocolOwnershipTransfer:
                 exRow.addCell(9, 'Current Protocol Status')
                 exRow.addCell(10, 'Organization Name')
                 exRow.addCell(11, 'Org CDR-ID')
+                #exRow.addCell(12, 'FDA Regulated')
+                #exRow.addCell(13, 'Section 801')
+                #exRow.addCell(14, 'FDA IND')
+                #exRow.addCell(15, 'Phase')
                 exRow.addCell(12, 'GrantNo')
 
             # Add the protocol data one record at a time beginning after 
@@ -3854,8 +3920,14 @@ class ProtocolOwnershipTransfer:
                     rowNum += 1
                     exRow = ws.addRow(rowNum, style1, 40)
                     exRow.addCell(1, row)
-                    exRow.addCell(2, Prot.protocols[row][u'pId'])
-                    exRow.addCell(3, Prot.protocols[row][u'nctId'])
+                    cgUrl =  'http://www.cancer.gov/clinicaltrials/search/'
+                    cgUrl += 'view?cdrid=%s&version=HealthProfessional' % row
+                    exRow.addCell(2, Prot.protocols[row][u'pId'], 
+                                                href = cgUrl, style = style4)
+                    ctUrl = 'http://clinicaltrials.gov/ct/show'
+                    ctUrl += '/%s' % Prot.protocols[row][u'nctId']
+                    exRow.addCell(3, Prot.protocols[row][u'nctId'], 
+                                                href = ctUrl, style = style4)
 
                     if Prot.protocols[row].has_key('protSource'):
                         exRow.addCell(4, Prot.protocols[row][u'protSource'])
@@ -3881,15 +3953,32 @@ class ProtocolOwnershipTransfer:
 
                         exRow.addCell(11, Prot.protocols[row][u'pup'].persPhone)
                         exRow.addCell(12, Prot.protocols[row][u'pup'].persEmail)
+
+                    if Prot.protocols[row].has_key(u'fdaReg'):
+                        exRow.addCell(13, Prot.protocols[row][u'fdaReg'])
+                    if Prot.protocols[row].has_key(u'fda801'):
+                        exRow.addCell(14, Prot.protocols[row][u'fda801'])
+                    if Prot.protocols[row].has_key(u'fdaInd'):
+                        exRow.addCell(15, Prot.protocols[row][u'fdaInd'])
+
+                    if Prot.protocols[row].has_key(u'phase'):
+                        exRow.addCell(16, Prot.protocols[row][u'phase'])
+
                     if Prot.protocols[row].has_key('grantNo'):
-                        exRow.addCell(13, Prot.protocols[row][u'grantNo'])
+                        exRow.addCell(17, Prot.protocols[row][u'grantNo'])
             else:
                 for row in Prot.protocols:
                     rowNum += 1
                     exRow = ws.addRow(rowNum, style1, 40)
                     exRow.addCell(1, row)
-                    exRow.addCell(2, Prot.protocols[row][u'pId'])
-                    exRow.addCell(3, Prot.protocols[row][u'nctId'])
+                    cgUrl =  'http://www.cancer.gov/clinicaltrials/search/'
+                    cgUrl += 'view?cdrid=%s&version=HealthProfessional' % row
+                    exRow.addCell(2, Prot.protocols[row][u'pId'], 
+                                                href = cgUrl, style = style4)
+                    ctUrl = 'http://clinicaltrials.gov/ct/show'
+                    ctUrl += '/%s' % Prot.protocols[row][u'nctId']
+                    exRow.addCell(3, Prot.protocols[row][u'nctId'], 
+                                                href = ctUrl, style = style4)
 
                     if Prot.protocols[row].has_key('trOrg'):
                         exRow.addCell(4, Prot.protocols[row][u'trOrg'])
