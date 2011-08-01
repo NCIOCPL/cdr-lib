@@ -1170,7 +1170,12 @@ class UnicodeString:
             self.nbytes += struct.unpack("<l", buf[pos:pos+4])[0] + 4
             pos += 4
         if self.utf16:
-            self.value = unicode(buf[pos:pos+self.length*2], "utf-16-le")
+            try:
+                self.value = unicode(buf[pos:pos+self.length*2], "utf-16-le")
+            except Exception, e:
+                sys.stderr.write("utf-16-le: %s: [%s]\n" %
+                                 (e, repr(buf[pos:pos+self.length*2])))
+                raise
             pos += self.length * 2
             self.nbytes += self.length * 2
         else:
