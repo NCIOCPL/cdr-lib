@@ -138,59 +138,6 @@
 #
 # $Id$
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.18  2007/04/05 13:11:26  bkline
-# Added a way to override the default location of the CDR database server.
-#
-# Revision 1.17  2005/07/26 20:11:16  ameyer
-# Added more info to exception messages in the execute() method.
-#
-# Revision 1.16  2004/10/22 12:20:50  bkline
-# Fixed BLOB handling.
-#
-# Revision 1.15  2003/02/14 20:30:37  bkline
-# Added extension helper function strftime().
-#
-# Revision 1.14  2002/09/03 12:49:19  bkline
-# Added optional db parameter to connect().
-#
-# Revision 1.13  2002/09/02 00:38:00  bkline
-# Added optional timeout parameter to callproc().
-#
-# Revision 1.12  2002/05/23 22:05:29  ameyer
-# setAutoCommit() now returns the previous state of the autocommit flag.
-# getAutoCommit() fetches the autocommit state.
-#
-# Revision 1.11  2002/04/23 22:54:06  bkline
-# Added optional timeout parameter to Cursor.execute().
-#
-# Revision 1.10  2001/12/19 20:31:03  bkline
-# Added optional dataSource argument to connect().
-#
-# Revision 1.9  2001/12/19 20:24:42  bkline
-# Added date/time formatting and support for CdrPublishing login.
-#
-# Revision 1.8  2001/08/06 22:21:22  bkline
-# Implemented commit(), rollback(), and setAutoCommit() on Connection.
-#
-# Revision 1.7  2001/08/06 18:03:58  bkline
-# Switched hardcoded error strings to Unicode.
-#
-# Revision 1.6  2001/08/06 15:55:30  bkline
-# Fixed a collection item notation bug in Cursor.execute().
-#
-# Revision 1.5  2001/08/06 14:38:26  bkline
-# Enhanced exception error information; implemented nextset().
-#
-# Revision 1.4  2001/08/06 04:33:01  bkline
-# Switched to SQLOLEDB provider.
-#
-# Revision 1.2  2001/08/05 20:25:03  bkline
-# Fixed a couple of typos in the date/time formatting routines.
-#
-# Revision 1.1  2001/08/05 19:23:25  bkline
-# Initial revision
-#
 #----------------------------------------------------------------------
 
 import win32com.client
@@ -802,11 +749,12 @@ def connect(user = 'cdr', dataSource = CDR_DB_SERVER, db = 'cdr'):
     try:
         debugLog(what = "connect(user=%s db=%s dataSource=%s)" %
                  (user, db, dataSource))
+        port = 32408
         adoConn.Open("Provider=SQLOLEDB;\
-                      Data Source=%s;\
+                      Data Source=%s;%d\
                       Initial Catalog=%s;\
                       User ID=%s;\
-                      Password=%s" % (dataSource, db, user, password))
+                      Password=%s" % (dataSource, port, db, user, password))
     except:
         raise DatabaseError, ("connect", buildErrorList(adoConn))
     return Connection(adoConn)
