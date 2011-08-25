@@ -195,18 +195,21 @@ class Job:
         a group of CDR documents.
 
         Pass:
-            uid        - CDR user ID of operator
-            pwd        - Password for CDR account
+            uid        - CDR user ID of operator.
+            pwd        - Password for CDR account.
             filter     - Object with method to get document IDs to be
-                         processed; must have method getDocIds()
+                         processed; must have method getDocIds() that returns
+                         a sequence of CDR IDs as integers.
             transform  - Object which knows how to take the old XML
                          for a CDR document and transform it using
                          the algorithm appropriate to this job; the
-                         name of this method must be run()
-            comment    - String to be stored with new versions
+                         name of this method must be run().
+                         transform and filter can be methods in the same
+                         object.
+            comment    - String to be stored with new versions.
             testMode   - True = write output to files, do not update database.
                          False = Modify the database.
-            logFile    - Optional path for logfile
+            logFile    - Optional path for logfile.
             validate   - True=validate that the transform did not invalidate
                          a previously valid document.  NB: if the original
                          document was invalid, we assume that the transformed
@@ -216,6 +219,12 @@ class Job:
                                  don't save any versions of that doc.
                          False = Save anyway.
                          sets _noSaveOnErr
+
+        Notes:
+            It can be useful to set the Job object as a field in the
+            transform/filter objects.  Then logging with object.job.log()
+            will intersperse logged comments with logging from ModifyDocs in
+            one log file.
         """
         global _testMode
         global _validate
