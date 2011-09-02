@@ -326,15 +326,18 @@ def mainMenu(session, news = None):
     menu     = """\
     <ol>
 """
-    try:
-        if userPair[0].lower() == 'venglisc':
-            menu += """\
-     <li>
-      <a href='%s/EditFilters.py%s'>Manage Filters (Just for you, Volker!)</a>
-     </li>
-""" % (BASE, session)
-    except:
-        pass
+    # We don't use EditFilters anymore
+    # --------------------------------
+    #try:
+    #    if userPair[0].lower() == 'venglisc':
+    #        menu += """\
+    # <li>
+    #  <a href='%s/EditFilters.py%s'>Manage Filters (Just for you, Volker!)</a>
+    # </li>
+#""" % (BASE, session)
+    #except:
+    #    pass
+
     try:
         # Identify the groups of the user
         # -------------------------------
