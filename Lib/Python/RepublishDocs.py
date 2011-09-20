@@ -6,7 +6,8 @@
 # what we would send to Cancer.gov is identical with what we sent
 # for the last push job.
 #
-# $Log: not supported by cvs2svn $
+# BZIssue::4855 - Add GKTarget Parameter to Re-publishing Job Interface
+#
 # Revision 1.6  2007/05/16 15:54:54  bkline
 # Fixed call to append() (by making argument a tuple).
 #
@@ -129,7 +130,7 @@ class CdrRepublisher:
     def republish(self, addNewLinkedDocuments,
                   docList = None, jobList = None, docType = None,
                   docTypeAll = False, failedOnly = True, email = '',
-                  gkHost = ''):
+                  gkHost = '', gkPubTarget = ''):
 
 
         """
@@ -212,6 +213,14 @@ class CdrRepublisher:
                                         server, in order to override
                                         the default as determined by the
                                         cdr2gk module
+                gkPubTarget           - optional string containing the
+                                        GateKeeper target.  This is 
+                                        typically set to 'Preview' for 
+                                        testing.  Valid values would be
+                                        (Gatekeeper, Preview, Live).
+                                        This value overrides the default
+                                        as determinded by the cdr2gk 
+                                        module.
 
             Returns:
 
@@ -321,6 +330,10 @@ class CdrRepublisher:
                 parms.append(('GKServer', gkHost))
                 cdr.logwrite("republish(): setting GateKeeper host to %s" %
                              gkHost, cdr.PUBLOG)
+            if gkPubTarget:
+                parms.append(('GKPubTarget', gkPubTarget))
+                cdr.logwrite("republish(): setting GateKeeper target to %s" %
+                             gkPubTarget, cdr.PUBLOG)
             resp = cdr.publish(self.__credentials, pubSystem, pubSubset,
                                parms = parms, docList = docs, email = email,
                                host = self.__host, port = self.__port)
