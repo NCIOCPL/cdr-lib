@@ -64,6 +64,16 @@ HEADER   = u"""\
     *.DTDerror   { color: red;
                    font-weight: bold; }
     *.DTDwarning { color: green; }
+    TD.ttext     { color: black; }
+    TD.tlabel    { font-weight: bold;
+                   text-align: right;
+                   white-space: nowrap;
+                   vertical-align: top; }
+    TH.theader   { font-weight: bold;
+                   font-size: small;
+                   text-align: left;
+                   white-space: nowrap;
+                   vertical-align: top; }
   </style>
   %s
  </HEAD>
@@ -72,7 +82,7 @@ HEADER   = u"""\
    <TABLE WIDTH='100%%' CELLSPACING='0' CELLPADDING='0' BORDER='0'>
     <TR>
      <TH class='banner' NOWRAP ALIGN='left'>
-      <FONT SIZE='6' COLOR='white'>&nbsp;%s</FONT>
+      <span style='color: white; font-size: xx-large;'>&nbsp;%s</span>
      </TH>
 """
 RPTHEADER   = """\
@@ -115,7 +125,7 @@ SUBBANNER = """\
     </TR>
     <TR>
      <TD BGCOLOR='#FFFFCC' COLSPAN='3'>
-      <FONT SIZE='-1' COLOR='navy'>&nbsp;%s<BR></FONT>
+      <span style='color: navy; font-size: small;'>&nbsp;%s<BR></span>
      </TD>
     </TR>
    </TABLE>
@@ -722,7 +732,18 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
                 CONTENT     = "text/html; charset=iso-8859-1">
   <STYLE        TYPE        = "text/css">
    <!--
-    .Page { font-family: Arial, Helvietica, sans-serif; color: #000066 }
+    *.header  { font-family: Arial, Helvietica, sans-serif; 
+                font-size: x-large;
+                white-space: nowrap;
+                color: #000066 }
+    *.subhdr  { font-family: Arial, Helvietica, sans-serif; 
+                font-size: large;
+                white-space: nowrap;
+                color: #000066 }
+    *.page    { font-family: Arial, Helvietica, sans-serif; 
+                font-size: medium;
+                white-space: nowrap;
+                color: #000066 }
    -->
   </STYLE>
  </HEAD>
@@ -736,22 +757,17 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
                 BORDER      = "0"
                 CELLSPACING = "0">
     <TR         BGCOLOR     = "#6699FF">
-     <TD        NOWRAP
-                HEIGHT      = "26"
-                COLSPAN     = "2">
-      <FONT     SIZE        = "+2"
-                CLASS       = "Page">CDR Advanced Search</FONT>
+     <TD        HEIGHT      = "26"
+                COLSPAN     = "2"
+                class       = "header">CDR Advanced Search
      </TD>
     </TR>
     <TR         BGCOLOR     = "#FFFFCC">
-     <TD        NOWRAP
-                COLSPAN     = "2">
-      <FONT     SIZE        = "+1"
-                CLASS       = "Page">%s</FONT>
-     </TD>
+     <TD        COLSPAN     = "2"
+                class       = "subhdr">%s</TD>
     <TR>
     <TR>
-     <TD        NOWRAP
+     <TD        style       = "white-space: nowrap;"
                 COLSPAN     = "2">&nbsp;</TD>
     </TR>
 """ % (title, BASE, script, SESSION, session, subtitle)
@@ -771,7 +787,7 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
     <TR>
      <TD        NOWRAP
                 ALIGN       = "right"
-                CLASS       = "Page">%s &nbsp; </TD>
+                class       = "page">%s &nbsp; </TD>
      <TD        WIDTH       = "55%%"
                 ALIGN       = "left">
       <INPUT    TYPE        = "text"
@@ -785,7 +801,7 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
     <TR>
      <TD        NOWRAP
                 ALIGN       = "right"
-                CLASS       = "Page">%s &nbsp; </TD>
+                class       = "page">%s &nbsp; </TD>
      <TD        WIDTH       = "55%%"
                 ALIGN       = "left">
 %s
@@ -798,7 +814,7 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
     <TR>
      <TD        NOWRAP
                 WIDTH       = "15%"
-                CLASS       = "Page"
+                class       = "page"
                 VALIGN      = "top"
                 ALIGN       = "right">Search Connector &nbsp; </TD>
      <TD        WIDTH       = "30%"
@@ -818,7 +834,7 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
             html += """\
     <TR>
      <TD        NOWRAP
-                CLASS       = "Page"
+                class       = "page"
                 VALIGN      = "top"
                 ALIGN       = "right">%s &nbsp; </TD>
      <TD        WIDTH       = "55%%">
@@ -885,19 +901,13 @@ def addNewFormOnPage(session, script, fields, buttons, subtitle,
                 BORDER      = "0"
                 CELLSPACING = "0">
     <!-- TR         BGCOLOR     = "#6699FF">
-     <TD        NOWRAP
-                HEIGHT      = "26"
-                COLSPAN     = "2">
-      <FONT     SIZE        = "+2"
-                CLASS       = "Page">CDR Advanced Search</FONT>
-     </TD>
+     <TD        HEIGHT      = "26"
+                COLSPAN     = "2"
+                class       = "header">CDR Advanced Search</TD>
     </TR -->
     <TR         BGCOLOR     = "#FFFFCC">
-     <TD        NOWRAP
-                COLSPAN     = "2">
-      <FONT     SIZE        = "+1"
-                CLASS       = "Page">%s</FONT>
-     </TD>
+     <TD        COLSPAN     = "2"
+                class       = "subhdr">%s</TD>
     <TR>
     <TR>
      <TD        NOWRAP
@@ -920,7 +930,7 @@ def addNewFormOnPage(session, script, fields, buttons, subtitle,
     <TR>
      <TD        NOWRAP
                 ALIGN       = "right"
-                CLASS       = "Page">%s &nbsp; </TD>
+                class       = "page">%s &nbsp; </TD>
      <TD        WIDTH       = "55%%"
                 ALIGN       = "left">
       <INPUT    TYPE        = "text"
@@ -934,7 +944,7 @@ def addNewFormOnPage(session, script, fields, buttons, subtitle,
     <TR>
      <TD        NOWRAP
                 ALIGN       = "right"
-                CLASS       = "Page">%s &nbsp; </TD>
+                class       = "page">%s &nbsp; </TD>
      <TD        WIDTH       = "55%%"
                 ALIGN       = "left">
 %s
@@ -947,7 +957,7 @@ def addNewFormOnPage(session, script, fields, buttons, subtitle,
     <TR>
      <TD        NOWRAP
                 WIDTH       = "15%"
-                CLASS       = "Page"
+                class       = "page"
                 VALIGN      = "top"
                 ALIGN       = "right">Search Connector &nbsp; </TD>
      <TD        WIDTH       = "30%"
@@ -967,7 +977,7 @@ def addNewFormOnPage(session, script, fields, buttons, subtitle,
             html += """\
     <TR>
      <TD        NOWRAP
-                CLASS       = "Page"
+                class       = "page"
                 VALIGN      = "top"
                 ALIGN       = "right">%s &nbsp; </TD>
      <TD        WIDTH       = "55%%">
@@ -1208,7 +1218,17 @@ def advancedSearchResultsPageTop(subTitle, nRows, strings):
              CONTENT = "text/html; charset=iso-8859-1">
   <STYLE        TYPE = "text/css">
    <!--
-    .Page { font-family: Arial, Helvetica, sans-serif; color: #000066 }
+    *.header  { font-family: Arial, Helvietica, sans-serif; 
+                font-size: x-large;
+                white-space: nowrap;
+                color: #000066 }
+    *.subhdr  { font-family: Arial, Helvietica, sans-serif; 
+                font-size: large;
+                white-space: nowrap;
+                color: #000066 }
+    *.page    { font-family: Arial, Helvietica, sans-serif; 
+                font-size: medium;
+                color: #000066 }
     :link            { color: navy }
     :link:visited    { color: navy }
     :link:hover      { background: #FFFFCC; }
@@ -1220,21 +1240,15 @@ def advancedSearchResultsPageTop(subTitle, nRows, strings):
   <TABLE       WIDTH = "100%%"
               BORDER = "0"
          CELLSPACING = "0"
-               CLASS = "Page">
+               class = "page">
    <TR       BGCOLOR = "#6699FF">
-    <TD       NOWRAP
-              HEIGHT = "26"
-             COLSPAN = "4">
-     <FONT      SIZE = "+2"
-               CLASS = "Page">CDR Advanced Search Results</FONT>
-    </TD>
+    <TD       HEIGHT = "26"
+             COLSPAN = "4"
+               class = "header">CDR Advanced Search Results</TD>
    </TR>
    <TR       BGCOLOR = "#FFFFCC">
-    <TD       NOWRAP
-             COLSPAN = "4">
-     <SPAN     CLASS = "Page">
-      <FONT     SIZE = "+1">%s</FONT>
-     </SPAN>
+    <TD      COLSPAN = "4">
+     <SPAN     class = "subhdr">%s</SPAN>
     </TD>
    </TR>
    <TR>
@@ -1245,14 +1259,14 @@ def advancedSearchResultsPageTop(subTitle, nRows, strings):
    <TR>
     <TD       NOWRAP
              COLSPAN = "4"
-               CLASS = "Page">
-     <FONT     COLOR = "#000000">%d documents match '%s'</FONT>
+               class = "page">
+     <span style="color: black;">%d documents match '%s'</span>
     </TD>
    </TR>
    <TR>
     <TD       NOWRAP
              COLSPAN = "4"
-               CLASS = "Page">&nbsp;</TD>
+               class = "page">&nbsp;</TD>
    </TR>
 """ % (subTitle, subTitle, nRows, unicode(strings, 'latin-1'))
 
@@ -1303,7 +1317,7 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
             href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId,
                                                           filt, session)
         html += u"""\
-   <TR CLASS="rowitem">
+   <TR class="rowitem">
     <TD       NOWRAP
                WIDTH = "5%%"
               VALIGN = "top">
