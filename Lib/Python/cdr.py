@@ -3913,7 +3913,7 @@ def extractResponseNode(caller, responseString):
     elif len(cdrResponseElems) == 3:
         responseElem = cdrResponseElems[2]
         raise Exception(caller, 'Found %d CdrResponse elements; '
-                                    'expected one or three')
+                                'expected one or three' % len(cdrResponseElems))
     if responseElem.getAttribute('Status') == 'success':
         return CdrResponseNode(responseElem, when)
     errElems = cdrResponseElems[0].getElementsByTagName('Err')
@@ -3956,14 +3956,13 @@ def getFilterSets(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
 #----------------------------------------------------------------------
 # Object for a named set of CDR filters.
+# All string members should be of type unicode
 #----------------------------------------------------------------------
 class FilterSet:
     def __init__(self, name, desc, notes = None, members = None):
-        self.name     = name
-        self.desc     = desc
-        ###if type(self.desc) == type(u""):
-        ###    self.desc = self.desc.encode('utf-8')
-        self.notes    = notes
+        self.name     = toUnicode(name)
+        self.desc     = toUnicode(desc)
+        self.notes    = toUnicode(notes)
         self.members  = members or []
         self.expanded = 0
     def __repr__(self):
@@ -3980,11 +3979,31 @@ class FilterSet:
                 rep += "filter %s (%s)\n" % (member.id, member.name)
         return rep
 
+# ----------------------------------------------------------------------
+# Testing character encoding of unicode string
+# Return a unicode string.
+# ----------------------------------------------------------------------
+def toUnicode(s):
+    if type(s) is unicode:
+        return s
+    if type(s) is not str:
+        return unicode(s)
+    for e in ('ascii', 'utf-8', 'iso-8859-1'):
+        try:
+            return unicode(s, e)
+        except:
+            pass
+    raise Exception("unknown encoding for %s" % repr(s))
+
+
 #----------------------------------------------------------------------
 # Pack up XML elements for a CDR filter set (common code used by
 # addFilterSet() and repFilterSet()).
+#
+# Old version of packFilterSet.  It has been modified to properly 
+# handle Unicode characters in the filter name, description or notes.
 #----------------------------------------------------------------------
-def packFilterSet(filterSet):
+def packFilterSetOld(filterSet):
     elems = "<FilterSetName>%s</FilterSetName>" % cgi.escape(filterSet.name)
     elems += "<FilterSetDescription>%s</FilterSetDescription>" % \
             cgi.escape(filterSet.desc)
@@ -3999,20 +4018,48 @@ def packFilterSet(filterSet):
     return elems
 
 #----------------------------------------------------------------------
+# Pack up XML elements for a CDR filter set (common code used by
+# addFilterSet() and repFilterSet()).
+# This function returns a Unicode string.
+#----------------------------------------------------------------------
+def packFilterSet(filterSet):
+    elems = [u"""\
+<FilterSetName>%s</FilterSetName>
+<FilterSetDescription>%s</FilterSetDescription>
+""" % (cgi.escape(toUnicode(filterSet.name)),
+       cgi.escape(toUnicode(filterSet.desc)))]
+
+    if filterSet.notes is not None:
+        elems.append(u"""\
+<FilterSetNotes>%s</FilterSetNotes>
+""" % cgi.escape(toUnicode(filterSet.notes)))
+    for member in filterSet.members:
+        if type(member.id) is type(9):
+            elems.append(u"<FilterSet SetId='%d'/>" % member.id)
+        else:
+            elems.append(u"<Filter DocId='%s'/>" % member.id)
+    packedSet = u"".join(elems)
+    return packedSet
+
+#----------------------------------------------------------------------
 # Create a new CDR filter set.
+# Note: The cmd string created is a Unicode string.  Unfortunately,
+#       at this point the string should be passed to the wrapCommand()
+#       as is but wrapComment() expects the string serialized.
 #----------------------------------------------------------------------
 def addFilterSet(session, filterSet, host = DEFAULT_HOST, port = DEFAULT_PORT):
-    cmd  = "<CdrAddFilterSet>%s</CdrAddFilterSet>" % packFilterSet(filterSet)
-    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    cmd  = u"<CdrAddFilterSet>%s</CdrAddFilterSet>" % packFilterSet(filterSet)
+    resp = sendCommands(wrapCommand(cmd.encode('utf-8'), session), host, port)
     node = extractResponseNode('addFilterSet', resp)
     return node.specificElement.getAttribute('TotalFilters')
 
 #----------------------------------------------------------------------
 # Replace an existing CDR filter set.
+# Note:  Please see note for addFilterSet().
 #----------------------------------------------------------------------
 def repFilterSet(session, filterSet, host = DEFAULT_HOST, port = DEFAULT_PORT):
-    cmd  = "<CdrRepFilterSet>%s</CdrRepFilterSet>" % packFilterSet(filterSet)
-    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    cmd  = u"<CdrRepFilterSet>%s</CdrRepFilterSet>" % packFilterSet(filterSet)
+    resp = sendCommands(wrapCommand(cmd.encode('utf-8'), session), host, port)
     node = extractResponseNode('repFilterSet', resp)
     return node.specificElement.getAttribute('TotalFilters')
 
@@ -4025,9 +4072,11 @@ def repFilterSet(session, filterSet, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # the form 'CDR0000099999'.
 #----------------------------------------------------------------------
 def getFilterSet(session, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
-    cmd          = "<CdrGetFilterSet><FilterSetName>%s" \
-                   "</FilterSetName></CdrGetFilterSet>" % cgi.escape(name)
-    response     = sendCommands(wrapCommand(cmd, session), host, port)
+    cmd          = u"<CdrGetFilterSet><FilterSetName>%s" \
+                   u"</FilterSetName></CdrGetFilterSet>" % \
+                                                    cgi.escape(toUnicode(name))
+    response     = sendCommands(wrapCommand(cmd.encode('utf-8'), session), 
+                                                                    host, port)
     responseNode = extractResponseNode('getFilterSet', response)
     name         = None
     desc         = None
@@ -4106,9 +4155,11 @@ def expandFilterSets(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # Delete an existing CDR filter set.
 #----------------------------------------------------------------------
 def delFilterSet(session, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
-    cmd  = "<CdrDelFilterSet><FilterSetName>%s" \
-           "</FilterSetName></CdrDelFilterSet>" % cgi.escape(name)
-    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    #import cdrcgi
+    #cdrcgi.bailnew(type(name))
+    cmd  = u"<CdrDelFilterSet><FilterSetName>%s" \
+           u"</FilterSetName></CdrDelFilterSet>" % cgi.escape(name)
+    resp = sendCommands(wrapCommand(cmd.encode('utf-8'), session), host, port)
     extractResponseNode('delFilterSet', resp)
 
 #----------------------------------------------------------------------
