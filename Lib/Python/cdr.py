@@ -11,6 +11,7 @@
 # BZIssue::2231
 # BZIssue::4123
 # BZIssue::4207
+# BZIssue::5120 - Fixed exNormalize() to allow trailing spaces
 #
 #----------------------------------------------------------------------
 
@@ -179,7 +180,8 @@ def exNormalize(id):
     else:
         # Parse the string
         pat = re.compile (
-            r"(^([Cc][Dd][Rr]0*)?)(?P<num>(\d+))(\#(?P<frag>(.*)))?$")
+            r"(^\s*?([Cc][Dd][Rr]0*)?)(?P<num>(\d+))\s*(\#(?P<frag>(.*)))?$")
+        #   r"(^([Cc][Dd][Rr]0*)?)(?P<num>(\d+))(\#(?P<frag>(.*)))?$")
         # pat = re.compile (r"(?P<num>(\d+))\#?(?P<frag>(.*))")
         result = pat.search (id)
 
