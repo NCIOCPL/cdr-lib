@@ -4,163 +4,21 @@
 #
 # CDR Reports too long to be run directly from CGI.
 #
+# BZIssue::1264 - Different filter set for OrgProtocolReview report
+# BZIssue::1319 - Modifications to glossary term search report
+# BZIssue::1337 - Modified displayed string; formatting changes
+# BZIssue::1702
+# BZIssue::3134 - Modifications to Protocol Processing Status report
+# BZIssue::3627 - Modifications for OSP report
+# BZIssue::4626 - Added class ProtocolOwnershipTransfer
 # BZIssue::4711 - Adding GrantNo column to report output
 # BZIssue::5086 - Changes to the Transferred Protocols Report (Issue 4626)
-#
-# Revision 1.43  2009/09/16 16:44:33  venglisc
-# Added class ProtocolOwnershipTransfer to create the 'Transfer of Ownership'
-# report as a batch job. (Bug 4626)
-#
-# Revision 1.42  2009/09/04 12:19:35  bkline
-# Removed redundant copy of nonRespondentsReport function.
-#
-# Revision 1.41  2008/01/16 12:10:53  kidderc
-# Added importing of NCIT terms.
-#
-# Revision 1.40  2008/01/14 18:31:26  bkline
-# Modified protocol processing report to skip malformed documents.
-#
-# Revision 1.39  2007/11/05 17:27:58  bkline
-# Changes to Protocol Status report to track modifications to the structure
-# of the protocol processing information block in the schema.
-#
-# Revision 1.38  2007/10/03 12:33:49  bkline
-# Fixed a bug in adjusting the starting year for fiscal year reports.
-#
-# Revision 1.37  2007/10/01 15:11:45  bkline
-# Modifications for OSP report (request #3627).
-#
-# Revision 1.36  2007/06/30 03:38:52  bkline
-# Fixed a Unicode problem with the URL check report.
-#
-# Revision 1.35  2007/05/16 22:33:25  bkline
-# Mapped 'No valid lead organization status found.' to empty string
-# for protocol processing report.
-#
-# Revision 1.34  2007/05/16 17:04:00  bkline
-# Fixed title width for new CTGov Withdrawn sheet.
-#
-# Revision 1.33  2007/05/04 14:53:34  bkline
-# Modifications to Protocol Processing Status report (#3134).
-#
-# Revision 1.32  2006/12/12 14:11:20  bkline
-# Added sorting and counting to outcome measures report; added new column
-# to Spanish Glossary Terms by Status report.
-#
-# Revision 1.31  2006/05/23 17:36:00  bkline
-# Corrected "HELD" to "HOLD" in Processing Status Report for Protocols.
-#
-# Revision 1.30  2006/05/18 21:14:16  bkline
-# Enhancements to Protocol Processing report and to testing invocation
-# support.
-#
-# Revision 1.29  2006/05/17 14:36:49  bkline
-# Added more documentation for the new Spanish glossary terms report, and
-# fixed a bug in the code for running a debugging version of the report.
-#
-# Revision 1.28  2006/05/17 14:15:30  bkline
-# Added Spanish Glossary Terms By Status report.
-#
-# Revision 1.27  2006/05/15 15:13:36  bkline
-# Cleaned up standalone version of outcome measures coding report and
-# fixed email message for the report (which still said "OSP").
-#
-# Revision 1.26  2006/05/04 15:48:52  bkline
-# Added manual version of Outcome Measures Coding Report.
-#
-# Revision 1.25  2006/03/01 15:33:06  bkline
-# Converted to new ExcelWriter module.
-#
-# Revision 1.24  2005/12/22 16:31:17  bkline
-# Added new Protocol Processing Status report; added back in changes
-# for request #1702, which had been inadvertantly discarded.
-#
-# Revision 1.23  2005/11/22 13:32:26  bkline
-# Removed hardwiring of OSP report to Bach data.
-#
-# Revision 1.22  2005/11/10 14:56:21  bkline
-# Rewrote OSP report to use new ExcelWriter module.  Added column
-# to report for date trials completed.
-#
-# Revision 1.21  2005/03/10 14:18:20  bkline
-# Fixed bugs, changed algorithm for determining protocol statuses
-# in OSP report.
-#
-# Revision 1.20  2005/03/01 21:10:22  bkline
-# Made active date range controlled by parameters.
-#
-# Revision 1.19  2005/03/01 15:35:03  bkline
-# Modified the date range for the OSP report.
-#
-# Revision 1.18  2005/01/19 23:27:19  venglisc
-# Added section to search for and display protocols that are listing the
-# organization in question as a Clinical Trial Office.
-#
-# Revision 1.17  2004/09/23 14:07:46  venglisc
-# Modified string passed by UI to display on report. (Bug 1337)
-#
-# Revision 1.16  2004/09/21 14:57:48  venglisc
-# Added third header line to Excel report output.  Minor formatting of header
-# (increased row size). (Bug 1337)
-#
-# Revision 1.15  2004/08/27 14:27:31  bkline
-# Modified the glossary term search report to restrict its search to
-# active and temporarily closed protocols for the protocols portion
-# (enhancement request #1319).
-#
-# Revision 1.14  2004/08/27 13:50:45  bkline
-# Added support for restricting glossary term search report by document
-# type; plugged in new (Python 2.3) approach to stripping specified
-# characters from the ends of a string.
-#
-# Revision 1.13  2004/08/06 22:31:02  bkline
-# Made table titles bold for Glossary Term Search report at Margaret's
-# request.
-#
-# Revision 1.12  2004/07/28 20:56:37  venglisc
-# Modified to use different filter set for OrgProtocolReview report.
-# Requested under Bug 1264.
-#
-# Revision 1.11  2004/04/26 20:55:12  bkline
-# Added report on glossary term phrases.
-#
-# Revision 1.10  2004/02/10 14:19:30  bkline
-# Modified date range for OSP report.
-#
-# Revision 1.9  2003/12/16 16:17:38  bkline
-# Added URL check report.
-#
-# Revision 1.8  2003/09/11 12:40:30  bkline
-# Fixed email message for two of the report types.
-#
-# Revision 1.7  2003/09/10 12:51:16  bkline
-# Broke out logic to restrict mailer-non-respondent report to the
-# specified date range into a separate SQL query.
-#
-# Revision 1.6  2003/09/09 22:18:23  bkline
-# Fixed SQL queries and name bug for inactive persons in mailer
-# non-respondent report.
-#
-# Revision 1.5  2003/09/04 15:31:23  bkline
-# Replaced calls to reportFailure() with job.fail().
-#
-# Revision 1.4  2003/08/21 19:25:45  bkline
-# Added Org Protocol Review report.
-#
-# Revision 1.3  2003/07/29 13:08:45  bkline
-# Added NonRespondents report.
-#
-# Revision 1.2  2003/05/08 20:36:52  bkline
-# Added report for the Office of Science Policy.
-#
-# Revision 1.1  2003/02/26 01:37:37  bkline
-# Script for executing reports which are too long to be handled directly
-# by CGI.
+# BZIssue::5123 - Audio Pronunciation Tracking Report
 #
 #----------------------------------------------------------------------
 import cdr, cdrdb, xml.dom.minidom, time, cdrcgi, cgi, sys, socket, cdrbatch
 import string, re, urlparse, httplib, traceback, xml.sax.saxutils
-import ExcelWriter, NCIThes
+import ExcelWriter, NCIThes, lxml.etree as etree
 
 #----------------------------------------------------------------------
 # Module values.
@@ -4038,6 +3896,190 @@ The Protocol Ownership Transfer Report you requested can be viewed at
 
  
 #----------------------------------------------------------------------
+# Report for tracking audio pronunciation recordings.
+#----------------------------------------------------------------------
+class PronunciationRecordingsReport:
+    def __init__(self, job):
+        self.job      = job
+        self.start    = job.getParm('start')
+        self.end      = job.getParm('end')
+        self.language = job.getParm('language')
+        self.cursor   = cdrdb.connect('CdrGuest').cursor()
+    def run(self):
+        lang = ''
+        if self.language == 'en':
+            lang = "AND t.value NOT LIKE '%-Spanish'"
+        elif self.language == 'es':
+            lang = "AND t.value LIKE '%-Spanish'"
+        self.cursor.execute("""\
+SELECT DISTINCT e.doc_id, c.created, t.value
+           FROM query_term e
+           JOIN doc_created c
+             ON c.doc_id = e.doc_id
+           JOIN query_term g
+             ON g.doc_id = c.doc_id
+           JOIN query_term t
+             ON t.doc_id = g.doc_id
+          WHERE e.path = '/Media/PhysicalMedia/SoundData/SoundEncoding'
+            AND e.value = 'MP3'
+            AND c.created BETWEEN ? AND ?
+            AND g.path = '/Media/MediaContent/Categories/Category'
+            AND g.value = 'pronunciation'
+            AND t.path = '/Media/MediaTitle'
+            %s""" % lang, (self.start, self.end + ' 23:59:59'))
+        docs = []
+        for docId, created, title in self.cursor.fetchall()[:10]:
+            doc = self.MediaDoc(docId, created, title, self.cursor)
+            docs.append(doc)
+        docs.sort()
+        book = ExcelWriter.Workbook()
+        border = ExcelWriter.Border()
+        borders = ExcelWriter.Borders(border, border, border, border)
+        font = ExcelWriter.Font(name='Arial', size=12)
+        align = ExcelWriter.Alignment('Left', 'Top', wrap=True)
+        style = book.addStyle(alignment=align, font=font, borders=borders)
+        title = "Pronunciations"
+        sheet = book.addWorksheet(title, style)
+        col = 1
+        for width in (50, 200, 200, 150, 75, 150, 100, 75, 75, 75):
+            sheet.addCol(col, width)
+            col += 1
+        col = 1
+        align = ExcelWriter.Alignment('Center')
+        font = ExcelWriter.Font(bold=True, size=14)
+        style = book.addStyle(alignment=align, font=font)
+        row = sheet.addRow(1, style)
+        lang = "ALL"
+        if self.language == 'en':
+            lang = "English"
+        elif self.language == 'es':
+            lang = "Spanish"
+        title = "Audio Pronunciation Recordings Tracking Report - %s" % lang
+        row.addCell(1, title, mergeAcross=9)
+        font = ExcelWriter.Font(bold=True, size=12, name='Arial')
+        align = ExcelWriter.Alignment('Center', 'Center', wrap=True)
+        style = book.addStyle(alignment=align, font=font)
+        row = sheet.addRow(2, style)
+        dates = "From %s - %s" % (self.start, self.end)
+        row.addCell(1, dates, mergeAcross=9)
+        row = sheet.addRow(3, style)
+        for label in ('CDRID', 'Title', 'Proposed Glossary Terms',
+                      'Processing Status*', 'Processing Status Date',
+                      'Comments*', 'Last Version Publishable?',
+                      'Date First Published', 'Date Last Modified',
+                      'Published Date'):
+            row.addCell(col, label)
+            col += 1
+        rowNumber = 4
+        for doc in docs:
+            row = sheet.addRow(rowNumber)
+            row.addCell(1, doc.docId)
+            row.addCell(2, doc.title)
+            row.addCell(3, u"; ".join(doc.glossaryTerms))
+            row.addCell(4, doc.status)
+            row.addCell(5, doc.statusDate)
+            row.addCell(6, u"; ".join(doc.comments))
+            row.addCell(7, doc.lastVersionPublishable and u"Y" or u"N")
+            row.addCell(8, doc.firstPub and doc.firstPub[:10] or u"")
+            row.addCell(9, doc.lastMod and doc.lastMod[:10] or u"")
+            row.addCell(10, doc.pubDate and doc.pubDate[:10] or u"")
+            rowNumber += 1
+
+        job.setProgressMsg("Saving spreadsheet")
+
+        # Save the report.
+        name = "/PronunciationRecordings-%s.xls" % job.getJobId()
+        fp = open(REPORTS_BASE + name, 'wb')
+        book.write(fp, True)
+        fp.close()
+
+        cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
+        url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+                                                            cdrcgi.BASE,
+                                                            name)
+        cdr.logwrite("url: %s" % url, LOGFILE)
+        msg = "Report available at <br><a href='%s'><u>%s</u></a>." % (
+            url, url)
+
+        # Tell the user where to find it.
+        # -------------------------------
+        body = """\
+The Audio Recordings Tracking Report you requested can be viewed at 
+
+  %s
+""" % (url)
+        sendMail(job, "Audio Recordings Tracking Report results", body)
+        job.setProgressMsg(msg)
+        job.setStatus(cdrbatch.ST_COMPLETED)
+        cdr.logwrite("Completed report", LOGFILE)
+        ## style2  = wb.addStyle(alignment = align, font = font, 
+        ##                          numFormat = 'YYYY-mm-dd')
+        ## alignH  = ExcelWriter.Alignment('Left', 'Bottom', wrap = True)
+        ## headFont= ExcelWriter.Font(bold=True, name = 'Times New Roman', 
+        ##                                                             size = 12)
+        ## boldFont= ExcelWriter.Font(bold=True, name = 'Times New Roman', 
+        ##                                                             size = 11)
+        ## styleH  = wb.addStyle(alignment = alignH, font = headFont)
+        ## style1b = wb.addStyle(alignment = align,  font = boldFont)
+
+    class MediaDoc:
+        def __init__(self, docId, created, title, cursor):
+            self.docId = docId
+            self.created = created
+            self.title = title
+            self.status = self.statusDate = self.firstPub = self.lastMod = None
+            self.pubDate = None
+            self.glossaryTerms = []
+            self.comments = []
+            self.lastVersionPublishable = False
+            versions = cdr.lastVersions('guest', 'CDR%010d' % docId)
+            if versions[0] == versions[1] and versions[0] > 0:
+                self.lastVersionPublishable = True
+            cursor.execute("""\
+SELECT dt
+  FROM last_doc_publication
+ WHERE doc_id = ?""", docId)
+            rows = cursor.fetchall()
+            if rows:
+                self.pubDate = rows[0][0]
+            cursor.execute("""\
+  SELECT n.value
+    FROM query_term n
+    JOIN query_term u
+      ON u.int_val = n.doc_id
+   WHERE u.doc_id = ?
+     AND n.path = '/GlossaryTermName/TermName/TermNameString'
+     AND u.path = '/Media/ProposedUse/Glossary/@cdr:ref'
+ORDER BY n.value""", docId)
+            for row in cursor.fetchall():
+                self.glossaryTerms.append(row[0])
+            cursor.execute("SELECT first_pub, xml FROM document WHERE id = ?",
+                           docId)
+            self.firstPub, docXml = cursor.fetchall()[0]
+            tree = etree.XML(docXml.encode('utf-8'))
+            #for node in tree.findall('ProposedUse/Glossary'):
+            #    self.glossaryTerms.append(node.get("{%s}ref" % NAMESPACE))
+            for node in tree.findall('DateLastModified'):
+                self.lastMod = node.text
+            for node in tree.findall('ProcessingStatuses/ProcessingStatus'):
+                for child in node:
+                    if child.tag == 'ProcessingStatusValue':
+                        self.status = child.text
+                    elif child.tag == 'ProcessingStatusDate':
+                        self.statusDate = child.text
+                    elif child.tag == 'Comment':
+                        self.comments.append(child.text)
+                break
+        def __cmp__(self, other):
+            if self.lastVersionPublishable == other.lastVersionPublishable:
+                if self.lastMod == other.lastMod:
+                    return cmp(self.title, other.title)
+                return cmp(self.lastMod, other.lastMod)
+            if self.lastVersionPublishable:
+                return -1
+            return 1
+
+#----------------------------------------------------------------------
 # Run a report of protocols that have been transferred to the NLM and
 # that still have to get transferred.
 #----------------------------------------------------------------------
@@ -4118,7 +4160,8 @@ if __name__ == "__main__":
     # Remaining args (after the report name) are an optional email address
     # and optional name=value parameters for the job.  If the value (or the
     # name, for that matter) has a space embedded in it, enclose the entire
-    # "name=value with spaces" argument in quotes.
+    # "name=value with spaces" argument in quotes.  If there are any name=value
+    # parameters on the command line, the email argument is not optional.
     # So, if you want to perform a test invocation, append a dummy job ID
     # to the end of these arguments so it can be popped above.
     if len(sys.argv) > 1:  
@@ -4144,6 +4187,13 @@ if __name__ == "__main__":
         if reportName == 'ProtocolProcessingStatusReport':
             job = TestJob(jobId, email, parms)
             ProtocolProcessingStatusReport(job).run()
+            sys.exit(0)
+
+        # Test invocation of Audio Pronunciation Recordings Tracking Report.
+        # Args: start=yyyy-mm-dd end=yyyy-mm-dd language=ALL|en|es
+        if reportName == 'pron':
+            job = TestJob(jobId, email, parms)
+            PronunciationRecordingsReport(job).run()
             sys.exit(0)
 
         # Test invocation of report for Office of Science Policy.
@@ -4195,6 +4245,8 @@ if __name__ == "__main__":
             NCITTermUpdate(job)
         elif jobName == "Protocol Ownership Transfer":
             protOwnershipTransfer(job)
+        elif jobName == "Audio Pronunciation Recordings Tracking Report":
+            PronunciationRecordingsReport(job).run()
         # That's all we know how to do right now.
         else:
             job.fail("CdrLongReports: unknown job name '%s'" % jobName,
