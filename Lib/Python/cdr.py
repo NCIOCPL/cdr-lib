@@ -61,6 +61,7 @@ CONNECT_TRIES    = 10
 # Default DTD.  Can get overwritten using Subset parameter
 PDQDTDPATH       = "d:\\cdr\licensee"
 DEFAULT_DTD      = PDQDTDPATH + '\\pdqCG.dtd'
+NAMESPACE        = "cips.nci.nih.gov/cdr"
 
 #----------------------------------------------------------------------
 # Module data used by publishing.py and cdrpub.py.
@@ -740,6 +741,12 @@ def getQueryTermValueForId (path, docId, conn = None):
     except cdrdb.Error, info:
         raise Exception("getQueryTermValueForId: database error: %s" %
                         info[1][0])
+
+#----------------------------------------------------------------------
+# Extract the text content of an lxml.etree node.
+#----------------------------------------------------------------------
+def getEtreeTextContent(node):
+    return node.xpath("string()")
 
 #----------------------------------------------------------------------
 # Extract the text content of a DOM element.
