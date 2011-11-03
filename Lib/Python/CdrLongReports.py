@@ -3926,7 +3926,7 @@ SELECT DISTINCT e.doc_id, c.created, t.value
             AND g.path = '/Media/MediaContent/Categories/Category'
             AND g.value = 'pronunciation'
             AND t.path = '/Media/MediaTitle'
-            %s""" % lang, (self.start, self.end + ' 23:59:59'))
+            %s""" % lang, (self.start, self.end + ' 23:59:59'), timeout=600)
         docs = []
         rows = self.cursor.fetchall()
         for docId, created, title in rows:
@@ -4015,15 +4015,6 @@ The Audio Recordings Tracking Report you requested can be viewed at
         job.setProgressMsg(msg)
         job.setStatus(cdrbatch.ST_COMPLETED)
         cdr.logwrite("Completed report", LOGFILE)
-        ## style2  = wb.addStyle(alignment = align, font = font, 
-        ##                          numFormat = 'YYYY-mm-dd')
-        ## alignH  = ExcelWriter.Alignment('Left', 'Bottom', wrap = True)
-        ## headFont= ExcelWriter.Font(bold=True, name = 'Times New Roman', 
-        ##                                                             size = 12)
-        ## boldFont= ExcelWriter.Font(bold=True, name = 'Times New Roman', 
-        ##                                                             size = 11)
-        ## styleH  = wb.addStyle(alignment = alignH, font = headFont)
-        ## style1b = wb.addStyle(alignment = align,  font = boldFont)
 
     class MediaDoc:
         def __init__(self, docId, created, title, cursor):
@@ -4041,7 +4032,7 @@ The Audio Recordings Tracking Report you requested can be viewed at
             cursor.execute("""\
 SELECT dt
   FROM last_doc_publication
- WHERE doc_id = ?""", docId)
+ WHERE doc_id = ?""", docId, timeout=300)
             rows = cursor.fetchall()
             if rows:
                 self.pubDate = rows[0][0]
@@ -4053,11 +4044,11 @@ SELECT dt
    WHERE u.doc_id = ?
      AND n.path = '/GlossaryTermName/TermName/TermNameString'
      AND u.path = '/Media/ProposedUse/Glossary/@cdr:ref'
-ORDER BY n.value""", docId)
+ORDER BY n.value""", docId, timeout=300)
             for row in cursor.fetchall():
                 self.glossaryTerms.append(row[0])
             cursor.execute("SELECT first_pub, xml FROM document WHERE id = ?",
-                           docId)
+                           docId, timeout=300)
             self.firstPub, docXml = cursor.fetchall()[0]
             tree = etree.XML(docXml.encode('utf-8'))
             #for node in tree.findall('ProposedUse/Glossary'):
