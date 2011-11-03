@@ -3928,9 +3928,12 @@ SELECT DISTINCT e.doc_id, c.created, t.value
             AND t.path = '/Media/MediaTitle'
             %s""" % lang, (self.start, self.end + ' 23:59:59'))
         docs = []
-        for docId, created, title in self.cursor.fetchall()[:10]:
+        rows = self.cursor.fetchall()
+        for docId, created, title in rows:
             doc = self.MediaDoc(docId, created, title, self.cursor)
             docs.append(doc)
+            self.job.setProgressMsg("processed %d of %d" %
+                                    (len(docs), len(rows)))
         docs.sort()
         book = ExcelWriter.Workbook()
         border = ExcelWriter.Border()
@@ -3964,8 +3967,8 @@ SELECT DISTINCT e.doc_id, c.created, t.value
         row.addCell(1, dates, mergeAcross=9)
         row = sheet.addRow(3, style)
         for label in ('CDRID', 'Title', 'Proposed Glossary Terms',
-                      'Processing Status*', 'Processing Status Date',
-                      'Comments*', 'Last Version Publishable?',
+                      'Processing Status', 'Processing Status Date',
+                      'Comments', 'Last Version Publishable?',
                       'Date First Published', 'Date Last Modified',
                       'Published Date'):
             row.addCell(col, label)
@@ -4071,9 +4074,10 @@ ORDER BY n.value""", docId)
                         self.comments.append(child.text)
                 break
         def __cmp__(self, other):
+            diff = cmp(self.status, other.status)
+            if diff:
+                return diff
             if self.lastVersionPublishable == other.lastVersionPublishable:
-                if self.lastMod == other.lastMod:
-                    return cmp(self.title, other.title)
                 return cmp(self.lastMod, other.lastMod)
             if self.lastVersionPublishable:
                 return -1
