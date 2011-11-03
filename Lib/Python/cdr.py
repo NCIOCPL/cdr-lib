@@ -940,7 +940,7 @@ class Doc:
         rep = "<CdrDoc Type='%s'" % self.type
         if self.id: rep += " Id='%s'" % self.id
         rep += "><CdrDocCtl>"
-        for key in self.ctrl.keys():
+        for key in self.ctrl:
             value = self.ctrl[key]
             if not alreadyUtf8:
                 value = unicode(value, self.encoding).encode('utf-8')
@@ -990,15 +990,16 @@ class Doc:
 #----------------------------------------------------------------------
 # Wrap an XML document in CdrDoc wrappers.
 #----------------------------------------------------------------------
-def makeCdrDoc(xml, docType, docId=None):
+def makeCdrDoc(xml, docType, docId=None, ctrl={}):
     """
     Make XML suitable for sending to server functions expecting
-    a CdrDocCtl wrapper.
+    a CdrDoc wrapper.
 
     Pass:
         xml     - Serialized XML for document - unicode or utf-8.
         docType - Document type string.
         docId   - CDR doc ID, or None.
+        ctrl    - optional dictionary of control elements
 
     Return:
         New XML string with passed xml as CDATA section, coded in utf-8.
@@ -1013,9 +1014,19 @@ def makeCdrDoc(xml, docType, docId=None):
         idHeader = " Id='%s'" % exNormalize(docId)[0]
 
     # Construct the entire document
+    docCtrl = "<CdrDocCtl>"
+    if ctrl:
+        for key, value in ctrl.iteritems():
+            if type(value) is unicode:
+                value = value.encode('utf-8')
+            else:
+                value = str(value)
+            docCtrl += "<%s>%s</%s>" % (key, cgi.escape(value), key)
+    docCtrl += "</CdrDocCtl>"
     newXml = """<CdrDoc Type='%s'%s>
+%s
 <CdrDocXml><![CDATA[%s]]></CdrDocXml>
-</CdrDoc>""" % (docType, idHeader, xml)
+</CdrDoc>""" % (docType, idHeader, docCtrl, xml)
 
     return newXml
 
