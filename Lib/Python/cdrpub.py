@@ -6,6 +6,7 @@
 #
 # BZIssue::4629 - Vendor Filter Changes for GenProf publishing
 # BZIssue::4869 - [Internal] Remove Parameter IncludeLinkedDocs
+# BZIssue::5176 - Modify Publishing Program
 #
 # Revision 1.110  2009/08/19 17:48:24  venglisc
 # Fixed exception message.  Message displayed jobId instead of document ID.
@@ -2692,6 +2693,23 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         done  = 0
         error = 0
 
+        # This is a test:
+        # Publishing fails frequently while processing Media/Audio
+        # documents and it's suspected that the OS is running out of
+        # file handles.  We're repeating the process of slowing down
+        # the system for processing these small MP3 audio files in the
+        # same way as done for adding small documents to pub_proc_cg_work
+        # ---------------------------------------------------------------
+        t0 = time.clock()
+        t1 = 0
+        ibrake = 1
+        mult = 1
+        brakeAtDocCount = 250
+        brakeTime = 30         # number of seconds to pause
+        maxDocsPerSecond = 5   # don't allow more docs per second to be
+                               # processed without the occational breather
+                               # for the OS
+
         while not done:
             # Get another document id to publish
             self.__lockNextDoc.acquire(1)
@@ -2722,8 +2740,44 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             # If we got one, publish it
             # Try to handle exceptions gracefully, then get out
             if not done:
+                # Check how fast we are processing documents.  If we're too
+                # fast, Windows OS starts chocking without telling anyone
+                # ---------------------------------------------------------
+                if ibrake > brakeAtDocCount:
+                    tNow = time.clock()
+                    tDelta = tNow - t1
+                    # This is the first call of the new thread.  t0 is set
+                    # to zero and tDelta is incorrect.  Setting tDelta to 999
+                    # -------------------------------------------------------
+                    if tDelta == tNow and t0 > 1: tDelta = 999999
+                    self.__debugLog("Secs this thread: %d" % tNow)
+                    self.__debugLog("Docs this thread: %d" % (
+                                                      mult * brakeAtDocCount))
+                    self.__debugLog("Last %d docs processed in %d secs" % (
+                                                          ibrake - 1, tDelta))
+                    self.__debugLog("Current Ratio Docs/sec: %.3f" % (
+                                                      brakeAtDocCount/tDelta))
+
+                    # We only need to take a breather and pause the program
+                    # if documents are being processes very fast.  For 
+                    # larger documents (almost all but audio files) we don't
+                    # need to take a break
+                    # ------------------------------------------------------
+                    if brakeAtDocCount / tDelta > maxDocsPerSecond:
+                        self.__debugLog("Allowed Ratio Docs/sec: %.3f ***" % (
+                                                      maxDocsPerSecond))
+                        self.__debugLog("Pausing for %d secs" % brakeTime)
+                        time.sleep(brakeTime)
+
+                    # Keep track of how often we came here and reset t1
+                    # -------------------------------------------------
+                    mult += 1
+                    ibrake = 1
+                    t1 = tNow
+
                 try:
                     self.__publishDoc (doc, filters, destType, destDir, subDir)
+                    ibrake += 1
                 except cdrdb.Error, info:
                     self.__debugLog(
                         "Database error publishing doc %d ver %d in %s:\n  %s"
