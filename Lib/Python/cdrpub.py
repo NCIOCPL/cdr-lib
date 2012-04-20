@@ -2704,9 +2704,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         t1 = 0
         ibrake = 1
         mult = 1
-        brakeAtDocCount = 250
+        brakeAtDocCount = 200
         brakeTime = 30         # number of seconds to pause
-        maxDocsPerSecond = 5   # don't allow more docs per second to be
+        maxDocsPerSecond = 4   # don't allow more docs per second to be
                                # processed without the occational breather
                                # for the OS
 
@@ -2741,7 +2741,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             # Try to handle exceptions gracefully, then get out
             if not done:
                 # Check how fast we are processing documents.  If we're too
-                # fast, Windows OS starts chocking without telling anyone
+                # fast, Windows OS starts choking without telling anyone
                 # ---------------------------------------------------------
                 if ibrake > brakeAtDocCount:
                     tNow = time.clock()
