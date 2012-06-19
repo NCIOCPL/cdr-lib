@@ -4,41 +4,7 @@
 #
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
-# BZIssue::4629 - Vendor Filter Changes for GenProf publishing
-# BZIssue::4869 - [Internal] Remove Parameter IncludeLinkedDocs
-# BZIssue::5176 - Modify Publishing Program
-#
-# Revision 1.110  2009/08/19 17:48:24  venglisc
-# Fixed exception message.  Message displayed jobId instead of document ID.
-#
-# Revision 1.109  2008/12/30 15:15:32  venglisc
-# Fixed error of sending a document type of GlossaryTermName to Gatekeeper
-# for a removed document.  Gatekeeper only accepts document type GlossaryTerm.
-#
-# Revision 1.108  2008/08/15 18:30:44  venglisc
-# Needed to rename the docType name GlossaryTermName to GlossaryTerm since
-# that's what Cancer.gov expects to receive. (Bug 3491)
-#
-# Revision 1.107  2008/06/03 21:14:49  bkline
-# Cleaned up code to extract error information from the Err elements
-# returned in CDR server responses.  Replaced StandardError exceptions
-# with Exception objects, as StandardError will be removed from the
-# exception heirarchy at some point.
-#
-# Revision 1.106  2008/03/17 21:49:22  venglisc
-# Corrected the problem where a protocol that got deleted after the
-# publishing job started (but before it finished) caused the publishing
-# job to fail since it would try to insert a record for the updated as well
-# as the removed document into a temporary table with a primary key of the
-# CDR-ID.  (Bug 3951)
-#
-# Revision 1.105  2008/02/26 23:42:29  venglisc
-# Replaced PyXML validator with Lxml. (Bug 3923)
-#
-# Revision 1.104  2007/10/11 20:29:13  venglisc
-# If a document fails to be written to disk we want to try again to ensure
-# the problem isn't just a network hiccup. (Bug 3488)
-#
+# $Log: not supported by cvs2svn $
 # Revision 1.103  2007/08/21 23:36:37  ameyer
 # Altered multiple SQL statements that update pub_proc_cg to not insert
 # any rows for excluded document types (currently Country and Person).  These
@@ -426,7 +392,7 @@
 
 import cdr, cdrdb, os, re, string, sys, xml.dom.minidom
 import socket, cdr2gk, time, threading, glob, base64, AssignGroupNums
-import lxml.etree
+from xml.parsers.xmlproc import xmlval, xmlproc
 
 #-----------------------------------------------------------------------
 # Value for controlling debugging output.  None means no debugging
@@ -531,13 +497,13 @@ class Publish:
     __cdrHttp  = "http://%s.nci.nih.gov/cgi-bin/cdr" % socket.gethostname()
     __interactiveMode   = 0
     __checkPushedDocs   = 0
-    ## __includeLinkedDocs = 0
+    __includeLinkedDocs = 0
     __reportOnly        = 0
     __validateDocs      = 0
     __logDocModulus     = LOG_MODULUS
 
     # Document types provided to licensees but not to Cancer.gov
-    __excludeDocTypes   = ('Country',)
+    __excludeDocTypes   = ('Country', 'Person')
 
     # Used in SQL SELECT statements to exclude documents of those types.
     __excludeDT         = ",".join(["'%s'" % t for t in __excludeDocTypes])
@@ -553,11 +519,10 @@ class Publish:
 
     # Thread locking objects.
     # All threads share this one instance of a Publish object.
-    __lockNextDoc  = threading.Lock()  # Get next doc id to pub from queue
-    __lockLog      = threading.Lock()  # Writing a log message
-    __lockManifest = threading.Lock()  # Append to a manifest of media
-    __lockDb       = threading.Lock()  # Server access to blob change date
-    __lockMakeDir  = threading.Lock()  # Creating or renaming a directory
+    __lockNextDoc  = threading.Lock()
+    __lockLog      = threading.Lock()
+    __lockManifest = threading.Lock()
+    __lockDb       = threading.Lock()
 
     # Publish this many docs in parallel
     __numThreads  = PUB_THREADS
@@ -565,9 +530,6 @@ class Publish:
     # An error in any thread updates this
     # Other threads will see it and exit
     __threadError = None
-
-    # Set this flag if a thread fails, tells other threads not to continue
-    __cleanupFailureCalled = False
 
     # Rows to be written to the image manifest file.
     __mediaManifest = []
@@ -639,12 +601,12 @@ class Publish:
                                                                time.ctime(),
                                                                self.__jobId)
                 self.__debugLog(msg)
-                raise Exception(msg)
+                raise StandardError(msg)
         except cdrdb.Error, info:
             msg  = "%s: Database failure retrieving information " % time.ctime()
             msg += "for job %d: %s" % (self.__jobId, info[1][0])
             self.__debugLog(msg)
-            raise Exception(msg)
+            raise StandardError(msg)
 
         self.__ctrlDocId   = row[0]
         self.__subsetName  = row[1]
@@ -683,7 +645,7 @@ class Publish:
             msg  = "%s: Failure retrieving documents for " % time.ctime()
             msg += "job %d: %s<BR>" % (self.__jobId, info[1][0])
             self.__updateStatus(Publish.FAILURE, msg)
-            raise Exception(msg)
+            raise StandardError(msg)
 
         # Load the job parameters from the database.  The server
         # will have merged parameters explicitly set for this job
@@ -716,7 +678,7 @@ class Publish:
             msg  = "Failure retrieving parameters for " % time.ctime()
             msg += "job %d: %s<BR>" % (self.__jobId, info[1][0])
             self.__updateStatus(Publish.FAILURE, msg)
-            raise Exception(msg)
+            raise StandardError(msg)
 
 
         # Initialize the hash __dateFirstPub. The hash key is the document
@@ -749,18 +711,12 @@ class Publish:
             msg  = "%s: Failure building hash __dateFirstPub " % time.ctime()
             msg += "for job %d: %s<BR>" % (self.__jobId, info[1][0])
             self.__updateStatus(Publish.FAILURE, msg)
-            raise Exception(msg)
+            raise StandardError(msg)
 
         # Reset some class private variables based on user input.
-        #
-        # Note: The 'IncludeLinkedDocs' parameter has been removed
-        #       from the publishing document since it has never
-        #       and shouldn't be used anymore but caused confusions
-        #       when publishing had to be run by "backup publishers"
-        # ----------------------------------------------------------
-        ## if self.__params.has_key("IncludeLinkedDocs"):
-        ##     self.__includeLinkedDocs = \
-        ##         self.__params["IncludeLinkedDocs"] == "Yes"
+        if self.__params.has_key("IncludeLinkedDocs"):
+            self.__includeLinkedDocs = \
+                self.__params["IncludeLinkedDocs"] == "Yes"
         if self.__params.has_key("InteractiveMode"):
             self.__interactiveMode = \
                 self.__params["InteractiveMode"] == "Yes"
@@ -818,14 +774,9 @@ class Publish:
             # when specified by user input. The linked documents will
             # be inserted into table pub_proc_doc and appended to list
             # __userDocList.
-            #
-            ### Hotfix-Export requirements changed again.
-            ### The parameter IncludeLinkedDocs has been removed and is
-            ### not being used anymore.  __addLinkedDocsToPPD will not
-            ### be called.
-            ##if self.__isPrimaryJob() and self.__subsetName == "Hotfix-Export":
-            ##    if self.__includeLinkedDocs:
-            ##        self.__addLinkedDocsToPPD()
+            if self.__isPrimaryJob() and self.__subsetName == "Hotfix-Export":
+                if self.__includeLinkedDocs:
+                    self.__addLinkedDocsToPPD()
 
             # Turn on cacheing.
             # This is an optimization that, at the time of writing
@@ -850,7 +801,7 @@ class Publish:
             # In the first pass a document on the user's list is published
             # only once, for the first specification which allows the user to
             # list documents of that document's type.
-            self.__alreadyPublished = set()
+            self.__alreadyPublished = {}
             specFilters             = []
             specSubdirs             = []
             userListedDocsRemaining = len(self.__userDocList)
@@ -911,7 +862,7 @@ class Publish:
                             msg = "%d docs failed so far.<BR>" % numFailures
                             self.__updateMessage(msg)
 
-                        self.__alreadyPublished.add(doc.getDocId())
+                        self.__alreadyPublished[doc.getDocId()] = 1
                         userListedDocsRemaining -= 1
                         if not userListedDocsRemaining: break
 
@@ -1097,7 +1048,7 @@ class Publish:
                     pass
             sys.exit(0)
 
-        except Exception, arg:
+        except StandardError, arg:
             self.__cleanupFailure(dest, dest_base, str(arg))
 
         except:
@@ -1159,45 +1110,27 @@ class Publish:
         Return:
             Void.
         """
+        # Log message
+        msg = "publish: %s<BR>" % msg
         try:
-            # Synchronize this with other threads that may call this
-            #   or attempt to create a directory
-            self.__lockMakeDir.acquire(1)
-
-            # Don't do this twice
-            if self.__cleanupFailureCalled:
-                return
-
-            # Log message
-            msg = "publish: %s<BR>" % msg
-            try:
-                self.__debugLog(msg, tb=1)
-            except:
-                pass
-
-            # Set status in database
-            try:
-                self.__updateStatus(Publish.FAILURE, msg)
-            except:
-                pass
-
-            # Rename output directory to indicate failure
-            if self.__no_output != "Y":
-                try:
-                    os.rename(dest, dest_base + ".FAILURE")
-                except:
-                    pass
-
-            # Cleanup is done
-            self.__cleanupFailureCalled = True
+            self.__debugLog(msg, tb=1)
         except:
             pass
 
-        finally:
-            # End synchronization
-            self.__lockMakeDir.release()
+        # Set status
+        try:
+            self.__updateStatus(Publish.FAILURE, msg)
+        except:
+            pass
 
-        return
+        # Rename output directory to indicate failure
+        if self.__no_output != "Y":
+            try:
+                os.rename(dest, dest_base + ".FAILURE")
+            except:
+                pass
+
+        return None
 
 
     #------------------------------------------------------------------
@@ -1266,8 +1199,8 @@ class Publish:
                 return 0
 
         except cdrdb.Error, info:
-            raise Exception("Failure finding pending pushing jobs "
-                            "for job %d: %s" % (self.__jobId, info[1][0]))
+            raise StandardError("""Failure finding pending pushing jobs
+                        for job %d: %s""" % (self.__jobId, info[1][0]))
         return 1
 
     #------------------------------------------------------------------
@@ -1303,8 +1236,8 @@ class Publish:
                   """ % (Publish.SUCCESS, subsetName, self.__ctrlDocId))
                 row = cursor.fetchone()
                 if not row:
-                    raise Exception("Corresponding vendor job does not "
-                                    "exist.<BR>")
+                    raise StandardError(
+                        "Corresponding vendor job does not exist.<BR>")
 
                 # XXX is this really a doc ID? [RMK 2004-12-17]
                 docId = row[0]
@@ -1312,15 +1245,15 @@ class Publish:
 
                 prevId = self.__getLastJobId(subsetName)
                 if prevId > docId:
-                    raise Exception("This same job has been previously "
-                                    "successfully done by job %d." % prevId)
+                    raise StandardError("""This same job has been previously
+                        successfully done by job %d.""" % prevId)
 
                 return [docId, dest]
 
             except cdrdb.Error, info:
-                raise Exception("Failure finding vendor job and vendor "
-                                "destination for job %d: %s" %
-                                (self.__jobId, info[1][0]))
+                raise StandardError("""Failure finding vendor job and vendor
+                        destination for job %d: %s""" % (self.__jobId,
+                                                         info[1][0]))
 
     #------------------------------------------------------------------
     # Push documents of a specific vendor_job to Cancer.gov using cdr2gk
@@ -1337,10 +1270,10 @@ class Publish:
                 msg = """The value of parameter PubType, %s, is unsupported.
                        <BR>Please modify the control document or the source
                        code.<BR>""" % pubType
-                raise Exception(msg)
+                raise StandardError(msg)
         else:
             msg = "There is no parameter PubType in the control document.<BR>"
-            raise Exception(msg)
+            raise StandardError(msg)
 
         try:
             cursor = self.__conn.cursor()
@@ -1353,7 +1286,7 @@ class Publish:
                                     timeout = self.__timeOut)
                 except cdrdb.Error, info:
                     msg = "Deleting pub_proc_cg failed: %s<BR>" % info[1][0]
-                    raise Exception(msg)
+                    raise StandardError(msg)
 
             # Create a working table pub_proc_cg_work to hold information
             # on transactions to Cancer.gov.
@@ -1392,8 +1325,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                           UPDATE pub_proc_cg_work SET cg_job = ?
                                 """, self.__jobId)
                     except cdrdb.Error, info:
-                        raise Exception("Updating pub_proc_cg_work failed: "
-                                        "%s<BR>" % info[1][0])
+                        raise StandardError(
+                            "Updating pub_proc_cg_work failed: %s<BR>" % \
+                                                             info[1][0])
 
                 pubTypeCG = pubType
                 self.__updateMessage(link)
@@ -1426,7 +1360,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 # Stop to enter job description.
                 self.__waitUserApproval()
             else:
-                raise Exception("pubType %s not supported." % pubType)
+                raise StandardError("pubType %s not supported." % pubType)
 
             docNum  = 1
             numDocs = 0
@@ -1467,7 +1401,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
             if not cgJobDesc:
                 self.__updateMessage(msg)
-                raise Exception("<BR>Missing required job description.")
+                raise StandardError("<BR>Missing required job description.")
 
             msg = "%s: Initiating request with pubType=%s, \
                    lastJobId=%d ...<BR>" % (time.ctime(), pubTypeCG, lastJobId)
@@ -1500,7 +1434,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                         'Operator may need to run "cdr2gk.py abort={jobnum}"'
 
                 # Can't continue
-                raise Exception(msg)
+                raise StandardError(msg)
 
             # What does GateKeeper think the last job ID was
             gkLastJobId = response.details.lastJobId;
@@ -1518,7 +1452,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                       "For test, switching to GateKeeper lastJobId")
                     lastJobId = response.details.lastJobId
                 else:
-                    raise Exception("Aborting on lastJobId CDR / CG mismatch")
+                    raise StandardError(\
+                        "Aborting on lastJobId CDR / CG mismatch")
 
             # Prepare the server for a list of documents to send.
             msg += """%s: Sending data prolog with jobId=%d, pubType=%s,
@@ -1536,7 +1471,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     msg += \
                         'Operator may need to run "cdr2gk.py abort={jobnum}"'
 
-                raise Exception(msg)
+                raise StandardError(msg)
 
             msg += "%s: Pushing documents starts<BR>" % time.ctime()
             self.__updateMessage(msg)
@@ -1582,10 +1517,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 docType = row[2]
                 if docType == "InScopeProtocol":
                     docType = "Protocol"
-                elif docType == "GlossaryTermName":
-                    docType = "GlossaryTerm"
-                elif docType == "Person":
-                    docType = "GeneticsProfessional"
                 xml = row[3].encode('utf-8')
                 xml = XmlDeclLine.sub("", xml)
                 xml = DocTypeLine.sub("", xml)
@@ -1594,7 +1525,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 grpNum = groupNums.getDocGroupNum(docId)
                 # grpNum = groupNums.genNewUniqueNum()
 
-                #self.__debugLog("DocType: %s  DocId: %d" % (docType, docId))
                 response = cdr2gk.sendDocument(self.__jobId, docNum,
                             "Export", docType, docId, version, grpNum, xml)
 
@@ -1605,7 +1535,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     msg += "sending document %d failed. %s: %s<BR>" % \
                             (docId, response.type, response.message)
                     self.__debugLog(msg)
-                    raise Exception(msg)
+                    raise StandardError(msg)
                 docNum  = docNum + 1
                 if docNum % 1000 == 0:
                     msg += "%s: Pushed %d documents<BR>" % (time.ctime(),
@@ -1640,10 +1570,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 docType   = row[2]
                 if docType == "InScopeProtocol":
                     docType = "Protocol"
-                elif docType == "GlossaryTermName":
-                    docType = "GlossaryTerm"
-                elif docType == "Person":
-                    docType = "GeneticsProfessional"
                 response = cdr2gk.sendDocument(self.__jobId, docNum, "Remove",
                                                docType, docId, version,
                                                groupNums.genNewUniqueNum())
@@ -1651,7 +1577,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 if response.type != "OK":
                     msg += "deleting document %d failed. %s: %s<BR>" % (docId,
                             response.type, response.message)
-                    raise Exception(msg)
+                    raise StandardError(msg)
                 docNum  = docNum + 1
                 if docNum % 1000 == 0:
                     msg += "%s: Pushed %d documents<BR>" % (time.ctime(),
@@ -1671,7 +1597,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             if response.type != "OK":
                 msg = "Error response from job completion:<BR>" + \
                        str(response.message)
-                raise Exception(msg)
+                raise StandardError(msg)
 
             # Before we claim success, we will have to update
             # pub_proc_cg and pub_proc_doc from pub_proc_cg_work.
@@ -1684,24 +1610,24 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             elif pubType == "Hotfix (Export)":
                 self.__updateFromPPCWHE()
             else:
-                raise Exception("pubType %s not supported." % pubType)
+                raise StandardError("pubType %s not supported." % pubType)
 
             msg += "%s: Updating PPC/PPD tables done<BR>" % time.ctime()
             self.__updateMessage(msg)
             msg = ""
 
         except cdrdb.Error, info:
-            self.__debugLog("Caught database error in __pushDocsToCG: %s" %
+            self.__debugLog("Caught database error in __pushDocs2CG: %s" % \
                             str(info))
             msg = "__pushDocsToCG() failed: %s<BR>" % info[1][0]
-            raise Exception(msg)
-        except Exception, arg:
-            self.__debugLog("Caught Exception in __pushDocsToCG: %s" %
+            raise StandardError(msg)
+        except StandardError, arg:
+            self.__debugLog("Caught StandardError in __pushDocs2CG: %s" % \
                             str(arg))
-            raise Exception(str(arg))
+            raise StandardError(str(arg))
         except:
             msg = "Unexpected failure in __pushDocsToCG.<BR>"
-            raise Exception(msg)
+            raise StandardError(msg)
 
     #------------------------------------------------------------------
     # Create rows in the working pub_proc_cg_work table before updating
@@ -1716,7 +1642,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         cg_job = self.__jobId
         cursor = self.__conn.cursor()
         cursor2 = self.__conn.cursor()
-        cursor3 = self.__conn.cursor()
 
         # Wipe out all rows in pub_proc_cg_work. Only one job can be run
         # for Cancer.gov transaction. This is guaranteed by calling
@@ -1726,8 +1651,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 DELETE pub_proc_cg_work
                            """, timeout = self.__timeOut)
         except cdrdb.Error, info:
-            raise Exception("Deleting pub_proc_cg_work failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Deleting pub_proc_cg_work failed: %s<BR>" % info[1][0])
         msg = "%s: Finished deleting pub_proc_cg_work<BR>" % time.ctime()
         self.__updateMessage(msg)
 
@@ -1741,15 +1666,12 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             qry = """
                 SELECT ppc.id, t.name, ppc.xml, ppd2.subdir, ppd2.doc_version,
                        ppc.force_push
-                  FROM pub_proc_cg ppc
-                  JOIN pub_proc_doc ppd2
-                    ON ppd2.doc_id = ppc.id
-                  JOIN doc_version d
-                    ON d.id = ppc.id
-                   AND d.num = ppd2.doc_version
-                  JOIN doc_type t
-                    ON t.id = d.doc_type
-                 WHERE ppd2.pub_proc = %d
+                  FROM pub_proc_cg ppc, doc_type t, document d,
+                       pub_proc_doc ppd2
+                 WHERE d.id = ppc.id
+                   AND d.doc_type = t.id
+                   AND ppd2.doc_id = d.id
+                   AND ppd2.pub_proc = %d
                    AND t.name NOT IN (%s)
                    AND EXISTS (
                            SELECT *
@@ -1759,7 +1681,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                               AND ppd.failure IS NULL
                               )
                   """ % (vendor_job, self.__excludeDT, vendor_job)
-                #and ppc.id in (
             cursor.execute(qry, timeout = self.__timeOut)
             row = cursor.fetchone()
             idsInserted = {}
@@ -1767,18 +1688,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             # Regexp for normalizing whitespace for compares
             spNorm = re.compile (ur"\s\s+")
 
-            # Setting parameters to slow down the writing and prevent
-            # SQL connection failure.
-            # -------------------------------------------------------
-            ibrake = 1
-            ifailure = 0
-            brakeLevel = 500
-            brakeTime  = 30
-
             # Fetch each doc
             while row:
                 docId  = row[0]
-                #self.__debugLog("*** processing %d ..." % docId)
                 if idsInserted.has_key(docId):
                     row = cursor.fetchone()
                     continue
@@ -1803,72 +1715,24 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                         needsPush = True
 
                 if needsPush:
-                    # If many small documents are being inserted (i.e.
-                    # GlossaryTerms we need to slow down the process
-                    # of inserting rows or the job will fail.
-                    # ------------------------------------------------
-                    if ibrake > brakeLevel:
-                        self.__debugLog("Processed %d documents" % (ibrake - 1))
-                        self.__debugLog("Resting %d seconds" % brakeTime)
-                        time.sleep(brakeTime)
-                        ibrake = 1
-
-                    try:
-                        # New xml is different or CG wants it sent anyway
-                        #self.__debugLog("*** Inserting  %d ..." % docId)
-                        cursor2.execute("""
-                            INSERT INTO pub_proc_cg_work (id, vendor_job,
-                                            cg_job, doc_type, xml, num)
-                                 VALUES (?, ?, ?, ?, ?, ?)
-                                        """, (docId, vendor_job, cg_job, dType,
-                                              fileTxt, ver),
-                                             timeout = self.__timeOut
-                                       )
-                        ibrake += 1
-                        # self.__debugLog("*** Getting Next ID")
-                    except cdrdb.Error, info:
-                        # If the INSERT failed take a brake and try again
-                        # after a few seconds.  If the second insert fails
-                        # again exit, otherwise continue.
-                        # ------------------------------------------------
-                        ifailure += 1
-                        self.__debugLog("*** DB Insert Error for %d" % docId)
-                        self.__debugLog("*** Written %d records" % ibrake)
-                        self.__debugLog("*** Retry after %d seconds" %
-                                                                 brakeTime)
-                        time.sleep(brakeTime)
-                        try:
-                            self.__debugLog("*** inserting %d ..." % docId)
-                            cursor3.execute("""
-                                INSERT INTO pub_proc_cg_work (id, vendor_job,
-                                                cg_job, doc_type, xml, num)
-                                     VALUES (?, ?, ?, ?, ?, ?)
-                                            """, (docId, vendor_job, cg_job,
-                                                  dType, fileTxt, ver),
-                                                 timeout = self.__timeOut
-                                           )
-                            self.__debugLog("*** inserting %d OK" % docId)
-                        except cdrdb.Error, info:
-                            self.__debugLog("*** Second failure inserting")
-                            raise Exception("Second Failure inserting %d to "
-                                            "PPCG<BR>" % info[1][0])
-                        except:
-                            self.__debugLog("*** Non-DB Failure at second insert")
-                            raise Exception("Non-DB Failure at second"
-                                            "insertion")
-                    except:
-                        self.__debugLog("*** Some Non-DB Error")
-                        #pass
+                    # New xml is different or CG wants it sent anyway
+                    cursor2.execute("""
+                        INSERT INTO pub_proc_cg_work (id, vendor_job,
+                                        cg_job, doc_type, xml, num)
+                             VALUES (?, ?, ?, ?, ?, ?)
+                                    """, (docId, vendor_job, cg_job, dType,
+                                          fileTxt, ver),
+                                         timeout = self.__timeOut
+                                   )
 
                 row = cursor.fetchone()
 
         except cdrdb.Error, info:
-            self.__debugLog("*** Failure at %d" % docId)
-            raise Exception("Setting U to pub_proc_cg_work failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Setting U to pub_proc_cg_work failed: %s<BR>" % info[1][0])
         except:
-            raise Exception("Unexpected failure in setting U to "
-                            "pub_proc_cg_work.")
+            raise StandardError(
+                "Unexpected failure in setting U to pub_proc_cg_work.")
         msg = "%s: Finished insertion for updating<BR>" % time.ctime()
         self.__updateMessage(msg)
 
@@ -1879,13 +1743,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             cursor.execute ("""
                      SELECT DISTINCT ppd.doc_id, t.name, ppd.subdir,
                             ppd.doc_version
-                       FROM pub_proc_doc ppd
-                       JOIN doc_version d
-                         ON d.id = ppd.doc_id
-                        AND d.num = ppd.doc_version
-                       JOIN doc_type t
-                         ON d.doc_type = t.id
+                       FROM pub_proc_doc ppd, doc_type t, document d
                       WHERE ppd.pub_proc = %d
+                        AND d.id = ppd.doc_id
+                        AND d.doc_type = t.id
                         AND ppd.failure IS NULL
                         AND t.name NOT IN (%s)
                         AND NOT EXISTS (
@@ -1918,18 +1779,19 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                     timeout = self.__timeOut
                                    )
                 except:
-                    raise Exception("Inserting CDR%d to PPCW failed." % docId)
+                    raise StandardError(
+                        "Inserting CDR%d to PPCW failed." % docId)
 
                 row = cursor.fetchone()
 
         except cdrdb.Error, info:
-            raise Exception("Setting A to pub_proc_cg_work failed: %s<BR>" %
-                            info[1][0])
-        except Exception, arg:
-            raise Exception(str(arg))
+            raise StandardError(
+                "Setting A to pub_proc_cg_work failed: %s<BR>" % info[1][0])
+        except StandardError, arg:
+            raise StandardError(str(arg))
         except:
-            raise Exception("Unexpected failure in setting A to "
-                            "pub_proc_cg_work.")
+            raise StandardError(
+                "Unexpected failure in setting A to pub_proc_cg_work.")
         msg = "%s: Finished insertion for adding<BR>" % time.ctime()
         self.__updateMessage(msg)
 
@@ -1967,13 +1829,11 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             AND d.active_status <> 'A'
                             AND t.name <> 'Media'
                             AND t.name NOT IN (%s)
-                            AND ppc.id NOT IN (SELECT id
-                                                 FROM pub_proc_cg_work)
                       """ % (vendor_job, cg_job, docTypes, self.__excludeDT)
                 cursor.execute(qry, timeout = self.__timeOut)
             except cdrdb.Error, info:
-                raise Exception("Setting D to pub_proc_cg_work failed: %s<BR>"
-                                % info[1][0])
+                raise StandardError(
+                    "Setting D to pub_proc_cg_work failed: %s<BR>" % info[1][0])
             msg = "%s: Finished insertion for deleting<BR>" % time.ctime()
         else:
             msg = ("%s: No remove transactions because no docTypes published!"
@@ -2000,7 +1860,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         except cdrdb.Error, info:
             msg = "Failure executing query to find doc types " \
                   "for job %d: %s" % (vendor_job, info[1][0])
-            raise Exception(msg)
+            raise StandardError(msg)
 
     #------------------------------------------------------------------
     # Generate the XML to be sent to Cancer.gov for a media document.
@@ -2008,16 +1868,15 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
     def __getCgMediaDoc(self, vendorDest, subdir, docId):
         names = glob.glob("%s/%s/CDR%010d.*" % (vendorDest, subdir, docId))
         if not names:
-            raise Exception("Failure locating media file for CDR%d" % docId)
+            raise StandardError("Failure locating media file for CDR%d" %
+                                docId)
         name = names[0]
         if name.endswith('.jpg'):
             mediaType = 'image/jpeg'
         elif name.endswith('.gif'):
             mediaType = 'image/gif'
-        elif name.endswith('.mp3'):
-            mediaType = 'audio/mpeg'
         else:
-            raise Exception("Unsupported media type: %s" % name)
+            raise StandardError("Unsupported media type: %s" % name)
         fp = file(name, 'rb')
         bytes = fp.read()
         fp.close()
@@ -2043,8 +1902,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 DELETE pub_proc_cg_work
                            """, timeout = self.__timeOut)
         except cdrdb.Error, info:
-            raise Exception("Deleting pub_proc_cg_work failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Deleting pub_proc_cg_work failed: %s<BR>" % info[1][0])
         msg = "%s: Finished deleting pub_proc_cg_work<BR>" % time.ctime()
         self.__updateMessage(msg)
 
@@ -2066,8 +1925,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                   """ % (vendor_job, cg_job, vendor_job, self.__excludeDT)
             cursor.execute(qry, timeout = self.__timeOut)
         except cdrdb.Error, info:
-            raise Exception("Setting D to pub_proc_cg_work failed (HFR): "
-                            "%s<BR>" % info[1][0])
+            raise StandardError(
+                "Setting D to pub_proc_cg_work failed: %s<BR>" % info[1][0])
         msg = "%s: Finished inserting D to PPCW<BR>" % time.ctime()
         self.__updateMessage(msg)
 
@@ -2089,8 +1948,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 DELETE pub_proc_cg_work
                            """, timeout = self.__timeOut)
         except cdrdb.Error, info:
-            raise Exception("Deleting pub_proc_cg_work failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Deleting pub_proc_cg_work failed: %s<BR>" % info[1][0])
 
         # Insert updated documents into pub_proc_cg_work. Updated documents
         # are those that are in both pub_proc_cg and pub_proc_doc belonging
@@ -2101,15 +1960,12 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             qry = """
                 SELECT ppc.id, t.name, ppc.xml, ppd2.subdir, ppd2.doc_version,
                        ppc.force_push
-                  FROM pub_proc_cg ppc
-                  JOIN pub_proc_doc ppd2
-                    ON ppd2.doc_id = ppc.id
-                  JOIN doc_version d
-                    ON d.id = ppd2.doc_id
-                   AND d.num = ppd2.doc_version
-                  JOIN doc_type t
-                    ON d.doc_type = t.id
-                 WHERE ppd2.pub_proc = %d
+                  FROM pub_proc_cg ppc, doc_type t, document d,
+                       pub_proc_doc ppd2
+                 WHERE d.id = ppc.id
+                   AND d.doc_type = t.id
+                   AND ppd2.doc_id = d.id
+                   AND ppd2.pub_proc = %d
                    AND t.name NOT IN (%s)
                    AND EXISTS (
                            SELECT *
@@ -2158,11 +2014,11 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 row = cursor.fetchone()
 
         except cdrdb.Error, info:
-            raise Exception("Setting U to pub_proc_cg_work (HE) failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Setting U to pub_proc_cg_work failed: %s<BR>" % info[1][0])
         except:
-            raise Exception("Unexpected failure in setting U to "
-                            "pub_proc_cg_work (HE).")
+            raise StandardError(
+                "Unexpected failure in setting U to pub_proc_cg_work.")
         msg = "%s: Finished insertion for updating.<BR>" % time.ctime()
         self.__updateMessage(msg)
 
@@ -2216,11 +2072,11 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 row = cursor.fetchone()
 
         except cdrdb.Error, info:
-            raise Exception("Setting A to pub_proc_cg_work failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Setting A to pub_proc_cg_work failed: %s<BR>" % info[1][0])
         except:
-            raise Exception("Unexpected failure in setting A to "
-                            "pub_proc_cg_work.")
+            raise StandardError(
+                "Unexpected failure in setting A to pub_proc_cg_work.")
         msg = "%s: Finished insertion for adding<BR>" % time.ctime()
         self.__updateMessage(msg)
 
@@ -2249,8 +2105,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             """, timeout = self.__timeOut)
         except cdrdb.Error, info:
             self.__conn.setAutoCommit(1)
-            raise Exception("Deleting from pub_proc_cg_work failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Deleting from pub_proc_cg_work failed: %s<BR>" % info[1][0])
 
         # Insert rows into PPD for removed documents of cg_job.
         try:
@@ -2263,8 +2119,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             """, timeout = self.__timeOut)
         except cdrdb.Error, info:
             self.__conn.setAutoCommit(1)
-            raise Exception("Inserting D into pub_proc_doc failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Inserting D into pub_proc_doc failed: %s<BR>" % info[1][0])
 
         # Update a document, if its id is in both PPC and PPD.
         # Update rows in PPC for updated documents of cg_job.
@@ -2278,8 +2134,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             """, timeout = self.__timeOut)
         except cdrdb.Error, info:
             self.__conn.setAutoCommit(1)
-            raise Exception("Updating xml, vendor_job from PPCW to PPC "
-                            "failed: %s<BR>" % info[1][0])
+            raise StandardError(
+                "Updating xml, vendor_job from PPCW to PPC failed: %s<BR>" % \
+                info[1][0])
 
         # Insert rows into PPD for updated documents of cg_job.
         try:
@@ -2291,8 +2148,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             """, timeout = self.__timeOut)
         except cdrdb.Error, info:
             self.__conn.setAutoCommit(1)
-            raise Exception("Inserting U into pub_proc_doc failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Inserting U into pub_proc_doc failed: %s<BR>" % info[1][0])
 
         # Insert a document to both PPD and PPC.
         # Add new documents into PPD first.
@@ -2309,8 +2166,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             """, timeout = self.__timeOut)
         except cdrdb.Error, info:
             self.__conn.setAutoCommit(1)
-            raise Exception("Inserting A into pub_proc_doc failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Inserting A into pub_proc_doc failed: %s<BR>" % info[1][0])
 
         # Add new documents into PPC last.
         try:
@@ -2327,8 +2184,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             """, timeout = self.__timeOut)
         except cdrdb.Error, info:
             self.__conn.setAutoCommit(1)
-            raise Exception("Inserting A into pub_proc_cg failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Inserting A into pub_proc_cg failed: %s<BR>" % info[1][0])
 
         self.__conn.commit()
         self.__conn.setAutoCommit(1)
@@ -2352,8 +2209,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             """, timeout = self.__timeOut)
         except cdrdb.Error, info:
             self.__conn.setAutoCommit(1)
-            raise Exception("Deleting PPC from PPCW failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Deleting PPC from PPCW failed: %s<BR>" % info[1][0])
 
         # Insert rows in PPD for removed documents of cg_job.
         try:
@@ -2366,8 +2223,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             """, timeout = self.__timeOut)
         except cdrdb.Error, info:
             self.__conn.setAutoCommit(1)
-            raise Exception("Inserting D into pub_proc_doc failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Inserting D into pub_proc_doc failed: %s<BR>" % info[1][0])
 
         self.__conn.commit()
         self.__conn.setAutoCommit(1)
@@ -2392,8 +2249,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             """, timeout = self.__timeOut)
         except cdrdb.Error, info:
             self.__conn.setAutoCommit(1)
-            raise Exception("Updating xml, vendor_job from PPCW to PPC "
-                            "failed: %s<BR>" % info[1][0])
+            raise StandardError(
+                "Updating xml, vendor_job from PPCW to PPC failed: %s<BR>" % \
+                info[1][0])
 
         # Insert rows into PPC for updated documents of cg_job.
         try:
@@ -2405,8 +2263,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             """, timeout = self.__timeOut)
         except cdrdb.Error, info:
             self.__conn.setAutoCommit(1)
-            raise Exception("Inserting U into pub_proc_doc failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Inserting U into pub_proc_doc failed: %s<BR>" % info[1][0])
 
         # Insert a document to both PPD and PPC.
         # Add new documents into PPD first.
@@ -2423,8 +2281,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             """, timeout = self.__timeOut)
         except cdrdb.Error, info:
             self.__conn.setAutoCommit(1)
-            raise Exception("Inserting A into pub_proc_doc failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Inserting A into pub_proc_doc failed: %s<BR>" % info[1][0])
 
         # Add new documents into PPC last.
         try:
@@ -2441,8 +2299,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             """, timeout = self.__timeOut)
         except cdrdb.Error, info:
             self.__conn.setAutoCommit(1)
-            raise Exception("Inserting A into pub_proc_cg failed: %s<BR>" %
-                            info[1][0])
+            raise StandardError(
+                "Inserting A into pub_proc_cg failed: %s<BR>" % info[1][0])
 
         self.__conn.commit()
         self.__conn.setAutoCommit(1)
@@ -2481,7 +2339,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         except cdrdb.Error, info:
             msg = """Failure executing query to find last successful
                      jobId for subset %s: %s""" % (subsetName, info[1][0])
-            raise Exception(msg)
+            raise StandardError(msg)
 
         return jobId
 
@@ -2520,7 +2378,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         except cdrdb.Error, info:
             msg = """Failure in __getCgJobDesc for %d: %s""" % (
                 self.__jobId, info[1][0])
-            raise Exception(msg)
+            raise StandardError(msg)
 
     #------------------------------------------------------------------
     # Return the last cg_job for any successful pushing jobs.
@@ -2548,60 +2406,58 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         except cdrdb.Error, info:
             msg = """Failure executing query to find last successful
                      cg_job: %s<BR>""" % info[1][0]
-            raise Exception(msg)
+            raise StandardError(msg)
 
-##    #------------------------------------------------------------------
-##    # Update pub_proc_doc table and __userDocList with all linked
-##    # documents.
-##    #
-##    # Note: See comment above.  This function is not used anymore.
-##    #------------------------------------------------------------------
-##    def __addLinkedDocsToPPD(self):
-##
-##        # Build the input hash.
-##        docPairList = {}
-##        for doc in self.__userDocList:
-##            docPairList[doc.getDocId()] = doc.getVersion()
-##
-##        # Find all the linked documents.
-##        resp      = findLinkedDocs(docPairList)
-##        msg       = resp[0]
-##        idVerHash = resp[1]
-##        self.__updateMessage(msg)
-##
-##        # Insert all pairs into PPD. Because these linked documents are
-##        # not in PPD yet, it should succeed with all insertions.
-##        try:
-##            cursor = self.__conn.cursor()
-##            for docId in idVerHash.keys():
-##
-##                # Update the PPD table.
-##                cursor.execute ("""
-##                    INSERT INTO pub_proc_doc
-##                                (pub_proc, doc_id, doc_version)
-##                         VALUES  (?, ?, ?)
-##                                """, (self.__jobId, docId, idVerHash[docId])
-##                               )
-##
-##                # Update the __userDocList.
-##                cursor.execute ("""
-##                         SELECT t.name
-##                           FROM doc_type t, document d
-##                          WHERE d.doc_type = t.id
-##                            AND d.id = ?
-##                                """, docId
-##                               )
-##                row = cursor.fetchone()
-##                if row and row[0]:
-##                    self.__userDocList.append(Doc(docId, idVerHash[docId],
-##                                                  row[0], recorded=True))
-##                else:
-##                    msg = "Failed in adding docs to __userDocList.<BR>"
-##                    raise Exception(msg)
-##        except cdrdb.Error, info:
-##            msg = 'Failure adding linked docs to PPD for job %d: %s' % (
-##                  self.__jobId, info[1][0])
-##            raise Exception(msg)
+    #------------------------------------------------------------------
+    # Update pub_proc_doc table and __userDocList with all linked
+    # documents.
+    #------------------------------------------------------------------
+    def __addLinkedDocsToPPD(self):
+
+        # Build the input hash.
+        docPairList = {}
+        for doc in self.__userDocList:
+            docPairList[doc.getDocId()] = doc.getVersion()
+
+        # Find all the linked documents.
+        resp      = findLinkedDocs(docPairList)
+        msg       = resp[0]
+        idVerHash = resp[1]
+        self.__updateMessage(msg)
+
+        # Insert all pairs into PPD. Because these linked documents are
+        # not in PPD yet, it should succeed with all insertions.
+        try:
+            cursor = self.__conn.cursor()
+            for docId in idVerHash.keys():
+
+                # Update the PPD table.
+                cursor.execute ("""
+                    INSERT INTO pub_proc_doc
+                                (pub_proc, doc_id, doc_version)
+                         VALUES  (?, ?, ?)
+                                """, (self.__jobId, docId, idVerHash[docId])
+                               )
+
+                # Update the __userDocList.
+                cursor.execute ("""
+                         SELECT t.name
+                           FROM doc_type t, document d
+                          WHERE d.doc_type = t.id
+                            AND d.id = ?
+                                """, docId
+                               )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    self.__userDocList.append(Doc(docId, idVerHash[docId],
+                                                  row[0], recorded=True))
+                else:
+                    msg = "Failed in adding docs to __userDocList.<BR>"
+                    raise StandardError(msg)
+        except cdrdb.Error, info:
+            msg = 'Failure adding linked docs to PPD for job %d: %s' % (
+                  self.__jobId, info[1][0])
+            raise StandardError(msg)
 
     #------------------------------------------------------------------
     # Launch some number of publishing threads.
@@ -2663,7 +2519,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                         # Abort
                         msg = "Aborting on error in thread %d, see logfile" % i
                         self.__debugLog(msg)
-                        raise Exception(msg)
+                        raise StandardError(msg)
 
             # Wait awhile before checking again
             time.sleep(2)
@@ -2692,23 +2548,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         # Flags indicating completion and error status
         done  = 0
         error = 0
-
-        # This is a test:
-        # Publishing fails frequently while processing Media/Audio
-        # documents and it's suspected that the OS is running out of
-        # file handles.  We're repeating the process of slowing down
-        # the system for processing these small MP3 audio files in the
-        # same way as done for adding small documents to pub_proc_cg_work
-        # ---------------------------------------------------------------
-        t0 = time.clock()
-        t1 = 0
-        ibrake = 1
-        mult = 1
-        brakeAtDocCount = 200
-        brakeTime = 30         # number of seconds to pause
-        maxDocsPerSecond = 4   # don't allow more docs per second to be
-                               # processed without the occational breather
-                               # for the OS
 
         while not done:
             # Get another document id to publish
@@ -2740,44 +2579,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             # If we got one, publish it
             # Try to handle exceptions gracefully, then get out
             if not done:
-                # Check how fast we are processing documents.  If we're too
-                # fast, Windows OS starts choking without telling anyone
-                # ---------------------------------------------------------
-                if ibrake > brakeAtDocCount:
-                    tNow = time.clock()
-                    tDelta = tNow - t1
-                    # This is the first call of the new thread.  t0 is set
-                    # to zero and tDelta is incorrect.  Setting tDelta to 999
-                    # -------------------------------------------------------
-                    if tDelta == tNow and t0 > 1: tDelta = 999999
-                    self.__debugLog("Secs this thread: %d" % tNow)
-                    self.__debugLog("Docs this thread: %d" % (
-                                                      mult * brakeAtDocCount))
-                    self.__debugLog("Last %d docs processed in %d secs" % (
-                                                          ibrake - 1, tDelta))
-                    self.__debugLog("Current Ratio Docs/sec: %.3f" % (
-                                                      brakeAtDocCount/tDelta))
-
-                    # We only need to take a breather and pause the program
-                    # if documents are being processes very fast.  For 
-                    # larger documents (almost all but audio files) we don't
-                    # need to take a break
-                    # ------------------------------------------------------
-                    if brakeAtDocCount / tDelta > maxDocsPerSecond:
-                        self.__debugLog("Allowed Ratio Docs/sec: %.3f ***" % (
-                                                      maxDocsPerSecond))
-                        self.__debugLog("Pausing for %d secs" % brakeTime)
-                        time.sleep(brakeTime)
-
-                    # Keep track of how often we came here and reset t1
-                    # -------------------------------------------------
-                    mult += 1
-                    ibrake = 1
-                    t1 = tNow
-
                 try:
                     self.__publishDoc (doc, filters, destType, destDir, subDir)
-                    ibrake += 1
                 except cdrdb.Error, info:
                     self.__debugLog(
                         "Database error publishing doc %d ver %d in %s:\n  %s"
@@ -2918,18 +2721,12 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             if self.__validateDocs and filteredDoc:
                 pdqdtd = str(os.path.join(cdr.PDQDTDPATH,
                                           self.__params['DTDFileName']))
-                errObj = validateDoc(filteredDoc, docId = docId,
-                                                        dtd = pdqdtd)
-
-                for error in errObj:
-                    if error.level_name == 'ERROR':
-                        dtdClass = 'DTDerror'
-                    else:
-                        dtdClass = 'DTDwarning'
-
-                    errors += "<span class='%s'>%s</span><BR>%s<BR>" % (
-                                              dtdClass, error.level_name,
-                                              error.message)
+                errObj = validateDoc(filteredDoc, docId = docId, dtd = pdqdtd)
+                for error in errObj.Errors:
+                    errors += "%s<BR>" % error
+                    invalDoc = "InvalidDocs"
+                for warning in errObj.Warnings:
+                    warnings += "%s<BR>" % warning
                     invalDoc = "InvalidDocs"
 
             # Save the output as instructed.
@@ -2949,7 +2746,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                         self.__saveDoc(filteredDoc, destDir,
                                        "CDR%d.xml" % docId)
                 except:
-                    # It appears that the system fails occasionally to
+                    # It appears that the system fails occasionally to 
                     # write one of the first two documents processed
                     # to disk even though all other disk writes finish
                     # successfully.  If we run into a failure we want
@@ -2959,8 +2756,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                         warnings += 'document CDR%010d<BR/>' % docId
                         warnings += 'Trying again...'
                         time.sleep(2)
-                        # We always use destType = Publish.DOC for
-                        # publishing.  So I ignore the fact that a
+                        # We always use destType = Publish.DOC for 
+                        # publishing.  So I ignore the fact that a 
                         # single file holding all publishing results
                         # may fail to write as well and we just retry
                         # writing that single document.
@@ -2995,15 +2792,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             if self.__errorsBeforeAborting != -1:
                 if self.__errorCount > self.__errorsBeforeAborting:
                     if self.__errorsBeforeAborting:
-                      msg  = "Aborting: too many errors detected "
-                      msg += "at CDR%d.<BR>" % doc.getDocId()
+                      msg = "Aborting on error detected in CDR%010d.<BR>" % \
+                             doc.getDocId()
                     else:
                       msg = "Aborting: too many errors encountered"
-
-                    # This message is being printed twice. Why? VE, 2009-12-09
-                    dbMsg = "Aborting: more than %d errors encountered<BR>" % \
-                             self.__errorsBeforeAborting
-                    self.__updateMessage(dbMsg)
 
         # Check warnings
         if warnings:
@@ -3015,8 +2807,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
         # Did we get an abort message?
         if msg:
-            self.__debugLog("checkProblems raises Exception, msg=%s" % msg)
-            raise Exception(msg)
+            self.__debugLog("checkProblems raises StandardError, msg=%s" % msg)
+            raise StandardError(msg)
 
     #------------------------------------------------------------------
     # Record warning or error messages for the job.
@@ -3030,8 +2822,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                  WHERE id = ?""", self.__jobId)
             row = cursor.fetchone()
             if not row:
-                raise Exception("Failure reading messages for job %d" %
-                                self.__jobId)
+                raise StandardError("Failure reading messages for job %d" %
+                                    self.__jobId)
             if row[0]:
                 messages = row[0] + "|" + messages
             cursor.execute("""\
@@ -3041,7 +2833,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         except cdrdb.Error, info:
             msg = 'Failure recording message for job %d: %s' % \
                   (self.__jobId, info[1][0])
-            raise Exception(msg)
+            raise StandardError(msg)
 
     #------------------------------------------------------------------
     # Record warning or error messages for a document.
@@ -3089,14 +2881,12 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     msg = "Internal error, asked to create PPD row for doc" \
                           " that's already recorded: jobId/docId=%d/%d" % \
                            (self.__jobId, doc.getDocId())
-                    raise Exception(msg)
+                    raise StandardError(msg)
 
             except cdrdb.Error, info:
-                msg = 'Failure adding or updating row for document %d-%d: %s' % \
-                      (doc.getDocId(), doc.getVersion(), info[1][0])
-                #msg='Failure adding or updating row for document %d: %s' % \
-                      #(self.__jobId, info[1][0])
-                raise Exception(msg)
+                msg = 'Failure adding or updating row for document %d: %s' % \
+                      (self.__jobId, info[1][0])
+                raise StandardError(msg)
 
     #------------------------------------------------------------------
     # For docs already in the pub_proc_doc table, add any messages
@@ -3125,7 +2915,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             except cdrdb.Error, info:
                 msg = 'Failure updating row for document %d: %s' % \
                       (self.__jobId, info[1][0])
-                raise Exception(msg)
+                raise StandardError(msg)
 
     #------------------------------------------------------------------
     # Build a set of documents which match the queries for a subset
@@ -3168,25 +2958,25 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
                     # Sanity checks for the query.
                     if not cursor.description:
-                        raise Exception(u"Result set not returned for "
-                                        u"SQL query: %s" % sql)
+                        raise StandardError(u"Result set not returned for "
+                                            u"SQL query: %s" % sql)
                     if len(cursor.description) < 1:
-                        raise Exception(u"SQL query must return at least "
-                                        u"one column (containing a "
-                                        u"document ID): %s" % sql)
+                        raise StandardError(u"SQL query must return at least "
+                                            u"one column (containing a "
+                                            u"document ID): %s" % sql)
 
                     # See if we have a version column.
                     haveVersion = len(cursor.description) > 1
 
-                    rows = cursor.fetchall()
-                    for row in rows:
+                    row = cursor.fetchone()
+                    while row:
                         oneId = row[0]
                         if oneId in self.__alreadyPublished: continue
                         ver = haveVersion and row[1] or None
 
                         try:
                             doc = self.__findPublishableVersion(oneId, ver)
-                        except Exception, arg:
+                        except StandardError, arg:
 
                             # Can't record this in the pub_proc_doc table,
                             # because we don't really have a versioned
@@ -3201,19 +2991,20 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                             # XXX Why are we falling through to the following
                             #     code if the call to get doc fails???
                         docs.append(Doc(doc[0], doc[1], doc[2]))
-                        self.__alreadyPublished.add(oneId)
+                        self.__alreadyPublished[oneId] = 1
+                        row = cursor.fetchone()
 
                 except cdrdb.Error, info:
                     msg = 'Failure retrieving document IDs for job %d: %s' % \
                           (self.__jobId, info[1][0])
-                    raise Exception(msg)
+                    raise StandardError(msg)
 
             # Handle XQL queries.
             elif child.nodeName == "SubsetXQL":
                 xql = self.__repParams(cdr.getTextContent(child))
                 resp = cdr.search(self.__credentials, xql)
                 if type(resp) in (type(""), type(u"")):
-                    raise Exception("XQL failure: %s" % resp)
+                    raise StandardError("XQL failure: %s" % resp)
                 for queryResult in resp:
                     oneId  = queryResult.docId
                     # dType = queryResult.docType # Currently unused
@@ -3222,7 +3013,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     if oneId in self.__alreadyPublished: continue
                     try:
                         doc = self.__findPublishableVersion(oneId)
-                    except Exception, arg:
+                    except StandardError, arg:
                         self.__errorCount += 1
                         threshold = self.__errorsBeforeAborting
                         if threshold != -1:
@@ -3230,7 +3021,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                 raise
                         self.__addJobMessages(arg[0])
                     docs.append(Doc(doc[0], doc[1], doc[2]))
-                    self.__alreadyPublished.add(oneId)
+                    self.__alreadyPublished[oneId] = 1
 
         self.__debugLog("SubsetSpecification queries selected %d documents."
                         % len(docs))
@@ -3276,16 +3067,16 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             row = cursor.fetchone()
             if not row:
                 if version:
-                    raise Exception("Version %d for document CDR%010d "
-                                    "is not publishable or does not "
-                                    "exist" % (version, id))
+                    raise StandardError("Version %d for document CDR%010d "
+                                        "is not publishable or does not "
+                                        "exist" % (version, id))
                 else:
-                    raise Exception("Unable to find publishable version "
-                                    "for document CDR%010d" % id)
+                    raise StandardError("Unable to find publishable version "
+                                        "for document CDR%010d" % id)
         except cdrdb.Error, info:
             msg = "Failure executing query to find publishable version " \
                   "for CDR%010d: %s" % (self.__jobId, info[1][0])
-            raise Exception(msg)
+            raise StandardError(msg)
         return tuple(row)
 
     #------------------------------------------------------------------
@@ -3314,7 +3105,7 @@ Please do not reply to this message.
             msg = "failure sending email to %s: %s" % \
                 (self.__email, cdr.exceptionInfo())
             self.__debugLog(msg)
-            raise Exception(msg)
+            raise StandardError(msg)
 
     #----------------------------------------------------------------
     # Set up a connection to CDR.  Processing of the publishing job
@@ -3331,7 +3122,7 @@ Please do not reply to this message.
             self.__conn = None
             msg = 'Database connection failure: %s' % info[1][0]
             self.__debugLog(msg)
-            raise Exception(msg)
+            raise StandardError(msg)
 
     #----------------------------------------------------------------
     # Return the document for the publishing control system from
@@ -3351,9 +3142,9 @@ Please do not reply to this message.
                        AND dt <= ?""", (self.__ctrlDocId, self.__jobTime))
             row = cursor.fetchone()
             if not row:
-                raise Exception("Unable to find version of document "
-                                "CDR%010d created on or before %s" %
-                                (self.__ctrlDocId, self.__jobTime))
+                raise StandardError("Unable to find version of document "
+                                    "CDR%010d created on or before %s" %
+                                    (self.__ctrlDocId, self.__jobTime))
             cursor.execute("""\
                     SELECT xml
                       FROM doc_version
@@ -3361,12 +3152,12 @@ Please do not reply to this message.
                        AND num = ?""", (self.__ctrlDocId, row[0]))
             row = cursor.fetchone()
             if not row or not row[0]:
-                raise Exception("Failure retrieving xml for control "
-                                "document CDR%010d" % self.__ctrlDocId)
+                raise StandardError("Failure retrieving xml for control "
+                                    "document CDR%010d" % self.__ctrlDocId)
         except cdrdb.Error, info:
-            raise Exception("Failure retrieving version of control "
-                            "document CDR%010d on or before %s: %s" %
-                            (self.__ctrlDocId, self.__jobTime, info[1][0]))
+            raise StandardError("Failure retrieving version of control "
+                                "document CDR%010d on or before %s: %s" %
+                                (self.__ctrlDocId, self.__jobTime, info[1][0]))
 
         xml = row[0]
 
@@ -3394,7 +3185,7 @@ Please do not reply to this message.
 
         # not found
         msg = "Failed in __getSubSet. SubsetName: %s." % self.__subsetName
-        raise Exception(msg)
+        raise StandardError(msg)
 
     #----------------------------------------------------------------
     # Replace ?Name? with values in the parameter list.
@@ -3431,10 +3222,10 @@ Please do not reply to this message.
                             elif m.nodeName == "OptionValue":
                                 value = cdr.getTextContent(m)
                         if not name:
-                            raise Exception("SubsetOption missing "
-                                            "required OptionName element")
+                            raise StandardError("SubsetOption missing "
+                                                "required OptionName element")
                         if name in options and options[name] != value:
-                            raise Exception("Duplicate option '%s'" % name)
+                            raise StandardError("Duplicate option '%s'" % name)
                         options[name] = value
                         self.__debugLog("Option %s='%s'." % (name, value))
                         if name == "AbortOnError":
@@ -3443,9 +3234,9 @@ Please do not reply to this message.
                                 abortOnError = self.__params['AbortOnError']
                         elif name == "PublishIfWarnings":
                             if value not in ["Yes", "No", "Ask"]:
-                                raise Exception("Invalid value for "
-                                                "PublishIfWarnings: %s" %
-                                                value)
+                                raise StandardError("Invalid value for "
+                                                    "PublishIfWarnings: %s" %
+                                                    value)
                             self.__publishIfWarnings = value
                 if abortOnError:
                     if abortOnError == "Yes": self.__errorsBeforeAborting = 0
@@ -3454,8 +3245,9 @@ Please do not reply to this message.
                         try:
                             self.__errorsBeforeAborting = int(abortOnError)
                         except:
-                            raise Exception("Invalid value for AbortOnError: "
-                                            "%s" % abortOnError)
+                            raise StandardError("Invalid value for "
+                                                "AbortOnError: %s" %
+                                                abortOnError)
                 break
 
         return options
@@ -3473,7 +3265,7 @@ Please do not reply to this message.
                 filterSets.append(self.__getFilterSet(node))
         if filterSets:
             return filterSets
-        raise Exception("Subset specification has no filters")
+        raise StandardError("Subset specification has no filters")
 
     #----------------------------------------------------------------
     # Extract a set of filters and associated parameters.
@@ -3487,8 +3279,8 @@ Please do not reply to this message.
             elif child.nodeName == "SubsetFilterParm":
                 parms.append(self.__getFilterParm(child))
         if not filters:
-            raise Exception("SubsetFilters element must have at least "
-                            "one SubsetFilter child element")
+            raise StandardError("SubsetFilters element must have at least " \
+                                "one SubsetFilter child element")
         return (filters, parms)
 
     #----------------------------------------------------------------
@@ -3507,8 +3299,8 @@ Please do not reply to this message.
                 filterId = cdr.getTextContent(child)
                 self.__debugLog('Fetching filter id "%s"' % filterId)
                 return filterId
-        raise Exception("SubsetFilter must contain SubsetFilterName "
-                        "or SubsetFilterId")
+        raise StandardError("SubsetFilter must contain SubsetFilterName " \
+                            "or SubsetFilterId")
 
     #----------------------------------------------------------------
     # Extract the name/value pair for a filter parameter.  Substitute
@@ -3524,7 +3316,7 @@ Please do not reply to this message.
                 parmValue = cdr.getTextContent(child)
                 parmValue = self.__repParams(parmValue)
         if not parmName:
-            raise Exception("Missing ParmName in SubsetFilterParm")
+            raise StandardError("Missing ParmName in SubsetFilterParm")
         return (parmName, parmValue)
 
     #----------------------------------------------------------------
@@ -3592,23 +3384,16 @@ Please do not reply to this message.
     #----------------------------------------------------------------
     def __saveDoc(self, document, dir, fileName, mode = "w"):
         if not os.path.isdir(dir):
-            # Create output subdirectory but don't create it twice
-            self.__lockMakeDir.acquire(1)
-
-            # Another thread might have created the directory while we
-            #   waited for the lock
-            # Or another thread might have renamed it to .FAILURE
-            #   while we waited
+            # Ignore failures, which are almost certainly artificially
+            # caused by multiple threads trying to create the same
+            # directory at the same time.
             try:
-                if not os.path.isdir(dir) and not self.__cleanupFailureCalled:
-                    os.makedirs(dir)
-            finally:
-                self.__lockMakeDir.release()
-
-        if not self.__cleanupFailureCalled:
-            fileObj = open(dir + "/" + fileName, mode)
-            fileObj.write(document)
-            fileObj.close()
+                os.makedirs(dir)
+            except:
+                pass
+        fileObj = open(dir + "/" + fileName, mode)
+        fileObj.write(document)
+        fileObj.close()
 
     #----------------------------------------------------------------
     # Handle process script, if one is specified, in which case
@@ -3624,7 +3409,7 @@ Please do not reply to this message.
                 scriptName = cdr.BASEDIR + "/" + scriptName
             if not os.path.isfile(scriptName):
                 msg = "Processing script '%s' not found" % scriptName
-                raise Exception(msg)
+                raise StandardError(msg)
             cmd = scriptName + " %d" % self.__jobId
             self.__debugLog("Publishing command '%s' invoked." % cmd)
             os.system(cmd)
@@ -3676,7 +3461,7 @@ Please do not reply to this message.
         except cdrdb.Error, info:
             msg = 'Failure updating status: %s' % info[1][0]
             self.__debugLog(msg)
-            raise Exception(msg)
+            raise StandardError(msg)
 
     #----------------------------------------------------------------------
     # Update message in pub_proc table.
@@ -3702,7 +3487,7 @@ Please do not reply to this message.
         except cdrdb.Error, info:
             msg = 'Failure updating message: %s' % info[1][0]
             self.__debugLog(msg)
-            raise Exception(msg)
+            raise StandardError(msg)
 
     # ---------------------------------------------------------------------
     # Create the mandatory CG Job Description for the automated Interim
@@ -3729,7 +3514,7 @@ Please do not reply to this message.
                  %  msg, LOG)
         except cdrdb.Error, info:
             msg = 'Failure updating message: %s' % info[1][0]
-            raise Exception(msg)
+            raise StandardError(msg)
 
 
     #----------------------------------------------------------------------
@@ -3746,7 +3531,7 @@ Please do not reply to this message.
                           )
         except cdrdb.Error, info:
             msg = 'Failure setting output_dir to "": %s' % info[1][0]
-            raise Exception(msg)
+            raise StandardError(msg)
 
     #----------------------------------------------------------------------
     # Get the number of failed documents in pub_proc_doc table.
@@ -3773,7 +3558,7 @@ Please do not reply to this message.
             msg = 'Failure getting failed docs for job %d: %s' % (jbId,
                                                             info[1][0])
             self.__debugLog(msg)
-            raise Exception(msg)
+            raise StandardError(msg)
 
     #----------------------------------------------------------------------
     # Wait for user's approval to proceed.
@@ -3809,12 +3594,12 @@ Please do not reply to this message.
                     status = row[0]
                 else:
                     msg = 'No status for job %d' % self.__jobId
-                    raise Exception(msg)
+                    raise StandardError(msg)
 
             except cdrdb.Error, info:
                 msg = 'Failure getting status for job %d: %s' % (
                             self.__jobId, info[1][0])
-                raise Exception(msg)
+                raise StandardError(msg)
 
             # Wait another 10 seconds.
             now = time.ctime()
@@ -3825,12 +3610,12 @@ Please do not reply to this message.
                     "<BR>%s: Job is resumed by user<BR>" % now)
                 return
             elif status == Publish.FAILURE:
-                raise Exception("%s: Job %d is killed by user<BR>"
-                                % (now, self.__jobId))
+                raise StandardError("%s: Job %d is killed by user<BR>" \
+                    % (now, self.__jobId))
             else:
                 msg = "Unexpected status: %s for job %d.<BR>" \
                     % (status, self.__jobId)
-                raise Exception(msg)
+                raise StandardError(msg)
 
     #----------------------------------------------------------------------
     # Log debugging message to d:/cdr/log/publish.log
@@ -3892,26 +3677,48 @@ class ErrHandler:
                                          msg,
                                          xmlString))
 
+#----------------------------------------------------------------------
+# Set a parser instance to validate filtered documents.
+#----------------------------------------------------------------------
+# __parser     = xmlval.XMLValidator()
+# __app        = xmlproc.Application()
+# __errHandler = ErrHandler(__parser)
+# __parser.set_application(__app)
+# __parser.set_error_handler(__errHandler)
 
 #----------------------------------------------------------------------
 # Validate a given document against its DTD.
 #----------------------------------------------------------------------
 def validateDoc(filteredDoc, docId = 0, dtd = cdr.DEFAULT_DTD):
 
-    # Loading the DTD file
-    fp     = open(dtd)
-    pdqDtd = lxml.etree.DTD(fp)
-    fp.close()
+    # These used to be global.  Now local to ensure expat thread safety
+    __parser     = xmlval.XMLValidator()
+    __app        = xmlproc.Application()
+    __errHandler = ErrHandler(__parser)
+    __parser.set_application(__app)
+    __parser.set_error_handler(__errHandler)
 
-    # Load and validate the document passed to us
-    docXml = lxml.etree.XML(filteredDoc)
-    pdqDtd.validate(docXml)
+    errObj      = ErrObject()
+    docTypeExpr = re.compile(r"<!DOCTYPE\s+(.*?)\s+.*?>", re.DOTALL)
+    docType     = """<!DOCTYPE %s SYSTEM "%s">
+                  """
 
-    # Extract any validation errors from the error object
-    errLog = pdqDtd.error_log.filter_from_errors()
-    errObj      = errLog
+    match = docTypeExpr.search(filteredDoc)
+    if match:
+        topElement = match.group(1)
+        docType    = docType % (topElement, dtd)
+        doc        = docTypeExpr.sub(docType, filteredDoc)
+    else:
+        errObj.Errors.append(
+            "%d.xml:0:0:DOCTYPE declaration is missing." % docId)
+        return errObj
 
-    return errLog
+    __errHandler.set_sysid("%d.xml" % docId)
+    __errHandler.set_errobj(errObj)
+    __parser.feed(doc)
+    __parser.reset()
+
+    return errObj
 
 #----------------------------------------------------------------------
 # Find all the linked documents for a given hash of docId/docVer pairs.
@@ -3987,8 +3794,8 @@ def findLinkedDocs(docPairList):
         # Return what we have got.
         return [msg, linkedDocHash]
 
-    except Exception, e:
-        raise Exception("Failure finding linked docs: %s<BR>" % e)
+    except:
+        raise StandardError("Failure finding linked docs.<BR>")
 
 #----------------------------------------------------------------------
 # Test driver.
