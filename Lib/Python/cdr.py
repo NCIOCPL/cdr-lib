@@ -2009,6 +2009,7 @@ SELECT d.title, t.name, d.active_status,
     return docData
 
 
+#----------------------------------------------------------------------
 # Class to contain CDR document type information.
 #----------------------------------------------------------------------
 class dtinfo:
@@ -2033,7 +2034,22 @@ class dtinfo:
         self.vvLists        = vvLists
         self.comment        = comment
         self.error          = error
+
     def getChildren(self, parent=None):
+        """
+        Get a list of top level children for a document type, or children
+        of a specific element.
+
+        Pass:
+            parent - Name of element for which children are desired.
+                     None = same as passing Document Type node.
+                     Multi-element paths (e.g. "X/Y/Z") not allowed (:<)
+
+        Return:
+            Sequence of element names, in the order that the schema allows
+            them to appear in the block.  The same name can appear more
+            than once if that is allowed in the schema.
+        """
         if not self.dtd:
             raise Exception("document type %s has no DTD" % self.type)
         parent = parent or self.type
@@ -3543,7 +3559,6 @@ class Log:
     """
 
     _DEFAULT_BANNER = "=========== Opening Log ==========="
-    _DEFAULT_CLOSER = "=========== Closing Log ==========="
 
     def __init__(self, filename,
                  dirname=DEFAULT_LOGDIR, banner=_DEFAULT_BANNER,
@@ -3667,14 +3682,13 @@ class Log:
         May write a closing banner - this tells when the program
         exited, or caller explicitly called del(log_object).
         """
-
         # If there's a banner, put one at the end
         if self.__banner:
             # Insure PID: date time on closing banner
             self.__logTime  = True
             self.__logPID   = True
             self.__level    = DEFAULT_LOGLVL
-            if type(self.__fp) == 'file':
+            if isinstance(self.__fp, file):
                 self.writeRaw("\n%s\n" % time.ctime())
                 self.writeRaw("=========== Closing Log ===========\n\n")
 
@@ -4020,7 +4034,7 @@ def toUnicode(s):
 # Pack up XML elements for a CDR filter set (common code used by
 # addFilterSet() and repFilterSet()).
 #
-# Old version of packFilterSet.  It has been modified to properly 
+# Old version of packFilterSet.  It has been modified to properly
 # handle Unicode characters in the filter name, description or notes.
 #----------------------------------------------------------------------
 def packFilterSetOld(filterSet):
@@ -4095,7 +4109,7 @@ def getFilterSet(session, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
     cmd          = u"<CdrGetFilterSet><FilterSetName>%s" \
                    u"</FilterSetName></CdrGetFilterSet>" % \
                                                     cgi.escape(toUnicode(name))
-    response     = sendCommands(wrapCommand(cmd.encode('utf-8'), session), 
+    response     = sendCommands(wrapCommand(cmd.encode('utf-8'), session),
                                                                     host, port)
     responseNode = extractResponseNode('getFilterSet', response)
     name         = None
