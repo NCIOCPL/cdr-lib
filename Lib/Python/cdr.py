@@ -12,6 +12,8 @@
 # BZIssue::4123
 # BZIssue::4207
 # BZIssue::5120 - Fixed exNormalize() to allow trailing spaces
+# BZIssue::5178 - Shorter URLS Needed For Successful Conversion of 
+#                 QC Reports into Word
 #
 #----------------------------------------------------------------------
 
@@ -73,6 +75,74 @@ PUBTYPES = {
     'Remove'          : 'Delete documents from Cancer.gov',
     'Hotfix (Remove)' : 'Delete individual documents from Cancer.gov',
     'Hotfix (Export)' : 'Send individual documents to Cancer.gov'
+}
+
+
+#----------------------------------------------------------------------
+# Map for finding the filters for a given document type to run
+# QC reports.
+#----------------------------------------------------------------------
+FILTERS = {
+    'Citation':
+        ["set:QC Citation Set"],
+    'CTGovProtocol':
+        ["set:QC CTGovProtocol Set"],
+    'DrugInformationSummary':
+        ["set:QC DrugInfoSummary Set"],
+    'GlossaryTerm':
+        ["set:QC GlossaryTerm Set"],
+    'GlossaryTerm:rs':            # Redline/Strikeout
+        ["set:QC GlossaryTerm Set (Redline/Strikeout)"],
+    'GlossaryTermConcept':
+        ["name:Glossary Term Concept QC Report Filter"],
+    'GlossaryTermName':
+        ["set:QC GlossaryTermName"],
+    'GlossaryTermName:gtnwc':
+        ["set:QC GlossaryTermName with Concept Set"],
+    'InScopeProtocol':
+        ["set:QC InScopeProtocol Set"],
+    'Media:img':
+        ["set:QC Media Set"],
+    'MiscellaneousDocument':
+        ["set:QC MiscellaneousDocument Set"],
+    'MiscellaneousDocument:rs':
+        ["set:QC MiscellaneousDocument Set (Redline/Strikeout)"],
+    'Organization':
+        ["set:QC Organization Set"],
+    'Person':
+        ["set:QC Person Set"],
+    'PDQBoardMemberInfo':
+        ["set:QC PDQBoardMemberInfo Set"],
+    'Summary':
+        ["set:QC Summary Set"],
+    'Summary:bu':                 # Bold/Underline
+        ["set:QC Summary Set (Bold/Underline)"],
+    'Summary:buqd':               # Bold/Underline - Quick and Dirty
+        ["set:QC QD Summary Set (Bold/Underline)"],
+    'Summary:rs':                 # Redline/Strikeout
+        ["set:QC Summary Set"],
+    'Summary:rsqd':               # Redline/Strikeout - Quick and Dirty
+        ["set:QC QD Summary Set"],
+    #'Summary:but':               # Bold/Underline
+    #    ["set:QC Summary Set (Bold/Underline) Test"],
+    #'Summary:rst':               # Redline/Strikeout
+    #    ["set:QC Summary Set Test"],
+    'Summary:nm':                 # No markup
+        ["set:QC Summary Set"],
+    'Summary:pat':                # Patient
+        ["set:QC Summary Patient Set"],
+    'Summary:patrs':              # Patient R/S
+        ["set:QC Summary Patient Set"],
+    'Summary:patqd':              # Patient - Quick and Dirty
+        ["set:QC QD Summary Patient Set"],
+    'Summary:patrsqd':            # Patient R/S - Quick and Dirty
+        ["set:QC QD Summary Patient Set"],
+    'Summary:patbu':              # Patient BU
+        ["set:QC Summary Patient Set (Bold/Underline)"],
+    'Summary:patbuqd':            # Patient BU - Quick and Dirty
+        ["set:QC QD Summary Patient Set (Bold/Underline)"],
+    'Term':
+        ["set:QC Term Set"]
 }
 
 

@@ -195,8 +195,11 @@ def getRequest(fields):
 
 #----------------------------------------------------------------------
 # Send an HTML page back to the client.
+# If the parms parameter gets passed we need to redirect the output
+# and run the QCforWord.py script to properly convert the HTML output
+# to Word.
 #----------------------------------------------------------------------
-def sendPage(page, textType = 'html'):
+def sendPage(page, textType = 'html', parms='', docId='', docType=''):
     """
     Send a completed page of text to stdout, assumed to be piped by a
     webserver to a web browser.
@@ -204,14 +207,22 @@ def sendPage(page, textType = 'html'):
     Pass:
         page     - Text to send, assumed to be 16 bit unicode.
         textType - HTTP Content-type, assumed to be html.
+        parms    - RowID storing all parameters if report needs to 
+                   be converted to Word, usually an empty string.
+        docType  - if parms is supplied the document type is needed
+                   to properly redirect the output, usually an empty string.
 
     Return:
         No return.  After writing to the browser, the process exits.
     """
+    if parms == '':
+        redirect = ''
+    else:
+        redirect = 'Location: http://%s%s/QCforWord.py?DocId=%s&DocType=%s&%s\n' % (WEBSERVER, BASE, docId, docType, parms)
     print """\
-Content-type: text/%s
+%sContent-type: text/%s
 
-%s""" % (textType, unicodeToLatin1(page))
+%s""" % (redirect, textType, unicodeToLatin1(page))
     sys.exit(0)
 
 #----------------------------------------------------------------------
