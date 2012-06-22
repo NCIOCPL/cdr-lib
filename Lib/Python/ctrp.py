@@ -330,7 +330,6 @@ class Person(Ids, ContactInfo):
         addChild(node, 'Role', self.role)
         return node
     def addPdqPerson(self, parent):
-        node = etree.SubElement(parent, 'PDQPerson')
         doc = CdrDoc.lookupExternalMapValue(self.poId, 'CTRP_PO_ID')
         if not doc:
             doc = CdrDoc.lookupExternalMapValue(self.ctepId, 'CTSU_Person_ID')
@@ -345,7 +344,10 @@ class Person(Ids, ContactInfo):
                                                self.ctepId)
                     except:
                         pass
-            raise Exception("unmapped person with CTRP ID %s" % self.poId)
+            # Requirements have changed; we now allow unmapped persons.
+            #raise Exception("unmapped person with CTRP ID %s" % self.poId)
+            return
+        node = etree.SubElement(parent, 'PDQPerson')
         node.text = doc.title
         node.set("{%s}ref" % CDR_NAMESPACE, "CDR%010d" % doc.cdrId)
     def createCdrDocXml(self):
