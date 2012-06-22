@@ -65,12 +65,14 @@ class MappingProblem:
                     values.append(u"]")
         return u" ".join(values)
     @staticmethod
-    def findMappingProblems(session, tree, poIds, geoMappings):
+    def findMappingProblems(session, tree, poIds, geoMappings, orgsOnly=False):
         problems = {}
         tags = { 'location/facility': 'Organization',
                  'location/contact': 'Person',
                  'location/investigator': 'Person',
                  'overall_official': 'Person' }
+        if orgsOnly:
+            tags = { 'location/facility': 'Organization' }
         for path, docType in tags.iteritems():
             for node in tree.findall(path):
                 poId = MappingProblem.getChildText(node, 'po_id')
@@ -1101,7 +1103,6 @@ class Protocol:
                     self.investigators.append(Person(child))
 
 def main(uid, pwd):
-    import sys
     global session
     if uid and pwd:
         session = cdr.login(uid, pwd)
@@ -1109,4 +1110,6 @@ def main(uid, pwd):
     print protocol.convert()
 
 if __name__ == '__main__':
-    main()
+    uid = len(sys.argv) > 1 and sys.argv[1] or None
+    pwd = len(sys.argv) > 2 and sys.argv[2] or None
+    main(uid, pwd)
