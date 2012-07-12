@@ -199,7 +199,8 @@ def getRequest(fields):
 # and run the QCforWord.py script to properly convert the HTML output
 # to Word.
 #----------------------------------------------------------------------
-def sendPage(page, textType = 'html', parms='', docId='', docType=''):
+def sendPage(page, textType = 'html', parms='', docId='', docType='',
+             docVer=''):
     """
     Send a completed page of text to stdout, assumed to be piped by a
     webserver to a web browser.
@@ -218,7 +219,7 @@ def sendPage(page, textType = 'html', parms='', docId='', docType=''):
     if parms == '':
         redirect = ''
     else:
-        redirect = 'Location: http://%s%s/QCforWord.py?DocId=%s&DocType=%s&%s\n' % (WEBSERVER, BASE, docId, docType, parms)
+        redirect = 'Location: http://%s%s/QCforWord.py?DocId=%s&DocType=%s&DocVersion=%s&%s\n' % (WEBSERVER, BASE, docId, docType, docVer, parms)
     print """\
 %sContent-type: text/%s
 
