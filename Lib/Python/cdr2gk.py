@@ -4,85 +4,11 @@
 #
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.22  2008/11/06 15:14:11  venglisc
-# Updating host after Gatekeeper upgrade.
-#
-# Revision 1.21  2008/10/06 19:32:48  venglisc
-# Removed latest change since it was unnecessary. (Bug 4123)
-#
-# Revision 1.20  2008/08/15 18:30:44  venglisc
-# Needed to rename the docType name GlossaryTermName to GlossaryTerm since
-# that's what Cancer.gov expects to receive. (Bug 3491)
-#
-# Revision 1.19  2008/06/18 17:01:53  venglisc
-# Fixed typo for publish preview.
-#
-# Revision 1.18  2008/06/03 21:14:49  bkline
-# Cleaned up code to extract error information from the Err elements
-# returned in CDR server responses.  Replaced StandardError exceptions
-# with Exception objects, as StandardError will be removed from the
-# exception heirarchy at some point.
-#
-# Revision 1.17  2008/01/07 20:42:25  bkline
-# More cleanup of logging.
-#
-# Revision 1.16  2008/01/07 20:18:29  bkline
-# Cleaned up character-set handling and parameter names in the logging code.
-#
-# Revision 1.15  2007/08/21 17:24:58  venglisc
-# Changing the default GateKeeper server.
-#
-# Revision 1.14  2007/07/09 17:57:23  bkline
-# Used another (more generic) method of forcing the logging of retries,
-# and completed an unfinished call to logString() elsewhere.
-#
-# Revision 1.13  2007/07/09 17:48:58  bkline
-# Force logging of retries, regardless of debuglevel.
-#
-# Revision 1.12  2007/07/09 17:09:40  bkline
-# Added MAX_RETRIES and RETRY_MULTIPLIER module-level variables.
-#
-# Revision 1.11  2007/07/09 13:57:45  bkline
-# Enhanced retry mechanism.
-#
-# Revision 1.10  2007/05/16 16:02:21  bkline
-# Fixed sendRequest() so it uses the current value of the module-level
-# host attribute instead of the value the attribute had when the
-# module was loaded when the caller doesn't explicitly pass a value
-# for the function's host parameter.
-#
-# Revision 1.9  2007/05/09 18:21:46  venglisc
-# Moved definition for PUBTYPES and PDQDTD to cdrpub.py where it belongs.
-#
-# Revision 1.8  2007/05/09 17:38:52  bkline
-# Fixed bug in initiateRequest() (wasn't using current value of host
-# in call to sendRequest()).
-#
-# Revision 1.7  2007/05/09 17:18:43  bkline
-# Modified logging to capture the host string in the banner.
-#
-# Revision 1.6  2007/05/02 23:08:04  venglisc
-# Added new PubType 'Reload'.
-#
-# Revision 1.5  2007/04/20 03:46:25  bkline
-# Finished status query code.
-#
-# Revision 1.4  2007/04/10 21:37:28  bkline
-# Plugged in some additional unit-testing options, as well as the start
-# of the status query method.
-#
-# Revision 1.3  2007/03/23 16:31:33  bkline
-# Adjusted name of doc type for Protocol documents.
-#
-# Revision 1.2  2007/03/23 16:04:15  bkline
-# First working version.
-#
-# Revision 1.1  2007/03/19 18:00:46  bkline
-# New program for GateKeeper2.0 client.
+# BZIssue::3491
+# BZIssue::4123
 #
 #----------------------------------------------------------------------
-import httplib, re, sys, time, xml.dom.minidom, socket, string
+import cdr, httplib, re, sys, time, xml.dom.minidom, socket, string
 
 #----------------------------------------------------------------------
 # Module data.
@@ -91,7 +17,6 @@ LOGFILE             = "d:/cdr/log/cdr2gk.log"
 MAX_RETRIES         = 10
 RETRY_MULTIPLIER    = 1.0
 debuglevel          = 0
-localhost           = socket.gethostname()
 host                = "gatekeeper.cancer.gov"
 #testhost            = "nci-learnb-s1.nci.nih.gov"
 #testhost            = "gatekeepergk.cancer.gov"
@@ -104,7 +29,7 @@ HEADERS             = {
     'Content-type': 'text/xml; charset="utf-8"',
     'SOAPAction'  : 'http://www.cancer.gov/webservices/Request'
 }
-if string.upper(localhost) in ("MAHLER", "FRANCK"):
+if not cdr.isProdHost():
     host = testhost
 
 #----------------------------------------------------------------------
