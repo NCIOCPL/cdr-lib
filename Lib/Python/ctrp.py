@@ -51,9 +51,12 @@ class MappingProblem:
                      'address/street', 'address/city', 'address/state',
                      'address/zip', 'address/country'):
             for child in node.findall(path):
-                if "address/" in path:
-                    haveAddress = True
-                values.append(child.text)
+                if child.text is not None:
+                    text = child.text.strip()
+                    if text:
+                        if "address/" in path:
+                            haveAddress = True
+                        values.append(text)
         if not haveAddress:
             parent = node.getparent()
             if parent.tag == "xxxlocationxxx":
@@ -61,7 +64,11 @@ class MappingProblem:
                     values.append(u"[facility address:")
                     for tag in ('street', 'city', 'state', 'zip', 'country'):
                         for grandchild in child.findall(tag):
-                            values.append(grandchild.text)
+                            text = grandchild.text
+                            if text is not None:
+                                text = text.strip()
+                                if text:
+                                    values.append(text)
                     values.append(u"]")
         return u" ".join(values)
     @staticmethod
