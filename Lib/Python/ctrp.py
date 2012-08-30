@@ -1,6 +1,21 @@
 #!/usr/bin/python
 
+#----------------------------------------------------------------------
+#
 # $Id$
+#
+# Common code for processing clinical trial documents from CTRP
+# (Clinical Trials Reporting Program).  The original plan was to
+# import these documents as a new CTRPProtocol document type.
+# Eventually, after unsuccessful attempt to resolve the problems
+# that CTRP was having, that plan was abandoned, and we now just
+# import the participating site information from the CTRP documents
+# into the corresponding CTGovProtocol documents that we already
+# have.
+#
+# BZIssue::4942
+#
+#----------------------------------------------------------------------
 
 import cdr, cdrdb, lxml.etree as etree, sys, time
 
@@ -11,11 +26,18 @@ POID = 'CTRP_PO_ID'
 cursor = cdrdb.connect('CdrGuest').cursor()
 session = None
 
+#----------------------------------------------------------------------
+# Gets the mapping table's type ID for CTRP person/org ID mappings.
+#----------------------------------------------------------------------
 def getPoidUsage():
     cursor.execute("SELECT id FROM external_map_usage WHERE name = ?", POID)
     rows = cursor.fetchall()
     return rows and rows[0][0] or None
 
+#----------------------------------------------------------------------
+# Loads the dictionary of CTRP person/org ID mappings from the mapping
+# table.
+#----------------------------------------------------------------------
 def getPoidMappings():
     cursor.execute("SELECT value, doc_id FROM external_map WHERE usage = ?",
                    getPoidUsage())
@@ -24,15 +46,30 @@ def getPoidMappings():
         mappings[poId] = docId
     return mappings
 
+#----------------------------------------------------------------------
+# CTRP sometimes wraps text in an extra 'textblock' element, sometimes
+# not (it's random).  This function gets that text whichever way it's
+# stored.
+#----------------------------------------------------------------------
 def extractText(node):
     for child in node.findall('textblock'):
         return child.text
     return node.text
 
+#----------------------------------------------------------------------
+# Another workaround for the random wrapping of text in 'textblock'
+# elements by CTRP.
+#----------------------------------------------------------------------
 def getParagraphs(node):
     paras = [child.text for child in node.findall('textblock')]
     return paras or [node.text]
 
+#----------------------------------------------------------------------
+# Represents a person, organization, state, or country found in a
+# CTRP trial document for which we can't find a corresponding mapped
+# CDR document.  The ctrpId attribute refers to the ID CTRP uses
+# for the unmapped entity, not the trial document itself.
+#----------------------------------------------------------------------
 class MappingProblem:
     def __init__(self, docType, value, ctrpId=None):
         self.docType = docType
@@ -46,7 +83,6 @@ class MappingProblem:
     @staticmethod
     def extractStrings(node):
         values = []
-        haveAddress = False
         for path in ('name', 'first_name', 'middle_initial', 'last_name',
                      'address/street', 'address/city', 'address/state',
                      'address/zip', 'address/country'):
@@ -54,25 +90,22 @@ class MappingProblem:
                 if child.text is not None:
                     text = child.text.strip()
                     if text:
-                        if "address/" in path:
-                            haveAddress = True
                         values.append(text)
-        if not haveAddress:
-            parent = node.getparent()
-            if parent.tag == "xxxlocationxxx":
-                for child in parent.findall('facility/address'):
-                    values.append(u"[facility address:")
-                    for tag in ('street', 'city', 'state', 'zip', 'country'):
-                        for grandchild in child.findall(tag):
-                            text = grandchild.text
-                            if text is not None:
-                                text = text.strip()
-                                if text:
-                                    values.append(text)
-                    values.append(u"]")
         return u" ".join(values)
     @staticmethod
     def findMappingProblems(session, tree, poIds, geoMappings, orgsOnly=False):
+        """
+        Builds a dictionary of persons, organizations, states, and countries
+        in a CTRP trial for which we can't identify the corresponding CDR
+        documents.
+
+        Passed:
+            session     - ID of a CDR login session
+            tree        - parsed XML document (from lxml.etree parser)
+            poIds       - object holding known person/org mappings
+            geoMappings - object holding known country and state mappings
+            orgsOnly    - True=don't bother reporting problems for persons
+        """
         problems = {}
         tags = { 'location/facility': 'Organization',
                  'location/contact': 'Person',
@@ -107,6 +140,10 @@ class MappingProblem:
                         problems[key] = problem
         return problems
 
+#----------------------------------------------------------------------
+# Tools for looking up CTRP download and import disposition codes
+# and names.
+#----------------------------------------------------------------------
 class Dispositions:
     downloadCodes = {}
     downloadNames = {}
@@ -146,6 +183,10 @@ class Dispositions:
             Dispositions.loadMaps()
         return Dispositions.importCodes.get(name)
 
+#----------------------------------------------------------------------
+# Object holding known state and country mappings between CTRP values
+# and the matching CDR IDs.
+#----------------------------------------------------------------------
 class GeographicalMappings:
 
     def __init__(self):
@@ -207,14 +248,30 @@ SELECT d.id, d.title
             ids[docId] = docTitle
         return ids
 
+#----------------------------------------------------------------------
+# Module object holding mappings for states and countries.
+#----------------------------------------------------------------------
+geoMap = GeographicalMappings()
+
+#----------------------------------------------------------------------
+# Adds an attribute with its value to an XML element we've created.
+#----------------------------------------------------------------------
 def addAttribute(node, name, value):
     if value:
         node.set(name, value)
 
+#----------------------------------------------------------------------
+# Adds an XML child element, optionally with text content, to a parent
+# element.
+#----------------------------------------------------------------------
 def addChild(parent, name, value):
     if value:
         etree.SubElement(parent, name).text = value
 
+#----------------------------------------------------------------------
+# Adds an XML child element, optionally with Para grandchildren, to a
+# parent element.
+#----------------------------------------------------------------------
 def addChildWithParas(parent, name, paras):
     if paras:
         child = etree.Element(name)
@@ -222,6 +279,9 @@ def addChildWithParas(parent, name, paras):
             etree.SubElement(child, 'Para').text = para
         parent.append(child)
 
+#----------------------------------------------------------------------
+# Adds Phase elements to a CTRPProtocol document we're building.
+#----------------------------------------------------------------------
 def addPhases(parent, ctrpPhase):
     if not ctrpPhase or ctrpPhase == 'N/A':
         addChild(parent, 'Phase', 'No phase specified')
@@ -236,16 +296,20 @@ def addPhases(parent, ctrpPhase):
     else:
         raise Exception(u"invalid phase '%s'" % ctrpPhase)
 
+#----------------------------------------------------------------------
+# Looks up the DocTitle for a CDR document.
+#----------------------------------------------------------------------
 def getDocTitle(docId):
     cursor.execute("SELECT title FROM document WHERE id = ?", docId)
     rows = cursor.fetchall()
     return rows and rows[0][0] or None
 
+#----------------------------------------------------------------------
+# Adds a new document to the CDR.  Returns the CdrDoc object representing
+# the new document.
+#----------------------------------------------------------------------
 def createCdrDoc(docXml, docType):
     doc = cdr.Doc(docXml, docType)
-    #print "*** CREATING DOC ***"
-    #print str(doc)
-    #return CdrDoc(999999, "Dummy Title")
     comment = "Adding %s doc for CTRP import" % docType
     response = cdr.addDoc(session, doc=str(doc), comment=comment, ver='Y',
                           verPublishable='N', checkIn='Y')
@@ -256,8 +320,9 @@ def createCdrDoc(docXml, docType):
     docTitle = getDocTitle(docId)
     return CdrDoc(docId, docTitle)
 
-geoMap = GeographicalMappings()
-
+#----------------------------------------------------------------------
+# Holds document ID and title for a CDR document.
+#----------------------------------------------------------------------
 class CdrDoc:
     def __init__(self, docId, docTitle):
         self.cdrId = docId
@@ -265,6 +330,7 @@ class CdrDoc:
 
     @staticmethod
     def lookupExternalMapValue(value, usage):
+        "Returns CdrDoc object matching CTRP ID (if any)"
         if not value or not usage:
             return None
         cursor.execute("""\
@@ -281,6 +347,9 @@ SELECT m.doc_id, d.title
             return None
         return CdrDoc(rows[0][0], rows[0][1])
 
+#----------------------------------------------------------------------
+# Base class for elements which have po_id and ctep_id attributes.
+#----------------------------------------------------------------------
 class Ids:
     def __init__(self, node):
         self.poId = self.ctepId = None
@@ -293,6 +362,9 @@ class Ids:
         addAttribute(node, 'po_id', self.poId)
         addAttribute(node, 'ctep_id', self.ctepId)
 
+#----------------------------------------------------------------------
+# Base class for blocks which have contact elements (phone, email, etc.).
+#----------------------------------------------------------------------
 class ContactInfo:
     def convert(self, node, standaloneDoc=False):
         if self.address:
@@ -318,6 +390,10 @@ class ContactInfo:
             elif child.tag == 'email':
                 self.emailAddresses.append(child.text)
 
+#----------------------------------------------------------------------
+# Represents a block for a person (e.g., overall_contact) in a CTRP
+# document.
+#----------------------------------------------------------------------
 class Person(Ids, ContactInfo):
     def __init__(self, node):
         Ids.__init__(self, node)
@@ -385,6 +461,9 @@ class Person(Ids, ContactInfo):
                 elif child.tag == 'last_name':
                     self.lastName = child.text
 
+#----------------------------------------------------------------------
+# Holds the information parsed from a CTRP clinical trial document.
+#----------------------------------------------------------------------
 class Protocol:
     def makeInfoBlock(self, ctrpId):
         block = etree.Element('CTRPInfo')
@@ -1111,6 +1190,13 @@ class Protocol:
                 elif child.tag == 'investigator':
                     self.investigators.append(Person(child))
 
+#----------------------------------------------------------------------
+# For unit testing.  Reads a CTRP trial document from the standard
+# input and prints out the corresponding CDR CTRPProtocol document.
+# If optional CDR user name and password are given on the command
+# line, then rows are added to the mapping table for missing
+# mappings (persons, organizations, states, countries).
+#----------------------------------------------------------------------
 def main(uid, pwd):
     global session
     if uid and pwd:
