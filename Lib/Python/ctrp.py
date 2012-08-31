@@ -78,7 +78,9 @@ class MappingProblem:
     @staticmethod
     def getChildText(node, tag):
         for child in node.findall(tag):
-            return child.text
+            if child.text is not None:
+                text = child.text.strip()
+                return text or None
         return None
     @staticmethod
     def extractStrings(node):
@@ -129,11 +131,12 @@ class MappingProblem:
                         poIds[poId] = None
                 for node in node.findall("address"):
                     country = MappingProblem.getChildText(node, 'country')
-                    if geoMappings.lookupCountryId(country) is None:
+                    if country and geoMappings.lookupCountryId(country) is None:
                         problem = MappingProblem('Country', country)
                         problems[('Country', country)] = problem
                     state = MappingProblem.getChildText(node, 'state')
-                    if geoMappings.lookupStateId(state, country) is None:
+                    if state and geoMappings.lookupStateId(state,
+                                                           country) is None:
                         value = u"%s|%s" % (state, country)
                         key = ('State/Province', value)
                         problem = MappingProblem('State/Province', value)
