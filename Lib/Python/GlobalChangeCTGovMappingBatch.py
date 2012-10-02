@@ -17,20 +17,6 @@
 #   Last argument = job id of the mapping job to run.
 #                   Identifies a row in batch_job table.
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.5  2007/10/16 21:22:54  ameyer
-# Shortened report by only showing docs that were changed.  For unchanged
-# docs, I just provide a count in the email report.
-#
-# Revision 1.4  2007/10/10 04:05:30  ameyer
-# Added more information to the email report.
-#
-# Revision 1.3  2007/10/05 04:38:23  ameyer
-# Fixed bug - writing naked ID number instead of correct CDR000... number.
-#
-# Revision 1.1  2007/09/19 04:43:57  ameyer
-# Initial version.
-#
 #----------------------------------------------------------------------
 import sys, socket, cdr, cdrcgi, cdrdb, cdrbatch, ModifyDocs
 
@@ -325,7 +311,7 @@ def report(html):
     # Send it by email
     emailList = batchJob.getEmailList()
     _logf.write("Sending email to: %s" % emailList)
-    resp = cdr.sendMail ("cdr@%s.nci.nih.gov" % socket.gethostname(),
+    resp = cdr.sendMail ("cdr@%s" % cdr.getHostName()[1],
                          emailList,
                          subject="Final report on global change",
                          body=safeHtml,
@@ -457,10 +443,10 @@ were examined that have been modfied between %s and %s.<p>
     if runMode == "test":
         html += """
 <p>See
-<a href="http://%s.nci.nih.gov/cgi-bin/cdr/ShowGlobalChangeTestResults.py">
+<a href="%s/cgi-bin/cdr/ShowGlobalChangeTestResults.py">
 Global Change Test Results</a> for change/diff information for test
 results.</p>
-""" % socket.gethostname()
+""" % cdr.getHostName()[2]
     html += " </body>\n</html>\n"
 
     # Report by email
