@@ -110,6 +110,7 @@ class MappingProblem:
         """
         problems = {}
         tags = { 'location/facility': 'Organization',
+                 'overall_official/affiliation': 'Organization',
                  'location/contact': 'Person',
                  'location/investigator': 'Person',
                  'overall_official': 'Person' }
@@ -385,7 +386,9 @@ class ContactInfo:
         self.emailAddresses = []
         for child in node:
             if child.tag == 'address':
-                self.address = Protocol.Address(child)
+                address = Protocol.Address(child)
+                if not address.isEmpty():
+                    self.address = address
             elif child.tag == 'phone':
                 self.phoneNumbers.append(child.text)
             elif child.tag == 'fax':
@@ -1100,6 +1103,13 @@ class Protocol:
                     self.zip = child.text
                 elif child.tag == 'country':
                     self.country = child.text
+        def isEmpty(self):
+            if self.city or self.state or self.zip or self.country:
+                return False
+            for street in self.street:
+                if street is not None and street.strip():
+                    return False
+            return True
     class Org(Ids, ContactInfo):
         def convert(self, name):
             node = etree.Element(name)
