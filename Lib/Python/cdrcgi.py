@@ -635,7 +635,7 @@ SELECT DISTINCT s.id,
            JOIN document c
              ON clink.int_val = c.id
           WHERE clink.path = '/PoliticalSubUnit/Country/@cdr:ref'
-       ORDER BY s.title, c.title"""
+       ORDER BY 2, 3"""
     pattern = "<option value='CDR%010d'>%s [%s]&nbsp;</option>"
     return generateHtmlPicklist(conn, fName, query, pattern)
 
@@ -649,7 +649,7 @@ SELECT DISTINCT value, value
            FROM query_term
           WHERE path IN ('/GlossaryTermConcept/TermDefinition/Audience',
                '/GlossaryTermConcept/TranslatedTermDefinition/Audience')
-       ORDER BY value"""
+       ORDER BY 1"""
     pattern = "<option value='%s'>%s&nbsp;</option>"
     return generateHtmlPicklist(conn, fName, query, pattern,
                                 firstOpt = defaultOpt)
@@ -664,7 +664,7 @@ def glossaryTermStatusList(conn, fName,
 SELECT DISTINCT value, value
            FROM query_term
           WHERE path = '%s'
-       ORDER BY value""" % path
+       ORDER BY 1""" % path
     pattern = "<option value='%s'>%s&nbsp;</option>"
     return generateHtmlPicklist(conn, fName, query, pattern,
                                 firstOpt = defaultOpt)
@@ -680,7 +680,7 @@ SELECT DISTINCT value, value
            FROM query_term
           WHERE path IN ('/GlossaryTermConcept/TermDefinition/Dictionary',
                '/GlossaryTermConcept/TranslatedTermDefinition/Dictionary')
-       ORDER BY value"""
+       ORDER BY 1"""
     pattern = "<option value='%s'>%s&nbsp;</option>"
     return generateHtmlPicklist(conn, fName, query, pattern,
                                 firstOpt = defaultOpt)
