@@ -4,107 +4,7 @@
 #
 # Base class for importing protocol site information from external sites.
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.29  2008/05/06 13:37:15  bkline
-# Refinements in manifest parser; mapping of new status value.
-#
-# Revision 1.28  2007/06/04 10:22:47  bkline
-# Converted incoming xml from utf-8 before storing or processing.
-#
-# Revision 1.27  2007/05/16 22:46:37  bkline
-# Escaped status string reserved characters.
-#
-# Revision 1.26  2007/05/11 22:30:42  bkline
-# Added some more status mapping at Sheri's request (still #3244).
-#
-# Revision 1.25  2007/05/11 03:50:36  bkline
-# Added missing parens to call to upper().
-#
-# Revision 1.24  2007/05/11 03:43:49  bkline
-# Mapped 'Temporarily Closed to Accrual' to 'Temporarily closed' (request
-# 3244).
-#
-# Revision 1.23  2007/04/20 21:30:10  bkline
-# Passed in parameters to 'Insert External Sites' filter for adjusting
-# the lead org's protocol status when appropriate.
-#
-# Revision 1.22  2007/04/17 13:35:01  bkline
-# Fixed typo ('AND' for 'WHERE') in SQL query.
-#
-# Revision 1.21  2007/04/16 15:20:00  bkline
-# Enhancements needed for Oncore imports.
-#
-# Revision 1.20  2005/11/17 14:06:01  bkline
-# Separated logs for imports from different sources.
-#
-# Revision 1.19  2005/10/20 14:24:59  bkline
-# Restricted processing of pending docs to the ones for this source.
-#
-# Revision 1.18  2005/10/17 21:09:42  bkline
-# Modified logic for reporting on missing docs.
-#
-# Revision 1.17  2005/09/02 17:41:12  bkline
-# Split out missing trials for which we've never received any site
-# information from those which have been unexpectedly dropped.
-#
-# Revision 1.16  2005/08/27 22:09:04  bkline
-# Added code to block import of trials which don't have at least one lead
-# organization with a matching UpdateMode.  Modified email report so that
-# it now is sent out even with test reports (but with an extra header
-# identifying the test nature of the job).  Added parameter for new
-# DateLastModified value.
-#
-# Revision 1.15  2005/08/22 16:10:06  bkline
-# Added parameter for invoking validation in test mode.
-#
-# Revision 1.14  2005/06/20 16:44:14  bkline
-# Added more flexibility with the name of the manifest file; added more
-# robust handling of database code.
-#
-# Revision 1.13  2005/06/10 12:34:29  bkline
-# Set job's __id member to None at top of constructor.
-#
-# Revision 1.12  2005/06/03 15:18:08  bkline
-# Fixed pychecker warnings.
-#
-# Revision 1.11  2005/06/03 15:14:09  bkline
-# Fixed typo in variable name; add more exception handling.
-#
-# Revision 1.10  2005/06/01 04:18:17  bkline
-# Fixed spacing in email report group name.  Adjusted processing logic for
-# test mode.
-#
-# Revision 1.9  2005/05/26 23:45:07  bkline
-# Fix to create output directory in test mode for SiteImporter subclass.
-#
-# Revision 1.8  2005/05/24 21:10:27  bkline
-# Added email report at end of job.
-#
-# Revision 1.7  2005/05/10 21:21:47  bkline
-# Converted @@IDENTITY value from string to integer (for some reason the
-# ADO interface converts it from an integer to a string); added code to
-# strip the doctype declaration from the stored RSS XML document.
-#
-# Revision 1.6  2005/05/05 13:06:35  bkline
-# Added sweep to process pending trials left by previous jobs; added more
-# robust failure handling.
-#
-# Revision 1.5  2005/05/03 12:13:48  bkline
-# Added check for ambiguous source IDs.
-#
-# Revision 1.4  2005/04/28 12:52:32  bkline
-# Added splitlines() to loop that walks through lines in manifest file.
-#
-# Revision 1.3  2005/04/18 13:07:56  bkline
-# Fixed typo (header for headers in sendRequest() method).
-#
-# Revision 1.2  2005/03/30 14:35:53  bkline
-# Increased timeout for first database query; added 'source' parameter
-# to invocation of filter to insert external sites into the protocol
-# document.
-#
-# Revision 1.1  2005/03/15 21:12:32  bkline
-# Base class for jobs that import protocol site information from outside.
+# BZIssue::3422
 #
 #----------------------------------------------------------------------
 import cdr, cdrdb, httplib, sys, time, zipfile, ModifyDocs, socket
@@ -327,11 +227,11 @@ class ImportJob(ModifyDocs.Job):
     def sendReport(self, includeDeveloper = False):
         group   = 'Protocol Import Reviewers'
         recips  = self.__getEmailRecipients(group, includeDeveloper)
-        server  = socket.gethostname()
+        names   = cdr.getHostName()
         source  = self.__source
-        pattern = "%s sites downloaded %%Y-%%m-%%d on %s" % (source, server)
+        pattern = "%s sites downloaded %%Y-%%m-%%d on %s" % (source, names[0])
         subject = time.strftime(pattern)
-        sender  = "cdr@%s.nci.nih.gov" % server
+        sender  = "cdr@%s" % names[1]
         body    = self.__getEmailReportBody()
         cdr.sendMail(sender, recips, subject, body)
 

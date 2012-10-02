@@ -22,7 +22,7 @@
 # Import external modules needed.
 #----------------------------------------------------------------------
 import cgi, cdr, cdrdb, sys, re, string, socket, xml.sax.saxutils, textwrap
-import time
+import time, os
 
 #----------------------------------------------------------------------
 # Get some help tracking down CGI problems.
@@ -31,7 +31,25 @@ import cgitb
 cgitb.enable(display = cdr.isDevHost(), logdir = cdr.DEFAULT_LOGDIR)
 
 #----------------------------------------------------------------------
-# Create some useful constants.
+# Now that we're migrating to CBIIT hosting, we'll need a more flexible
+# method for keeping track of web server names.  If we're being called
+# in the context of a web request, get the name of the server handling
+# that request.  Otherwise, fall back on the name we use for the CDR
+# server.
+#----------------------------------------------------------------------
+def _getWebServerName():
+    try:
+        name = os.environ["SERVER_NAME"]
+        if name:
+            return name
+    except:
+        pass
+    return cdr.getHostName()[1]
+    
+#----------------------------------------------------------------------
+# Create some useful constants.  Some of these are no longer necessarily
+# useful (for example, ISPLAIN, or THISHOST) but are retained in case
+# older code relies on them.
 #----------------------------------------------------------------------
 USERNAME = "UserName"
 PASSWORD = "Password"
@@ -43,10 +61,11 @@ FILTER   = "Filter"
 FORMBG   = '/images/back.jpg'
 BASE     = '/cgi-bin/cdr'
 MAINMENU = 'Admin Menu'
-THISHOST = socket.gethostbyaddr(socket.gethostname())[0].lower()
+WEBSERVER= _getWebServerName()
+SPLTNAME = WEBSERVER.lower().split(".")
+THISHOST = SPLTNAME[0]
 ISPLAIN  = "." not in THISHOST
-DOMAIN   = ".nci.nih.gov"
-WEBSERVER= THISHOST.split('.')[0] + DOMAIN
+DOMAIN   = "." + ".".join(SPLTNAME[1:])
 DAY_ONE  = cdr.URDATE
 HEADER   = u"""\
 <!DOCTYPE HTML PUBLIC '-//W3C//DTD HTML 4.01 Transitional//EN'
@@ -1499,3 +1518,47 @@ def colorDiffs(report, subColor='#FAFAD2', addColor='#F0E68C',
             lines[i] = wrapper.fill(lines[i])
     return "\n".join(lines)
 
+def markupTagForPrettyXml(match):
+    s = match.group(1)
+    if s.startswith('/'):
+        return "</@@TAG-START@@%s@@END-SPAN@@>" % s[1:]
+    trailingSlash = ''
+    if s.endswith('/'):
+        s = s[:-1]
+        trailingSlash = '/'
+    pieces = re.split("\\s", s, 1)
+    if len(pieces) == 1:
+        return "<@@TAG-START@@%s@@END-SPAN@@%s>" % (s, trailingSlash)
+    tag, attrs = pieces
+    pieces = ["<@@TAG-START@@%s@@END-SPAN@@" % tag]
+    for attr, delim in re.findall("(\\S+=(['\"]).*?\\2)", attrs):
+        name, value = attr.split('=', 1)
+        pieces.append(" @@NAME-START@@%s=@@END-SPAN@@"
+                      "@@VALUE-START@@%s@@END-SPAN@@" % (name, value))
+    pieces.append(trailingSlash)
+    pieces.append('>')
+    return "".join(pieces)
+
+def makeXmlPretty(doc):
+    import lxml.etree as etree
+    if type(doc) is unicode:
+        doc = doc.encode("utf-8")
+    tree = etree.XML(doc)
+    doc = unicode(etree.tostring(tree, pretty_print=True))
+    doc = re.sub("<([^>]+)>", markupTagForPrettyXml, doc)
+    doc = cgi.escape(doc)
+    doc = doc.replace('@@TAG-START@@', '<span class="xml-tag-name">')
+    doc = doc.replace('@@NAME-START@@', '<span class="xml-attr-name">')
+    doc = doc.replace('@@VALUE-START@@', '<span class="xml-attr-value">')
+    doc = doc.replace('@@END-SPAN@@', '</span>')
+    return doc
+
+def makeCssForPrettyXml(tagNameColor="blue", attrNameColor="maroon",
+                        attrValueColor="red", tagNameWeight="bold"):
+    return u"""\
+<style type="text/css">
+ .xml-tag-name { color: %s; font-weight: %s; }
+ .xml-attr-name { color: %s; }
+ .xml-attr-value { color: %s; }
+</style>
+""" % (tagNameColor, tagNameWeight, attrNameColor, attrValueColor)
