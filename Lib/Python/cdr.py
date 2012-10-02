@@ -25,15 +25,47 @@ import os, smtplib, time, atexit, cdrdb, tempfile, traceback, difflib
 import xml.sax.saxutils, datetime, subprocess
 
 #----------------------------------------------------------------------
+# Give caller variant forms of the host name.  See also getHostName()
+# version below, which uses cached result of call to this function.
+# As a side effect, we record whether we're running on CBIIT hosting.
+#----------------------------------------------------------------------
+def _getHostNames():
+    """
+    Return the server host name as a tuple of:
+        naked host name
+        fully qualified host name
+        fully qualified name, prefixed by "http://"
+    """
+    global CBIIT_HOSTING
+    try:
+        # This method works IFF we're on CBIIT hosting.
+        fp = open("d:/cdr/etc/hostname")
+        fqdn = fp.read().strip()
+        fp.close()
+        CBIIT_HOSTING = True
+        return (fqdn.split(".")[0], fqdn, "http://%s" % fqdn)
+    except:
+        # This method works on CTB/OCE hosts.
+        CBIIT_HOSTING = False
+        localhost = socket.gethostname().split(".")[0]
+        return (localhost, "%s.nci.nih.gov" % localhost,
+                "http://%s.nci.nih.gov" % localhost)
+
+#----------------------------------------------------------------------
 # Set some package constants
 #----------------------------------------------------------------------
+HOST_NAMES       = _getHostNames()
 OPERATOR         = 'operator@cips.nci.nih.gov'
-DOMAIN_NAME      = 'nci.nih.gov'
-PROD_NAME        = 'bach'
-DEV_NAME         = 'mahler'
-PROD_HOST        = '%s.%s' % (PROD_NAME, DOMAIN_NAME)
-DEV_HOST         = '%s.%s' % (DEV_NAME, DOMAIN_NAME)
-PUB_NAME         = socket.gethostname()
+DOMAIN_NAME      = ".".join(HOST_NAMES[1].split(".")[1:])
+PROD_DB_NAME     = CBIIT_HOSTING and 'ncidb-d065-p' or 'bach' # XXX I'm guessing
+DEV_DB_NAME      = CBIIT_HOSTING and '***REMOVED***' or 'mahler'
+CBIIT_CDR_PROD   = "nciws-p141-v.nci.nih.gov" # XXX Is this right???
+CTB_CDR_PROD     = "bach.nci.nih.gov"
+CBIIT_CDR_DEV    = "***REMOVED***.nci.nih.gov"
+CTB_CDR_DEV      = "mahler.nci.nih.gov"
+PROD_HOST        = CBIIT_HOSTING and CBIIT_CDR_PROD or CTB_CDR_PROD
+DEV_HOST         = CBIIT_HOSTING and CBIIT_CDR_DEV  or CTB_CDR_PROD
+PUB_NAME         = HOST_NAMES[0]
 EMAILER_PROD     = 'pdqupdate.cancer.gov'
 EMAILER_DEV      = 'verdi.nci.nih.gov'
 EMAILER_CGI      = '/PDQUpdate/cgi-bin'
@@ -704,7 +736,7 @@ def lastVersions (session, docId, host=DEFAULT_HOST, port=DEFAULT_PORT):
  <CdrLastVersions>
    <DocId>%s</DocId>
  </CdrLastVersions>
-""" % docId, session)
+""" % normalize(docId), session)
 
     # Submit it
     resp = sendCommands (cmd, host, port)
@@ -4399,18 +4431,16 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, chgOnly=True, useCDATA=False):
 # Tell the caller if we are on the development host.
 #----------------------------------------------------------------------
 def isDevHost():
-    localhost = socket.gethostname()
-    return localhost.upper().startswith(DEV_NAME.upper())
+    return HOST_NAMES[1].upper() == DEV_HOST.upper()
 
 #----------------------------------------------------------------------
 # Tell the caller if we are on the development host.
 #----------------------------------------------------------------------
 def isProdHost():
-    localhost = socket.gethostname()
-    return localhost.upper().startswith(PROD_NAME.upper())
+    return HOST_NAMES[1].upper() == PROD_HOST.upper()
 
 #----------------------------------------------------------------------
-# Give caller variant forms of the host name
+# Give caller variant forms of the host name (cached tuple).
 #----------------------------------------------------------------------
 def getHostName():
     """
@@ -4419,9 +4449,7 @@ def getHostName():
         fully qualified host name
         fully qualified name, prefixed by "http://"
     """
-    localhost = socket.gethostname()
-    return (localhost, "%s.nci.nih.gov" % localhost,
-            "http://%s.nci.nih.gov" % localhost)
+    return HOST_NAMES
 
 #----------------------------------------------------------------------
 # Add a row to the external_map table.
