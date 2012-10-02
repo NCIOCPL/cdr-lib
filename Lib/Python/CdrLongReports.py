@@ -25,7 +25,7 @@ import ExcelWriter, NCIThes, lxml.etree as etree
 #----------------------------------------------------------------------
 REPORTS_BASE = 'd:/cdr/reports'
 LOGFILE      = cdr.DEFAULT_LOGDIR + "/reports.log"
-EMAILFROM    = 'cdr@%s.nci.nih.gov' % socket.gethostname()
+EMAILFROM    = 'cdr@%s' % cdr.getHostName()[1]
 
 #----------------------------------------------------------------------
 # Send mail to the receipients specified for the job.
@@ -338,8 +338,7 @@ def protsWithoutPhones(job):
 """
     reportName = "/ProtSitesWithoutPhones-Job%d.html" % job.getJobId()
     cdr.logwrite("reportName: %s" % reportName, LOGFILE)
-    url = "http://%s.nci.nih.gov/CdrReports%s" % (socket.gethostname(),
-                                                  reportName)
+    url = "%s/CdrReports%s" % (cdr.getHostName()[2], reportName)
     cdr.logwrite("url: %s" % url, LOGFILE)
     msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (url,
                                                                     url)
@@ -1727,8 +1726,7 @@ SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
         file.write(cdrcgi.unicodeToLatin1(html))
         file.close()
         cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
-        url = "http://%s.nci.nih.gov/CdrReports%s" % (socket.gethostname(),
-                                                      name)
+        url = "%s/CdrReports%s" % (cdr.getHostName()[2], name)
         cdr.logwrite("url: %s" % url, LOGFILE)
         msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (
             url, url)
@@ -1944,8 +1942,7 @@ ORDER BY t.name, q.doc_id
         file.write(cdrcgi.unicodeToLatin1(u"".join(html)))
         file.close()
         cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
-        url = "http://%s.nci.nih.gov/CdrReports%s" % (socket.gethostname(),
-                                                      name)
+        url = "%s/CdrReports%s" % (cdr.getHostName()[2], name)
         cdr.logwrite("url: %s" % url, LOGFILE)
         msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (
             url, url)
@@ -2279,8 +2276,7 @@ class GlossaryTermSearch:
         file.write(cdrcgi.unicodeToLatin1(html))
         file.close()
         cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
-        url = "http://%s.nci.nih.gov/CdrReports%s" % (socket.gethostname(),
-                                                      name)
+        url = "%s/CdrReports%s" % (cdr.getHostName()[2], name)
         cdr.logwrite("url: %s" % url, LOGFILE)
         self.msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (
             url, url)

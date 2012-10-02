@@ -3,10 +3,6 @@
 #
 # $Id$
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.1  2009/07/08 03:04:55  ameyer
-# Initial version.
-#
 #----------------------------------------------------------------------
 import sys, socket, cgi, re, cdr, cdrdb, cdrcgi, cdrbatch, ModifyDocs
 
@@ -961,7 +957,7 @@ Results page.</p>
     # Convert email string to a list
     emailList = linkVars.getVar("emailList").split()
 
-    resp = cdr.sendMail ("cdr@%s.nci.nih.gov" % socket.gethostname(),
+    resp = cdr.sendMail ("cdr@%s" % cdr.getHostName()[1],
                          emailList,
                          subject="Final report on global change",
                          body=html,

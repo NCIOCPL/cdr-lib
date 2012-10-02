@@ -22,119 +22,6 @@
 #   Last argument = job id of the Global Change job to run.
 #                   Identifies row in batch_job table.
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.27  2005/04/28 14:02:45  ameyer
-# Added correct error handling for cdr.unlock() call.
-#
-# Revision 1.26  2005/04/12 16:04:28  ameyer
-# Added some more complete and robust error reporting.
-#
-# Revision 1.25  2004/09/23 21:44:32  ameyer
-# Added name of output directory to final report when running in test mode.
-#
-# Revision 1.24  2004/09/21 20:31:54  ameyer
-# Added ability to output to files instead of to database - for test.
-# Added ability to run a filter for validation only, discarding any output.
-# Fixed bug in progress message where local variable overrode global and
-# final progress message did not appear in final report.
-#
-# Revision 1.23  2004/05/28 00:26:50  ameyer
-# If a save of a publishable version returns errors, I now go on to try to
-# save the changed CWD anyway.  Fixes a problem where an ancient, invalid,
-# publishable version got saved as a non-publishable version and the latest
-# CWD was pushed down in the version stack.
-#
-# Revision 1.22  2004/02/26 22:05:40  ameyer
-# Modified document id list handling to assume an actual list passed via
-# the database rather than a list parsable string.  Overcomes database
-# value length limit.
-#
-# Revision 1.21  2004/02/04 00:51:51  ameyer
-# Added capture and reporting of warning messages from the filters.
-#
-# Revision 1.20  2004/01/30 02:25:27  ameyer
-# Now processing documents with ID's passed from the CGI portion, rather
-# than re-executing the selection statement.  This is needed because a
-# user can now individually select or deselect documents from the list
-# for processing.
-#
-# Revision 1.19  2003/12/24 18:17:07  ameyer
-# Added retrieval of warnings from the cdr.repDoc calls.  Any warnings are
-# included in the final output report.
-#
-# Revision 1.18  2003/11/14 02:16:34  ameyer
-# Completion of changes for global terminology change.
-# More may be done as testing continues.
-#
-# Revision 1.17  2003/11/05 01:44:54  ameyer
-# Changes to allow a document to be filtered multiple times for one global
-# change, each with different filters and/or parameters.
-#
-# Revision 1.16  2003/09/16 19:43:28  ameyer
-# Moved assignment of filter parameters from here to cdrglblchg.py.
-# Now performing filterDoc operations in a loop, allowing multiple
-# filters with dynamically assigned parameters to be applied to each
-# document.
-#
-# Revision 1.15  2003/09/09 15:41:51  ameyer
-# Added proper job failure after database error selecting docs.
-#
-# Revision 1.14  2003/06/05 18:38:29  ameyer
-# Added proper character encodings for report emailed to users.
-#
-# Revision 1.13  2003/04/26 16:33:12  bkline
-# Added encoding argument to cdr.Doc() constructor invocation.
-#
-# Revision 1.12  2003/04/08 18:29:39  ameyer
-# Modified to always create a new version, whether the CWD is identical to the
-# last publishable version or not.  Pre and post-change versions of the
-# protocols are thus always created.
-#
-# Revision 1.11  2003/03/27 18:36:04  ameyer
-# Added some logic for new insert org global change.
-# Simplified and centralized handling of filter parameter and comment
-# data passed to cdr.filterDoc.
-#
-# Revision 1.10  2002/11/27 01:38:32  ameyer
-# Slight change to double check that personId can only be sent if
-# leadOrgId also exists.
-#
-# Revision 1.9  2002/11/27 01:36:52  ameyer
-# Added parameters to status change filter for the lead org id and
-# person id, if user has entered them.
-#
-# Revision 1.8  2002/11/13 02:38:32  ameyer
-# Added support for multiple emails.
-#
-# Revision 1.7  2002/09/24 19:31:16  ameyer
-# Fixed bugs in handling of data returned by cdr.lastVersions().
-#
-# Revision 1.6  2002/09/19 18:01:09  ameyer
-# Reorganized to place try block inside for loop instead of outside so
-# that an exception would not halt all processing.
-#
-# Revision 1.5  2002/08/16 03:15:11  ameyer
-# Switched from logging "reason" to "comment".
-# Fixed serious bug in version handling.
-# Added column to report to indicate whether publishable version existed.
-# Made cosmetic changes.
-#
-# Revision 1.4  2002/08/13 21:15:36  ameyer
-# Finished the third type of global change.
-# Ready for production unless further testing reveals some problem.
-#
-# Revision 1.3  2002/08/09 03:48:05  ameyer
-# Changes for organization status protocol global change.
-#
-# Revision 1.2  2002/08/08 18:05:18  ameyer
-# Revised handling of filtering of publishable versions.
-# Increased reporting to users in emailed report.
-#
-# Revision 1.1  2002/08/02 03:35:43  ameyer
-# Batch/background portion of global protocol change.
-# More to come.  This is the first working version.
-#
-#
 #----------------------------------------------------------------------
 
 import sys, socket, time, string, re, cdr, cdrbatch, cdrglblchg, cdrcgi, traceback
@@ -788,7 +675,7 @@ else:
 
 # Send it by email
 cdr.logwrite ("About to email final report to %s" % jobObj.getEmail(), LF)
-resp = cdr.sendMail ("cdr@%s.nci.nih.gov" % socket.gethostname(),
+resp = cdr.sendMail ("cdr@%s" % cdr.getHostName()[1],
                      emailList,
                      subject="Final report on global change",
                      body=safeHtml,
