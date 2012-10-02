@@ -8,23 +8,9 @@
 #
 # $Id$
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.3  2006/07/13 17:21:55  ameyer
-# Fixed bug in retrieval of import job numbers.
-# Modified report header to correctly display job numbers.
-#
-# Revision 1.2  2006/07/03 20:17:23  ameyer
-# Removed a bit of debugging code.
-#
-# Revision 1.1  2006/07/03 20:10:03  ameyer
-# Batch part of report.
-#
-#
 #----------------------------------------------------------------------
 
 import sys, time, cdr, cdrdb, cdrxdiff, cdrbatch, CTGovUpdateCommon
-
-hostName = cdr.getHostName()[0]
 
 # These are also used in interactive portion, which imports this file
 JOB_NAME    = CTGovUpdateCommon.JOB_NAME
@@ -77,7 +63,7 @@ def fatal(msg):
     # Tell users
     emailList = batchJobObj.getEmailList()
     if len(emailList):
-        resp = cdr.sendMail("cdr@%s.nci.nih.gov" %hostName, emailList,
+        resp = cdr.sendMail("cdr@%s" % cdr.getHostName()[1], emailList,
                 subject="CTGov Update Report has failed", body="""
 The CTGov Update report started at %s has failed.
 
@@ -395,7 +381,7 @@ reportWrite()
 # Notify user by email
 emailList = batchJobObj.getEmailList()
 if len(emailList):
-    resp = cdr.sendMail("cdr@%s.nci.nih.gov" % hostName, emailList,
+    resp = cdr.sendMail("cdr@%s" % cdr.getHostName()[1], emailList,
                      subject="CTGov Update Report has completed", body="""
 The CTGov Update report has completed.
 The report can be viewed at: <a href="%s">%s</a>
