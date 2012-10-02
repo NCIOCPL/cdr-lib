@@ -1062,7 +1062,7 @@ Results page.</p>
     # Convert email string to a list
     emailList = linkVars.getVar("emailList").split()
 
-    resp = cdr.sendMail ("cdr@%s.nci.nih.gov" % socket.gethostname(),
+    resp = cdr.sendMail ("cdr@%s" % cdr.getHostName()[1],
                          emailList,
                          subject="Final report on global change",
                          body=html,
