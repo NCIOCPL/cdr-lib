@@ -31,18 +31,6 @@
 #
 # $Id$
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.3  2005/12/16 05:22:52  ameyer
-# Changed from inefficient string buffer accumulation to sequence
-# accumulation with conversion to string only upon request.
-#
-# Revision 1.2  2005/11/30 04:56:55  ameyer
-# Added getDiffText() to retrieve buffer contents whenever.
-#
-# Revision 1.1  2005/11/11 00:31:09  ameyer
-# Differencing module for XML docs.
-#
-#
 #---------------------------------------------------------
 import os, sys, cgi, re, difflib, textwrap, cdr, cdrcgi
 
@@ -532,7 +520,7 @@ class UDiff(_Diff):
         # Allow any exception to bubble up
         name1 = "CWD.xml"
         name2 = "LPV.xml"
-        cmd   = "diff -a -i -w -B -U 1 %s %s" % (name2, name1)
+        cmd   = r"d:\cygwin\bin\diff -a -i -w -B -U 1 %s %s" % (name2, name1)
         workDir = cdr.makeTempDir('diff')
         os.chdir(workDir)
         f1 = open(name1, "wb")
