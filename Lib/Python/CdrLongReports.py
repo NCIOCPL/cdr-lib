@@ -14,6 +14,8 @@
 # BZIssue::4711 - Adding GrantNo column to report output
 # BZIssue::5086 - Changes to the Transferred Protocols Report (Issue 4626)
 # BZIssue::5123 - Audio Pronunciation Tracking Report
+# BZIssue::5237 - Report for publication document counts fails on 
+#                 non-production server
 #
 #----------------------------------------------------------------------
 import cdr, cdrdb, xml.dom.minidom, time, cdrcgi, cgi, sys, socket, cdrbatch
@@ -1829,8 +1831,9 @@ class UrlCheck:
     #------------------------------------------------------------------
     def run(self, job):
         job.setProgressMsg("Report started")
+        cdr.logwrite("Starting UrlCheck report", LOGFILE)
         query  = """\
-  SELECT q.doc_id, q.path, q.value, t.name
+  SELECT top 500 q.doc_id, q.path, q.value, t.name
     FROM query_term q
     JOIN document d
       ON d.id = q.doc_id
@@ -1922,11 +1925,14 @@ ORDER BY t.name, q.doc_id
                     goodUrls[url] = 1
             except IOError, ioError:
                 html.append(self.report(row, "IOError: %s" % ioError))
+                cdr.logwrite("%s, IOError: %s" % (row, ioError), LOGFILE)
             except socket.error, socketError:
                 deadHosts[host] = 1
                 html.append(self.report(row, "Host not responding"))
+                cdr.logwrite("%s Host not responding" % row, LOGFILE)
             except:
                 html.append(self.report(row, "Unrecognized error"))
+                cdr.logwrite("%s Unrecognized error" % row, LOGFILE)
             job.setProgressMsg(msg)
         html.append(u"""\
   </table>
@@ -1954,7 +1960,454 @@ The URL report you requested can be viewed at
         sendMail(job, "Report results", body)
         job.setProgressMsg(msg)
         job.setStatus(cdrbatch.ST_COMPLETED)
-        cdr.logwrite("Completed report", LOGFILE)
+        cdr.logwrite("Completed UrlCheck report", LOGFILE)
+
+#----------------------------------------------------------------------
+# Class for finding URLs which are not alive.
+#----------------------------------------------------------------------
+class countPublishedDocs:
+    def __init__(self, host = 'localhost'):
+        self.conn    = cdrdb.connect('CdrGuest', dataSource = host)
+        self.cursor  = self.conn.cursor()
+        self.pattern = re.compile(u"([^/]+)/@cdr:xref$")
+
+    #------------------------------------------------------------------
+    # Report on a dead URL
+    #------------------------------------------------------------------
+    def report(self, row, err):
+        match = self.pattern.search(row[1])
+        elem = match and match.group(1) or ""
+        return u"""\
+   <tr bgcolor='white'>
+    <td>%s</td>
+    <td>%d</td>
+    <td>%s</td>
+    <td nowrap='1'>%s</td>
+    <td>%s</td>
+   </tr>
+""" % (row[3], row[0], row[2], err, elem)
+
+    #------------------------------------------------------------------
+    # Run the report.
+    #------------------------------------------------------------------
+    def run(self, job):
+        job.setProgressMsg("Report started")
+        cdr.logwrite("Starting Published Documents Count report", LOGFILE)
+
+        protQuery = """
+            SELECT doc_id, doc_version 
+              FROM pub_proc_doc ppd
+              JOIN active_doc d
+                ON d.id = ppd.doc_id
+              JOIN doc_type dt
+                ON d.doc_type = dt.id
+             WHERE pub_proc = %s
+               AND dt.name = '%s'
+        """
+
+        # -------------------------------------------------------------------
+        # Retrieve the XML from the database
+        # Returns the protocol object
+        # -------------------------------------------------------------------
+        def getProtocol(docId, num, cursor):
+            query = """
+                SELECT xml 
+                  FROM doc_version 
+                 WHERE id = %s
+                   AND num = %s 
+        """ % (docId, num)
+
+            try:
+                cursor.execute(query)
+                row = cursor.fetchone()
+
+            except cdrdb.Error, info:
+                cdr.logwrite("Failure retrieving XML: %s" % info[1][0], LOGFILE)
+
+            return etree.XML(row[0].encode('utf-8'))
+
+        # -------------------------------------------------------------------
+        # Count the InScopeProtocols by status
+        # This version retrieves the documents from the database
+        # -------------------------------------------------------------------
+        def getInScopeCount(jobID = 4867):
+            """
+            Function to collect the InScopeProtocols from the last
+            export job (given by the JobID) and counting the number
+            of documents per CurrentStatus.
+            """
+            query = protQuery % (jobID, 'InScopeProtocol')
+
+            try:
+                # Selecting all protocol documents
+                # --------------------------------
+                job.setProgressMsg("Running InScopeProtocols")
+                cdr.logwrite("Running InScopeProtocols", LOGFILE)
+                self.cursor.execute(query)
+                rows = self.cursor.fetchall()
+
+                inScopeCount = {}
+
+                # Inspecting and counting by status value
+                # ---------------------------------------
+                for (docID, version) in rows:
+                    xml = getProtocol(docID, version, self.cursor)
+                    curStatus = xml.find('./ProtocolAdminInfo/CurrentProtocolStatus')
+                    status = curStatus.text
+
+                    if inScopeCount.has_key(status):
+                        inScopeCount[status] += 1
+                    else:
+                        inScopeCount[status]  = 1
+
+            except Exception as e:
+                cdr.logwrite("Error collecting InScope filenames: %s" % \
+                                                          info[1][0], LOGFILE)
+
+            return(inScopeCount)
+
+        # -------------------------------------------------------------------
+        # Count the CTGovProtocols by status
+        # This version retrieves the documents from the database
+        # -------------------------------------------------------------------
+        def getCTGovCount(jobID = 4867):
+            """
+            Function to collect the CTGovProtocols from the last
+            export job (given by the JobID) and counting the number
+            of documents per CurrentStatus.
+            """
+            query = protQuery % (jobID, 'CTGovProtocol')
+
+            try:
+                # Selecting all protocol documents
+                # --------------------------------
+                self.cursor.execute(query)
+                rows = self.cursor.fetchall()
+
+                ctgovCount = {}
+
+                # Inspecting and counting by status value
+                # ---------------------------------------
+                for (docID, version) in rows:
+                    xml = getProtocol(docID, version, self.cursor)
+                    curStatus = xml.find('./OverallStatus')
+
+                    if curStatus is not None:
+                        status = curStatus.text
+
+                    if ctgovCount.has_key(status):
+                        ctgovCount[status] += 1
+                    else:
+                        ctgovCount[status]  = 1
+
+            except Exception as e:
+                cdr.logwrite("Error collecting CTGov filenames: %s" % \
+                                                          info[1][0], LOGFILE)
+            
+            return(ctgovCount)
+
+
+        #----------------------------------------------------------------------
+        # Build date string for header.
+        #----------------------------------------------------------------------
+        dateString = time.strftime("%B %d, %Y")
+
+        #----------------------------------------------------------------------
+        # Select the Job ID of the last Export job
+        # ----------------------------------------
+        query = """SELECT MAX(id) 
+                     FROM pub_proc 
+                    WHERE pub_system = 178
+                      AND pub_subset = 'Export'
+                      AND status = 'Success'"""
+        try:
+            #cursor = conn.cursor()
+            self.cursor.execute(query)
+            jobID = self.cursor.fetchone()
+
+            jobID = [9768]
+            print jobID
+
+            self.cursor.close()
+            #self.cursor = None
+        except cdrdb.Error, info:
+            cdr.logwrite("Failure selecting last Export JobId: %s" % \
+                                                          info[1][0], LOGFILE)
+             
+        # Counting the documents by document type
+        # ---------------------------------------
+        query = """select dt.name, count(*)
+                     from pub_proc_doc ppd
+                     join document d
+                       on d.id = ppd.doc_id
+                     join doc_type dt
+                       on dt.id = d.doc_type
+                    where pub_proc = %s
+                      and failure is null
+                    group by dt.name
+                    order by dt.name""" % (jobID[0])
+
+        try:
+            #cursor = conn.cursor()
+            job.setProgressMsg("Counting all document types")
+            cdr.logwrite("Counting all document types", LOGFILE)
+            self.cursor.execute(query)
+            docTypesCount = self.cursor.fetchall()
+            self.cursor.close()
+            #self.cursor = None
+        except cdrdb.Error, info:
+            cdr.logwrite("Failure selecting published document count: %s" % \
+                                                          info[1][0], LOGFILE)
+             
+        #----------------------------------------------------------------------
+        # Create the results page.
+        #----------------------------------------------------------------------
+        title     = "CDR Administration"
+        header = u"""\
+<!DOCTYPE HTML PUBLIC '-//W3C//DTD HTML 4.01 Transitional//EN'
+                      'http://www.w3.org/TR/html4/loose.dtd'>
+<html>
+ <head>
+  <title>Published Documents on Cancer.gov -- %s</title>
+  <meta http-equiv='Content-Type' content='text/html;charset=utf-8'>
+  <link rel='shortcut icon' href='/favicon.ico'>
+  <LINK TYPE='text/css' REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
+  <style type="text/css">
+        body         { background-color: #DFDFDF; }
+        H5           { font-weight: bold;
+                       font-family: Arial;
+                       font-size: 13pt; 
+                       margin: 0pt; }
+        TD.header    { font-weight: bold; 
+                       align: center; }
+        TR.odd       { background-color: #F7F7F7; }
+        TR.even      { background-color: #FFFFFF; }
+        TR.head      { background-color: #B2B2B2; }
+        *.center     { text-align: center; }
+        *.footer     { font-size: 11pt;
+                       background-color: #B2B2B2; 
+                       font-weight: bold; 
+                       border-top: 2px solid black; 
+                       border-bottom: 2px solid black; }
+  </style>
+ </head>
+ <body>
+        """ % dateString
+
+        # -------------------------
+        # Display the Report Title
+        # -------------------------
+        #report    = u"""\
+        #   <INPUT TYPE='hidden' NAME='%s' VALUE='%s'>
+        #  </FORM>
+        #""" % (cdrcgi.SESSION, session)
+
+        report = u"""
+  <div class="center">
+    <H3>Published Documents</H3>
+     <b>Documents Listed from Last Weekly Export: Job%s</b>
+     <br>
+     <br>
+  </div>
+        """ % jobID[0]
+
+        # Display the header row of the first table
+        # ------------------------------------------
+        report += u"""
+   <table width="25%" align="center" border="0">
+    <tr class="head">
+     <td class="header" align="center" width="70%">Doc Type</td>
+     <td class="header" align="center" width="30%">Count</td>
+    </tr>"""
+
+        # Displaying the records for the document type counts
+        # ------------------------------------------------------------
+        count = 0
+        total = 0
+        for docTypeCount in docTypesCount:
+            total += docTypeCount[1]
+            count += 1
+
+            # Display the rows with different background color
+            # ------------------------------------------------
+            if count % 2 == 0:
+                report += u"""
+            <tr class="even">"""
+            else:
+                report += u"""
+            <tr class="odd">"""
+            report += u"""
+             <td><b>%s</b></td>
+             <td><b>%s</b></td>""" % (docTypeCount[0], docTypeCount[1])
+
+            report += u"""
+            </tr>"""
+
+        report += u"""
+            <tr class="footer">
+             <td class="footer">Total</td>
+             <td class="footer">%s</td>
+            </tr>
+           </table>""" % total
+
+        # List an additional table for the breakdown of InScopeProtocols 
+        # by status
+        # -----------------------------------------------------------------
+        job.setProgressMsg("Counting InScopeProtocols by status")
+        cdr.logwrite("Counting InScopeProtocols by status", LOGFILE)
+        inScopeCount = getInScopeCount(jobID[0])
+
+        inScopeKeys = inScopeCount.keys()
+        inScopeKeys.sort()
+        #print ""
+
+        report += u"""
+   <div class="center">
+    <br>
+     <b>InScopeProtocol by Status</b>
+    <br>
+   </div>
+   <table width="35%" align="center" border="0">
+    <tr class="head">
+     <td class="header" align="center" width="50%">Status</td>
+     <td class="header" align="center" width="20%">Count</td>
+    </tr>"""
+
+        # We want to display a summary line of total active/closed protocols
+        # ------------------------------------------------------------------
+        scount = 0
+        acount = 0
+        ccount = 0
+
+        for status in inScopeKeys:
+            # Counting total of active and closed protocols
+            # ------------------------------------------------------
+            if status in ('Active', 'Approved-not yet active'):
+                acount += inScopeCount[status]
+            else:
+                ccount += inScopeCount[status]
+
+            # Display the records for the status values
+            # -----------------------------------------
+            scount += 1
+            if scount % 2 == 0:
+                report += u"""
+            <tr class="even">"""
+            else:
+                report += u"""
+            <tr class="odd">"""
+            report += u"""
+             <td><b>%s</b></td>
+             <td><b>%s</b></td>""" % (status, inScopeCount[status])
+
+            report += u"""
+            </tr>"""
+
+        # Display the summary for active/closed protocols
+        # -----------------------------------------------
+        report += u"""
+    <tr class="footer">
+     <td class="footer">Total-active</td>
+     <td class="footer">%s</td>
+    </tr>
+    <tr class="footer">
+     <td class="footer">Total-closed</td>
+     <td class="footer">%s</td>
+    </tr>
+   </table>""" % (acount, ccount)
+
+        # Repeat the same for the CTGovProtocols
+        # --------------------------------------
+        job.setProgressMsg("Counting CTGovProtocols by status")
+        cdr.logwrite("Counting CTGovProtocols by status", LOGFILE)
+        ctgovCount = getCTGovCount(jobID[0])
+
+        ctgovKeys = ctgovCount.keys()
+        ctgovKeys.sort()
+
+        report += u"""
+   <div class="center">
+    <br>
+     <b>CTGovProtocol by Status</b>
+    <br>
+   </div>
+   <table width="35%" align="center" border="0">
+    <tr class="head">
+     <td class="header" align="center" width="50%">Status</td>
+     <td class="header" align="center" width="20%">Count</td>
+    </tr>"""
+
+        # We want to display a summary line of total active/closed protocols
+        # ------------------------------------------------------------------
+        scount = 0
+        acount = 0
+        ccount = 0
+
+        for status in ctgovKeys:
+            # Counting total of active and closed CTGovProtocols
+            # --------------------------------------------------
+            if status in ('Active', 'Approved-not yet active'):
+                 acount += ctgovCount[status]
+            else:
+                 ccount += ctgovCount[status]
+
+            # Display the records for the status values
+            # -----------------------------------------
+            scount += 1
+            if scount % 2 == 0:
+                report += u"""
+            <tr class="even">"""
+            else:
+                report += u"""
+            <tr class="odd">"""
+            report += u"""
+             <td><b>%s</b></td>
+             <td><b>%s</b></td>""" % (status, ctgovCount[status])
+
+            report += u"""
+            </tr>"""
+
+
+        # Display the summary for active/closed protocols
+        # -----------------------------------------------
+        report += """
+    <tr class="footer">
+     <td class="footer">Total-active</td>
+     <td class="footer">%s</td>
+    </tr>
+    <tr class="footer">
+     <td class="footer">Total-closed</td>
+     <td class="footer">%s</td>
+    </tr>
+   </table>""" % (acount, ccount)
+
+        footer = u"""
+ </body>
+</html> 
+        """     
+
+        #--------------------------------------------------------------
+        # Write out the report and tell the user where it is.
+        #--------------------------------------------------------------
+        html = header + report + footer
+        name = "/PubDocsCount-%d.html" % job.getJobId()
+        file = open(REPORTS_BASE + name, "wb")
+        file.write(cdrcgi.unicodeToLatin1(u"".join(html)))
+        file.close()
+        cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
+        url = "%s/CdrReports%s" % (cdr.getHostName()[2], name)
+        cdr.logwrite("url: %s" % url, LOGFILE)
+        msg = "<br>Report available at <a href='%s'><u>%s</u></a>." % (
+            url, url)
+
+        body = """\
+The Publishing Documents Count report you requested can be viewed at
+%s.
+""" % (url)
+        sendMail(job, "Report results", body)
+        job.setProgressMsg(msg)
+        job.setStatus(cdrbatch.ST_COMPLETED)
+        cdr.logwrite("Completed PubDocsCount report", LOGFILE)
 
 #----------------------------------------------------------------------
 # Find phrases which match a specified glossary term.
@@ -4087,6 +4540,13 @@ def checkUrls(job):
     report.run(job)
 
 #----------------------------------------------------------------------
+# Run a report of dead URLs.
+#----------------------------------------------------------------------
+def pubCount(job):
+    report = countPublishedDocs()
+    report.run(job)
+
+#----------------------------------------------------------------------
 # Run a report of protocols connected with a specific organization.
 #----------------------------------------------------------------------
 def orgProtocolReview(job):
@@ -4238,6 +4698,8 @@ if __name__ == "__main__":
             protOwnershipTransfer(job)
         elif jobName == "Audio Pronunciation Recordings Tracking Report":
             PronunciationRecordingsReport(job).run()
+        elif jobName == "Published Documents Count":
+            pubCount(job)
         # That's all we know how to do right now.
         else:
             job.fail("CdrLongReports: unknown job name '%s'" % jobName,
