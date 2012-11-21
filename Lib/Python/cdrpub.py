@@ -556,12 +556,13 @@ class Publish:
             self.__updateMessage(msg)
             numFailures = self.__getFailures()
             if numFailures > 0:
+                #   href="%s/PubStatus.py?id=%d&type=FilterFailure">Check
                 msg = """%s: Total of %d docs failed.
                     <A style='text-decoration: underline;'
-                    href="%s/PubStatus.py?id=%d&type=FilterFailure">Check
+                    href="PubStatus.py?id=%d&type=FilterFailure">Check
                     the failure details.</A><BR>""" % (time.ctime(),
                                                        numFailures,
-                                                       self.__cdrHttp,
+                                                       # self.__cdrHttp,
                                                        self.__jobId)
                 self.__updateMessage(msg)
             else:
