@@ -2142,7 +2142,8 @@ class countPublishedDocs:
                     else:
                         inScopeCount[status]  = 1
 
-            except Exception as e:
+            # except Exception as e:
+            except cdrdb.Error, info:
                 cdr.logwrite("Error collecting InScope filenames: %s" % \
                                                           info[1][0], LOGFILE)
 
@@ -2182,7 +2183,8 @@ class countPublishedDocs:
                     else:
                         ctgovCount[status]  = 1
 
-            except Exception as e:
+            # except Exception as e:
+            except cdrdb.Error, info:
                 cdr.logwrite("Error collecting CTGov filenames: %s" % \
                                                           info[1][0], LOGFILE)
             
@@ -2207,8 +2209,8 @@ class countPublishedDocs:
             self.cursor.execute(query)
             jobID = self.cursor.fetchone()
 
-            jobID = [9768]
-            print jobID
+            # jobID = [9768]
+            # print jobID
 
             self.cursor.close()
             #self.cursor = None
