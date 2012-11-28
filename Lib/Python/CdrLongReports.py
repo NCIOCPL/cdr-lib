@@ -16,6 +16,7 @@
 # BZIssue::5123 - Audio Pronunciation Tracking Report
 # BZIssue::5237 - Report for publication document counts fails on 
 #                 non-production server
+# BZIssue::5244 - URL Check report not working
 #
 #----------------------------------------------------------------------
 import cdr, cdrdb, xml.dom.minidom, time, cdrcgi, cgi, sys, socket, cdrbatch
@@ -1809,6 +1810,9 @@ class UrlCheck:
         self.conn    = cdrdb.connect('CdrGuest', dataSource = host)
         self.cursor  = self.conn.cursor()
         self.pattern = re.compile(u"([^/]+)/@cdr:xref$")
+        self.docType  = job.getParm('docType')
+        self.audience = job.getParm('audience')
+        self.language = job.getParm('language')
 
     #------------------------------------------------------------------
     # Report on a dead URL
@@ -1818,13 +1822,14 @@ class UrlCheck:
         elem = match and match.group(1) or ""
         return u"""\
    <tr bgcolor='white'>
-    <td>%s</td>
     <td>%d</td>
     <td>%s</td>
     <td nowrap='1'>%s</td>
     <td>%s</td>
    </tr>
-""" % (row[3], row[0], row[2], err, elem)
+""" % (row[0], row[2], err, elem)
+#     <td>%s</td>
+# """ % (row[3], row[0], row[2], err, elem)
 
     #------------------------------------------------------------------
     # Run the report.
@@ -1832,17 +1837,90 @@ class UrlCheck:
     def run(self, job):
         job.setProgressMsg("Report started")
         cdr.logwrite("Starting UrlCheck report", LOGFILE)
-        query  = """\
-  SELECT top 500 q.doc_id, q.path, q.value, t.name
+        myLanguage = ''
+        myAudience = ''
+
+        # SQL Query for Summaries
+        # -----------------------
+        if self.docType == 'Summary':
+            if self.language == 'EN': 
+                sqLanguage = 'English'
+                myDefinition = 'TermDefinition'
+            else:
+                sqLanguage = 'Spanish'
+                myDefinition = 'TranslatedTermDefinition'
+            myLanguage = self.language
+
+            if self.audience == 'HP':
+                myAudience = 'Health professionals'
+            else:
+                myAudience = 'Patients'
+            query = """\
+  SELECT q.doc_id, q.path, q.value, a.value, l.value
+    FROM query_term q
+    JOIN document d
+      ON d.id = q.doc_id
+    JOIN query_term a
+      ON d.id = a.doc_id
+     AND a.path = '/Summary/SummaryMetaData/SummaryAudience'
+     AND a.value = '%s'
+    JOIN query_term l
+      ON l.doc_id = d.id
+     AND l.path = '/Summary/SummaryMetaData/SummaryLanguage'
+     AND l.value = '%s'
+   WHERE q.value LIKE 'http%%'
+     AND q.path LIKE '%%/@cdr:xref'
+ORDER BY q.doc_id
+""" % (myAudience, sqLanguage)
+
+        # SQL Query for Glossaries
+        # ------------------------
+        elif self.docType in ('Glossary', 'GlossaryTermConcept'): 
+            if self.language == 'EN': 
+                myLanguage = 'en'
+                myDefinition = 'TermDefinition'
+            else:
+                myLanguage = 'es'
+                myDefinition = 'TranslatedTermDefinition'
+            myAudience = self.audience
+
+            query = """\
+  SELECT q.doc_id, q.path, q.value, t.name, l.value
     FROM query_term q
     JOIN document d
       ON d.id = q.doc_id
     JOIN doc_type t
       ON t.id = d.doc_type
-   WHERE value LIKE 'http%'
-     AND path LIKE '%/@cdr:xref'
+     AND t.name = 'GlossaryTermConcept'
+left outer JOIN query_term l
+      ON l.doc_id = d.id
+     AND l.path like '%%/@UseWith'
+   WHERE q.value LIKE 'http%%'
+     AND (q.path LIKE '%%/%s/%%/@cdr:xref'
+          OR
+          q.path LIKE '%%/RelatedExternalRef/@cdr:xref'
+          AND 
+          l.value <> '%s'
+         )
 ORDER BY t.name, q.doc_id
-"""
+""" % (myDefinition, myLanguage)
+
+        # SQL Query for all others
+        # ------------------------
+        else:
+            query  = """\
+  SELECT q.doc_id, q.path, q.value, t.name
+    FROM query_term q
+    JOIN document d
+      ON d.id = q.doc_id
+    JOIN doc_type t
+      ON t.id = d.doc_type
+     AND t.name = '%s'
+   WHERE value LIKE 'http%%'
+     AND path LIKE '%%/@cdr:xref'
+ORDER BY t.name, q.doc_id
+""" % (self.docType)
+
         self.cursor.execute(query, timeout = 1200)
         rows = self.cursor.fetchall()
 
@@ -1860,6 +1938,9 @@ ORDER BY t.name, q.doc_id
         #--------------------------------------------------------------
         # Create the HTML for the report.
         #--------------------------------------------------------------
+        dtAdd = ""
+        if myLanguage or myAudience:
+            dtAdd = " - %s, %s" % (myLanguage.upper(), myAudience)
         html = [u"""\
 <!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
 <html>
@@ -1873,8 +1954,8 @@ ORDER BY t.name, q.doc_id
   </style>
  </head>
  <body>
-  <h1>CDR Report on Inactive Hyperlinks</h1>
-  <table border='0' width='100%' cellspacing='1' cellpadding='2'>
+  <h1>CDR Report on Inactive Hyperlinks<br>%s%s</h1>
+  <table border='0' width='100%%' cellspacing='1' cellpadding='2'>
    <tr bgcolor='silver'>
     <td><b>Doc Type</b></td>
     <td><b>Source Doc</b></td>
@@ -1882,8 +1963,9 @@ ORDER BY t.name, q.doc_id
     <td><b>Problem</b></td>
     <td><b>Element</b></td>
    </tr>
-"""]
+""" % (self.docType, dtAdd)]
         done = 0
+        msg = "No URLs found!"
         for row in rows:
             done    += 1
             msg      = "checked %d of %d URLs" % (done, len(rows))
