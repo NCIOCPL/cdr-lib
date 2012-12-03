@@ -1804,6 +1804,7 @@ can be viewed at
         
 #----------------------------------------------------------------------
 # Class for finding URLs which are not alive.
+# Changing use of depricated class httplib.HTTP
 #----------------------------------------------------------------------
 class UrlCheck:
     def __init__(self, host = 'localhost'):
@@ -1991,16 +1992,16 @@ ORDER BY t.name, q.doc_id
                 html.append(self.report(row, "Unexpected protocol"))
                 continue
             try:
-                http = httplib.HTTP(host)
-                http.putrequest('GET', selector)
-                http.endheaders()
-                reply = http.getreply()
-                if reply[0] / 100 != 2:
+                http = httplib.HTTPConnection(host)
+                http.request('GET', selector)
+                result = http.getresponse()
+
+                if result.status / 100 != 2:
                     try:
-                        message = unicode(reply[1], 'utf-8')
+                        message = unicode(result.reason, 'utf-8')
                     except:
-                        message = unicode(reply[1])
-                    message = u"%s: %s" % (reply[0], message)
+                        message = unicode(result.reason)
+                    message = u"%s: %s" % (result.status, message)
                     deadUrls[url] = message
                     html.append(self.report(row, message))
                 else:
