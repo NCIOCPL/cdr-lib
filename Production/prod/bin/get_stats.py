@@ -45,7 +45,7 @@ pubDir  = '/u/ftp/pub/pdq/full'
 
 FTPSERVER = 'cipsftp.nci.nih.gov'
 FTPUSER   = 'operator'
-FTPPWD    = 'mars56'
+FTPPWD    = '***REMOVED***'
 
 now     = time.time()
 lastWk  = time.time() - 5 * 24 * 60 * 60
