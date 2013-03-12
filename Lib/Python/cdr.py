@@ -22,7 +22,7 @@
 #----------------------------------------------------------------------
 import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
 import os, smtplib, time, atexit, cdrdb, tempfile, traceback, difflib
-import xml.sax.saxutils, datetime, subprocess
+import xml.sax.saxutils, datetime, subprocess, util
 
 #----------------------------------------------------------------------
 # Give caller variant forms of the host name.  See also getHostName()
@@ -51,6 +51,13 @@ def _getHostNames():
         return (localhost, "%s.nci.nih.gov" % localhost,
                 "http://%s.nci.nih.gov" % localhost)
 
+# ---------------------------------------------------------------------
+# The file cdrapphosts knows about the different server names in the
+# CBIIT and OCE environments based on the tier
+# ---------------------------------------------------------------------
+h = util.AppHost(util.getEnvironment(), util.getTier(),
+                   filename = 'd:/etc/cdrapphosts.rc')
+
 #----------------------------------------------------------------------
 # Set some package constants
 #----------------------------------------------------------------------
@@ -66,9 +73,11 @@ CTB_CDR_DEV      = "mahler.nci.nih.gov"
 PROD_HOST        = CBIIT_HOSTING and CBIIT_CDR_PROD or CTB_CDR_PROD
 DEV_HOST         = CBIIT_HOSTING and CBIIT_CDR_DEV  or CTB_CDR_PROD
 PUB_NAME         = HOST_NAMES[0]
-EMAILER_PROD     = 'pdqupdate.cancer.gov'
-EMAILER_DEV      = 'verdi.nci.nih.gov'
-EMAILER_CGI      = '/PDQUpdate/cgi-bin'
+EMAILER_PROD     = 'pdqupdate.cancer.gov'  # usage for OCE only
+EMAILER_DEV      = 'verdi.nci.nih.gov'     # usage for OCE only
+GPMAILER         = '%s.%s' % (h.host['EMAILERS'][0], h.host['EMAILERS'][1])
+GPMAILERDB       = '%s.%s' % (h.host['DB'][0], h.host['DB'][1])
+EMAILER_CGI      = '/PDQUpdate/cgi-bin'    # usage for OCE only
 CVSROOT          = "verdi.nci.nih.gov:/usr/local/cvsroot"
 SVNBASE          = 'https://imbncipf01.nci.nih.gov/svn/CDR/trunk'
 DEFAULT_HOST     = 'localhost'
@@ -3233,7 +3242,8 @@ def exceptionInfo():
 # Gets the email addresses for members of a group.
 #----------------------------------------------------------------------
 def getEmailList(groupName, host = 'localhost'):
-    conn = cdrdb.connect(dataSource = host)
+    ### conn = cdrdb.connect(dataSource = host)
+    conn = cdrdb.connect()
     cursor = conn.cursor()
     cursor.execute("""\
         SELECT u.email
@@ -4495,7 +4505,8 @@ def setDocStatus(credentials, docId, newStatus,
 # Retrieve the active status for a document.
 #----------------------------------------------------------------------
 def getDocStatus(credentials, docId, host = DEFAULT_HOST):
-    conn = cdrdb.connect('CdrGuest', dataSource = host)
+    ### conn = cdrdb.connect('CdrGuest', dataSource = host)
+    conn = cdrdb.connect('CdrGuest')
     cursor = conn.cursor()
     idTuple = exNormalize(docId)
     docId = idTuple[1]
@@ -4518,7 +4529,8 @@ def unblockDoc(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT,
 def getVersionedBlobChangeDate(credentials, docId, version, conn = None,
                                host = DEFAULT_HOST):
     if not conn:
-        conn = cdrdb.connect('CdrGuest', dataSource = host)
+        ### conn = cdrdb.connect('CdrGuest', dataSource = host)
+        conn = cdrdb.connect('CdrGuest')
     cursor = conn.cursor()
     cursor.execute("""\
         SELECT blob_id
@@ -4559,9 +4571,15 @@ def emailerHost():
 
 #----------------------------------------------------------------------
 # Returns the base URL for the current emailer CGI directory.
+# Note: The CNAME for the GPMailer is only accessible from the 
+#       bastion host but not from the CDR Server (C-Mahler)
 #----------------------------------------------------------------------
 def emailerCgi():
-    return "http://%s%s" % (emailerHost(), EMAILER_CGI)
+    if util.getEnvironment() == 'OCE':
+        return "http://%s%s" % (emailerHost(), EMAILER_CGI)
+    else:
+        return "https://%s.%s/cgi-bin" % (h.host['EMAILERSC'][0], 
+                                          h.host['EMAILERSC'][1])
 
 #----------------------------------------------------------------------
 # Create a file to use as an interprocess lockfile.
@@ -4747,7 +4765,8 @@ def getBoardNames(boardType = 'all', display = 'full', host = 'localhost'):
 
     # Get the board names and cdr-ids from the database
     # -------------------------------------------------
-    conn = cdrdb.connect(dataSource = host)
+    ### conn = cdrdb.connect(dataSource = host)
+    conn = cdrdb.connect()
     cursor = conn.cursor()
     cursor.execute("""\
      SELECT d.id,
