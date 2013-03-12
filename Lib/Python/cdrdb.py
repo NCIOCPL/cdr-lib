@@ -147,11 +147,25 @@ import pywintypes
 # Until we do this bogus object creation, the constants are invisible.
 win32com.client.Dispatch("ADODB.Connection")
 
+# As part of the move to CBIIT hosting, we have added the configuration
+# file d:/cdr/etc/dbhost, whose sole content is the name of the database
+# server (e.g. ***REMOVED*** or ***REMOVED***\MSSQLOCEDEV).
+try:
+    fp = open("d:/cdr/etc/dbhost")
+    CDR_DB_SERVER = fp.read().strip()
+    fp.close()
+    CBIIT_HOSTING = True
+except:
+    CDR_DB_SERVER = 'localhost'
+    CBIIT_HOSTING = False
+
 # Look in the environment for override of default location of CDR database.
-CDR_DB_SERVER = os.environ.get('CDR_DB_SERVER') or 'localhost'
+_cdr_db_server = os.environ.get('CDR_DB_SERVER')
+if _cdr_db_server:
+    CDR_DB_SERVER = _cdr_db_server
 
 # Logging support.  Set LOGFILE to log file pathname to enable logging.
-LOGFILE = None
+LOGFILE = os.environ.get('CDR_DB_LOGFILE') or None
 def debugLog(sql = None, params = None, what = "SQL Query"):
     if LOGFILE:
         import datetime
@@ -740,21 +754,41 @@ def connect(user = 'cdr', dataSource = CDR_DB_SERVER, db = 'cdr'):
     """
 
     adoConn = win32com.client.Dispatch("ADODB.Connection")
-    if user == 'cdr': password = '***REMOVED***'
-    elif user == 'CdrGuest': password = '***REDACTED***'
-    elif user == 'CdrPublishing': password = '***REMOVED***'
-    else: raise DatabaseError, ("connect",
-            ((u"invalid login name %s" % user),))
+    userUpper = user.upper()
+    if CBIIT_HOSTING:
+        port = 55373
+        if userUpper == 'CDR':
+            user = userUpper = 'CDRSQLACCOUNT'
+        if userUpper == 'CDRGUEST':
+            password = '***REMOVED***'
+        elif userUpper == 'CDRPUBLISHING':
+            password = '***REMOVED***'
+        elif userUpper == 'CDRSQLACCOUNT':
+            password = '***REMOVED***'
+        else:
+            raise DatabaseError, ("connect",
+                                  ((u"invalid login name %s" % user),))
+    else:
+        port = 32408
+        if userUpper == 'CDR':
+            password = '***REMOVED***'
+        elif userUpper == 'CDRGUEST':
+            password = '***REDACTED***'
+        elif userUpper == 'CDRPUBLISHING':
+            password = '***REMOVED***'
+        else:
+            raise DatabaseError, ("connect",
+                                  ((u"invalid login name %s" % user),))
 
     try:
-        debugLog(what = "connect(user=%s db=%s dataSource=%s)" %
-                 (user, db, dataSource))
-        port = 32408
-        adoConn.Open("Provider=SQLOLEDB;\
-                      Data Source=%s,%d;\
-                      Initial Catalog=%s;\
-                      User ID=%s;\
-                      Password=%s" % (dataSource, port, db, user, password))
+        connString = ("Provider=SQLOLEDB;"
+                      "Data Source=%s,%d;"
+                      "Initial Catalog=%s;"
+                      "User ID=%s;"
+                      "Password=%s" %
+                      (dataSource, port, db, user, password))
+        debugLog(what="CONNECTION STRING: %s" % repr(connString))
+        adoConn.Open(connString)
     except:
         raise DatabaseError, ("connect", buildErrorList(adoConn))
     return Connection(adoConn)
