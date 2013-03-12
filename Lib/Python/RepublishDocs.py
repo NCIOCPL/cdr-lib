@@ -123,7 +123,7 @@ class CdrRepublisher:
         self.__credentials = credentials
         self.__host        = host
         self.__port        = port
-        self.__conn        = cdrdb.connect(dataSource = host)
+        self.__conn        = cdrdb.connect()
         self.__cursor      = self.__conn.cursor()
         self.__onCG        = self.__getDocsOnCG()
     
