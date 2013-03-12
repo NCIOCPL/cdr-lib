@@ -387,10 +387,17 @@ class RemailSelector:
 #----------------------------------------------------------------------
 def emailerConn(db, host = None):
     try:
-        conn = MySQLdb.connect(host = host or cdr.emailerHost(),
-                               db = db,
-                               user = "dropbox",
-                               passwd = '***REMOVED***')
+        if cdr.h.org == 'OCE':
+            conn = MySQLdb.connect(host = host or cdr.emailerHost(),
+                                   db = db,
+                                   user = "dropbox",
+                                   passwd = '***REMOVED***')
+        else:
+            conn = MySQLdb.connect(host = host or cdr.GPMAILERDB,
+                                   db = db,
+                                   port = 3600,
+                                   user = "dropbox",
+                                   passwd = '***REMOVED***')
         conn.cursor().execute("SET NAMES utf8")
         return conn
     except:
