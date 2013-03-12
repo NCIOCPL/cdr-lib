@@ -751,7 +751,7 @@ def connect(user = 'cdr', dataSource = CDR_DB_SERVER, db = 'cdr'):
                  (user, db, dataSource))
         port = 32408
         adoConn.Open("Provider=SQLOLEDB;\
-                      Data Source=%s;%d\
+                      Data Source=%s,%d;\
                       Initial Catalog=%s;\
                       User ID=%s;\
                       Password=%s" % (dataSource, port, db, user, password))
