@@ -195,8 +195,9 @@ class Job:
         a group of CDR documents.
 
         Pass:
-            uid        - CDR user ID of operator.
+            uid        - CDR user ID of operator, or active session ID.
             pwd        - Password for CDR account.
+                         If !pw, then uid = session ID, else uid = user ID.
             filter     - Object with method to get document IDs to be
                          processed; must have method getDocIds() that returns
                          a sequence of CDR IDs as integers.
@@ -232,14 +233,19 @@ class Job:
 
         self.logFile   = open(logFile, 'a')
         self.logOpen   = True
-        self.uid       = uid
-        self.pwd       = pwd
         self.filter    = filter
         self.transform = transform
         self.comment   = comment
         self.conn      = cdrdb.connect('CdrGuest')
         self.cursor    = self.conn.cursor()
-        self.session   = cdr.login(uid, pwd)
+
+        # Set session based on passed uid/session id
+        if pwd:
+            # Caller passed a user id + password
+            self.session = cdr.login(uid, pwd)
+        else:
+            # Caller passed a session id
+            self.session = session
         error = cdr.checkErr(self.session)
         if error:
             raise Exception("Failure logging into CDR: %s" % error)
