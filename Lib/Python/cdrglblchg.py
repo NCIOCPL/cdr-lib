@@ -860,7 +860,7 @@ class GlblChg:
 
         # Session for host query
         session = self.ssVars[cdrcgi.SESSION]
-        cdr.logwrite ("Got session", LF)
+        cdr.logwrite ("Got session %s" % session, LF)
 
         # Setup some html and javascript for managing the list of docs
         # Select All, Clear All buttons
