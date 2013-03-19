@@ -55,7 +55,7 @@ def _getHostNames():
 # The file cdrapphosts knows about the different server names in the
 # CBIIT and OCE environments based on the tier
 # ---------------------------------------------------------------------
-h = util.AppHost(util.getEnvironment(), util.getTier(),
+h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
                    filename = 'd:/etc/cdrapphosts.rc')
 
 #----------------------------------------------------------------------
@@ -4575,7 +4575,7 @@ def emailerHost():
 #       bastion host but not from the CDR Server (C-Mahler)
 #----------------------------------------------------------------------
 def emailerCgi(cname=True):
-    if util.getEnvironment() == 'OCE':
+    if cdrutil.getEnvironment() == 'OCE':
         return "http://%s%s" % (emailerHost(), EMAILER_CGI)
     else:
         if cname:
