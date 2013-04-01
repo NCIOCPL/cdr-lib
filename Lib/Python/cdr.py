@@ -4586,6 +4586,18 @@ def emailerCgi(cname=True):
                                               h.host['EMAILERS'][1])
 
 #----------------------------------------------------------------------
+# Standardize the email subject prefix used to 
+#    Host-Tier: SubjectLine
+#----------------------------------------------------------------------
+def emailSubject(text='No Subject'):
+    if h.org == 'OCE':
+        subject   = u"%s: %s" % (PUB_NAME.capitalize(), text) 
+    else:
+        subject   = u"%s-%s: %s" %(h.org, h.tier, text)
+    
+    return subject
+
+#----------------------------------------------------------------------
 # Create a file to use as an interprocess lockfile.
 #----------------------------------------------------------------------
 # Static dictionary of locked files
