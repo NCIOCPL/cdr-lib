@@ -45,7 +45,7 @@ def _getWebServerName():
     except:
         pass
     return cdr.getHostName()[1]
-    
+
 #----------------------------------------------------------------------
 # Create some useful constants.  Some of these are no longer necessarily
 # useful (for example, ISPLAIN, or THISHOST) but are retained in case
@@ -227,7 +227,7 @@ def sendPage(page, textType = 'html', parms='', docId='', docType='',
     Pass:
         page     - Text to send, assumed to be 16 bit unicode.
         textType - HTTP Content-type, assumed to be html.
-        parms    - RowID storing all parameters if report needs to 
+        parms    - RowID storing all parameters if report needs to
                    be converted to Word, usually an empty string.
         docType  - if parms is supplied the document type is needed
                    to properly redirect the output, usually an empty string.
@@ -357,6 +357,9 @@ def logout(session):
 #----------------------------------------------------------------------
 def mainMenu(session, news = None):
 
+    # Save the session text, before converting to "?Session=session"
+    sessionText = session
+
     userPair = cdr.idSessionUser(session, session)
     session  = "?%s=%s" % (SESSION, session)
     title    = "CDR Administration"
@@ -382,7 +385,8 @@ def mainMenu(session, news = None):
     try:
         # Identify the groups of the user
         # -------------------------------
-        userInfo = cdr.getUser((userPair[0], userPair[1]), userPair[0])
+        # userInfo = cdr.getUser((userPair[0], userPair[1]), userPair[0])
+        userInfo = cdr.getUser(sessionText, userPair[0])
     except:
         bail('Unable to identify permissions for user. '
              'Has your session timed out?')
@@ -763,15 +767,15 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
                 CONTENT     = "text/html; charset=iso-8859-1">
   <STYLE        TYPE        = "text/css">
    <!--
-    *.header  { font-family: Arial, Helvietica, sans-serif; 
+    *.header  { font-family: Arial, Helvietica, sans-serif;
                 font-size: x-large;
                 white-space: nowrap;
                 color: #000066 }
-    *.subhdr  { font-family: Arial, Helvietica, sans-serif; 
+    *.subhdr  { font-family: Arial, Helvietica, sans-serif;
                 font-size: large;
                 white-space: nowrap;
                 color: #000066 }
-    *.page    { font-family: Arial, Helvietica, sans-serif; 
+    *.page    { font-family: Arial, Helvietica, sans-serif;
                 font-size: medium;
                 white-space: nowrap;
                 color: #000066 }
@@ -1249,15 +1253,15 @@ def advancedSearchResultsPageTop(subTitle, nRows, strings):
              CONTENT = "text/html; charset=iso-8859-1">
   <STYLE        TYPE = "text/css">
    <!--
-    *.header  { font-family: Arial, Helvietica, sans-serif; 
+    *.header  { font-family: Arial, Helvietica, sans-serif;
                 font-size: x-large;
                 white-space: nowrap;
                 color: #000066 }
-    *.subhdr  { font-family: Arial, Helvietica, sans-serif; 
+    *.subhdr  { font-family: Arial, Helvietica, sans-serif;
                 font-size: large;
                 white-space: nowrap;
                 color: #000066 }
-    *.page    { font-family: Arial, Helvietica, sans-serif; 
+    *.page    { font-family: Arial, Helvietica, sans-serif;
                 font-size: medium;
                 color: #000066 }
     :link            { color: navy }

@@ -353,13 +353,13 @@ if __name__ == "__main__":
         fatal("Error fetching parms: '%s'" % str(info))
 
     # Create modification job
-    (userid, pw) = cdr.idSessionUser(session, session)
     if runMode == "run":
         testMode = False
         # Users prefer the word "live" to "run"
     else:
         testMode = True
-    modifyJob = ModifyDocs.Job(userid, pw, Filter(startDt, endDt), Transform(),
+    modifyJob = ModifyDocs.Job(session, None, Filter(startDt, endDt),
+                               Transform(),
          "Global change CTGovProtocol unmapped strings (request #3451).",
          testMode=testMode)
 

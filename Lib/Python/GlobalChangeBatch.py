@@ -262,24 +262,13 @@ chg.dumpSsVars()
 #----------------------------------------------------------------------
 # Find original session
 session = jobObj.getParm (cdrcgi.SESSION)
+# session = cdr.login('ahm', 'cdrAhm123')
+# session = cdr.dupSession(session)
 cdr.logwrite ("GCBatch: Using session: %s" % session, LF)
+# time.sleep(30)
 
-# Find the original user associated with this session
-resp = cdr.idSessionUser (None, session)
-if type(resp)==type("") or type(resp)==type(u""):
-    # Failed - log and exit
-    jobObj.fail ("Can't identify original user: " + resp, logfile=LF)
-cdr.logwrite ("GCBatch: Got userid=%s" % resp[0], LF) # DEBUG
-
-# Re-login the original user
-session = cdr.login (resp[0], resp[1])
-if session.startswith ("<Error"):
-    jobObj.fail ("Can't login original user: %s:%s" % (resp[0], resp[1]),
-                 logfile=LF)
-cdr.logwrite ("GCBatch: Got new session: %s" % session, LF) # DEBUG
-
-# Object needs to know new session, not old one
-chg.ssVars[cdrcgi.SESSION] = session
+# Object needs to know new session, not old one XXX - ALREADY HAVE IT
+# chg.ssVars[cdrcgi.SESSION] = session
 
 
 #----------------------------------------------------------------------
@@ -689,4 +678,6 @@ else:
 # Signal completion
 jobObj.setStatus (cdrbatch.ST_COMPLETED)
 
+# Don't leave session hanging around
+cdr.logout(session)
 sys.exit (0)

@@ -12,7 +12,7 @@
 # BZIssue::4123
 # BZIssue::4207
 # BZIssue::5120 - Fixed exNormalize() to allow trailing spaces
-# BZIssue::5178 - Shorter URLS Needed For Successful Conversion of 
+# BZIssue::5178 - Shorter URLS Needed For Successful Conversion of
 #                 QC Reports into Word
 #
 #----------------------------------------------------------------------
@@ -56,7 +56,7 @@ def _getHostNames():
 # CBIIT and OCE environments based on the tier
 # ---------------------------------------------------------------------
 h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                   filename = 'd:/etc/cdrapphosts.rc')
+                    filename = 'd:/etc/cdrapphosts.rc')
 
 #----------------------------------------------------------------------
 # Set some package constants
@@ -623,18 +623,24 @@ def login(userId, passWord, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
 #----------------------------------------------------------------------
 # Identify the user associated with a session.
-# Essentially a reverse login, provides info needed to re-login
-# the same user with a new session.
-# Note: This is a quick and dirty insecure function, but anyone with
-#       access to it already has access to the same info via other means.
-#       Future version may use mySession to secure this function.
+# Originally this was a reverse login, providing a userid and password
+# enabling a program to re-login the same user with a new session.
+#
+# The function has been modified (March 2013) to only return a user id.
+# Passwords are to be encrypted in the database and are hence not stored
+# in any form that could be used to re-login.
+#
 # Pass:
 #   mySession  - session for user doing the lookup - currently unused.
 #   getSession - session to be looked up.
 #
 # Returns:
-#   Tuple of (userid, password)
+#   Tuple of (userid, '')
 #   Or single error string.
+#
+#   The original tuple type return is retained so that the many programs
+#   that use this function only to find a userid will work without
+#   modification.
 #----------------------------------------------------------------------
 def idSessionUser(mySession, getSession):
 
@@ -649,19 +655,42 @@ def idSessionUser(mySession, getSession):
     # Search user/session tables
     try:
         cursor.execute (\
-            "SELECT u.name, u.password " \
+            "SELECT u.name, '' AS pw" \
             "  FROM usr u, session s " \
             " WHERE u.id = s.usr " \
             "   AND s.name = '%s'" % getSession)
         usrRow = cursor.fetchone()
         if type(usrRow)==type(()) or type(usrRow)==type([]):
-            return usrRow
+            return (usrRow[0], '')
         else:
             # return "User unknown for session %s" % getSession
             return usrRow
     except cdrdb.Error, info:
         return "Error selecting usr for session: %s - %s" % \
                 (getSession, info[1][0])
+
+#----------------------------------------------------------------------
+# Duplicate a session, retrieving the name of a new session on behalf of
+# the same user as an existing session.
+#
+# Used when a batch job, e.g., a global change, must be run for a user
+# after he has logged off his interactive session.
+#
+# Pass:
+#   oldSession - string representing a logged in session to be duplicated.
+#                Do not pass a userId + password.
+#
+# Returns:
+#   String representing a new logged in session.
+#----------------------------------------------------------------------
+def dupSession(oldSession, host=DEFAULT_HOST, port=DEFAULT_PORT):
+
+    cmds = wrapCommand("<CdrDupSession/>", oldSession)
+    # DEBUG
+    resp = sendCommands(cmds, host, port)
+
+    # Extract the session ID.
+    return extract("<newSessionId[^>]*>(.+)</newSessionId>", resp)
 
 #----------------------------------------------------------------------
 # Select the email address for the user.
@@ -2784,7 +2813,7 @@ def putGroup(credentials, gName, group, host = DEFAULT_HOST,
 class User:
     def __init__(self,
                  name,
-                 password,
+                 password = '',
                  fullname = None,
                  office   = None,
                  email    = None,
@@ -2792,7 +2821,6 @@ class User:
                  groups   = [],
                  comment  = None):
         self.name         = name
-        self.password     = password
         self.fullname     = fullname
         self.office       = office
         self.email        = email
@@ -2815,8 +2843,7 @@ def getUser(credentials, uName, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Parse the response.
     name     = re.findall("<UserName>(.*?)</UserName>", resp)[0]
-    password = re.findall("<Password>(.*?)</Password>", resp)[0]
-    user     = User(name, password)
+    user     = User(name)
     fullname = re.findall("<FullName>(.*?)</FullName>", resp)
     office   = re.findall("<Office>(.*?)</Office>", resp)
     email    = re.findall("<Email>(.*?)</Email>", resp)
@@ -2830,16 +2857,32 @@ def getUser(credentials, uName, host = DEFAULT_HOST, port = DEFAULT_PORT):
     if email:    user.email    = email[0]
     if phone:    user.phone    = phone[0]
     if comment:  user.comment  = comment[0]
+
+    # Passwords are no longer stored in the server, but we create
+    #  a place for one in the User object.
+    user.password = ''
+
     return user
 
 #----------------------------------------------------------------------
-# Stores information about a CDR user.
+# Add or update the database record for a CDR user.
+#
+# Pass:
+#   credentials - Session for person creating the user (not the user himself).
+#   uName       - Name of user whose record should be modified.
+#   host        - Which server to use.
+#   port        - Which port.
+#
+# Return:
+#   string      - Error message if operation failed.
+#   None        - Operation succeeded.
 #----------------------------------------------------------------------
 def putUser(credentials, uName, user, host = DEFAULT_HOST,
                                       port = DEFAULT_PORT):
 
     # Create the command
     if uName:
+        # Credential must be
         cmd = "<CdrModUsr><UserName>%s</UserName>" % uName
         if user.name and uName != user.name:
             cmd += "<NewName>%s</NewName>" % user.name
@@ -3406,7 +3449,6 @@ def listVersions(credentials, docId, nVersions = -1,
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
-    print resp
 
     # Check for failure.
     if resp.find("<Errors") != -1:
@@ -4571,7 +4613,7 @@ def emailerHost():
 
 #----------------------------------------------------------------------
 # Returns the base URL for the current emailer CGI directory.
-# Note: The CNAME for the GPMailer is only accessible from the 
+# Note: The CNAME for the GPMailer is only accessible from the
 #       bastion host but not from the CDR Server (C-Mahler)
 #----------------------------------------------------------------------
 def emailerCgi(cname=True):
@@ -4579,22 +4621,22 @@ def emailerCgi(cname=True):
         return "http://%s%s" % (emailerHost(), EMAILER_CGI)
     else:
         if cname:
-            return "https://%s.%s/cgi-bin" % (h.host['EMAILERSC'][0], 
+            return "https://%s.%s/cgi-bin" % (h.host['EMAILERSC'][0],
                                               h.host['EMAILERSC'][1])
         else:
-            return "https://%s.%s/cgi-bin" % (h.host['EMAILERS'][0], 
+            return "https://%s.%s/cgi-bin" % (h.host['EMAILERS'][0],
                                               h.host['EMAILERS'][1])
 
 #----------------------------------------------------------------------
-# Standardize the email subject prefix used to 
+# Standardize the email subject prefix used to
 #    Host-Tier: SubjectLine
 #----------------------------------------------------------------------
 def emailSubject(text='No Subject'):
     if h.org == 'OCE':
-        subject   = u"%s: %s" % (PUB_NAME.capitalize(), text) 
+        subject   = u"%s: %s" % (PUB_NAME.capitalize(), text)
     else:
         subject   = u"%s-%s: %s" %(h.org, h.tier, text)
-    
+
     return subject
 
 #----------------------------------------------------------------------
