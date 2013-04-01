@@ -254,22 +254,14 @@ except cdrbatch.BatchException, be:
                  str(be), logfile=LF)
 
 # Debug logging
-cdr.logwrite ("GCBatch: Created chg object of type=%s" % chgType,LF)
-chg.dumpSsVars()
+# cdr.logwrite ("GCBatch: Created chg object of type=%s" % chgType,LF)
+# chg.dumpSsVars()
 
 #----------------------------------------------------------------------
 # Setup session
 #----------------------------------------------------------------------
 # Find original session
 session = jobObj.getParm (cdrcgi.SESSION)
-# session = cdr.login('ahm', 'cdrAhm123')
-# session = cdr.dupSession(session)
-cdr.logwrite ("GCBatch: Using session: %s" % session, LF)
-# time.sleep(30)
-
-# Object needs to know new session, not old one XXX - ALREADY HAVE IT
-# chg.ssVars[cdrcgi.SESSION] = session
-
 
 #----------------------------------------------------------------------
 # Run the actual global change
