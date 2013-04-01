@@ -244,8 +244,8 @@ class Job:
             # Caller passed a user id + password
             self.session = cdr.login(uid, pwd)
         else:
-            # Caller passed a session id
-            self.session = session
+            # Caller passed a session id instead of a user id
+            self.session = uid
         error = cdr.checkErr(self.session)
         if error:
             raise Exception("Failure logging into CDR: %s" % error)
