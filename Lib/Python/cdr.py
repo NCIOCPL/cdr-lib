@@ -2890,6 +2890,8 @@ def putUser(credentials, uName, user, host = DEFAULT_HOST,
         cmd = "<CdrAddUsr><UserName>%s</UserName>" % user.name
 
     # Add the user's password.
+    # Note: If user.password is empty, server will leave existing pw alone.
+    #       It will NOT remove the password.
     cmd += "<Password>%s</Password>" % user.password
 
     # Add the optional single elements.
