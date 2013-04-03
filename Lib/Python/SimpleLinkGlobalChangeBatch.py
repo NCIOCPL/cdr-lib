@@ -4,7 +4,7 @@
 # $Id$
 #
 #----------------------------------------------------------------------
-import sys, socket, cgi, re, cdr, cdrdb, cdrcgi, cdrbatch, ModifyDocs
+import sys, cgi, re, cdr, cdrdb, cdrcgi, cdrbatch, ModifyDocs
 
 LF       = cdr.DEFAULT_LOGDIR + "/GlobalChange.log"
 JOB_NAME = "SimpleLinkGlobalChangeBatch"
@@ -55,6 +55,9 @@ class SimpleLinkVars:
     def __init__(self, jobObj=None):
         """
         Read all of the variables stored in the CGI request object.
+
+        This constructor runs as part of the interactive browser based part
+        of the global change.
 
         Pass:
             jobObj - cdrbatch.CdrBatch object.
@@ -238,9 +241,12 @@ class SimpleLinkVars:
                 varValue = self.getVar(varName)
             argSeq.append((varName, varValue))
 
-        # Add session
+        # Add session for batch use
         if self.session:
-            argSeq.append(("session", self.session))
+            # Create a new session from the old so user can logout while
+            #  batch job runs under his credentials.
+            batchSession = cdr.dupSession(self.session)
+            argSeq.append(("batchSession", batchSession))
 
         return argSeq
 
@@ -872,7 +878,7 @@ class SimpleLinkTransform:
 
 
 #----------------------------------------------------------------------
-# Main
+# Main - Running as stand-alone batch job, not serving the browser
 #----------------------------------------------------------------------
 if __name__ == "__main__":
 
@@ -893,11 +899,11 @@ if __name__ == "__main__":
     filtTrans  = SimpleLinkTransform(linkVars)
 
     # Construct the ModifyDocs job
-    userId, pw = cdr.idSessionUser(linkVars.session, linkVars.session)
-    testMode   = True
+    testMode     = True
+    batchSession = linkVars.getVar('batchSession')
     if linkVars.getVar("runMode") == "Live":
         testMode = False
-    modifyJob  = ModifyDocs.Job(userId, pw, filtTrans, filtTrans,
+    modifyJob  = ModifyDocs.Job(batchSession, None, filtTrans, filtTrans,
                     "GlobalChangeSimpleLink of %s to %s in %s/%s" %
                         (linkVars.getVar("oldLinkRefIdStr"),
                          linkVars.getVar("newLinkRefIdStr"),
