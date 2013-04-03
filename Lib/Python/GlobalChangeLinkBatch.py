@@ -7,7 +7,7 @@
 #
 #                                           Alan Meyer, December 2010
 #----------------------------------------------------------------------
-import sys, socket, cgi, cdr, cdrdb, cdrcgi, cdrbatch, ModifyDocs
+import sys, cgi, cdr, cdrdb, cdrcgi, cdrbatch, ModifyDocs
 from lxml import etree as et
 
 LF       = cdr.DEFAULT_LOGDIR + "/GlobalChange.log"
@@ -309,7 +309,10 @@ class SimpleLinkVars:
 
         # Add session
         if self.session:
-            argSeq.append(("session", self.session))
+            # Create a new session from the old so user can logout while
+            #  batch job runs under his credentials.
+            batchSession = cdr.dupSession(self.session)
+            argSeq.append(("batchSession", batchSession))
 
         return argSeq
 
@@ -323,8 +326,8 @@ class SimpleLinkVars:
         batchArgs = self.__batchJobObj.getArgs()
         for varName in batchArgs.keys():
             self.vars[varName] = batchArgs[varName]
-        if self.getVar("session"):
-            self.session = self.getVar("session")
+        if self.getVar("batchSession"):
+            self.batchSession = self.getVar("batchSession")
 
 
     def sendPage(self, formContent, subBanner=None, haveVars=None,
@@ -984,8 +987,8 @@ if __name__ == "__main__":
     filtTrans = SimpleLinkTransform(linkVars)
 
     # Construct the ModifyDocs job
-    userId, pw = cdr.idSessionUser(linkVars.session, linkVars.session)
-    testMode   = True
+    testMode     = True
+    batchSession = linkVars.getVar('batchSession')
     if linkVars.getVar("runMode") == "Live":
         testMode = False
 
@@ -1009,8 +1012,8 @@ if __name__ == "__main__":
                     )
 
     # Create the job object
-    modifyJob  = ModifyDocs.Job(userId, pw, filtTrans, filtTrans, jobMsg,
-                                testMode=testMode, validate=True)
+    modifyJob  = ModifyDocs.Job(batchSession, None, filtTrans, filtTrans,
+                                jobMsg, testMode=testMode, validate=True)
 
     # DEBUG
     ModifyDocs.setMaxErrors(5)
