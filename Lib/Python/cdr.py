@@ -14,6 +14,7 @@
 # BZIssue::5120 - Fixed exNormalize() to allow trailing spaces
 # BZIssue::5178 - Shorter URLS Needed For Successful Conversion of
 #                 QC Reports into Word
+# BZIssue::5296 - Check for errors in delDoc()
 #
 #----------------------------------------------------------------------
 
@@ -1705,6 +1706,12 @@ def delDoc(credentials, docId, val = 'N', reason = '',
 
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+
+    # Check for failure.
+    errors = getErrors(resp, errorsExpected=False, asSequence=True,
+                       asUtf8=False)
+    if errors:
+        return errors
 
     # Extract the document ID.
     return extract("<DocId.*>(CDR\d+)</DocId>", resp)
