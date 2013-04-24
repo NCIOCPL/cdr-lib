@@ -28,7 +28,8 @@ import ExcelWriter, NCIThes, lxml.etree as etree
 #----------------------------------------------------------------------
 REPORTS_BASE = 'd:/cdr/reports'
 LOGFILE      = cdr.DEFAULT_LOGDIR + "/reports.log"
-EMAILFROM    = 'cdr@%s' % cdr.getHostName()[1]
+### EMAILFROM    = 'cdr@%s' % cdr.getHostName()[1]
+EMAILFROM    = 'cdr@%s' % cdr.CBIIT_NAMES[1]
 
 #----------------------------------------------------------------------
 # Send mail to the receipients specified for the job.
@@ -341,7 +342,8 @@ def protsWithoutPhones(job):
 """
     reportName = "/ProtSitesWithoutPhones-Job%d.html" % job.getJobId()
     cdr.logwrite("reportName: %s" % reportName, LOGFILE)
-    url = "%s/CdrReports%s" % (cdr.getHostName()[2], reportName)
+    ### url = "%s/CdrReports%s" % (cdr.getHostName()[2], reportName)
+    url = "%s/CdrReports%s" % (cdr.CBIIT_NAMES[2], reportName)
     cdr.logwrite("url: %s" % url, LOGFILE)
     msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (url,
                                                                     url)
@@ -353,7 +355,13 @@ def protsWithoutPhones(job):
 The report you requested on Protocol Sites Without Phones can be viewed at
 %s.
 """ % url
-    sendMail(job, "Report results", body)
+
+    if cdr.h.org == 'OCE':
+        subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+    else:
+        subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+
+    sendMail(job, subject, body)
     job.setProgressMsg(msg)
     job.setStatus(cdrbatch.ST_COMPLETED)
     cdr.logwrite("Completed report", LOGFILE)
@@ -776,7 +784,12 @@ def outcomeMeasuresCodingReport(job):
 The Outcome Measures Coding report you requested can be viewed at
 %s.
 """ % url
-    sendMail(job, "Report results", body)
+    if cdr.h.org == 'OCE':
+        subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+    else:
+        subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+
+    sendMail(job, subject, body)
     job.setProgressMsg(msg)
     job.setStatus(cdrbatch.ST_COMPLETED)
     cdr.logwrite("Completed report", LOGFILE)
@@ -809,7 +822,12 @@ def NCITTermUpdate(job):
 The NCIT Term Update report is available at
 %s.
 """ % url
-    sendMail(job, "Report results", body)
+    if cdr.h.org == 'OCE':
+        subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+    else:
+        subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+
+    sendMail(job, subject, body)
     job.setProgressMsg(msg)
     job.setStatus(cdrbatch.ST_COMPLETED)
     cdr.logwrite("Completed report", LOGFILE)    
@@ -1045,7 +1063,12 @@ def ospReport(job):
 The OSP report you requested on Protocols can be viewed at
 %s.
 """ % url
-    sendMail(job, "Report results", body)
+    if cdr.h.org == 'OCE':
+        subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+    else:
+        subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+
+    sendMail(job, subject, body)
     job.setProgressMsg(msg)
     job.setStatus(cdrbatch.ST_COMPLETED)
     cdr.logwrite("Completed report", LOGFILE)
@@ -1058,6 +1081,16 @@ class NonRespondentsReport:
         #--------------------------------------------------------------
         # Set up a database connection and cursor.
         #--------------------------------------------------------------
+        # Setting up the propper database source
+        # --------------------------------------
+        import cdrutil
+        h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
+                            filename = 'd:/etc/cdrapphosts.rc')
+        if h.org == 'OCE':
+            host = 'localhost'
+        else:
+            host = h.host['DBWIN'][0]
+
         self.conn = cdrdb.connect('CdrGuest', dataSource = host)
         self.cursor = self.conn.cursor()
             
@@ -1293,7 +1326,12 @@ class NonRespondentsReport:
 The %s Mailer Non-Respondents report you requested can be
 viewed at %s.
 """ % (self.docType, url)
-        sendMail(job, "Report results", body)
+        if cdr.h.org == 'OCE':
+            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+        else:
+            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+
+        sendMail(job, subject, body)
         job.setProgressMsg(msg)
         job.setStatus(cdrbatch.ST_COMPLETED)
         cdr.logwrite("Completed report", LOGFILE)
@@ -1314,6 +1352,16 @@ def nonRespondentsReport(job):
 class OrgProtocolReview:
     def __init__(self, id, host = 'localhost'):
         self.id     = id
+        # Setting up the propper database source
+        # --------------------------------------
+        import cdrutil
+        h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
+                            filename = 'd:/etc/cdrapphosts.rc')
+        if h.org == 'OCE':
+            host = 'localhost'
+        else:
+            host = h.host['DBWIN'][0]
+
         self.conn   = cdrdb.connect('CdrGuest', dataSource = host)
         self.cursor = self.conn.cursor()
 
@@ -1729,7 +1777,8 @@ SELECT DISTINCT prot_id.value, prot_id.doc_id, org_stat.value,
         file.write(cdrcgi.unicodeToLatin1(html))
         file.close()
         cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
-        url = "%s/CdrReports%s" % (cdr.getHostName()[2], name)
+        ### url = "%s/CdrReports%s" % (cdr.getHostName()[2], name)
+        url = "%s/CdrReports%s" % (cdr.CBIIT_NAMES[2], name)
         cdr.logwrite("url: %s" % url, LOGFILE)
         msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (
             url, url)
@@ -1740,7 +1789,12 @@ The Organization Protocol Review report you requested for CDR%d
 can be viewed at
 %s.
 """ % (self.id, url)
-        sendMail(job, "Report results", body)
+        if cdr.h.org == 'OCE':
+            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+        else:
+            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+
+        sendMail(job, subject, body)
         job.setProgressMsg(msg)
         job.setStatus(cdrbatch.ST_COMPLETED)
         cdr.logwrite("Completed report", LOGFILE)
@@ -1807,7 +1861,17 @@ can be viewed at
 # Changing use of depricated class httplib.HTTP
 #----------------------------------------------------------------------
 class UrlCheck:
-    def __init__(self, host = 'localhost'):
+    def __init__(self):
+        # Setting up the propper database source
+        # --------------------------------------
+        import cdrutil
+        h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
+                            filename = 'd:/etc/cdrapphosts.rc')
+        if h.org == 'OCE':
+            host = 'localhost'
+        else:
+            host = h.host['DBWIN'][0]
+
         self.conn    = cdrdb.connect('CdrGuest', dataSource = host)
         self.cursor  = self.conn.cursor()
         self.pattern = re.compile(u"([^/]+)/@cdr:xref$")
@@ -2031,7 +2095,8 @@ ORDER BY t.name, q.doc_id
         file.write(cdrcgi.unicodeToLatin1(u"".join(html)))
         file.close()
         cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
-        url = "%s/CdrReports%s" % (cdr.getHostName()[2], name)
+        ### url = "%s/CdrReports%s" % (cdr.getHostName()[2], name)
+        url = "%s/CdrReports%s" % (cdr.CBIIT_NAMES[2], name)
         cdr.logwrite("url: %s" % url, LOGFILE)
         msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (
             url, url)
@@ -2040,7 +2105,13 @@ ORDER BY t.name, q.doc_id
 The URL report you requested can be viewed at
 %s.
 """ % (url)
-        sendMail(job, "Report results", body)
+
+        if cdr.h.org == 'OCE':
+            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+        else:
+            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+
+        sendMail(job, subject, body)
         job.setProgressMsg(msg)
         job.setStatus(cdrbatch.ST_COMPLETED)
         cdr.logwrite("Completed UrlCheck report", LOGFILE)
@@ -2050,6 +2121,16 @@ The URL report you requested can be viewed at
 #----------------------------------------------------------------------
 class countPublishedDocs:
     def __init__(self, host = 'localhost'):
+        # Setting up the propper database source
+        # --------------------------------------
+        import cdrutil
+        h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
+                            filename = 'd:/etc/cdrapphosts.rc')
+        if h.org == 'OCE':
+            host = 'localhost'
+        else:
+            host = h.host['DBWIN'][0]
+
         self.conn    = cdrdb.connect('CdrGuest', dataSource = host)
         self.cursor  = self.conn.cursor()
         self.pattern = re.compile(u"([^/]+)/@cdr:xref$")
@@ -2480,7 +2561,8 @@ class countPublishedDocs:
         file.write(cdrcgi.unicodeToLatin1(u"".join(html)))
         file.close()
         cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
-        url = "%s/CdrReports%s" % (cdr.getHostName()[2], name)
+        ### url = "%s/CdrReports%s" % (cdr.getHostName()[2], name)
+        url = "%s/CdrReports%s" % (cdr.CBIIT_NAMES[2], name)
         cdr.logwrite("url: %s" % url, LOGFILE)
         msg = "<br>Report available at <a href='%s'><u>%s</u></a>." % (
             url, url)
@@ -2489,7 +2571,12 @@ class countPublishedDocs:
 The Publishing Documents Count report you requested can be viewed at
 %s.
 """ % (url)
-        sendMail(job, "Report results", body)
+        if cdr.h.org == 'OCE':
+            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+        else:
+            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+
+        sendMail(job, subject, body)
         job.setProgressMsg(msg)
         job.setStatus(cdrbatch.ST_COMPLETED)
         cdr.logwrite("Completed PubDocsCount report", LOGFILE)
@@ -2814,7 +2901,8 @@ class GlossaryTermSearch:
         file.write(cdrcgi.unicodeToLatin1(html))
         file.close()
         cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
-        url = "%s/CdrReports%s" % (cdr.getHostName()[2], name)
+        ### url = "%s/CdrReports%s" % (cdr.getHostName()[2], name)
+        url = "%s/CdrReports%s" % (cdr.CBIIT_NAMES[2], name)
         cdr.logwrite("url: %s" % url, LOGFILE)
         self.msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (
             url, url)
@@ -2823,7 +2911,12 @@ class GlossaryTermSearch:
 The Glossary Term report you requested can be viewed at
 %s.
 """ % (url)
-        sendMail(job, "Report results", body)
+        if cdr.h.org == 'OCE':
+            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+        else:
+            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+
+        sendMail(job, subject, body)
         job.setProgressMsg(self.msg)
         job.setStatus(cdrbatch.ST_COMPLETED)
         cdr.logwrite("Completed report", LOGFILE)
@@ -3347,7 +3440,12 @@ class ProtocolProcessingStatusReport:
 The Protocol Processing report you requested can be viewed at
 %s.
 """ % (url)
-        sendMail(job, "Report results", body)
+        if cdr.h.org == 'OCE':
+            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+        else:
+            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+
+        sendMail(job, subject, body)
         job.setProgressMsg(self.msg)
         job.setStatus(cdrbatch.ST_COMPLETED)
         cdr.logwrite("Completed report", LOGFILE)
@@ -3663,7 +3761,12 @@ The report you requested on Spanish Glossary Terms by Status can be viewed at:
 
 %s.
     """ % url
-        sendMail(job, "Report results", body)
+        if cdr.h.org == 'OCE':
+            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+        else:
+            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+
+        sendMail(job, subject, body)
         job.setProgressMsg(msg)
         job.setStatus(cdrbatch.ST_COMPLETED)
         cdr.logwrite("Completed report", LOGFILE)
@@ -3772,6 +3875,14 @@ class ProtocolOwnershipTransfer:
         #--------------------------------------------------------------
         # Set up a database connection and cursor.
         #--------------------------------------------------------------
+        import cdrutil
+        h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
+                            filename = 'd:/etc/cdrapphosts.rc')
+        if h.org == 'OCE':
+            host = 'localhost'
+        else:
+            host = h.host['DBWIN'][0]
+
         self.conn = cdrdb.connect('CdrGuest', dataSource = host)
         self.cursor = self.conn.cursor()
 
@@ -4423,7 +4534,14 @@ The Protocol Ownership Transfer Report you requested can be viewed at
 
   %s
 """ % (url)
-        sendMail(job, "Protocol Transfer Report results", body)
+        if cdr.h.org == 'OCE':
+            subject   = "%s: Protocol Transfer Report results" % \
+                                                   cdr.PUB_NAME.capitalize()
+        else:
+            subject   = "%s-%s: Protocol Transfer Report results" % \
+                                                   (cdr.h.org, cdr.h.tier)
+
+        sendMail(job, subject, body)
         job.setProgressMsg(msg)
         job.setStatus(cdrbatch.ST_COMPLETED)
         cdr.logwrite("Completed report", LOGFILE)
@@ -4545,7 +4663,14 @@ The Audio Recordings Tracking Report you requested can be viewed at
 
   %s
 """ % (url)
-        sendMail(job, "Audio Recordings Tracking Report results", body)
+        if cdr.h.org == 'OCE':
+            subject   = "%s: Audio Recordings Tracking Report results" % \
+                                                   cdr.PUB_NAME.capitalize()
+        else:
+            subject   = "%s-%s: Audio Recordings Tracking Report results" % \
+                                                   (cdr.h.org, cdr.h.tier)
+
+        sendMail(job, subject, body)
         job.setProgressMsg(msg)
         job.setStatus(cdrbatch.ST_COMPLETED)
         cdr.logwrite("Completed report", LOGFILE)
