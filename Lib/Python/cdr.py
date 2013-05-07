@@ -57,7 +57,7 @@ def _getHostNames():
 # CBIIT and OCE environments based on the tier
 # ---------------------------------------------------------------------
 h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                    filename = 'd:/etc/cdrapphosts.rc')
+                    filename = '/etc/cdrapphosts.rc')
 
 #----------------------------------------------------------------------
 # Set some package constants
