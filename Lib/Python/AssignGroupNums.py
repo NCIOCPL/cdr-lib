@@ -36,20 +36,6 @@ import sys, re, time, cdr, cdrdb
 # $Id$
 #
 # $Log: not supported by cvs2svn $
-# Revision 1.10  2008/04/11 02:55:08  ameyer
-# Added logging and exception management.
-#
-# Revision 1.9  2007/11/20 16:08:53  ameyer
-# Added logic to check SummaryURL attributes, determine whether they have
-# changed since the last publication and, if so, force the Summary with
-# the changed attribute to become the head of a group.  If it fails, all
-# Summaries or other docs that link to it will also fail so that their
-# modified SummaryRef references by URL will not be loaded (and vice
-# versa if one of them fails.)
-#
-# Revision 1.8  2007/05/11 03:54:36  ameyer
-# Updated a few comments.
-#
 # Revision 1.7  2007/05/07 01:34:54  bkline
 # Modified logic to handle links between new documents correctly.  Used
 # cdr.Exception class.  Replaced some sequences with sets.
@@ -77,10 +63,6 @@ import sys, re, time, cdr, cdrdb
 # Initial version, not yet tested.
 #
 #----------------------------------------------------------------------
-
-# Global (for this module) logger appends to publish.log
-gLog = cdr.Log("publish.log", banner=None)
-
 class GroupNums:
 
     def __init__(self, jobNum):
@@ -107,7 +89,6 @@ class GroupNums:
         Raises:
             cdr.Exception if failure.
         """
-        gLog.write("AGN = Instantiating AssignGroupNums object")
         self.__jobNum = jobNum
 
         # Read only access to the database
@@ -132,11 +113,6 @@ class GroupNums:
         #   hrefs from the final vendor filtered version
         self.__refPat = re.compile("ref=['\"](CDR\\d{10})")
 
-        # Regex pattern for finding SummaryURL attribute from
-        #   vendor filtered doc
-        self.__sumURLpat = re.compile("<SummaryURL xref=['\"]([^'\"]*)['\"]")
-
-        gLog.write("AGN: Searching for newly published documents")
         # Find all newly published documents
         # jobNum must match pub_proc id
         qry = """
@@ -157,9 +133,6 @@ SELECT id
                 "GroupNums: Database error fetching list of newly published "
                 "docs in job %d: %s" % (jobNum, str(info)))
 
-        # Add to the list any Summaries for which the SummaryURL changed
-        self.__addChangedUrlIds()
-
         # Get a list of all docs in the run that aren't removals
         qry = """
 SELECT id
@@ -178,8 +151,6 @@ SELECT id
         # Remember counts
         self.__newDocCount = len(self.__newDocs)
         self.__docCount    = len(docList)
-        gLog.write("AGN: Found %d docs, including %d new docs" %
-                   (self.__docCount, self.__newDocCount))
 
         # Process every doc in the job
         for docId in docList:
@@ -197,8 +168,6 @@ SELECT id
 
             # Ensure that we're in the same group as all of these new docs.
             for newDocId in linkedNewDocs:
-
-              try:
 
                 # Find out if the new document is already in a group
                 newDocGroupId = self.__docs.get(newDocId)
@@ -230,21 +199,12 @@ SELECT id
                     self.__docs[docId] = groupId
                     self.__docs[newDocId] = groupId
 
-              except Exception, e:
-                # Report to log and bubble it up
-                gLog.write("AGN: Caught exception=%s value='%s' on docId=%d" %
-                           (str(type(e)), str(e), docId), tback=True)
-                raise
-
-
             # If we still don't have a group for this document, make one.
             if not groupId:
                 groupId = self.genNewUniqueNum()
                 group   = self.__groups[groupId] = set()
                 group.add(docId)
                 self.__docs[docId] = groupId
-
-        gLog.write("AGN: Completed AssignGroupNums processing")
 
     def __getXml(self, docId):
         """
@@ -297,100 +257,6 @@ SELECT id
 
         return refs
 
-    def __getSummaryURL(self, xml):
-        """
-        Get the SummaryURL value from a Summary.
-
-        Uses regular expression for same reason as getRefs.
-
-        Pass:
-            xml - Vendor format text in utf-8 ( XXX - UNICODE?)
-
-        Return:
-            SummaryURL as a string.
-            None if not found.
-        """
-        match = self.__sumURLpat.search(xml, re.MULTILINE)
-        if match:
-            return match.group(1)
-        return None
-
-    def __addChangedUrlIds(self):
-        """
-        If any Summary has a changed SummaryURL, add its ID to the
-        list of docs that function as heads of groups.
-        """
-        # Find any Summary docs published this run
-        qry = """
-SELECT ppcw.id
-  FROM pub_proc_cg_work ppcw
-  JOIN document d
-    ON ppcw.id = d.id
-  JOIN doc_type t
-    ON d.doc_type = t.id
- WHERE t.name = 'Summary'
- """
-        try:
-            self.__cursor.execute(qry)
-            docList = [row[0] for row in self.__cursor.fetchall()]
-        except cdrdb.Error, info:
-            raise cdr.Exception(
-             "GroupNums: Database error fetching list of Summary doc IDs: %s"
-                % str(info))
-
-        # If no Summaries published, we're done
-        if len(docList) == 0:
-            return
-
-        # Else have to check each one to see if the doc published
-        #   before this has a different value
-        for docId in docList:
-            try:
-                self.__cursor.execute(
-                    "SELECT xml FROM pub_proc_cg WHERE id = %d" % docId)
-                xmlRow = self.__cursor.fetchone()
-                # Null XML should never occur but we have evidence that it did
-                if xmlRow and xmlRow[0]:
-                    # Extract unicode string from row and convert to utf-8
-                    xml = xmlRow[0].encode('utf-8')
-                else:
-                    # If not found, it's a new Summary, never before published
-                    # We can skip it because it will already be in the
-                    #   __newDocs list
-                    continue
-            except cdrdb.Error, info:
-                raise cdr.Exception(
-                 "GroupNums: DB error fetching pub_proc_cg.xml for ID=%d: %s"
-                    % (docId, str(info)))
-
-            # Get it's SummaryURL attribute value
-            oldUrl = self.__getSummaryURL(xml)
-
-            # Get new XML and extract value
-            try:
-                self.__cursor.execute(
-                    "SELECT xml FROM pub_proc_cg_work WHERE id = %d" % docId)
-                xmlRow = self.__cursor.fetchone()
-                if xmlRow and xmlRow[0]:
-                    # Extract unicode string from row and convert to utf-8
-                    xml = xmlRow[0].encode('utf-8')
-                else:
-                    # Not found means doc is being removed
-                    # No group processing required
-                    continue
-            except cdrdb.Error, info:
-                raise cdr.Exception(
-             "GroupNums: DB error fetching pub_proc_cg_work.xml for ID=%d: %s"
-                    % (docId, str(info)))
-            newUrl = self.__getSummaryURL(xml)
-
-            # If they aren't the same, or one didn't exist, make the
-            #   doc head of a group
-            if newUrl != oldUrl:
-                self.__newDocs.add(docId)
-
-        return
-
     def __mergeGroups(self, dstGrpId, srcGrpId):
         """
         Merge all docs in srcGrpId's group into group for dstGrpId and
@@ -423,7 +289,6 @@ SELECT ppcw.id
         """
         Return a list of docIds for newly published documents in the job.
         """
-        gLog.write("AGN: getNewDocs()")
         newDocs = list(self.__newDocs)
         newDocs.sort()
         return newDocs
@@ -432,7 +297,6 @@ SELECT ppcw.id
         """
         Return a list of all docIds, newly published or not.
         """
-        gLog.write("AGN: getAllDocs()")
         allDocs = self.__docs.keys()
         allDocs.sort()
         return allDocs
@@ -462,21 +326,18 @@ SELECT ppcw.id
         """
         Report how many docs were newly published.
         """
-        gLog.write("AGN: getNewDocCount()")
         return self.__newDocCount
 
     def getDocCount(self):
         """
         Report how many docs were processed (docs that didn't fail)
         """
-        gLog.write("AGN: getDocCount()")
         return self.__docCount
 
     def getGroupIds(self):
         """
         Return sequence of unique group IDs assigned.
         """
-        gLog.write("AGN: getGroupIds()")
         return tuple(self.__groups.keys())
 
 # Main routine for test purposes only
