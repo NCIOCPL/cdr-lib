@@ -57,12 +57,39 @@ def _getHostNames():
 # CBIIT and OCE environments based on the tier
 # ---------------------------------------------------------------------
 h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                    filename = '/etc/cdrapphosts.rc')
+                   filename = 'd:/etc/cdrapphosts.rc')
+
+#----------------------------------------------------------------------
+# Give caller variant forms of the host name.  See also getHostName()
+# version below, which uses cached result of call to this function.
+# The url is set so that links will work from the bastion host.
+#----------------------------------------------------------------------
+def _getCbiitNames(ssl=True):
+    """
+    Return the server host name as a tuple of:
+        naked host name
+        fully qualified host name
+        fully qualified name, prefixed by "http://"
+    """
+    if ssl: s = 's'
+    else:   s = ''
+
+    if h.org == 'OCE':
+        host = '%s' % h.host['APP'][0]
+        fqdn = '%s.%s' % (h.host['APP'][0], h.host['APP'][1])
+    else:
+        host = '%s' % h.host['APPC'][0]
+        fqdn = '%s.%s' % (h.host['APPC'][0], h.host['APPC'][1])
+
+    url  = 'http%s://%s' % (s, fqdn)
+
+    return (host, fqdn, url)
 
 #----------------------------------------------------------------------
 # Set some package constants
 #----------------------------------------------------------------------
 HOST_NAMES       = _getHostNames()
+CBIIT_NAMES      = _getCbiitNames()
 OPERATOR         = 'operator@cips.nci.nih.gov'
 DOMAIN_NAME      = ".".join(HOST_NAMES[1].split(".")[1:])
 PROD_DB_NAME     = CBIIT_HOSTING and 'ncidb-d065-p' or 'bach' # XXX I'm guessing
