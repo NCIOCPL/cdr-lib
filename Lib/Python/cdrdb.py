@@ -147,17 +147,14 @@ import pywintypes
 # Until we do this bogus object creation, the constants are invisible.
 win32com.client.Dispatch("ADODB.Connection")
 
-# As part of the move to CBIIT hosting, we have added the configuration
-# file d:/cdr/etc/dbhost, whose sole content is the name of the database
-# server (e.g. ***REMOVED*** or ***REMOVED***\MSSQLOCEDEV).
-try:
-    fp = open("d:/cdr/etc/dbhost")
-    CDR_DB_SERVER = fp.read().strip()
-    fp.close()
-    CBIIT_HOSTING = True
-except:
+# Setting up the propper database source
+# --------------------------------------
+h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
+                            filename = 'd:/etc/cdrapphosts.rc')
+if h.org == 'OCE':
     CDR_DB_SERVER = 'localhost'
-    CBIIT_HOSTING = False
+else:
+    CDR_DB_SERVER = h.host['DBWIN'][0]
 
 # Look in the environment for override of default location of CDR database.
 _cdr_db_server = os.environ.get('CDR_DB_SERVER')
