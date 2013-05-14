@@ -775,7 +775,8 @@ def outcomeMeasuresCodingReport(job):
     fobj.write(u"\n".join(report).encode('utf-8'))
     fobj.close()
     cdr.logwrite("saving %s" % fullname, LOGFILE)
-    url = "http://%s/CdrReports%s" % (cdrcgi.WEBSERVER, name)
+    ### url = "http://%s/CdrReports%s" % (cdrcgi.WEBSERVER, name)
+    url = "%s/CdrReports%s" % (cdr.CBIIT_NAMES[2], name)
     cdr.logwrite("url: %s" % url, LOGFILE)
     msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (url, url)
     
@@ -785,9 +786,11 @@ The Outcome Measures Coding report you requested can be viewed at
 %s.
 """ % url
     if cdr.h.org == 'OCE':
-        subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+        subject   = "%s: Report results - Outcome Measures" % \
+                                                cdr.PUB_NAME.capitalize()
     else:
-        subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+        subject   = "%s-%s: Report results - Outcome Measures" % (
+                                                   cdr.h.org, cdr.h.tier)
 
     sendMail(job, subject, body)
     job.setProgressMsg(msg)
@@ -812,7 +815,9 @@ def NCITTermUpdate(job):
                            drugTerms=drug)
 
     cdr.logwrite("saving %s" % excelOutputFile, LOGFILE)
-    url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+    ### url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+    ###                                                     cdrcgi.BASE, name)
+    url = "%s%s/GetReportWorkbook.py?name=%s" % (cdr.CBIIT_NAMES[2],
                                                         cdrcgi.BASE, name)
     cdr.logwrite("url: %s" % url, LOGFILE)
     msg = "<br>Report available at <a href='%s'><u>%s</u></a>." % (url, url)
@@ -823,9 +828,11 @@ The NCIT Term Update report is available at
 %s.
 """ % url
     if cdr.h.org == 'OCE':
-        subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+        subject   = "%s: Report results - NCIT Term Update" % \
+                                                   cdr.PUB_NAME.capitalize()
     else:
-        subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+        subject   = "%s-%s: Report results - NCIT Term Update" % (
+                                                   cdr.h.org, cdr.h.tier)
 
     sendMail(job, subject, body)
     job.setProgressMsg(msg)
@@ -1053,7 +1060,9 @@ def ospReport(job):
     wb.write(fobj, True)
     fobj.close()
     cdr.logwrite("saving %s" % fullname, LOGFILE)
-    url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+    ### url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+    ###                                                     cdrcgi.BASE, name)
+    url = "%s%s/GetReportWorkbook.py?name=%s" % (cdr.CBIIT_NAMES[2],
                                                         cdrcgi.BASE, name)
     cdr.logwrite("url: %s" % url, LOGFILE)
     msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (url, url)
@@ -1064,9 +1073,11 @@ The OSP report you requested on Protocols can be viewed at
 %s.
 """ % url
     if cdr.h.org == 'OCE':
-        subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+        subject   = "%s: Report results - OSP Report" % \
+                                                    cdr.PUB_NAME.capitalize()
     else:
-        subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+        subject   = "%s-%s: Report results - OSP Report" % (
+                                                       cdr.h.org, cdr.h.tier)
 
     sendMail(job, subject, body)
     job.setProgressMsg(msg)
@@ -1314,7 +1325,10 @@ class NonRespondentsReport:
         wb.write(f, True)
         f.close()
         cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
-        url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+        ### url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+        ###                                                    cdrcgi.BASE,
+        ###                                                    name)
+        url = "%s%s/GetReportWorkbook.py?name=%s" % (cdr.CBIIT_NAMES[2],
                                                             cdrcgi.BASE,
                                                             name)
         cdr.logwrite("url: %s" % url, LOGFILE)
@@ -1327,9 +1341,11 @@ The %s Mailer Non-Respondents report you requested can be
 viewed at %s.
 """ % (self.docType, url)
         if cdr.h.org == 'OCE':
-            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+            subject   = "%s: Report results - Mailer (NR)" % \
+                                                    cdr.PUB_NAME.capitalize()
         else:
-            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+            subject   = "%s-%s: Report results - Mailer (NR)" % (
+                                                       cdr.h.org, cdr.h.tier)
 
         sendMail(job, subject, body)
         job.setProgressMsg(msg)
@@ -1790,9 +1806,11 @@ can be viewed at
 %s.
 """ % (self.id, url)
         if cdr.h.org == 'OCE':
-            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+            subject   = "%s: Report results - Org protocol review" % \
+                                                   cdr.PUB_NAME.capitalize()
         else:
-            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+            subject   = "%s-%s: Report results - Org protocol review" % (
+                                                      cdr.h.org, cdr.h.tier)
 
         sendMail(job, subject, body)
         job.setProgressMsg(msg)
@@ -2107,9 +2125,11 @@ The URL report you requested can be viewed at
 """ % (url)
 
         if cdr.h.org == 'OCE':
-            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+            subject   = "%s: Report results - URL Check" % \
+                                                cdr.PUB_NAME.capitalize()
         else:
-            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+            subject   = "%s-%s: Report results - URL Check" % (
+                                                   cdr.h.org, cdr.h.tier)
 
         sendMail(job, subject, body)
         job.setProgressMsg(msg)
@@ -2572,9 +2592,11 @@ The Publishing Documents Count report you requested can be viewed at
 %s.
 """ % (url)
         if cdr.h.org == 'OCE':
-            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+            subject   = "%s: Report results - Pub doc count" % \
+                                                   cdr.PUB_NAME.capitalize()
         else:
-            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+            subject   = "%s-%s: Report results - Pub doc count" % (
+                                                      cdr.h.org, cdr.h.tier)
 
         sendMail(job, subject, body)
         job.setProgressMsg(msg)
@@ -2912,9 +2934,11 @@ The Glossary Term report you requested can be viewed at
 %s.
 """ % (url)
         if cdr.h.org == 'OCE':
-            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+            subject   = "%s: Report results - Glossary Term" % \
+                                                      cdr.PUB_NAME.capitalize()
         else:
-            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+            subject   = "%s-%s: Report results - Glossary Term" % (
+                                                      cdr.h.org, cdr.h.tier)
 
         sendMail(job, subject, body)
         job.setProgressMsg(self.msg)
@@ -3429,7 +3453,10 @@ class ProtocolProcessingStatusReport:
         wb.write(f, True)
         f.close()
         cdr.logwrite("saving %s" % (REPORTS_BASE + "/" + name), LOGFILE)
-        url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+        ### url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+        ###                                                     cdrcgi.BASE,
+        ###                                                     name)
+        url = "%s%s/GetReportWorkbook.py?name=%s" % (cdr.CBIIT_NAMES[2],
                                                             cdrcgi.BASE,
                                                             name)
         cdr.logwrite("url: %s" % url, LOGFILE)
@@ -3441,9 +3468,11 @@ The Protocol Processing report you requested can be viewed at
 %s.
 """ % (url)
         if cdr.h.org == 'OCE':
-            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+            subject   = "%s: Report results - Prot processing" % \
+                                                    cdr.PUB_NAME.capitalize()
         else:
-            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+            subject   = "%s-%s: Report results - Prot processing" % (
+                                                       cdr.h.org, cdr.h.tier)
 
         sendMail(job, subject, body)
         job.setProgressMsg(self.msg)
@@ -3748,7 +3777,8 @@ class SpanishGlossaryTermsByStatus:
         reportName = ("/SpanishGlossaryTermsByStatus-Job%d.html" %
                       job.getJobId())
         cdr.logwrite("reportName: %s" % reportName, LOGFILE)
-        url = "http://%s/CdrReports%s" % (cdrcgi.WEBSERVER, reportName)
+        ### url = "http://%s/CdrReports%s" % (cdrcgi.WEBSERVER, reportName)
+        url = "%s/CdrReports%s" % (cdr.CBIIT_NAMES[2], reportName)
         cdr.logwrite("url: %s" % url, LOGFILE)
         msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (url,
                                                                         url)
@@ -3762,9 +3792,11 @@ The report you requested on Spanish Glossary Terms by Status can be viewed at:
 %s.
     """ % url
         if cdr.h.org == 'OCE':
-            subject   = "%s: Report results" % cdr.PUB_NAME.capitalize()
+            subject   = "%s: Report results - Glossary term (ES)" % \
+                                                   cdr.PUB_NAME.capitalize()
         else:
-            subject   = "%s-%s: Report results" % (cdr.h.org, cdr.h.tier)
+            subject   = "%s-%s: Report results - Glossary term (ES)" % (
+                                                      cdr.h.org, cdr.h.tier)
 
         sendMail(job, subject, body)
         job.setProgressMsg(msg)
@@ -4520,7 +4552,10 @@ class ProtocolOwnershipTransfer:
         f.close()
 
         cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
-        url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+        ### url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+        ###                                                     cdrcgi.BASE,
+        ###                                                     name)
+        url = "%s%s/GetReportWorkbook.py?name=%s" % (cdr.CBIIT_NAMES[2],
                                                             cdrcgi.BASE,
                                                             name)
         cdr.logwrite("url: %s" % url, LOGFILE)
@@ -4535,10 +4570,10 @@ The Protocol Ownership Transfer Report you requested can be viewed at
   %s
 """ % (url)
         if cdr.h.org == 'OCE':
-            subject   = "%s: Protocol Transfer Report results" % \
+            subject   = "%s: Report results - Protocol Transfer" % \
                                                    cdr.PUB_NAME.capitalize()
         else:
-            subject   = "%s-%s: Protocol Transfer Report results" % \
+            subject   = "%s-%s: Report results - Protocol Transfer" % \
                                                    (cdr.h.org, cdr.h.tier)
 
         sendMail(job, subject, body)
