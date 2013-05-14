@@ -5,7 +5,7 @@
 # $Id: cdrutil.py 11558 2013-03-19 01:54:40Z volker $
 #
 #----------------------------------------------------------------------
-import sys, time
+import MySQLdb, sys, time
 
 # -----------------------------------------------
 # -----------------------------------------------
@@ -66,7 +66,8 @@ class AppHost:
                         if self.tier == tier:
                             self.host[use] = [name, domain]
                 except ValueError:
-                    # XXX Should this pass?
+                    # If there's an error in one row, keep reading to
+                    #  get the data for the other rows
                     pass
 
             f.close()
@@ -140,8 +141,6 @@ def wrapFieldsInMap(fields):
 def getConnection(db = 'emailers'):
 
     # Don't call getConnection unless we're dealing with MySQL.
-    import MySQLdb
-
     if getEnvironment() == 'CBIIT':
         h = AppHost(getEnvironment(), getTier(),
                                filename = '/etc/cdrapphosts.rc')
