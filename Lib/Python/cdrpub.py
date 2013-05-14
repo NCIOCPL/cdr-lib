@@ -119,7 +119,11 @@ class Publish:
     __timeOut  = 3000
     __cdrEmail = "cdr@%s" % cdr.getHostName()[1]
     __pd2cg    = "Push_Documents_To_Cancer.Gov"
-    __cdrHttp  = "%s/cgi-bin/cdr" % cdr.getHostName()[2]
+    if cdr.h.org == 'OCE':
+        __cdrHttp  = "%s/cgi-bin/cdr" % cdr.getHostName()[2]
+    else:
+        __cdrHttp  = "https://%s.%s/cgi-bin/cdr" % (cdr.h.host['APPC'][0],
+                                                    cdr.h.host['APPC'][1])
     __interactiveMode   = 0
     __checkPushedDocs   = 0
     ## __includeLinkedDocs = 0
@@ -2351,7 +2355,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                                       brakeAtDocCount/tDelta))
 
                     # We only need to take a breather and pause the program
-                    # if documents are being processes very fast.  For 
+                    # if documents are being processes very fast.  For
                     # larger documents (almost all but audio files) we don't
                     # need to take a break
                     # ------------------------------------------------------
