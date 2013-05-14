@@ -469,6 +469,15 @@ class CdrBatch:
             Exception if database error, or passed job id not found.
         """
 
+        # Setting up the propper database source
+        # --------------------------------------
+        h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
+                            filename = 'd:/etc/cdrapphosts.rc')
+        if h.org == 'OCE':
+            host = 'localhost'
+        else:
+            host = h.host['DBWIN'][0]
+
         # Set job id to None or passed value
         self.__jobId = jobId
 
@@ -478,7 +487,7 @@ class CdrBatch:
         # Need access to the database for anything we do
         self.__conn = None
         try:
-            self.__conn   = cdrdb.connect (dataSource = host)
+            self.__conn   = cdrdb.connect(dataSource = host)
             self.__cursor = self.__conn.cursor()
         except cdrdb.Error, info:
             # Job must not try to run itself
