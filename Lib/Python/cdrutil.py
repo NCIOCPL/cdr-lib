@@ -1,19 +1,18 @@
-#!/usr/bin/python
-
 #----------------------------------------------------------------------
 #
-# $Id: cdrutil.py 11558 2013-03-19 01:54:40Z volker $
+# $Id: cdrutil.py -1   $
 #
 #----------------------------------------------------------------------
-import MySQLdb, sys, time
+import MySQLdb, sys, time, os
 
 # -----------------------------------------------
+#
 # -----------------------------------------------
 def isProductionHost():
-    fp = file('/etc/emailers.rc')
+    fp = file('/etc/cdrtier.rc')
     rc = fp.read()
-    fp.close();
-    return rc.lower().find('production') != -1
+    fp.close()
+    return rc.find('PROD') != -1
 
 # -----------------------------------------------
 # -----------------------------------------------
@@ -66,8 +65,6 @@ class AppHost:
                         if self.tier == tier:
                             self.host[use] = [name, domain]
                 except ValueError:
-                    # If there's an error in one row, keep reading to
-                    #  get the data for the other rows
                     pass
 
             f.close()
@@ -94,14 +91,14 @@ From: %s
 To: %s
 Subject: %s
 """ % (sender, recipList, subject)
-
+            
     # Set content type for html
     if html:
         message += "Content-type: text/html; charset=utf-8\n"
-
+                
     # Separator line + body
     message += "\n%s" % body
-
+                
     # Send it
     import smtplib
     server = smtplib.SMTP(SMTP_RELAY)
@@ -112,7 +109,8 @@ Subject: %s
 #----------------------------------------------------------------------
 # Write to a debug log.
 #----------------------------------------------------------------------
-def log(what, logfile='/weblogs/glossifier/glossifier.log'):
+#def log(what, logfile='/weblogs/glossifier/glossifier.log'):
+def log(what, logfile='/usr/local/cdr/log/cdr.log'):
     logFile = logfile
     if DEBUG_LOG:
         f = open('%s' % logFile, 'a')
@@ -139,10 +137,8 @@ def wrapFieldsInMap(fields):
 # Connect to the emailers database.
 #----------------------------------------------------------------------
 def getConnection(db = 'emailers'):
-
-    # Don't call getConnection unless we're dealing with MySQL.
     if getEnvironment() == 'CBIIT':
-        h = AppHost(getEnvironment(), getTier(),
+        h = AppHost(getEnvironment(), getTier(), 
                                filename = '/etc/cdrapphosts.rc')
         conn = MySQLdb.connect(user = 'emailers',
                                host = h.host['DBNIX'][0], #'***REMOVED***-d',
@@ -150,8 +146,8 @@ def getConnection(db = 'emailers'):
                                passwd = '***REMOVED***',
                                db = db)
     else:
-        conn = MySQLdb.connect(user = 'emailers',
-                               passwd = '***REMOVED***',
+        conn = MySQLdb.connect(user = 'emailers', 
+                               passwd = '***REMOVED***', 
                                db = db)
 
     conn.cursor().execute("SET NAMES utf8")
@@ -182,3 +178,67 @@ def base36(n):
         return lowestDigit
     else:
         return base36(higherDigits) + lowestDigit
+
+#----------------------------------------------------------------------
+# Run an external command.
+#----------------------------------------------------------------------
+def runCommand(command):
+    commandStream = os.popen('%s 2>&1' % command)
+    output = commandStream.read()
+    code = commandStream.close()
+    return CommandResult(code, output)
+
+
+#----------------------------------------------------------------------
+# Object for results of an external command.
+#----------------------------------------------------------------------
+class CommandResult:
+    def __init__(self, code, output, error = None):
+        self.code   = code
+        self.output = output
+        self.error  = error
+
+
+# -----------------------------------------------------------
+# Extract the valid document types for licensees from the
+# driver document
+# -----------------------------------------------------------
+def getDocTypes(filename = '/home/cdroperator/prod/lib/pdq_files.txt'):
+    sourceDoc = filename
+    fileText = open(sourceDoc, 'r').readlines()
+
+    docTypes = []
+
+    for record in fileText:
+         if record.split(':')[0] == 'FTPCDRPUB':
+             docTypes.append(record.split(':')[1])
+
+    return docTypes
+
+#----------------------------------------------------------------------
+# Extract the text content of a DOM element.
+#----------------------------------------------------------------------
+def getTextContent(node, recurse=False, separator=''):
+    """
+    Get text content for a node, possibly including sub nodes.
+
+    Pass:
+        node      - Node to be checked.
+        recurse   - Flag indicating that all subnodes must be processed.
+        separator - If multiple nodes, put this between them if we wish
+                    to avoid jamming words together.
+                    The separator is applied even if recurse=False.  It
+                    also appears after the end of the last node.
+
+    Return:
+        Text content as a single string.
+    """
+    text = ''
+    for child in node.childNodes:
+        if child.nodeType in (child.TEXT_NODE, child.CDATA_SECTION_NODE):
+            text = text + child.nodeValue + separator
+        elif recurse and child.nodeType == child.ELEMENT_NODE:
+            text = text + getTextContent(child, recurse, separator)
+    return text
+
+
