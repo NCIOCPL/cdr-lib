@@ -69,7 +69,7 @@
 #
 #----------------------------------------------------------------------
 
-import sys, string, cdr, cdrdb
+import sys, string, cdr, cdrdb, cdrutil
 
 #----------------------------------------------------------------------
 # Module level constants
