@@ -347,6 +347,9 @@ def exNormalize(id):
 #----------------------------------------------------------------------
 def sendCommands(cmds, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
+    # XXX DEBUG
+    # host = '***REMOVED***-w'
+
     # Connect to the CDR Server.
     failed = False
     for i in range(CONNECT_TRIES):
