@@ -117,7 +117,8 @@ class Publish:
 
     # class private variables.
     __timeOut  = 3000
-    __cdrEmail = "cdr@%s" % cdr.getHostName()[1]
+    # __cdrEmail = "cdr@%s" % cdr.getHostName()[1]
+    __cdrEmail = "cdr@%s.%s" % (cdr.h.host['APPC'][0], cdr.h.host['APPC'][1])
     __pd2cg    = "Push_Documents_To_Cancer.Gov"
     if cdr.h.org == 'OCE':
         __cdrHttp  = "%s/cgi-bin/cdr" % cdr.getHostName()[2]
