@@ -147,12 +147,19 @@ import pywintypes
 # Until we do this bogus object creation, the constants are invisible.
 win32com.client.Dispatch("ADODB.Connection")
 
+# Provides name resolution for different hosts
+import cdrutil
+
 # Setting up the propper database source
 # --------------------------------------
+# Default
+CBIIT_HOSTING = True
+
 h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
                             filename = 'd:/etc/cdrapphosts.rc')
 if h.org == 'OCE':
     CDR_DB_SERVER = 'localhost'
+    CBIIT_HOSTING = False
 else:
     CDR_DB_SERVER = h.host['DBWIN'][0]
 
@@ -749,6 +756,8 @@ def connect(user = 'cdr', dataSource = CDR_DB_SERVER, db = 'cdr'):
     data is required.  The 'CdrGuest' account has read-only access
     to the CDR data.
     """
+
+    global CBIIT_HOSTING
 
     adoConn = win32com.client.Dispatch("ADODB.Connection")
     userUpper = user.upper()
