@@ -17,10 +17,8 @@ LOGFILE             = "d:/cdr/log/cdr2gk.log"
 MAX_RETRIES         = 10
 RETRY_MULTIPLIER    = 1.0
 debuglevel          = 0
-host                = "gatekeeper.cancer.gov"
-#testhost            = "nci-learnb-s1.nci.nih.gov"
-#testhost            = "gatekeepergk.cancer.gov"
-testhost            = "gatekeeperQA.cancer.gov"
+host                = "%s.%s" % (cdr.h.host['GK'][0], cdr.h.host['GK'][1] 
+                                                  # "gatekeeper.cancer.gov"
 port                = 80
 soapNamespace       = "http://schemas.xmlsoap.org/soap/envelope/"
 gatekeeperNamespace = "http://www.cancer.gov/webservices/"
@@ -29,7 +27,8 @@ HEADERS             = {
     'Content-type': 'text/xml; charset="utf-8"',
     'SOAPAction'  : 'http://www.cancer.gov/webservices/Request'
 }
-if not cdr.isProdHost():
+if h.org == 'OCE' and not cdr.isProdHost():
+    testhost        = "gatekeeperQA.cancer.gov"
     host = testhost
 
 #----------------------------------------------------------------------
