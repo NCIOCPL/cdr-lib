@@ -4,7 +4,10 @@
 #
 # Simple Web service helper classes.
 #
-# $Log: not supported by cvs2svn $
+# $Log: WebService.py,v $
+# Revision 1.3  2008/05/15 13:19:48  bkline
+# Added Content-length header; added code to log parsing failure.
+#
 # Revision 1.2  2008/05/14 14:40:46  bkline
 # Added code to support Linux.
 #
@@ -15,6 +18,9 @@
 #----------------------------------------------------------------------
 import os, sys, re, xml.dom.minidom
 
+class WrongMethod(Exception):
+    pass
+
 #----------------------------------------------------------------------
 # Windows needs stdio set for binary mode.
 #----------------------------------------------------------------------
@@ -22,8 +28,9 @@ try:
     import msvcrt
     msvcrt.setmode (0, os.O_BINARY) # stdin  = 0
     msvcrt.setmode (1, os.O_BINARY) # stdout = 1
+    WINDOWS = True
 except ImportError:
-    pass
+    WINDOWS = False
 
 #----------------------------------------------------------------------
 # Object representing a client request, extracted from the XML
@@ -57,10 +64,21 @@ class Request:
             if remoteHost and remoteHost != self.client:
                 self.client += " (%s)" % remoteHost
             if not requestMethod:
-                raise Exception("Request method not specified")
+                raise WrongMethod("Request method not specified")
+            if requestMethod == "OPTIONS":
+                sys.stdout.write("""\
+Content-Type: text/plain
+Content-Length: 0
+Access-Control-Allow-Headers: Content-Type,SOAPAction
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: POST, GET, OPTIONS
+
+""")
+                sys.exit(0)
+                
             if requestMethod != "POST":
-                raise Exception("Request method should be POST; was %s" %
-                                requestMethod)
+                raise WrongMethod("Request method should be POST; was %s" %
+                                  requestMethod)
             lenString = os.getenv("CONTENT_LENGTH")
             if not lenString:
                 raise Exception("Content length not specified")
@@ -81,13 +99,13 @@ class Request:
                 raise Exception("Failure reading request: %s" % str(e))
             self.message = "".join(blocks)
             if debugLog:
-                debugLog("message: %s" % self.message)
+                debugLog("message: %s" % self.message, 2)
         try:
             dom = xml.dom.minidom.parseString(self.message)
         except Exception, e:
-            debugLog("Failure parsing request: %s" % repr(e))
-            raise Exception("Failure parsing request '%s ...: %s" %
-                            (self.message[:20], str(e)))
+            debugLog("Failure parsing request: %s" % e)
+            debugLog(repr(self.message))
+            raise Exception("Failure parsing request: %s" % e)
         self.doc  = dom.documentElement
         self.type = self.doc.nodeName
         try:
@@ -105,12 +123,15 @@ class Request:
             lines.append("%s=%s" % (e, os.environ[e]))
         lines.append("")
         try:
-            f = open('d:/cdr/log/WebService.log', 'a')
+            f = open('/weblogs/glossifier/WebService.log', 'a')
         except:
             try:
-                f = open('/tmp/WebService.log', 'a')
+                f = open('d:/cdr/log/WebService.log', 'a')
             except:
-                return
+                try:
+                    f = open('/tmp/WebService.log', 'a')
+                except:
+                    return
         f.write("\n".join(lines) + "\n")
         f.close()
 
@@ -128,7 +149,12 @@ class Response:
         if type(self.body) == unicode:
             self.body = self.body.encode('utf-8')
         sys.stdout.write("Content-Type: %s; charset=utf-8\n" % contentType)
-        sys.stdout.write("Content-Length: %d\n\n" % len(self.body))
+        sys.stdout.write("Content-Length: %d\n" % len(self.body))
+        if not WINDOWS:
+            sys.stdout.write("Access-Control-Allow-Headers: ")
+            sys.stdout.write("Content-Type,SOAPAction\n")
+            sys.stdout.write("Access-Control-Allow-Origin: *\n")
+        sys.stdout.write("\n")
         sys.stdout.write(self.body)
         sys.exit(0)
 
