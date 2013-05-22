@@ -471,12 +471,10 @@ class CdrBatch:
 
         # Setting up the propper database source
         # --------------------------------------
-        h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                            filename = 'd:/etc/cdrapphosts.rc')
-        if h.org == 'OCE':
+        if cdr.h.org == 'OCE':
             host = 'localhost'
         else:
-            host = h.host['DBWIN'][0]
+            host = cdr.h.host['DBWIN'][0]
 
         # Set job id to None or passed value
         self.__jobId = jobId
