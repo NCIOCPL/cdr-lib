@@ -5,35 +5,222 @@
 #----------------------------------------------------------------------
 import MySQLdb, sys, time, os
 
-# -----------------------------------------------
-#
-# -----------------------------------------------
+def translateTier(tier):
+    """
+    Convert internal system names (composers) to logical names of "tiers".
+
+    If the name is unknown or if it's already okay, it's left alone.
+
+    Pass:
+        tier - name to look up.
+    """
+    # Resolve synomyms from OCE -> CBIIT names
+    hiTier = tier.upper()
+    if hiTier == 'BACH':
+        tier = 'PROD'
+    elif hiTier == 'MAHLER':
+        tier = 'DEV'
+    elif hiTier == 'FRANCK':
+        tier = 'QA'
+
+    # Return translated name, or original if no translation occurred
+    return tier
+
+
+#-----------------------------------------------------------
+# Class holding all network server names
+#-----------------------------------------------------------
+class AppHost:
+    """
+    Holds all of the network configuration information we have enabling
+    us to use the correct network server name for each organization (CBIIT
+    or OCE), each tier (DEV, QA, PROD, etc.) and each use (APP, DBxx, etc.)
+
+    INSTANTIATE THIS ONLY ONCE!  Anything else is redundant unless it uses
+    a different config file.  [Multiple instantiations are probably safe
+    because Environment and Tier are independent of this config file, but
+    it's hard to see a use case for multiple instances.]
+
+    Importing cdr.py will automatically instantiate it.  Reference it
+    through cdr.h.
+    """
+
+    # Static dictionary, only loaded once, with all name config info
+    #   key = (org, tier, use)
+    #   value = (name, domain)
+    lookup = {}
+
+    # These variables are accessible through class or instance
+    # DO NOT set them more than once unless you have a good reason
+    org  = None  # 'CBIIT' or 'OCE'
+    tier = None  # 'DEV', 'QA', 'PROD', maybe others
+    host = {}    # '***REMOVED***', etc.
+
+    def __init__(self, org, tier, filename = '/etc/cdrapphosts.rc'):
+        """
+        Load the lookup dictionary.
+        Set variables for the current environment.
+        """
+
+        # Prevent multiple instantiations?
+        # if AppHost.lookup:
+        #   raise Exception("Attempt to instantiate multiple AppHost objects)
+
+        # These are class variables.
+        AppHost.org  = org
+        AppHost.tier = tier
+
+        # If the dictionary isn't loaded, load it
+        if not AppHost.lookup:
+            try:
+                f = open(filename)
+                while True:
+                    row = f.readline()
+
+                    # At the end
+                    if not row:
+                        break
+
+                    # Remove whitespace, including trailing \n
+                    row = row.strip()
+
+                    # Skip blank lines and comments
+                    if not row or row.startswith('#'):
+                        continue
+
+                    # Parse and store in the dictionary
+                    # XXX Do I need to normalize case?
+                    #     Or can I assume file is OK?
+                    org, tier, use, name, domain = row.strip().split(":")
+                    AppHost.lookup[(org,tier,use)] = (name, domain)
+
+                    # Also update the shortcut dictionary for this host
+                    # We can remove this later if everything using it
+                    #  is converted to another technique.  The info is
+                    #  already in the lookup dictionary.
+                    if self.org == org and self.tier == tier:
+                        self.host[use] = (name, domain)
+
+                f.close()
+            except:
+                raise Exception('Unable to read values from apphost file')
+
+
+    def getAnyHostNames(self, org, tier, use):
+        """
+        Find and return the names for any desired host, anywhere.
+
+        This is not normally used by applications.  See getHostNames()
+        for more usable function.
+
+        Pass:
+            org  = CBIIT or OCE
+            tier = DEV, QA, PROD, or synomyms 'mahler', 'franck', 'bach'
+            use  = See cdrapphosts.rc
+
+            Names are case insensitive.
+
+        Return:
+            tuple of (basename, e.g., 'nciws-999-v-m',
+                      fullname, e.g., 'nciws-999-v-m.nci.nih.gov')
+            If lookup fails:
+                Return None.
+        """
+        # Normalize case
+        org  = org.upper()
+        tier = tier.upper()
+        use  = use.upper()
+
+        # Resolve synomyms from OCE -> CBIIT names
+        tier = translateTier(tier)
+
+        # Lookup
+        try:
+            namePair = AppHost.lookup[(org, tier, use)]
+        except KeyError:
+            return None
+
+        # Format return
+        return (namePair[0], "%s.%s" % namePair)
+
+    def getTierHostNames(self, tier, use):
+        """
+        Get an application host name for the current network environment.
+
+        This is a front end to getHostNames that defaults the org to
+        CBIIT or OCE based on where it runs.  This will be the most
+        common case.  When OCE goes away we can remove getAnyHostNames()
+        and move the logic to here.
+
+        Pass:
+            See getAnyHostNames().
+
+        Return:
+            See getAnyHostNames().
+        """
+        return self.getAnyHostNames(getEnvironment(), tier, use)
+
+    def getHostNames(self, use):
+        """
+        Most common case of getting names, current network environment,
+        current server, just get the names for this use.
+
+        Pass:
+            See getAnyHostNames().
+
+        Return:
+            See getAnyHostNames().
+        """
+        return self.getAnyHostNames(getEnvironment(), getTier(), use)
+
+
+#-----------------------------------------------------------
+# Functions for characterizing the localhost
+#-----------------------------------------------------------
 def isProductionHost():
-    fp = file('/etc/cdrtier.rc')
-    rc = fp.read()
-    fp.close()
-    return rc.find('PROD') != -1
+    """
+    Is this server the production server?
+    """
+    if getTier() == 'PROD':
+        return True
+    return False
 
-# -----------------------------------------------
-# -----------------------------------------------
 def getEnvironment():
-    try:
-        fp = file('/etc/cdrenv.rc')
-        rc = fp.read()
-        return rc.upper().strip()
-    except:
-        return 'OCE'
+    """
+    Returns the name of the organization running the infrastructure
+    on this server.  Currently either 'OCE' or 'CBIIT'
 
-# -----------------------------------------------
-# -----------------------------------------------
+    Caches the file lookup in an AppHost class variable.
+    """
+    if not AppHost.org:
+        try:
+            fp = file('/etc/cdrenv.rc')
+            rc = fp.read()
+            AppHost.org = rc.upper().strip()
+        except:
+            AppHost.org = 'OCE'
+    return AppHost.org
+
 def getTier():
-    try:
-        fp = file('/etc/cdrtier.rc')
-        rc = fp.read()
-        return rc.upper().strip()
-    except:
-        return 'DEV'
+    """
+    Returns the tier, 'DEV', 'QA', 'PROD', maybe others, of the current
+    server.
 
+    Caches the file lookup in an AppHost class variable.
+    """
+    if not AppHost.tier:
+        try:
+            fp = file('/etc/cdrtier.rc')
+            rc = fp.read()
+            AppHost.tier = rc.upper().strip()
+        except:
+            AppHost.tier = 'DEV'
+    return AppHost.tier
+
+
+#-----------------------------------------------------------
+# Module constants
+#-----------------------------------------------------------
 DEBUG_LOG        = 1
 OPERATOR         = ['***REMOVED***']
 HTML_BASE        = "/PDQUpdate"
@@ -43,34 +230,6 @@ PROD_HOST        = 'pdqupdate.cancer.gov'
 DEV_HOST         = 'verdi.nci.nih.gov'
 WEB_HOST         = IS_PROD_HOST and PROD_HOST or DEV_HOST
 SMTP_RELAY       = "MAILFWD.NIH.GOV"
-
-
-# Reading the hostnames for the given CBIIT/OCE tier
-# --------------------------------------------------
-class AppHost:
-    def __init__(self, org, tier, filename = '/etc/cdrapphosts.rc'):
-        self.org = org   # CBIIT or OCE
-        self.tier = tier # DEV, QA, CA, or PROD
-        self.host = {}   # stores hostnames for the given tier
-
-        # Read file (default: /etc/apphost) and filter by org/tier
-        # --------------------------------------------------------
-        try:
-            f = open(filename, "r" )
-            for row in f:
-                try:
-                    (organization, tier, use, name, domain) = \
-                                                  row.strip().split( ":" )
-                    if self.org == organization:
-                        if self.tier == tier:
-                            self.host[use] = [name, domain]
-                except ValueError:
-                    pass
-
-            f.close()
-        except:
-            raise Exception('Unable to read values from apphost file')
-
 
 #----------------------------------------------------------------------
 # Send email to a list of recipients.
@@ -91,14 +250,14 @@ From: %s
 To: %s
 Subject: %s
 """ % (sender, recipList, subject)
-            
+
     # Set content type for html
     if html:
         message += "Content-type: text/html; charset=utf-8\n"
-                
+
     # Separator line + body
     message += "\n%s" % body
-                
+
     # Send it
     import smtplib
     server = smtplib.SMTP(SMTP_RELAY)
@@ -138,7 +297,7 @@ def wrapFieldsInMap(fields):
 #----------------------------------------------------------------------
 def getConnection(db = 'emailers'):
     if getEnvironment() == 'CBIIT':
-        h = AppHost(getEnvironment(), getTier(), 
+        h = AppHost(getEnvironment(), getTier(),
                                filename = '/etc/cdrapphosts.rc')
         conn = MySQLdb.connect(user = 'emailers',
                                host = h.host['DBNIX'][0], #'***REMOVED***-d',
@@ -146,8 +305,8 @@ def getConnection(db = 'emailers'):
                                passwd = '***REMOVED***',
                                db = db)
     else:
-        conn = MySQLdb.connect(user = 'emailers', 
-                               passwd = '***REMOVED***', 
+        conn = MySQLdb.connect(user = 'emailers',
+                               passwd = '***REMOVED***',
                                db = db)
 
     conn.cursor().execute("SET NAMES utf8")
