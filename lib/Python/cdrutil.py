@@ -36,13 +36,14 @@ class AppHost:
     us to use the correct network server name for each organization (CBIIT
     or OCE), each tier (DEV, QA, PROD, etc.) and each use (APP, DBxx, etc.)
 
-    INSTANTIATE THIS ONLY ONCE!  Anything else is redundant unless it uses
-    a different config file.  [Multiple instantiations are probably safe
+    Instantiate this only once.  Anything else is redundant unless it uses
+    a different config file.  Multiple instantiations are probably safe
     because Environment and Tier are independent of this config file, but
-    it's hard to see a use case for multiple instances.]
+    it's hard to see a use case for multiple instances.
 
-    Importing cdr.py will automatically instantiate it.  Reference it
-    through cdr.h.
+    Importing cdr.py will automatically instantiate it.  If cdr is imported,
+    reference the instance using the module object "cdr.h".  Otherwise,
+    instantiate it separately.
     """
 
     # Static dictionary, only loaded once, with all name config info
@@ -51,7 +52,8 @@ class AppHost:
     lookup = {}
 
     # These variables are accessible through class or instance
-    # DO NOT set them more than once unless you have a good reason
+    # Do NOT change them after __init__() runs unless you have a really
+    #  good reason (I can't think what that could be.)
     org  = None  # 'CBIIT' or 'OCE'
     tier = None  # 'DEV', 'QA', 'PROD', maybe others
     host = {}    # '***REMOVED***', etc.
