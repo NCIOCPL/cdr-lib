@@ -155,8 +155,10 @@ import cdrutil
 # Default
 CBIIT_HOSTING = True
 
-h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                            filename = 'd:/etc/cdrapphosts.rc')
+# XXX No acounting for alternate tiers here
+# XXX Will we allow connections to other tiers?
+# XXX That will also require password lookups for different CBIIT tiers
+h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier())
 if h.org == 'OCE':
     CDR_DB_SERVER = 'localhost'
     CBIIT_HOSTING = False
