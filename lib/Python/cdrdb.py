@@ -155,9 +155,7 @@ import cdrutil
 # Default
 CBIIT_HOSTING = True
 
-# XXX No acounting for alternate tiers here
-# XXX Will we allow connections to other tiers?
-# XXX That will also require password lookups for different CBIIT tiers
+# Accounting for alternate tiers later, see def connect()
 h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier())
 if h.org == 'OCE':
     CDR_DB_SERVER = 'localhost'
@@ -760,6 +758,13 @@ def connect(user = 'cdr', dataSource = CDR_DB_SERVER, db = 'cdr'):
     """
 
     global CBIIT_HOSTING
+    if dataSource != CDR_DB_SERVER:
+        # Default server name established above
+        # If it's anything else, establish the network name here
+        global h
+        hostInfo = h.getTierHostNames(dataSource, 'DBWIN')
+        if hostInfo:
+            dataSource = hostInfo.qname()
 
     adoConn = win32com.client.Dispatch("ADODB.Connection")
     userUpper = user.upper()
