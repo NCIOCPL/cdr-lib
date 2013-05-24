@@ -71,6 +71,7 @@ def _getCbiitNames(ssl=True):
         fully qualified host name
         fully qualified name, prefixed by "http://"
     """
+    # Use "http" or "https" protocol
     if ssl: s = 's'
     else:   s = ''
 
@@ -347,8 +348,19 @@ def exNormalize(id):
 #----------------------------------------------------------------------
 def sendCommands(cmds, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
-    # XXX DEBUG
-    # host = '***REMOVED***-w'
+    if host != DEFAULT_HOST:
+        # Resolve logical host name to actual network name
+        # We're looking for the host's name for "APP" usage
+        # That should be the only usage connecting on a CdrServer port
+        passedHost = host
+        hostprops  = h.getTierHostNames(passedHost, 'APP')
+        if hostprops:
+            # Fully qualified name, e.g. "abc.foobar.nih.gov"
+            host = hostprops.qname
+
+        # If that failed try whatever was passed.  But we're probaby doomed
+        if not host:
+            host = passedHost
 
     # Connect to the CDR Server.
     failed = False
@@ -4005,6 +4017,7 @@ def runCommand(command, joinErr2Out = True, returnNoneOnSuccess = True):
     if joinErr2Out:
         try:
             commandStream = subprocess.Popen(command, shell = True,
+                                             stdin  = subprocess.PIPE,
                                              stdout = subprocess.PIPE,
                                              stderr = subprocess.STDOUT)
             output, error = commandStream.communicate()
@@ -4021,6 +4034,7 @@ def runCommand(command, joinErr2Out = True, returnNoneOnSuccess = True):
     else:
         try:
             commandStream = subprocess.Popen(command, shell = True,
+                                             stdin  = subprocess.PIPE,
                                              stdout = subprocess.PIPE,
                                              stderr = subprocess.PIPE)
             output, error = commandStream.communicate()
