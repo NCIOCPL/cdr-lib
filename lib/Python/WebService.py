@@ -4,17 +4,6 @@
 #
 # Simple Web service helper classes.
 #
-# $Log: WebService.py,v $
-# Revision 1.3  2008/05/15 13:19:48  bkline
-# Added Content-length header; added code to log parsing failure.
-#
-# Revision 1.2  2008/05/14 14:40:46  bkline
-# Added code to support Linux.
-#
-# Revision 1.1  2005/11/09 00:08:16  bkline
-# Module used by the CDR client files refresh server to receive and
-# respond to client requests contained in XML documents.
-#
 #----------------------------------------------------------------------
 import os, sys, re, xml.dom.minidom
 
@@ -29,8 +18,10 @@ try:
     msvcrt.setmode (0, os.O_BINARY) # stdin  = 0
     msvcrt.setmode (1, os.O_BINARY) # stdout = 1
     WINDOWS = True
+    LOGFILE = "d:/cdr/log/WebService.log"
 except ImportError:
     WINDOWS = False
+    LOGFILE = "/weblogs/glossifier/WebService.log"
 
 #----------------------------------------------------------------------
 # Object representing a client request, extracted from the XML
@@ -123,15 +114,12 @@ Access-Control-Allow-Methods: POST, GET, OPTIONS
             lines.append("%s=%s" % (e, os.environ[e]))
         lines.append("")
         try:
-            f = open('/weblogs/glossifier/WebService.log', 'a')
+            f = open(LOGFILE, 'a')
         except:
             try:
-                f = open('d:/cdr/log/WebService.log', 'a')
+                f = open('/tmp/WebService.log', 'a')
             except:
-                try:
-                    f = open('/tmp/WebService.log', 'a')
-                except:
-                    return
+                return
         f.write("\n".join(lines) + "\n")
         f.close()
 
