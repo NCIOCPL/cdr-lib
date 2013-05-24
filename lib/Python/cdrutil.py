@@ -254,9 +254,12 @@ class AppHost:
                       Not y or n          = Whatever default rule is in place.
         Return:
             URL string.
+            If we can't resolve the host, return an error message.
         """
         # Resolve names
         hostInfo = self.getTierHostNames(tier, 'APPWEB')
+        if not hostInfo:
+            return "*** Unable to resolve web host for tier=%s ***" % tier
 
         # Resolve protocol
         ssl = ssl.lower()[0]
