@@ -238,23 +238,38 @@ class AppHost:
         """
         return self.getAnyHostNames(getEnvironment(), getTier(), use)
 
-    def makeCdrCgiUrl(self, tier, program):
+    def makeCdrCgiUrl(self, tier, program, ssl='default'):
         """
         Make a URL that works for a particular tier and program.
         Example:
-            makeCdrCgiUrl('PROD', 'CTGov.py')
+            makeCdrCgiUrl('PROD', 'CTGov.py', 'Y')
         Results:
             'https://nciws-pXXX-v-w.cdr.nci.nih.gov'
 
         Pass:
             tier    - One of 'PROD', 'DEV', 'bach', etc.
             program - Name of the python script.
+            ssl     - 'Y' or 'y' or 'yes' = Yes, use https.
+                      'N' or 'n' or 'no'  = No, use http.
+                      Not y or n          = Whatever default rule is in place.
         Return:
             URL string.
         """
+        # Resolve names
         hostInfo = self.getTierHostNames(tier, 'APPWEB')
 
-        return "https://%s/cgi-bin/cdr/%s" % (hostInfo.qname, program)
+        # Resolve protocol
+        ssl = ssl.lower()[0]
+        if ssl == 'y':
+            protocol = "https"
+        elif ssl == 'n':
+            protocol = "http"
+
+        # Default
+        else:
+            protocol = "https"
+
+        return "%s://%s/cgi-bin/cdr/%s" % (protocol, hostInfo.qname, program)
 
 
 #-----------------------------------------------------------
