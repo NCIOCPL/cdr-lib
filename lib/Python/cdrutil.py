@@ -1,9 +1,9 @@
 #----------------------------------------------------------------------
 #
-# $Id: cdrutil.py -1   $
+# $Id$
 #
 #----------------------------------------------------------------------
-import MySQLdb, sys, time, os, socket
+import MySQLdb, sys, time, os, socket, cdrpw
 
 def translateTier(tier):
     """
@@ -396,20 +396,17 @@ def wrapFieldsInMap(fields):
 #----------------------------------------------------------------------
 # Connect to the emailers database.
 #----------------------------------------------------------------------
-def getConnection(db = 'emailers'):
-    if getEnvironment() == 'CBIIT':
-        h = AppHost(getEnvironment(), getTier(),
-                               filename = '/etc/cdrapphosts.rc')
-        conn = MySQLdb.connect(user = 'emailers',
-                               host = h.host['DBNIX'][0], #'***REMOVED***-d',
-                               port = 3600,
-                               passwd = '***REMOVED***',
-                               db = db)
+def getConnection(db='emailers'):
+    env = getEnvironment()
+    tier = getTier()
+    pw = cdrpw.password(env, tier, db)
+    appHost = AppHost(env, tier, filename="/etc/cdrapphosts.rc")
+    port = env == "CBIIT" and 3600 or 3306
+    if db == "glossifier":
+        host = appHost.host["GLOSSIFIERDB"][0]
     else:
-        conn = MySQLdb.connect(user = 'emailers',
-                               passwd = '***REMOVED***',
-                               db = db)
-
+        host = appHost.host["EMAILERSDB"][0]
+    conn = MySQLdb.connect(user=db, host=host, port=port, passwd=pw, db=db)
     conn.cursor().execute("SET NAMES utf8")
     return conn
 

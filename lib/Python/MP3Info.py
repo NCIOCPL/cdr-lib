@@ -1,6 +1,6 @@
 # -*- Mode: python -*-
 #
-# $Id: MP3Info.py,v 1.12 2004/05/19 16:07:09 vivake Exp $
+# $Id$
 # 
 # Copyright (c) 2002-2004 Vivake Gupta (vivakeATlab49.com).  All rights reserved.
 # 
