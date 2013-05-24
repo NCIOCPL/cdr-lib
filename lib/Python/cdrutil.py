@@ -238,6 +238,24 @@ class AppHost:
         """
         return self.getAnyHostNames(getEnvironment(), getTier(), use)
 
+    def makeCdrCgiUrl(self, tier, program):
+        """
+        Make a URL that works for a particular tier and program.
+        Example:
+            makeCdrCgiUrl('PROD', 'CTGov.py')
+        Results:
+            'https://nciws-pXXX-v-w.cdr.nci.nih.gov'
+
+        Pass:
+            tier    - One of 'PROD', 'DEV', 'bach', etc.
+            program - Name of the python script.
+        Return:
+            URL string.
+        """
+        hostInfo = self.getTierHostNames(tier, 'APPWEB')
+
+        return "https://%s/cgi-bin/cdr/%s" % (hostInfo.qname, program)
+
 
 #-----------------------------------------------------------
 # Functions for characterizing the localhost
