@@ -3,7 +3,7 @@
 # $Id: cdrutil.py -1   $
 #
 #----------------------------------------------------------------------
-import MySQLdb, sys, time, os
+import MySQLdb, sys, time, os, socket
 
 def translateTier(tier):
     """
@@ -25,6 +25,50 @@ def translateTier(tier):
 
     # Return translated name, or original if no translation occurred
     return tier
+
+#-----------------------------------------------------------
+# Class describing all of the attributes of a host
+#-----------------------------------------------------------
+class HostProp:
+    """
+    Instead of having different functions to return different properties
+    of a host connection, it would seem to make sense to have all of them
+    just return an object that can be queried for anything desired.
+
+    If more properties are added later, e.g., passwords, alternate names,
+    etc., we can add them to the HostProp class without any change at
+    all to the function interfaces.
+    """
+    def __init__(self, org, tier, use, name, domain):
+        """
+        Always initialize with all required fields
+        """
+        self.__org    = org
+        self.__tier   = tier
+        self.__use    = use
+        self.__name   = name
+        self.__domain = domain
+
+    @property
+    def org(self):    return self.__org
+
+    @property
+    def tier(self):   return self.__tier
+
+    @property
+    def use(self):    return self.__use
+
+    @property
+    def name(self):   return self.__name
+
+    @property
+    def domain(self): return self.__domain
+
+    # This one does a bit of work, returning name.domain
+    # e.g., "foobar.cdr.nih.gov"
+    @property
+    def qname(self):
+        return "%s.%s" % (self.__name, self.__domain)
 
 
 #-----------------------------------------------------------
@@ -58,22 +102,34 @@ class AppHost:
     tier = None  # 'DEV', 'QA', 'PROD', maybe others
     host = {}    # '***REMOVED***', etc.
 
+    # The actual names of the current machine, as reported by the OS
+    # This variable doesn't come from the config file
+    localhost   = None
+    localname   = None
+    localdomain = None
+
     def __init__(self, org, tier, filename = '/etc/cdrapphosts.rc'):
         """
         Load the lookup dictionary.
         Set variables for the current environment.
         """
-
         # Prevent multiple instantiations?
         # if AppHost.lookup:
         #   raise Exception("Attempt to instantiate multiple AppHost objects)
 
-        # These are class variables.
-        AppHost.org  = org
-        AppHost.tier = tier
-
         # If the dictionary isn't loaded, load it
         if not AppHost.lookup:
+
+            # These are class variables.
+            AppHost.org  = org
+            AppHost.tier = tier
+
+            # Here's what the local OS tells us
+            AppHost.localhost   = socket.getfqdn()
+            dotPos              = AppHost.localhost.index('.')
+            AppHost.localname   = AppHost.localhost[0:dotPos]
+            AppHost.localdomain = AppHost.localhost[dotPos+1:]
+
             try:
                 f = open(filename)
                 while True:
@@ -101,7 +157,7 @@ class AppHost:
                     #  is converted to another technique.  The info is
                     #  already in the lookup dictionary.
                     if self.org == org and self.tier == tier:
-                        self.host[use] = (name, domain)
+                        AppHost.host[use] = (name, domain)
 
                 f.close()
             except:
@@ -123,33 +179,39 @@ class AppHost:
             Names are case insensitive.
 
         Return:
-            tuple of (basename, e.g., 'nciws-999-v-m',
-                      fullname, e.g., 'nciws-999-v-m.nci.nih.gov')
+            HostProp (q.v.) instance with all info.
             If lookup fails:
                 Return None.
         """
-        # Normalize case
-        org  = org.upper()
-        tier = tier.upper()
-        use  = use.upper()
-
         # Resolve synomyms from OCE -> CBIIT names
         tier = translateTier(tier)
+
+        # The HostProp object to return
+        # Caller gets this if lookup fails and not 'localhost'
+        retObj = None
 
         # Lookup
         try:
             namePair = AppHost.lookup[(org, tier, use)]
+            retObj = HostProp(org, tier, use, namePair[0], namePair[1])
         except KeyError:
-            return None
+            # 'localhost' is a special case.  We don't want it in the
+            #  config file because we'd need a different file for every
+            #  server and, worse, if we got it wrong we'd be really sorry
+            if tier == 'localhost':
+                # "use" is just echoing back caller's parm.  There aren't
+                # separate socket names for separate uses.
+                retObj = HostProp(getEnvironment(), getTier(), use,
+                                  AppHost.localname, AppHost.localdomain)
 
-        # Format return
-        return (namePair[0], "%s.%s" % namePair)
+        # Results
+        return retObj
 
     def getTierHostNames(self, tier, use):
         """
         Get an application host name for the current network environment.
 
-        This is a front end to getHostNames that defaults the org to
+        This is a front end to getAnyHostNames that defaults the org to
         CBIIT or OCE based on where it runs.  This will be the most
         common case.  When OCE goes away we can remove getAnyHostNames()
         and move the logic to here.
@@ -165,7 +227,8 @@ class AppHost:
     def getHostNames(self, use):
         """
         Most common case of getting names, current network environment,
-        current server, just get the names for this use.
+        current server, just get the names for this use.  Another front-end
+        to getAnyHostNames().
 
         Pass:
             See getAnyHostNames().
