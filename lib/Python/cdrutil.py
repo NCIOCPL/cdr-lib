@@ -238,26 +238,35 @@ class AppHost:
         """
         return self.getAnyHostNames(getEnvironment(), getTier(), use)
 
-    def makeCdrCgiUrl(self, tier, program, ssl='default'):
+    def makeCdrCgiUrl(self, tier, program, ssl='default', use='APPC'):
         """
         Make a URL that works for a particular tier and program.
+        This uses the "APPC" name of the host.  URL's created with this
+        routine won't work on our actual web servers unless forced to
+        do so with the optional "use" parameter.
+
         Example:
             makeCdrCgiUrl('PROD', 'CTGov.py', 'Y')
         Results:
-            'https://nciws-pXXX-v-w.cdr.nci.nih.gov'
+            We have to choose one or the other of these as a default
+            "https://dev.cdr.nci.nih.gov/CTGov.py"
+            or qa.cdr... or cdr...
 
         Pass:
             tier    - One of 'PROD', 'DEV', 'bach', etc.
             program - Name of the python script.
             ssl     - 'Y' or 'y' or 'yes' = Yes, use https.
                       'N' or 'n' or 'no'  = No, use http.
-                      Not y or n          = Whatever default rule is in place.
+                      'default'           = Whatever default rule is in place.
+            use     - One of the server use synonyms in cdrapphosts.rc.
+                      default is 'APPC', the name used outside the internal
+                      server infrastructure.
         Return:
             URL string.
             If we can't resolve the host, return an error message.
         """
         # Resolve names
-        hostInfo = self.getTierHostNames(tier, 'APPWEB')
+        hostInfo = self.getTierHostNames(tier, use)
         if not hostInfo:
             return "*** Unable to resolve web host for tier=%s ***" % tier
 
