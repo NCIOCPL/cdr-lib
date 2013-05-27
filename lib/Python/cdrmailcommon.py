@@ -5,52 +5,9 @@
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.12  2008/04/17 21:06:39  bkline
-# Added "SET NAMES utf8" setting to MySQL connection.
-#
-# Revision 1.11  2007/08/01 13:18:09  bkline
-# Added recordMailer() function.
-#
-# Revision 1.10  2005/11/18 20:47:46  bkline
-# Bumped up timeouts.
-#
-# Revision 1.9  2005/03/03 13:57:10  bkline
-# Moved determination of emailer host to cdr module.
-#
-# Revision 1.8  2004/07/08 19:02:21  bkline
-# Added emailerConn() function.
-#
-# Revision 1.7  2003/05/14 13:26:06  bkline
-# Modified SQL queries to select only documents which have not been
-# blocked.
-#
-# Revision 1.6  2003/03/05 02:50:40  ameyer
-# Added code to handle selection of remailer for single, named document.
-#
-# Revision 1.5  2002/11/06 03:06:31  ameyer
-# Added join to pub_proc table on first selection to be sure we only select
-# mailers for remailing if the original mailer job had not failed.
-# Made timeout 180 seconds on the last, most difficult selection.  The
-# default 30 seconds is usually, but not always, enough.
-# Added some logging to record times for each select statement.
-#
-# Revision 1.4  2002/11/01 05:24:13  ameyer
-# Changed getRelatedId to retrieve a single scalar object - recipient no longer
-# needed here.
-#
-# Revision 1.3  2002/11/01 02:42:57  ameyer
-# New version using multi-temp-table queries developed by Bob.
-#
-# Revision 1.2  2002/10/24 23:13:07  ameyer
-# Revised selections and numerous small changes.
-#
-# Revision 1.1  2002/09/19 21:40:00  ameyer
-# First fersion of common mailer routines.  Not yet operational.
-#
 #----------------------------------------------------------------------
 
-import sys, cdr, cdrdb, MySQLdb, cgi, re
+import sys, cdr, cdrdb, cdrutil, cgi, re
 
 
 # Log file for debugging - module variable, not instance
@@ -387,19 +344,7 @@ class RemailSelector:
 #----------------------------------------------------------------------
 def emailerConn(db, host = None):
     try:
-        if cdr.h.org == 'OCE':
-            conn = MySQLdb.connect(host = host or cdr.emailerHost(),
-                                   db = db,
-                                   user = "dropbox",
-                                   passwd = '***REMOVED***')
-        else:
-            conn = MySQLdb.connect(host = host or cdr.GPMAILERDB,
-                                   db = db,
-                                   port = 3600,
-                                   user = "dropbox",
-                                   passwd = '***REMOVED***')
-        conn.cursor().execute("SET NAMES utf8")
-        return conn
+        return cdrutil.getConnection(db)
     except:
         raise Exception("Failure connecting to %s" % db)
 
