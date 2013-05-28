@@ -391,6 +391,10 @@ def mainMenu(session, news = None):
         bail('Unable to identify permissions for user. '
              'Has your session timed out?')
 
+    # If returne from getUser is a string, it's an error message
+    if type(userInfo) == type(""):
+        bail(userInfo)
+
     # Creating a menu for users with only GUEST permission and one
     # for all others
     # ------------------------------------------------------------
