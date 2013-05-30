@@ -34,12 +34,17 @@
 # message.
 #
 # ******************************************************************
-import sys, os, ftplib, time
+import sys, os, ftplib, time, shutil, cdrutil
 
 # Setting the variables
 # ---------------------
 tmpDir  = '/tmp'
-pdqLog  = '/pdq/prod/log'
+PDQLOG  = '/home/cdroperator/prod/log/pdq'
+if cdrutil.isProductionHost():
+    FTPBASE = '/u/ftp/cdr'
+else:
+    FTPBASE = '/home/cdroperator/test'
+FTPDIR  = '%s/pub/pdq/full' % FTPBASE
 ftpFile = '%s/getchanges.ftp' % tmpDir
 pubDir  = '/u/ftp/pub/pdq/full'
 
@@ -69,30 +74,15 @@ def runCommand(command):
 # ----------------------------------------------
 print 'Getting the statistics files...'
 
-try:
-    ftpDir = '/u/ftp/pub/pdq/full'
-    ftpFile = '%s' % (rchanges)
-    ftp = ftplib.FTP(FTPSERVER)
-    ftp.login(FTPUSER, FTPPWD)
-    chCwd = ftp.cwd(pubDir)
-    print ftp.pwd()
-    # ftp.dir()
-    print "%s" % chCwd
-    os.chdir(pdqLog)
-    print "FtpFile: %s" % ftpFile
+ftpFile = '%s' % (rchanges)
+os.chdir(PDQLOG)
+print "FtpFile: %s" % ftpFile
 
-    file = open(ftpFile, 'w')
-    a = ftp.retrbinary('RETR %s' % ftpFile, file.write) # , file.write())
-    print a
-    file.close()
-    print "Bytes transfered %d" % ftp.size(ftpFile)
-except ftplib.Error, msg:
-    print '*** FTP Error ***\n%s' % msg
-    sys.exit(1)
+shutil.copy2('%s/%s' % (FTPDIR, ftpFile), '%s/%s' % (PDQLOG, ftpFile))
 
 # Reading the data in
 # -------------------
-file = open(pdqLog + '/' + rchanges, 'r')
+file = open(PDQLOG + '/' + rchanges, 'r')
 records = file.read()
 file.close()
 
@@ -115,7 +105,7 @@ for line in lines:
 # Write the data to the log directory
 # -----------------------------------
 print 'Writing formatted changes file...'
-sf = open(pdqLog + '/' + lchanges, 'w')
+sf = open(PDQLOG + '/' + lchanges, 'w')
 sf.write('\n\n       Changed Documents for %s\n' % relDateHdr)
 sf.write('       ===================================\n\n')
 sf.write('Document Type            added  modified  removed\n')
