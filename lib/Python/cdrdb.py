@@ -150,6 +150,9 @@ win32com.client.Dispatch("ADODB.Connection")
 # Provides name resolution for different hosts
 import cdrutil
 
+# Provides lookup of database passwords from centralized file.
+import cdrpw
+
 # Setting up the propper database source
 # --------------------------------------
 # Default
@@ -746,7 +749,7 @@ class Connection:
 #----------------------------------------------------------------------
 # Connect to the CDR using known login account.
 #----------------------------------------------------------------------
-def connect(user = 'cdr', dataSource = CDR_DB_SERVER, db = 'cdr'):
+def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr'):
     """
     Factory for creating a connection to the database.  Returns a
     Connection Object. It takes a number of parameters which are
@@ -767,32 +770,13 @@ def connect(user = 'cdr', dataSource = CDR_DB_SERVER, db = 'cdr'):
             dataSource = hostInfo.qname()
 
     adoConn = win32com.client.Dispatch("ADODB.Connection")
-    userUpper = user.upper()
     if CBIIT_HOSTING:
         port = 55373
-        if userUpper == 'CDR':
-            user = userUpper = 'CDRSQLACCOUNT'
-        if userUpper == 'CDRGUEST':
-            password = '***REMOVED***'
-        elif userUpper == 'CDRPUBLISHING':
-            password = '***REMOVED***'
-        elif userUpper == 'CDRSQLACCOUNT':
-            password = '***REMOVED***'
-        else:
-            raise DatabaseError, ("connect",
-                                  ((u"invalid login name %s" % user),))
+        if user.upper() == "CDR":
+            user = "cdrsqlaccount"
     else:
         port = 32408
-        if userUpper == 'CDR':
-            password = '***REMOVED***'
-        elif userUpper == 'CDRGUEST':
-            password = '***REDACTED***'
-        elif userUpper == 'CDRPUBLISHING':
-            password = '***REMOVED***'
-        else:
-            raise DatabaseError, ("connect",
-                                  ((u"invalid login name %s" % user),))
-
+    password = cdrpw.password(h.org, h.tier, db, user)
     try:
         connString = ("Provider=SQLOLEDB;"
                       "Data Source=%s,%d;"
