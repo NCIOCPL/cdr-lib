@@ -4684,9 +4684,12 @@ SELECT DISTINCT e.doc_id, c.created, t.value
         fp.close()
 
         cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
-        url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
-                                                            cdrcgi.BASE,
-                                                            name)
+        #url = "http://%s%s/GetReportWorkbook.py?name=%s" % (cdrcgi.WEBSERVER,
+        #                                                    cdrcgi.BASE,
+        #                                                    name)
+        url = "%s%s/GetReportWorkbook.py?name=%s" % (cdr.CBIIT_NAMES[2],
+                                                         cdrcgi.BASE, name)
+
         cdr.logwrite("url: %s" % url, LOGFILE)
         msg = "Report available at <br><a href='%s'><u>%s</u></a>." % (
             url, url)
