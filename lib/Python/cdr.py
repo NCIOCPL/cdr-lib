@@ -4548,7 +4548,8 @@ def isDevHost():
 # Tell the caller if we are on the development host.
 #----------------------------------------------------------------------
 def isProdHost():
-    return HOST_NAMES[1].upper() == PROD_HOST.upper()
+    return cdrutil.isProductionHost()
+    # return HOST_NAMES[1].upper() == PROD_HOST.upper()
 
 #----------------------------------------------------------------------
 # Give caller variant forms of the host name (cached tuple).
