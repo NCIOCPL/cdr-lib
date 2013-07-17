@@ -438,11 +438,20 @@ def wrapCommand(command, credentials):
         return "%s<CdrCommand>%s</CdrCommand>%s" % (login, command,
                                                     LOGOFF_STRING)
 
-    # Otherwise we have a session ID for a user who's already logged in.
-    cmds = """<CdrCommandSet><SessionId>%s</SessionId>
+    # Else we have a session ID.  Session strings are always ascii,
+    #  however the duplication and manipulation of sessions, including
+    #  retrieval from the DB, can cause undesirable conversions to unicode
+    # Unicode credentials cause problems by forcing the command, which may
+    #  be a large utf-8 XML doc, to unicode, which will cause a
+    #  UnicodeDecodeError in the implicit conversion that doesn't know
+    #  that the command string is utf-8 and not ascii.
+    if type(credentials) == type(u""):
+        credentials = credentials.encode('ascii')
+
+    # Wrap the command
+    return """<CdrCommandSet><SessionId>%s</SessionId>
               <CdrCommand>%s</CdrCommand>
               </CdrCommandSet>""" % (credentials, command)
-    return cmds
 
 #----------------------------------------------------------------------
 # Validate date/time strings using strptime.
@@ -735,8 +744,11 @@ def idSessionUser(mySession, getSession):
 def dupSession(oldSession, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     cmds = wrapCommand("<CdrDupSession/>", oldSession)
-    # DEBUG
     resp = sendCommands(cmds, host, port)
+
+    # Session data must always be ordinary ascii
+    if type(resp) == type(u""):
+        resp = oldSession.encode('ascii')
 
     # Extract the session ID.
     return extract("<newSessionId[^>]*>(.+)</newSessionId>", resp)
