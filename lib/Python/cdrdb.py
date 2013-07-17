@@ -772,6 +772,8 @@ def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr'):
     adoConn = win32com.client.Dispatch("ADODB.Connection")
     if CBIIT_HOSTING:
         port = 55373
+        if h.tier == "PROD":
+            port = 55733
         if user.upper() == "CDR":
             user = "cdrsqlaccount"
     else:

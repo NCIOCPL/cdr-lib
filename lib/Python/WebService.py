@@ -14,11 +14,11 @@ class WrongMethod(Exception):
 # Windows needs stdio set for binary mode.
 #----------------------------------------------------------------------
 try:
-    import msvcrt
+    import msvcrt, cdr
     msvcrt.setmode (0, os.O_BINARY) # stdin  = 0
     msvcrt.setmode (1, os.O_BINARY) # stdout = 1
     WINDOWS = True
-    LOGFILE = "d:/cdr/log/WebService.log"
+    LOGFILE = cdr.DEFAULT_LOGDIR + "/WebService.log"
 except ImportError:
     WINDOWS = False
     LOGFILE = "/weblogs/glossifier/WebService.log"

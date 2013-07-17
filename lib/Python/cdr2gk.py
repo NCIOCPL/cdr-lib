@@ -13,7 +13,7 @@ import cdr, httplib, re, sys, time, xml.dom.minidom, socket, string
 #----------------------------------------------------------------------
 # Module data.
 #----------------------------------------------------------------------
-LOGFILE             = "d:/cdr/log/cdr2gk.log"
+LOGFILE             = cdr.DEFAULT_LOGDIR + "/cdr2gk.log"
 MAX_RETRIES         = 10
 RETRY_MULTIPLIER    = 1.0
 debuglevel          = 0

@@ -26,6 +26,19 @@ import os, smtplib, time, atexit, cdrdb, tempfile, traceback, difflib
 import xml.sax.saxutils, datetime, subprocess, cdrutil
 
 #----------------------------------------------------------------------
+# Find out the drive on which the CDR working files are stored.
+#----------------------------------------------------------------------
+def _getWorkingDrive():
+    for drive in ('D', 'C', 'E', 'F'):
+        try:
+            os.stat(drive + ":/cdr/lib/python")
+            return drive
+        except:
+            pass
+    raise Exception("unable to find CDR working files")
+WORK_DRIVE = _getWorkingDrive()
+
+#----------------------------------------------------------------------
 # Give caller variant forms of the host name.  See also getHostName()
 # version below, which uses cached result of call to this function.
 # As a side effect, we record whether we're running on CBIIT hosting.
@@ -40,7 +53,7 @@ def _getHostNames():
     global CBIIT_HOSTING
     try:
         # This method works IFF we're on CBIIT hosting.
-        fp = open("d:/cdr/etc/hostname")
+        fp = open(WORK_DRIVE + ":/cdr/etc/hostname")
         fqdn = fp.read().strip()
         fp.close()
         CBIIT_HOSTING = True
@@ -123,9 +136,9 @@ LOGON_STRING     = ("<CdrCommandSet><CdrCommand><CdrLogon>"
                     "<UserName>%s</UserName><Password>%s</Password>"
                     "</CdrLogon></CdrCommand>")
 LOGOFF_STRING    = "<CdrCommand><CdrLogoff/></CdrCommand></CdrCommandSet>"
-PYTHON           = "d:\\python\\python.exe"
-PERL             = "d:\\bin\\Perl.exe"
-BASEDIR          = "d:/cdr"
+PYTHON           = WORK_DRIVE + ":\\python\\python.exe"
+PERL             = WORK_DRIVE + ":\\bin\\Perl.exe"
+BASEDIR          = WORK_DRIVE + ":/cdr"
 SMTP_RELAY       = "MAILFWD.NIH.GOV"
 DEFAULT_LOGDIR   = BASEDIR + "/Log"
 DEFAULT_LOGLVL   = 5
@@ -137,9 +150,18 @@ MANIFEST_PATH    = "%s/%s" % (CLIENT_FILES_DIR, MANIFEST_NAME)
 CONNECT_TRIES    = 10
 
 # Default DTD.  Can get overwritten using Subset parameter
-PDQDTDPATH       = "d:\\cdr\licensee"
+PDQDTDPATH       = WORK_DRIVE + ":\\cdr\\licensee"
 DEFAULT_DTD      = PDQDTDPATH + '\\pdqCG.dtd'
 NAMESPACE        = "cips.nci.nih.gov/cdr"
+
+#----------------------------------------------------------------------
+# If we're not actually running on the CDR server machine, then
+# "localhost" won't work.
+#----------------------------------------------------------------------
+try:
+    os.stat("d:/cdr/bin/CdrService.exe")
+except:
+    DEFAULT_HOST = CBIIT_NAMES[1]
 
 #----------------------------------------------------------------------
 # Module data used by publishing.py and cdrpub.py.

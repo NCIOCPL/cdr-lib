@@ -46,9 +46,10 @@ class ImportJob(ModifyDocs.Job):
 
     def __init__(self, source, comment, fileName = None, validate = False):
 
+        logFile = cdr.DEFAULT_LOGDIR + "/%sImport.log" % source
         ModifyDocs.Job.__init__(self, UID, PWD, None, None, comment,
                                 testMode = TEST_MODE, validate = validate,
-                                logFile = "d:/cdr/log/%sImport.log" % source)
+                                logFile = logFile)
         
         self.log("SiteImporter: source=%s" % source)
 

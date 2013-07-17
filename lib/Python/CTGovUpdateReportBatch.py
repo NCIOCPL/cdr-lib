@@ -20,7 +20,7 @@ SCRIPT      = CTGovUpdateCommon.SCRIPT
 LF          = CTGovUpdateCommon.LF
 
 # Fully qualified file name
-REPORT_BASE = "d:/cdr/reports/"
+REPORT_BASE = cdr.BASE_DIR + "/reports/"
 REPORT_PATH = REPORT_BASE + REPORT_FILE
 
 # Report buffer

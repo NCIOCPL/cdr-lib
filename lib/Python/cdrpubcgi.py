@@ -3,59 +3,6 @@
 # Script for command line and CGI publishing.
 #
 # $Id: cdrpub.py,v 1.8 2002/03/15 23:38:56 pzhang Exp $
-# $Log: cdrpub.py,v $
-# Revision 1.8  2002/03/15 23:38:56  pzhang
-# Added docDate and linkDate into SQL filter to pick up
-# the appropriate versions of master and linking documents.
-#
-# Revision 1.7  2002/03/01 22:46:19  pzhang
-# Detected docs that are not publishable. Reorganized publishing messages.
-#
-# Revision 1.6  2002/02/28 23:23:46  pzhang
-# Don't care about destination directory if no_output == 'Y'.
-#
-# Revision 1.5  2002/02/22 19:01:14  pzhang
-# Updated getSubsets to return flags for Params and UserSelect.
-# Updated isPublishable to return version number or -1.
-# Updated getAction to return the action name or ""
-#
-# Revision 1.4  2002/02/22 16:41:31  pzhang
-# Fixed a bug in getParameters returning None instead of [].
-#
-# Revision 1.3  2002/02/20 22:31:47  pzhang
-# First version of cdrpub.py merged with publish.py.
-#
-# Revision 1.10  2002/02/20 19:40:36  pzhang
-# Fixed __userXXX naming convention. Fixed a couple of bugs in SQL of isPermitted.
-#
-# Revision 1.9  2002/02/20 15:23:19  pzhang
-# Changed SCRIPTS to BASEDIR due to changes in cdr directory.
-#
-# Revision 1.8  2002/02/14 21:43:26  mruben
-# Fixed log comment; changed no_output to self.no_output [bkline for mruben].
-#
-# Revision 1.7  2002/02/14 21:25:49  mruben
-# Suppressed unused docTypes variable; added no_output support [commit by RMK].
-#
-# Revision 1.6  2002/02/07 14:46:17  mruben
-# added no output option
-#
-# Revision 1.5  2002/01/31 18:20:49  mruben
-# Fixed SQL for selecting publishing systems
-#
-# Revision 1.4  2001/12/03 23:14:15  Pzhang
-# Added code for email notification.
-# Disabled updateStatuses since pub_event is now a view.
-#
-# Revision 1.3  2001/10/05 18:50:49  Pzhang
-# Changed Publish.SUCCESS to SUCCEED, Fail to Failure, Wait to Waiting.
-#
-# Revision 1.2  2001/10/05 15:08:01  Pzhang
-# Added __invokePracessScript for Bob's Python Script.
-# Imported traceback to handle exceptions.
-#
-# Revision 1.1  2001/10/01 15:07:21  Pzhang
-# Initial revision
 #
 #----------------------------------------------------------------------
 
@@ -1448,10 +1395,10 @@ Please do not reply to this message.
         sys.exit(0)
 
     #----------------------------------------------------------------------
-    # Log debugging message to d:/cdr/log/publish.log
+    # Log debugging message to /cdr/log/publish.log
     #----------------------------------------------------------------------
     def __logPub(self, line):
-        file = "d:/cdr/log/publish.log"
+        file = cdr.PUBLOG
         open(file, "a").write("Job %d: %s\n" % (self.jobId, line))
 
 #----------------------------------------------------------------------

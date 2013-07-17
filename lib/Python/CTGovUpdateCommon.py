@@ -8,7 +8,7 @@
 import cdr
 
 JOB_NAME    = "Imported CTGovProtocols vs. CWDs"
-REPORT_BASE = "d:/cdr/reports/"
+REPORT_BASE = cdr.BASE_DIR + "/reports/"
 REPORT_FILE = "CTGov-CWD-diffs.html"
 SCRIPT      = "CTGovUpdateReportBatch.py"
 REPORT_URL  = cdr.getHostName()[2] + "/cdrreports/%s" % REPORT_FILE

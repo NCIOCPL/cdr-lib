@@ -520,7 +520,8 @@ class UDiff(_Diff):
         # Allow any exception to bubble up
         name1 = "CWD.xml"
         name2 = "LPV.xml"
-        cmd   = r"d:\cygwin\bin\diff -a -i -w -B -U 1 %s %s" % (name2, name1)
+        cmd   = (r"%s:\cygwin\bin\diff -a -i -w -B -U 1 %s %s" %
+                 (cdr.WORK_DRIVE, name2, name1))
         workDir = cdr.makeTempDir('diff')
         os.chdir(workDir)
         f1 = open(name1, "wb")

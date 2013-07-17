@@ -26,7 +26,7 @@ import ExcelWriter, NCIThes, lxml.etree as etree
 #----------------------------------------------------------------------
 # Module values.
 #----------------------------------------------------------------------
-REPORTS_BASE = 'd:/cdr/reports'
+REPORTS_BASE = cdr.BASEDIR + "/reports"
 LOGFILE      = cdr.DEFAULT_LOGDIR + "/reports.log"
 ### EMAILFROM    = 'cdr@%s' % cdr.getHostName()[1]
 EMAILFROM    = 'cdr@%s' % cdr.CBIIT_NAMES[1]
@@ -1096,7 +1096,7 @@ class NonRespondentsReport:
         # --------------------------------------
         import cdrutil
         h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                            filename = 'd:/etc/cdrapphosts.rc')
+                            filename = cdr.WORK_DRIVE + ':/etc/cdrapphosts.rc')
         if h.org == 'OCE':
             host = 'localhost'
         else:
@@ -1372,7 +1372,7 @@ class OrgProtocolReview:
         # --------------------------------------
         import cdrutil
         h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                            filename = 'd:/etc/cdrapphosts.rc')
+                            filename = cdr.WORK_DRIVE + ':/etc/cdrapphosts.rc')
         if h.org == 'OCE':
             host = 'localhost'
         else:
@@ -1884,7 +1884,7 @@ class UrlCheck:
         # --------------------------------------
         import cdrutil
         h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                            filename = 'd:/etc/cdrapphosts.rc')
+                            filename = cdr.WORK_DRIVE + ':/etc/cdrapphosts.rc')
         if h.org == 'OCE':
             host = 'localhost'
         else:
@@ -2145,7 +2145,7 @@ class countPublishedDocs:
         # --------------------------------------
         import cdrutil
         h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                            filename = 'd:/etc/cdrapphosts.rc')
+                            filename = cdr.WORK_DRIVE + ':/etc/cdrapphosts.rc')
         if h.org == 'OCE':
             host = 'localhost'
         else:
@@ -3909,7 +3909,7 @@ class ProtocolOwnershipTransfer:
         #--------------------------------------------------------------
         import cdrutil
         h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                            filename = 'd:/etc/cdrapphosts.rc')
+                            filename = cdr.WORK_DRIVE + ':/etc/cdrapphosts.rc')
         if h.org == 'OCE':
             host = 'localhost'
         else:

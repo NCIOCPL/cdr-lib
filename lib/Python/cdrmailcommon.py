@@ -11,7 +11,7 @@ import sys, cdr, cdrdb, cdrutil, cgi, re
 
 
 # Log file for debugging - module variable, not instance
-LOGFILE = "d:/cdr/log/mailer.log"
+LOGFILE = cdr.DEFAULT_LOGDIR + "/mailer.log"
 
 #----------------------------------------------------------------------
 # Class for finding documents for remailers.

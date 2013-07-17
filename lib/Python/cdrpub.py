@@ -25,7 +25,7 @@ import lxml.etree
 # written to the standard error file.  Any other string is used as
 # the pathname of the logfile to which to write debugging output.
 #-----------------------------------------------------------------------
-LOG = "d:/cdr/log/publish.log"
+LOG = cdr.PUBLOG
 
 # Number of publishing threads to use
 # Later, we may find a better way to get this into the program
@@ -3430,7 +3430,7 @@ Please do not reply to this message.
                 raise Exception(msg)
 
     #----------------------------------------------------------------------
-    # Log debugging message to d:/cdr/log/publish.log
+    # Log debugging message to /cdr/log/publish.log
     #----------------------------------------------------------------------
     def __debugLog(self, line, tb=0):
 

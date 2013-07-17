@@ -14,43 +14,8 @@
 # The Excel schema from the above source is on Mahler at:
 #    d:\downloads\MicrosoftOfficeSchemas\SpreadsheetML Schemas\excelss.xsd
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.10  2007/06/18 18:25:49  kidderc
-# 3309. Added big argument to writing excel files. Used for large excel files.
-#
-# Revision 1.9  2007/06/15 04:02:53  ameyer
-# Added some minor functions and documentation.
-#
-# Revision 1.8  2007/05/24 19:40:31  ameyer
-# Added documentation for public classes and methods.
-#
-# Revision 1.7  2006/11/07 14:48:21  bkline
-# Added code to clean up temporary files in Workbook.write().
-#
-# Revision 1.6  2006/10/28 14:33:05  bkline
-# Added ability to write results as a binary XLS file (using a
-# separate process invoking a Perl script built around John
-# McNamara's Spreadsheet::WriteExcel module).
-#
-# Revision 1.5  2006/05/04 15:50:31  bkline
-# Replaced newlines with character entities.
-#
-# Revision 1.4  2005/11/22 14:43:11  bkline
-# Modified test again for writing cell values (avoid writing empty
-# strings for DateTime values).
-#
-# Revision 1.3  2005/11/22 14:06:35  bkline
-# Changed test of cell value from if cell.value to if ... is not None
-# for output.
-#
-# Revision 1.2  2005/11/10 14:55:50  bkline
-# Fixed indentation bug in output.
-#
-# Revision 1.1  2005/10/27 21:31:13  bkline
-# Module to generate Excel workbooks using 2002/2003 XML format.
-#
 #----------------------------------------------------------------------
-import xml.sax.saxutils, sys, time, tempfile, os
+import xml.sax.saxutils, sys, time, tempfile, os, cdr
 
 def fix(me):
     if type(me) in (str, unicode):
@@ -154,8 +119,8 @@ class Workbook:
             self.__write(xmlFile)
             xmlFile.close()
             # Perl must be available in this location
-            script = "d:\\cdr\\lib\\Perl\\xml2xls.pl"
-            perl = "D:\\Perl\\bin\\perl.EXE"
+            script = cdr.WORK_DRIVE + ":\\cdr\\lib\\Perl\\xml2xls.pl"
+            perl = cdr.WORK_DRIVE + ":\\Perl\\bin\\perl.EXE"
             command = "%s %s %s %s %s 2>&1" % (perl, script, xmlName, xlsName, big)
             commandStream = os.popen('%s 2>&1' % command)
             output = commandStream.read()
