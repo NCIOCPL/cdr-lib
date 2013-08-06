@@ -20,7 +20,7 @@ SCRIPT      = CTGovUpdateCommon.SCRIPT
 LF          = CTGovUpdateCommon.LF
 
 # Fully qualified file name
-REPORT_BASE = cdr.BASE_DIR + "/reports/"
+REPORT_BASE = "D:/cdr/reports/"
 REPORT_PATH = REPORT_BASE + REPORT_FILE
 
 # Report buffer
@@ -63,8 +63,11 @@ def fatal(msg):
     # Tell users
     emailList = batchJobObj.getEmailList()
     if len(emailList):
-        resp = cdr.sendMail("cdr@%s" % cdr.getHostName()[1], emailList,
-                subject="CTGov Update Report has failed", body="""
+        sender = "cdr@%s.%s" % (cdr.h.host['APPC'][0], cdr.h.host['APPC'][1])
+        subj = "%s-%s: CTGov Update Report has failed" % (cdr.h.org,
+                                                             cdr.h.tier)
+        resp = cdr.sendMail(sender, emailList, subject=subj, 
+                            body="""
 The CTGov Update report started at %s has failed.
 
 See: %s""" % (jobStartTime, REPORT_URL))
@@ -381,8 +384,11 @@ reportWrite()
 # Notify user by email
 emailList = batchJobObj.getEmailList()
 if len(emailList):
-    resp = cdr.sendMail("cdr@%s" % cdr.getHostName()[1], emailList,
-                     subject="CTGov Update Report has completed", body="""
+    sender = "cdr@%s.%s" % (cdr.h.host['APPC'][0], cdr.h.host['APPC'][1])
+    subj = "%s-%s: CTGov Update Report has completed" % (cdr.h.org,
+                                                         cdr.h.tier)
+    resp = cdr.sendMail(sender, emailList, subject=subj, 
+                        body="""
 The CTGov Update report has completed.
 The report can be viewed at: <a href="%s">%s</a>
 """ % (REPORT_URL, REPORT_URL), html=1)
