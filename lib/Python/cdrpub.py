@@ -2896,7 +2896,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             if self.__email and self.__email != "Do not notify":
                 self.__debugLog("Sending mail to %s." % self.__email)
                 sender    = self.__cdrEmail
-                subject   = "CDR Publishing Job Status"
+                subject   = "%s-%s: CDR Publishing Job Status" % (cdr.h.org,
+                                                                  cdr.h.tier)
                 receivers = string.replace(self.__email, ";", ",")
                 receivers = string.split(receivers, ",")
                 message   = """
