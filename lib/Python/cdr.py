@@ -147,7 +147,10 @@ PUBLOG           = DEFAULT_LOGDIR + "/publish.log"
 MANIFEST_NAME    = 'CdrManifest.xml'
 CLIENT_FILES_DIR = BASEDIR + '/ClientFiles'
 MANIFEST_PATH    = "%s/%s" % (CLIENT_FILES_DIR, MANIFEST_NAME)
-CONNECT_TRIES    = 10
+
+# Default controls for sendCommands()
+SENDCMDS_TIMEOUT = 300
+SENDCMDS_SLEEP   = 3
 
 # Default DTD.  Can get overwritten using Subset parameter
 PDQDTDPATH       = WORK_DRIVE + ":\\cdr\\licensee"
@@ -372,9 +375,55 @@ def exNormalize(id):
     return (fullId, idNum, frag)
 
 #----------------------------------------------------------------------
+# Log an error from sendCommands
+#----------------------------------------------------------------------
+def logSendFailure(failingPart, connAttempts, sendRecvAttempts,
+                   startTime, timeout):
+    """
+    Write a message to the debug log describing an exception generated
+    within sendCommands.
+
+    Pass:
+        failingPart      - Where we failed, connecting or send/recv
+        connAttempts     - How many times we tried to connect
+        sendRecvAttempts - How many times we tried to send/recv
+        startTime        - Start time, time.time() at start of call
+        timeout          - Number of seconds requested for timeout
+    """
+    # Human readable datetimes
+    now      = datetime.datetime.now()
+    start    = datetime.datetime.fromtimestamp(startTime)
+    dtFormat = "%Y-%m-%d %H:%M:%S.%f"
+    nowPrt   = now.strftime(dtFormat)
+    startPrt = start.strftime(dtFormat)
+
+    # Log to default debugging log
+    logwrite("""\
+%s - sendCommands.%s  Connection attempts=%d  Send/Recv attempts=%d
+First started at %s  timeout=%d  Exception message follows:
+%s""" % (nowPrt, failingPart, connAttempts, sendRecvAttempts,
+         startPrt, timeout, exceptionInfo()))
+
+#----------------------------------------------------------------------
+# Change the default timeout for sendCommands
+# Call this after importing CDR if it is desirable to change the default
+#   for every call until the current module calls it again or exits.
+#----------------------------------------------------------------------
+def setGlobalSendCommandsTimeout(newTimeout):
+    global SENDCMDS_TIMEOUT
+    SENDCMDS_TIMEOUT = newTimeout
+
+#----------------------------------------------------------------------
 # Send a set of commands to the CDR Server and return its response.
 #----------------------------------------------------------------------
-def sendCommands(cmds, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def sendCommands(cmds, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=None):
+
+    # Set the timeout to the global default value if not set by the caller
+    # Note: setting timeout=SENDCMDS_TIMEOUT would be bound at compile time,
+    #       so we set the compile time timeout to None.
+    # See setGlobalSendCommandsTimeout() above to change for entire process.
+    if timeout is None:
+        timeout = SENDCMDS_TIMEOUT
 
     if host != DEFAULT_HOST:
         # Resolve logical host name to actual network name
@@ -391,59 +440,93 @@ def sendCommands(cmds, host = DEFAULT_HOST, port = DEFAULT_PORT):
             host = passedHost
 
     # Connect to the CDR Server.
-    failed = False
-    for i in range(CONNECT_TRIES):
+    connAttempts     = 0
+    sendRecvAttempts = 0
+    startTime        = time.time()
+    endTime          = startTime + timeout
+
+    # Run until logic raises exception or returns data
+    while True:
         try:
+            connAttempts += 1
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.connect((host, port))
-            break
         except:
-            # Remember that we failed at least once
-            failed = True
-
             # Find out what network connections are active
-            netStat = os.popen('netstat -a 2>&1')
-            netStatus = netStat.read()
-            netStat.close()
+            # This produces a huge output, so only do it if there is a failure
+            #   and only do it once
+            if connAttempts == 1:
+                netStat = os.popen('netstat -a 2>&1')
+                netStatus = netStat.read()
+                netStat.close()
 
-            # Log details to default log (not application log, don't know
-            #  what the application is)
+                # Log details to default log (not application log, don't know
+                #  what the application is)
             logwrite("""\
-sendCommands: Could not connect to host=%s port=%d
-exceptionInfo=%s
-Current netstat=
+sendCommands: netstat output from connection failure in sendCommands
+host=%s port=%d current netstat=
 %s
-""" % (host, port, exceptionInfo(), netStatus))
-            if i == CONNECT_TRIES-1:
-                # Tried multiple times, give up
-                logwrite("sendCommands: Giving up after %d tries" %
-                          CONNECT_TRIES)
+""" % (host, port, netStatus))
+            logSendFailure("Connecting", connAttempts, sendRecvAttempts,
+                            startTime, timeout)
+
+            # Can we keep trying
+            now = time.time()
+            if now >= endTime:
+                logwrite("sendCommands: Giving up on connect failure")
                 raise Exception("sendCommands could not connect.  "
                                 "See info in %s" % DEFAULT_LOGFILE)
 
-            # Wait a bit before trying again
-            time.sleep(1)
+            # Keep trying
+            sleepTime = SENDCMDS_SLEEP
+            if now + sleepTime > endTime:
+                sleepTime = int(endTime - now)
+            time.sleep(sleepTime)
+            continue
 
-    # If there were any recoverable failures in connecting
-    if failed:
-        # Log net connections again so we can see if something changed
-        netStat = os.popen('netstat -a')
-        netStatus = netStat.read()
-        netStat.close()
-        logwrite("""sendCommands: Connect succeeded after %d tries
-Current netstat after successful connect=
-%s
-""" % (i, netStatus))
+        # If we got here we have a connection
+        try:
+            # Send the commands to the server.
+            sendRecvAttempts += 1
+            sock.send(struct.pack('!L', len(cmds)))
+            sock.send(cmds)
 
-    # Send the commands to the server.
-    sock.send(struct.pack('!L', len(cmds)))
-    sock.send(cmds)
+            # Read the server's response.
+            (rlen,) = struct.unpack('!L', sock.recv(4))
+            resp = ''
+            while len(resp) < rlen:
+                resp = resp + sock.recv(rlen - len(resp))
 
-    # Read the server's response.
-    (rlen,) = struct.unpack('!L', sock.recv(4))
-    resp = ''
-    while len(resp) < rlen:
-        resp = resp + sock.recv(rlen - len(resp))
+            # We got the response.  We're done.  Return it to the caller
+            break
+
+        except:
+            # The connection is almost certainly gone, but make sure
+            try:
+                sock.close()
+            except:
+                pass
+
+            # Log the failure, as above
+            logSendFailure("send/recv", connAttempts, sendRecvAttempts,
+                            startTime, timeout)
+
+            # Handle timeouts as above
+            if now >= endTime:
+                logwrite("sendCommands: Giving up on send/recv failure")
+                raise Exception("sendCommands could not send/recv.  "
+                                "See info in %s" % DEFAULT_LOGFILE)
+            sleepTime = SENDCMDS_SLEEP
+            if now + sleepTime > endTime:
+                sleepTime = int(endTime - now)
+            time.sleep(sleepTime)
+            continue
+
+    # If we got here, we succeeded
+    # If there were errors, log the success
+    if connAttempts > 1 or sendRecvAttempts > 1:
+        logSendFailure("Success after retry", connAttempts, sendRecvAttempts,
+                        startTime, timeout)
 
     # Clean up and hand the server's response back to the caller.
     sock.close()
@@ -2344,8 +2427,8 @@ def getDoctype(credentials, doctype, host = DEFAULT_HOST, port = DEFAULT_PORT):
     vvExpr         = re.compile("<ValidValue>(.*?)</ValidValue>", re.DOTALL)
 
     # Parse out the components.
-    type       = typeExpr      .search(results)
-    format     = formatExpr    .search(results)
+    dtype      = typeExpr      .search(results)
+    dformat    = formatExpr    .search(results)
     versioning = versioningExpr.search(results)
     created    = createdExpr   .search(results)
     schema_mod = schemaModExpr .search(results)
@@ -2363,8 +2446,8 @@ def getDoctype(credentials, doctype, host = DEFAULT_HOST, port = DEFAULT_PORT):
             vvLists.append((enumSet[0], vvList))
 
     # Return a dtinfo instance.
-    return dtinfo(type       = type       and type      .group(1) or '',
-                  format     = format     and format    .group(1) or '',
+    return dtinfo(type       = dtype      and dtype     .group(1) or '',
+                  format     = dformat    and dformat   .group(1) or '',
                   versioning = versioning and versioning.group(1) or '',
                   created    = created    and created   .group(1) or '',
                   schema_mod = schema_mod and schema_mod.group(1) or '',
