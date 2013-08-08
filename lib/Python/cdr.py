@@ -462,7 +462,7 @@ def sendCommands(cmds, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=None):
 
                 # Log details to default log (not application log, don't know
                 #  what the application is)
-            logwrite("""\
+                logwrite("""\
 sendCommands: netstat output from connection failure in sendCommands
 host=%s port=%d current netstat=
 %s
@@ -512,6 +512,7 @@ host=%s port=%d current netstat=
                             startTime, timeout)
 
             # Handle timeouts as above
+            now = time.time()
             if now >= endTime:
                 logwrite("sendCommands: Giving up on send/recv failure")
                 raise Exception("sendCommands could not send/recv.  "
