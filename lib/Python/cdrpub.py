@@ -246,7 +246,18 @@ class Publish:
         self.__subsetName  = row[1]
         self.__userId      = row[2]
         self.__outputDir   = row[3]
-        self.__email       = row[4]
+
+        # If the email parameter has been saved as a list we'll have to
+        # convert the string selected from the DB back to a list.
+        # -------------------------------------------------------------
+        try:
+            self.__email   = eval(row[4])
+            cdr.logwrite('email = %s' % row[4], LOG, tback=tb)
+            
+        except:
+            self.__email   = row[4]
+            cdr.logwrite('email = %s' % row[4], LOG, tback=tb)
+
         self.__jobTime     = row[5]
         self.__no_output   = row[6]
         self.__userName    = row[7]
