@@ -252,11 +252,10 @@ class Publish:
         # -------------------------------------------------------------
         try:
             self.__email   = eval(row[4])
-            cdr.logwrite('email = %s' % row[4], LOG, tback=tb)
-            
+            cdr.logwrite('email = %s' % self.__email, LOG, tback=0)
         except:
             self.__email   = row[4]
-            cdr.logwrite('email = %s' % row[4], LOG, tback=tb)
+            cdr.logwrite('email = %s' % self.__email, LOG, tback=0)
 
         self.__jobTime     = row[5]
         self.__no_output   = row[6]
@@ -2909,8 +2908,13 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 sender    = self.__cdrEmail
                 subject   = "%s-%s: CDR Publishing Job Status" % (cdr.h.org,
                                                                   cdr.h.tier)
-                receivers = string.replace(self.__email, ";", ",")
-                receivers = string.split(receivers, ",")
+                if type(self.__email) == type("") or \
+                   type(self.__email) == type(u""):
+                    receivers = string.replace(self.__email, ";", ",")
+                    receivers = string.split(receivers, ",")
+                elif type(self.__email) == type([]):
+                    receivers = self.__email
+
                 message   = """
 Job %d has completed or changed status.  You can view a status report for this job at:
 
