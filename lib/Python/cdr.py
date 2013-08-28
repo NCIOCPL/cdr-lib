@@ -2833,6 +2833,56 @@ def _sysValue(credentials, action, name, value=None, program=None,
     return None
 
 #----------------------------------------------------------------------
+# Update the ctl table.  Like the above for sys_value
+#----------------------------------------------------------------------
+def updateCtl(credentials, action,
+              grp=None, name=None, val=None, comment=None):
+    """
+    Update the ctl table.  See CdrCtl.h/.cpp in the server for what this does.
+
+    Caller must be logged in as user with SET_SYS_VALUE privilege.
+
+    Pass:
+        credentials - as elsewhere.
+        action      - one of "Create", "Inactivate", "Install".
+        grp         - grouping string for names in Create or Inactivate.
+        name        - name of the value for Create or Inactivate.
+        val         - value itself, required for Create, else ignored.
+        comment     - optional comment to store in the table.
+
+        All parameters are strings.  Max length is defined in the database,
+        currently as 255 chars each for grp, name, val, comment.
+
+    Return:
+        None
+
+    Throws
+        Exception if there is an error return from the CdrServer.
+    """
+    # Parameters are checked in the server.  Don't need to do it here.
+    cmd = "<CdrSetCtl>\n <Ctl>\n  <Action>%s</Action>\n" % action
+    if grp is not None:
+        cmd += "  <Group>%s</Group>\n" % grp
+    if name is not None:
+        cmd += "  <Key>%s</Key>\n" % name
+    if val is not None:
+        cmd += "  <Value>%s</Value>\n" % val
+    if comment is not None:
+        cmd += "  <Comment>%s</Comment>\n" % comment
+    cmd += " </Ctl>\n</CdrSetCtl>\n"
+
+    # Wrap it with credentials and send it
+    cmd  = wrapCommand(cmd, credentials)
+    resp = sendCommands(cmd)
+
+    # Did server report error?
+    errs = getErrors (resp, 0)
+    if len(errs) > 0:
+        raise Exception("Server error on cdr.updatCtl: \n%s" % errs)
+
+    return None
+
+#----------------------------------------------------------------------
 # Type used by getCssFiles() below.
 #----------------------------------------------------------------------
 class CssFile:
