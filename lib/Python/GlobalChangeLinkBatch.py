@@ -65,7 +65,7 @@ class SimpleLinkVars:
                  "newLinkRefIdStr2", "newLinkRefName2",
                  "newLinkRefIdStr3", "newLinkRefName3",
                  "newLinkRefIdStr4", "newLinkRefName4",
-                 "replaceOld", "addMore",
+                 "deleteOld", "addMore",
                  "doRefs", "doHrefs", "emailList",
                  "runMode", "approved")
 
@@ -186,8 +186,8 @@ class SimpleLinkVars:
             docTitle = docData["title"]
             html += self.addProgress('Old link',
                                      "%s / %s" % (docIdStr, docTitle))
-            html += self.addProgress('Replacing old link',
-                                      self.getVar('replaceOld'))
+            html += self.addProgress('Deleting old link',
+                                      self.getVar('deleteOld'))
 
         if self.getVar('newLinkRefIdStr0'):
             # There is at least one new link, find all of them
@@ -472,12 +472,21 @@ found or changed.</p>
 """
             choices  = """
 <p>Disposition of the old value:</p>
-<input type='radio' name='replaceOld' value='Yes' checked='1'>
- Replace this link with one or more others
+<input type='radio' name='deleteOld' value='Yes' checked='1'>
+ Delete this link
 </input><br />
-<input type='radio' name='replaceOld' value='No'>
- Keep this link and add one or more others
+<input type='radio' name='deleteOld' value='No'>
+ Keep this link
 </input>
+
+<p>Add new value(s):</p>
+<input type='radio' name='addMore' value='Yes' checked='1'>
+ Add one one or more new links
+</input><br />
+<input type='radio' name='addMore' value='No'>
+ No new or replacement links
+</input>
+
 """
         else:
             refIdVar = "newLinkRefIdStr%d" % refNum
@@ -513,9 +522,11 @@ fragment ID.  Otherwise no new links will have trailing fragment IDs.</p>
                             "  ID=%s  Name=%s" % (self.getVar(refIdVar),
                                                   self.getVar(refName)))
 
-        # If we have neither an ID nor a title, prompt for them
-        if not self.getVar(refIdVar) and not self.getVar(refName):
-            html = """
+        if refType == "old" or self.getVar("addMore") == "Yes":
+
+            # If we have neither an ID nor a title but need one, prompt for them
+            if not self.getVar(refIdVar) and not self.getVar(refName):
+                html = """
 <p>Enter the CDR ID or leading characters of the title string for the
 %s linked document and click "Next".</p>
 <table>
@@ -529,12 +540,12 @@ fragment ID.  Otherwise no new links will have trailing fragment IDs.</p>
 %s
 %s
 """ % (prompt, refIdVar, refName, callingPhase, noteMsg, choices)
-            self.sendPage(html, "Enter link value",
-                          haveVars=(refIdVar, refName))
+                self.sendPage(html, "Enter link value",
+                              haveVars=(refIdVar, refName))
 
-        # If no doc ID supplied, display some matching titles in a picklist
-        if not self.getVar(refIdVar):
-            qry = """
+            # If no doc ID supplied, display some matching titles in a picklist
+            if self.getVar("addMore") == "Yes" and not self.getVar(refIdVar):
+                qry = """
 SELECT TOP 100 d.id, SUBSTRING(d.title, 1, 120)
   FROM document d
   JOIN doc_type t
@@ -544,58 +555,58 @@ SELECT TOP 100 d.id, SUBSTRING(d.title, 1, 120)
  ORDER BY title
 """ % (self.getLinkTargDocType(), self.getVar(refName))
 
-            pattern = "<option value='%s'>%s&nbsp;</option>"
-            pickList = cdrcgi.generateHtmlPicklist(getConn(), refIdVar, qry,
-                              pattern, selAttrs="size='10'")
+                pattern = "<option value='%s'>%s&nbsp;</option>"
+                pickList = cdrcgi.generateHtmlPicklist(getConn(), refIdVar, qry,
+                                  pattern, selAttrs="size='10'")
 
-            # If we got here, we have a name/title, disambiguate it
-            html = """
+                # If we got here, we have a name/title, disambiguate it
+                html = """
 <p>Select the document that matches the displayed %s linked document
 title.</p>
 """ % prompt
-            html += pickList
-            self.sendPage(html, "Select %s linked document" % prompt,
-                          haveVars=(refIdVar,))
+                html += pickList
+                self.sendPage(html, "Select %s linked document" % prompt,
+                              haveVars=(refIdVar,))
 
-        # If we got here, we have a CDR ID, but no title
-        refIdStr = self.getVar(refIdVar)
-        try:
-            refIdNum = cdr.exNormalize(refIdStr)[1]
-        except:
-            self.error("Unable to convert '%s' into a CDR Document ID" %
-                         refIdStr)
+            # If we got here, we have a CDR ID, but no title
+            refIdStr = self.getVar(refIdVar)
+            try:
+                refIdNum = cdr.exNormalize(refIdStr)[1]
+            except:
+                self.error("Unable to convert '%s' into a CDR Document ID" %
+                             refIdStr)
 
-        qry = """
+            qry = """
 SELECT title, doc_type
   FROM document
  WHERE id = %d
 """ % refIdNum
-        try:
-            conn   = cdrdb.connect()
-            cursor = conn.cursor()
-            cursor.execute(qry)
-            row = cursor.fetchone()
-            cursor.close()
-        except cdrdb.Error, info:
-            self.error("Database error fetching link title & doc_type: '%s'" %
-                        str(info))
+            try:
+                conn   = cdrdb.connect()
+                cursor = conn.cursor()
+                cursor.execute(qry)
+                row = cursor.fetchone()
+                cursor.close()
+            except cdrdb.Error, info:
+                self.error("Database error fetching link title & doc_type: '%s'" %
+                            str(info))
 
-        if not row:
-            self.error("I cannot find any document matching CDR ID=%s" %
-                        self.getVar(refIdVar))
+            if not row:
+                self.error("I cannot find any document matching CDR ID=%s" %
+                            self.getVar(refIdVar))
 
-        if not row[1]:
-            self.error("Internal error, no title found for CDR ID=%d" %
-                        self.getVar(refIdVar))
+            if not row[1]:
+                self.error("Internal error, no title found for CDR ID=%d" %
+                            self.getVar(refIdVar))
 
-        if row[1] != self.getLinkTargDocType():
-            self.error("Document %s is of the wrong type for this link" %
-                         self.getVar(refIdVar))
+            if row[1] != self.getLinkTargDocType():
+                self.error("Document %s is of the wrong type for this link" %
+                             self.getVar(refIdVar))
 
-        # Save the title
-        # cdr.logwrite("Resolved %s: CdrID=%s Title=%s" % (refName,
-        #        self.getVar(refIdVar), row[0]))
-        self.vars[refName] = row[0]
+            # Save the title
+            # cdr.logwrite("Resolved %s: CdrID=%s Title=%s" % (refName,
+            #        self.getVar(refIdVar), row[0]))
+            self.vars[refName] = row[0]
 
 
     def chkRefTypes(self):
@@ -957,7 +968,7 @@ class SimpleLinkTransform:
                     oldElem.addnext(newElem)
 
             # If we're replacing the old link, delete it here
-            if self.linkVars.getVar("replaceOld") == "Yes":
+            if self.linkVars.getVar("deleteOld") == "Yes":
                 parent = oldElem.getparent()
                 parent.remove(oldElem)
 
@@ -1000,7 +1011,7 @@ if __name__ == "__main__":
             if i > 0:
                 newLinks += ', '
             newLinks += newIdStr
-    if linkVars.getVar("replaceOld") == "Yes":
+    if linkVars.getVar("deleteOld") == "Yes":
         disposeOld = "deleting"
     else:
         disposeOld = "keeping"
