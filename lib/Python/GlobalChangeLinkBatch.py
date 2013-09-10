@@ -25,14 +25,14 @@ def fatal(msg, jobObj=None):
         Error message.
         Job object to abort, or None if not loaded.
     """
-    # Identify the message
-    msg = "%s: %s" % (JOB_NAME, msg)
+    # Identify the message for the log file
+    logmsg = "%s: %s" % (JOB_NAME, msg)
 
-    cdr.logwrite(msg, LF)
+    # Produce error messages in all places
+    cdr.logwrite(logmsg, LF)
     if jobObj:
-        jobObj.fail(msg)
-    sys.exit(1)
-
+        jobObj.fail(logmsg)
+    cdrcgi.bail(msg)
 
 def getConn():
     """
@@ -65,7 +65,7 @@ class SimpleLinkVars:
                  "newLinkRefIdStr2", "newLinkRefName2",
                  "newLinkRefIdStr3", "newLinkRefName3",
                  "newLinkRefIdStr4", "newLinkRefName4",
-                 "deleteOld", "addMore",
+                 "deleteOld", "addMore", "linkPhase",
                  "doRefs", "doHrefs", "emailList",
                  "runMode", "approved")
 
@@ -205,6 +205,15 @@ class SimpleLinkVars:
                     # Add line for this link to the progress display
                     html += self.addProgress('New link',
                             "%s / %s%s" % (docIdStr, docTitle, warning))
+
+        #
+        elif (self.getVar("addMore") == "No" \
+          and self.getVar("linkPhase") != "new0"):
+            if self.getVar("deleteOld") == "No":
+                # Nothing will actually be done
+                self.error(
+                    "Command specifies keep old link and add no new one. "
+                    "Nothing would be done.")
 
         if self.getVar('doRefs'):
             html += self.addProgress('Change cdr:refs', 'Yes')
@@ -458,6 +467,13 @@ changed and click "Next".</p>
         #  still working on the old one, i.e, resolving a name to a CDR ID
         callingPhase = "%s%d" % (refType, refNum)
 
+        # DEBUG
+        #cdr.logwrite("---Entering chkLinkRef() callingPhase=%s" % callingPhase)
+        #cdr.logwrite("oldLinkRefIdStr=%s" % self.getVar("oldLinkRefIdStr"))
+        #cdr.logwrite("oldLinkRefName=%s" % self.getVar("oldLinkRefName"))
+        #cdr.logwrite("newLinkRefIdStr0=%s" % self.getVar("newLinkRefIdStr0"))
+        #cdr.logwrite("newLinkRefName0=%s" % self.getVar("newLinkRefName0"))
+
         # Differences between the two types
         if refType == "old":
             refIdVar = "oldLinkRefIdStr"
@@ -514,17 +530,10 @@ fragment ID.  Otherwise no new links will have trailing fragment IDs.</p>
 """
 
         # If user entered both an ID and a string, warn him
-        # We must know that we're processing real input, not saved input
-        #   from a previous screen, e.g., checking old ref when new is entered
-        if self.__fields.getvalue("linkPhase") == callingPhase:
-            if self.getVar(refIdVar) and self.getVar(refName):
-                cdrcgi.bail("Please enter either an id OR a string, not both."
-                            "  ID=%s  Name=%s" % (self.getVar(refIdVar),
-                                                  self.getVar(refName)))
+        # No - it turns out to be tricky with the way the logic works
 
+        # If we have neither an ID nor a title but need one, prompt for them
         if refType == "old" or self.getVar("addMore") == "Yes":
-
-            # If we have neither an ID nor a title but need one, prompt for them
             if not self.getVar(refIdVar) and not self.getVar(refName):
                 html = """
 <p>Enter the CDR ID or leading characters of the title string for the
@@ -541,34 +550,36 @@ fragment ID.  Otherwise no new links will have trailing fragment IDs.</p>
 %s
 """ % (prompt, refIdVar, refName, callingPhase, noteMsg, choices)
                 self.sendPage(html, "Enter link value",
-                              haveVars=(refIdVar, refName))
+                                  haveVars=(refIdVar, refName))
 
-            # If no doc ID supplied, display some matching titles in a picklist
-            if self.getVar("addMore") == "Yes" and not self.getVar(refIdVar):
-                qry = """
+        # If no doc ID supplied, display some matching titles in a picklist
+        # if self.getVar("addMore") == "Yes" and not self.getVar(refIdVar):
+        if self.getVar(refName) and not self.getVar(refIdVar):
+            qry = """
 SELECT TOP 100 d.id, SUBSTRING(d.title, 1, 120)
-  FROM document d
-  JOIN doc_type t
-    ON d.doc_type = t.id
- WHERE t.id = %d
-   AND d.title LIKE '%s%%'
- ORDER BY title
+FROM document d
+JOIN doc_type t
+ON d.doc_type = t.id
+WHERE t.id = %d
+AND d.title LIKE '%s%%'
+ORDER BY title
 """ % (self.getLinkTargDocType(), self.getVar(refName))
 
-                pattern = "<option value='%s'>%s&nbsp;</option>"
-                pickList = cdrcgi.generateHtmlPicklist(getConn(), refIdVar, qry,
-                                  pattern, selAttrs="size='10'")
+            pattern = "<option value='%s'>%s&nbsp;</option>"
+            pickList = cdrcgi.generateHtmlPicklist(getConn(), refIdVar, qry,
+                              pattern, selAttrs="size='10'")
 
-                # If we got here, we have a name/title, disambiguate it
-                html = """
+            # If we got here, we have a name/title, disambiguate it
+            html = """
 <p>Select the document that matches the displayed %s linked document
 title.</p>
 """ % prompt
-                html += pickList
-                self.sendPage(html, "Select %s linked document" % prompt,
-                              haveVars=(refIdVar,))
+            html += pickList
+            self.sendPage(html, "Select %s linked document" % prompt,
+                          haveVars=(refIdVar,))
 
-            # If we got here, we have a CDR ID, but no title
+        # If we got here, we have a CDR ID, but no title
+        if self.getVar(refIdVar) and not self.getVar(refName):
             refIdStr = self.getVar(refIdVar)
             try:
                 refIdNum = cdr.exNormalize(refIdStr)[1]
@@ -577,10 +588,10 @@ title.</p>
                              refIdStr)
 
             qry = """
-SELECT title, doc_type
-  FROM document
- WHERE id = %d
-""" % refIdNum
+    SELECT title, doc_type
+    FROM document
+    WHERE id = %d
+    """ % refIdNum
             try:
                 conn   = cdrdb.connect()
                 cursor = conn.cursor()
@@ -588,8 +599,8 @@ SELECT title, doc_type
                 row = cursor.fetchone()
                 cursor.close()
             except cdrdb.Error, info:
-                self.error("Database error fetching link title & doc_type: '%s'" %
-                            str(info))
+                self.error("Database error fetching link title & doc_type: '%s'"
+                            % str(info))
 
             if not row:
                 self.error("I cannot find any document matching CDR ID=%s" %
@@ -604,8 +615,6 @@ SELECT title, doc_type
                              self.getVar(refIdVar))
 
             # Save the title
-            # cdr.logwrite("Resolved %s: CdrID=%s Title=%s" % (refName,
-            #        self.getVar(refIdVar), row[0]))
             self.vars[refName] = row[0]
 
 
@@ -773,8 +782,6 @@ SELECT %s
    AND %s
  %s
 """ % (selector, whereClause, matcher, orderBy)
-        # DEBUG
-        # cdr.logwrite(qry)
 
         return qry
 
@@ -877,9 +884,6 @@ class SimpleLinkTransform:
         except cdrdb.Error, info:
             self.linkVars.error("Database error fetching docIds to change: %s"
                          % str(info))
-
-        # DEBUG
-        # cdr.logwrite("getDocIds qry=\n%s\ncount = %d" % (qry, len(rows)))
 
         # Return IDs
         return [row[0] for row in rows]
