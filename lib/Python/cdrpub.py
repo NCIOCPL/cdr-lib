@@ -29,7 +29,7 @@ LOG = cdr.PUBLOG
 
 # Number of publishing threads to use
 # Later, we may find a better way to get this into the program
-PUB_THREADS = 2
+PUB_THREADS = 4
 
 # Publish this many docs of one doctype between reports
 LOG_MODULUS = 1000
