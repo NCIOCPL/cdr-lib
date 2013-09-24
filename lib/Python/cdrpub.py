@@ -27,9 +27,31 @@ import lxml.etree
 #-----------------------------------------------------------------------
 LOG = cdr.PUBLOG
 
-# Number of publishing threads to use
-# Later, we may find a better way to get this into the program
+# Default number of publishing threads to use
 PUB_THREADS = 4
+threadMsg   = "Threads=%d" % PUB_THREADS
+
+# Have we set a different number in the database control table?
+try:
+    conn = cdrdb.connect("cdr")
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT val
+          FROM ctl
+         WHERE grp = 'Publishing'
+           AND name = 'ThreadCount'
+           AND INACTIVATED IS NULL""")
+    row = cursor.fetchone()
+    if row:
+        PUB_THREADS = int(row[0])
+        threadMsg = "Using %d threads, defined in ctl table" % PUB_THREADS
+    else:
+        threadMsg = "Using default %d threads" % PUB_THREADS
+
+except cdrdb.Error, info:
+    threadMsg = "Database failure selecting Publishing/ThreadCount: %s" \
+                " using default %d threads" % (str(info), PUB_THREADS)
+cdr.logwrite(threadMsg, LOG)
 
 # Publish this many docs of one doctype between reports
 LOG_MODULUS = 1000
