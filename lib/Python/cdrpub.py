@@ -12,6 +12,7 @@
 # BZIssue::4629 - Vendor Filter Changes for GenProf publishing
 # BZIssue::4869 - [Internal] Remove Parameter IncludeLinkedDocs
 # BZIssue::5176 - Modify Publishing Program
+# OCECDR-3570   - Rerun Previous Publishing Run
 #
 #----------------------------------------------------------------------
 
@@ -1007,12 +1008,18 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 # In order for this to work we need to update the cg_job
                 # column in pub_prog_cg_work with the current jobID.
                 # ------------------------------------------------------
-                if (pubType in ("Export", "Reload") or
-                    pubType == "Full Load" and
-                     self.__params['RerunFailedPush'] == 'No'):
+                #if (pubType in ("Export", "Reload") or
+                #    pubType == "Full Load" and
+                ##if (pubType in ("Export", "Reload", "Full Load") and
+                ##     self.__params['RerunFailedPush'] == 'No'):
+                if self.__params['RerunFailedPush'] == 'No':
                     self.__createWorkPPC(vendor_job, vendor_dest)
                 else:
                     try:
+                        msg  = "%s: " % time.ctime()
+                        msg += "Reusing pub_proc_cg_work data "
+                        msg += "from previous job...<BR>"
+                        self.__updateMessage(msg)
                         msg  = "%s: " % time.ctime()
                         msg += "Updating pub_proc_cg_work with "
                         msg += "current jobID...<BR>"
@@ -2808,6 +2815,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     haveVersion = len(cursor.description) > 1
 
                     rows = cursor.fetchall()
+
+                    self.__debugLog("Selected %d documents." % len(rows))
+                    self.__debugLog("Searching pub versions.")
                     for row in rows:
                         oneId = row[0]
                         if oneId in self.__alreadyPublished: continue
