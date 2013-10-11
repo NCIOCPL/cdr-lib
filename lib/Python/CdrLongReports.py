@@ -14,14 +14,14 @@
 # BZIssue::4711 - Adding GrantNo column to report output
 # BZIssue::5086 - Changes to the Transferred Protocols Report (Issue 4626)
 # BZIssue::5123 - Audio Pronunciation Tracking Report
-# BZIssue::5237 - Report for publication document counts fails on 
+# BZIssue::5237 - Report for publication document counts fails on
 #                 non-production server
 # BZIssue::5244 - URL Check report not working
 #
 #----------------------------------------------------------------------
 import cdr, cdrdb, xml.dom.minidom, time, cdrcgi, cgi, sys, socket, cdrbatch
 import string, re, urlparse, httplib, traceback, xml.sax.saxutils
-import ExcelWriter, NCIThes, lxml.etree as etree
+import urllib2, HTMLParser, ExcelWriter, NCIThes, lxml.etree as etree
 
 #----------------------------------------------------------------------
 # Module values.
@@ -144,7 +144,7 @@ LEFT OUTER JOIN query_term i
 
     cursor.execute(query)
     row = cursor.fetchone()
-    
+
     return row
 
 
@@ -189,7 +189,7 @@ def protsWithoutPhones(job):
     except:
         job.fail("Database failure extracting active protocols",
                  logfile = LOGFILE)
-                      
+
     class ReportItem:
         def __init__(self, protDocId, protVer, protId, #siteType,
                      siteName, siteId):
@@ -435,9 +435,9 @@ class Objectives:
 ##                 html.append(
 ##             for child in node.childNodes:
 ##                 self.__extractHtml(child, html)
-    
-        
-    
+
+
+
 class Protocol:
     "Protocol information used for OPS-like reports."
 
@@ -647,7 +647,7 @@ def outcomeMeasuresCodingReport(job):
         raise
         job.fail("Database failure getting list of protocols.",
                  logfile = LOGFILE)
-        
+
     #------------------------------------------------------------------
     # Process all candidate protocols.
     #------------------------------------------------------------------
@@ -708,7 +708,7 @@ def outcomeMeasuresCodingReport(job):
     p               { font-size: 12pt; }
     dt              { font-size: 12pt; }
     dd              { font-size: 12pt; }
- 
+
     ul.lnone        { list-style: none; }
     ul.disc         { list-style: disc; }
     ul.square       { list-style: square; }
@@ -719,15 +719,15 @@ def outcomeMeasuresCodingReport(job):
     ol.d            { list-style: decimal; }
     ol.none         { list-style: none; }  /* Default if no attr specified */
     li.org          { vertical-align: top; }
-    
-    
+
+
     ol ol { marginx:0.em; }        /* No space before and after second level */
     ol ul { marginx:0.em; }        /* list                                   */
     ul ol { marginx:0.em; }        /* This white space must be suppressed in */
     ul ul { marginx:0.em; }        /* order to handle the Compact = No       */
     ul    { margin-top:0.em; }
     ol    { margin-top:0.em; }
-    
+
     p.listtitletop { font-style:       italic;  /* Display the first level  */
                      font-weight:      bold;    /* list title               */
                      margin-top:       0.em;
@@ -779,7 +779,7 @@ def outcomeMeasuresCodingReport(job):
     url = "%s/CdrReports%s" % (cdr.CBIIT_NAMES[2], name)
     cdr.logwrite("url: %s" % url, LOGFILE)
     msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (url, url)
-    
+
     # Tell the user where to find it.
     body = """\
 The Outcome Measures Coding report you requested can be viewed at
@@ -821,7 +821,7 @@ def NCITTermUpdate(job):
                                                         cdrcgi.BASE, name)
     cdr.logwrite("url: %s" % url, LOGFILE)
     msg = "<br>Report available at <a href='%s'><u>%s</u></a>." % (url, url)
-    
+
     # Tell the user where to find it.
     body = """\
 The NCIT Term Update report is available at
@@ -837,7 +837,7 @@ The NCIT Term Update report is available at
     sendMail(job, subject, body)
     job.setProgressMsg(msg)
     job.setStatus(cdrbatch.ST_COMPLETED)
-    cdr.logwrite("Completed report", LOGFILE)    
+    cdr.logwrite("Completed report", LOGFILE)
 
 #----------------------------------------------------------------------
 # Generate a spreadsheet on selected protocols for the Office of
@@ -907,7 +907,7 @@ def ospReport(job):
             if not cursor.rowcount:
                 break
             conn.commit()
-        
+
         cursor.execute("""\
                  SELECT DISTINCT t.doc_id, MAX(v.num)
                    FROM query_term t
@@ -948,7 +948,7 @@ def ospReport(job):
     ws = wb.addWorksheet("PDQ Clinical Trials", style1, 40, 1)
     style2 = wb.addStyle(alignment = align, font = font, borders = borders,
                          numFormat = 'YYYY-mm-dd')
-    
+
     # Set the column widths to match the sample provided by OSP.
     ws.addCol( 1, 232.5)
     ws.addCol( 2, 100)
@@ -1066,7 +1066,7 @@ def ospReport(job):
                                                         cdrcgi.BASE, name)
     cdr.logwrite("url: %s" % url, LOGFILE)
     msg += "<br>Report available at <a href='%s'><u>%s</u></a>." % (url, url)
-    
+
     # Tell the user where to find it.
     body = """\
 The OSP report you requested on Protocols can be viewed at
@@ -1088,7 +1088,7 @@ class NonRespondentsReport:
     def __init__(self, age, docType, host = 'localhost'):
         self.age     = age
         self.docType = docType
-        
+
         #--------------------------------------------------------------
         # Set up a database connection and cursor.
         #--------------------------------------------------------------
@@ -1104,7 +1104,7 @@ class NonRespondentsReport:
 
         self.conn = cdrdb.connect('CdrGuest', dataSource = host)
         self.cursor = self.conn.cursor()
-            
+
     def createSpreadsheet(self, job):
 
         now = time.localtime()
@@ -1194,10 +1194,10 @@ class NonRespondentsReport:
             self.conn.commit()
             job.setProgressMsg("#no_reply table populated")
             self.cursor.execute("""\
-                 SELECT recip_name.title, 
-                        #no_reply.doc_id, 
-                        base_doc.doc_id, 
-                        mailer_type.value, 
+                 SELECT recip_name.title,
+                        #no_reply.doc_id,
+                        base_doc.doc_id,
+                        mailer_type.value,
                         response_received.value,
                         changes_category.value
                    FROM document recip_name
@@ -1351,7 +1351,7 @@ viewed at %s.
         job.setProgressMsg(msg)
         job.setStatus(cdrbatch.ST_COMPLETED)
         cdr.logwrite("Completed report", LOGFILE)
-        
+
 #----------------------------------------------------------------------
 # Run a report of mailers which haven't had responses.
 #----------------------------------------------------------------------
@@ -1406,7 +1406,7 @@ class OrgProtocolReview:
     # This is the workhorse for the report.
     #------------------------------------------------------------------
     def report(self, job):
-        
+
         #--------------------------------------------------------------
         # Object for a protocol person.
         #--------------------------------------------------------------
@@ -1427,7 +1427,7 @@ class OrgProtocolReview:
                 self.personnel          = {}
                 self.isLeadOrg          = False
                 self.isOrgSite          = False
-        
+
         #--------------------------------------------------------------
         # Build the base html for the report.
         #--------------------------------------------------------------
@@ -1873,7 +1873,7 @@ can be viewed at
         return table + u"""\
   </table>
 """
-        
+
 #----------------------------------------------------------------------
 # Class for finding URLs which are not alive.
 # Changing use of depricated class httplib.HTTP
@@ -1926,7 +1926,7 @@ class UrlCheck:
         # SQL Query for Summaries
         # -----------------------
         if self.docType == 'Summary':
-            if self.language == 'EN': 
+            if self.language == 'EN':
                 sqLanguage = 'English'
                 myDefinition = 'TermDefinition'
             else:
@@ -1958,8 +1958,8 @@ ORDER BY q.doc_id
 
         # SQL Query for Glossaries
         # ------------------------
-        elif self.docType in ('Glossary', 'GlossaryTermConcept'): 
-            if self.language == 'EN': 
+        elif self.docType in ('Glossary', 'GlossaryTermConcept'):
+            if self.language == 'EN':
                 myLanguage = 'en'
                 myDefinition = 'TermDefinition'
             else:
@@ -1982,7 +1982,7 @@ left outer JOIN query_term l
      AND (q.path LIKE '%%/%s/%%/@cdr:xref'
           OR
           q.path LIKE '%%/RelatedExternalRef/@cdr:xref'
-          AND 
+          AND
           l.value <> '%s'
          )
 ORDER BY t.name, q.doc_id
@@ -2137,6 +2137,369 @@ The URL report you requested can be viewed at
         cdr.logwrite("Completed UrlCheck report", LOGFILE)
 
 #----------------------------------------------------------------------
+# Class for comparing stored ExternalRef/@ExRefPageTitle values with
+# html head titles of the referenced web pages.
+#
+# This report selects all ExternalRef elements that match user entered
+# report parameters (see CheckUrls.py) that contain an ExRefPageTitle
+# attribute.  The referenced (via @cdr:xref) web page is fetched and
+# parsed. and a normalized value of the /html/head/title element is
+# compared to a similarly normalized @ExRefPageTitle.
+#
+# If the two do not match, an error is reported.
+#----------------------------------------------------------------------
+class ExRefPageTitleCheck:
+    def __init__(self):
+        # Database
+        self.conn     = cdrdb.connect('CdrGuest')
+        self.cursor   = self.conn.cursor()
+
+        # Required, literal parameters
+        self.docType  = job.getParm('docType')
+        self.jobType  = job.getParm('jobType')
+
+        # Optional Summary audience parameter
+        audience = job.getParm('audience')
+        if audience == 'Pat':
+            self.audience = 'Patients'
+        elif audience == 'HP':
+            self.audience = 'Health Professionals'
+        else:
+            self.audience = None
+
+        # Optional Language of Summary or Glossary term
+        language = job.getParm('language')
+        if language == 'EN':
+            self.language = 'English'
+        elif language == 'ES':
+            self.language = 'Spanish'
+        else:
+            self.language = None
+
+        # Gathers all the output
+        self.html = []
+
+    #------------------------------------------------------------------
+    # Create an HTML SAX like parser for finding html titles
+    #------------------------------------------------------------------
+    class TitleParser(HTMLParser.HTMLParser):
+        def __init__(self):
+            # Super class constructor
+            HTMLParser.HTMLParser.__init__(self)
+
+            # Track where we are and accumulate title
+            self.inHead       = False
+            self.inTitle      = False
+            self.titleContent = u""
+
+        def handle_starttag(self, tag, attrs):
+            """
+            Callback when new tag recognized.
+            """
+            ltag = tag.lower()
+            if ltag == "head":
+                self.inHead = True
+            elif ltag == "title":
+                if self.inHead:
+                    self.inTitle = True
+
+        def handle_endtag(self, tag):
+            """
+            Callback when end tag recognized.
+            """
+            ltag = tag.lower()
+            if ltag == "head":
+                self.inHead = False
+            elif ltag == "title":
+                if self.inHead:
+                    self.inTitle = False
+
+        def handle_data(self, data):
+            """
+            Accumulate title text.  Using spaces to replace any interior tags.
+            """
+            if self.inTitle:
+                self.titleContent += u" " + data
+
+        def getTitleContent(self):
+            """
+            Return title with interior markup stripped, all spaces normalized
+            to single space, and leading and trailing space stripped.
+            """
+            return ' '.join(self.titleContent.split())
+
+    #------------------------------------------------------------------
+    # Create a row to the report output table.
+    #------------------------------------------------------------------
+    def addReportRow(self, cdrId, docTitle, url, exRefTitle,
+                     pageTitle, pageFlag):
+        """
+        Generate one row and append it to the report.
+
+        Pass:
+            cdrId       Integer doc ID of doc containing the ExternalRef
+            docTitle    Title of the CDR document
+            url         URL of the page linked-to
+            exRefTitle  Page title stored in @ExRefPageTitle in the doc
+            pageTitle   HTML title found in the linked-to page
+                         If document not retrieved, or no title found,
+                         contains error message
+            pageFlag    Indication of what has been found:
+                         "OK"       = title found and matched
+                         "Mismatch" = title found, but doesn't match stored
+                         "Error"    = Error message, not a title
+        Return:
+            Void.  Row is appended directly to html array
+        """
+        rowHtml = """\
+ <tr>
+  <td align='right'>%d</td>
+  <td>%s</td>
+  <td>%s</td>
+  <td>%s</td>
+  <td class='%s'>%s</td>
+ </tr>
+""" % (cdrId, docTitle, url, exRefTitle, pageFlag, pageTitle)
+
+        # Append it to the output
+        self.html.append(rowHtml)
+
+
+    #------------------------------------------------------------------
+    # Run the report.
+    #------------------------------------------------------------------
+    def run(self, job):
+        """
+        Conforms to the interface for all CdrLongReports.
+        """
+        job.setProgressMsg("Report started")
+        cdr.logwrite("Starting ExRefPageTitle report", LOGFILE)
+
+        # No restrictive query qualifiers yet
+        qualifiers = ''
+
+        # Define variable language and audience qualifiers of the
+        # SQL query to find page titles
+        if self.docType == "Summary":
+            if self.language is not None:
+                qualifiers = """
+  JOIN query_term lnq
+    ON lnq.doc_id = ptq.doc_id
+   AND lnq.path = '/Summary/SummaryMetaData/SummaryLanguage'
+   AND lnq.value = '%s'""" % self.language
+
+            if self.audience is not None:
+                qualifiers += """
+  JOIN query_term audq
+    ON audq.doc_id = ptq.doc_id
+   AND audq.path = '/Summary/SummaryMetaData/SummaryAudience'
+   AND audq.value = '%s'""" % self.audience
+
+        # Glossary types have a language but no audience
+        elif self.docType[0:8] == "Glossary":
+            if self.language is not None:
+                qualifiers = """
+  JOIN query_term lnq
+    ON lnq.doc_id = ptq.doc_id
+   AND lnq.path LIKE '/GlossaryTerm%/Language'
+   AND lnq.value = '%s'""" % self.language
+
+        # Query to select all objects of interest
+        #  ptq  = page title value query terms
+        #  urlq = url value query terms
+        query = """
+SELECT DISTINCT ptq.doc_id, ptq.value, urlq.value, doc.title
+  FROM query_term ptq
+  JOIN query_term urlq
+    ON ptq.doc_id = urlq.doc_id
+   AND SUBSTRING(ptq.node_loc, 1, LEN(ptq.node_loc) - 4) =
+       SUBSTRING(urlq.node_loc, 1, LEN(urlq.node_loc) - 4)
+%s
+  JOIN document doc
+    ON ptq.doc_id = doc.id
+ WHERE ptq.path LIKE '/%s/%%/@SourceTitle'
+   AND urlq.path LIKE '/%s/%%/@cdr:xref'""" % (qualifiers,
+                                               self.docType, self.docType)
+
+        # DEBUG
+        cdr.logwrite(query)
+
+        # Select them
+        rows = []
+        try:
+            self.cursor.execute(query, timeout = 1200)
+            rows = self.cursor.fetchall()
+        except cdrdb.Error, info:
+            job.fail('Failure fetching ExRefPageTitles: %s' % info[1][0],
+                     logfile = LOGFILE)
+
+        # Might not be any
+        if len(rows) == 0:
+            job.fail("No data found for report with input parameters")
+
+        # Create the output html
+        self.html.append(u"""\
+<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
+<html>
+ <head>
+  <title>ExternalRefs Report</title>
+  <style type='text/css'>
+   h1           { font-family: serif; font-size: 14pt; color: black;
+                  font-weight: bold; text-align: center; }
+   th           { font-family: Arial; font-size: 12pt; font-weight: bold; }
+   td           { font-family: Arial; font-size: 11pt; }
+   td.OK        { font-family: Arial; font-size: 11pt; color: Cyan; }
+   td.Mismatch  { font-family: Arial; font-size: 11pt; color: Red; }
+   td.Error     { font-family: Arial; font-size: 11pt; color: Darkred; }
+  </style>
+ </head>
+ <body>
+  <h1>Comparison of Stored Page Titles with Actual Titles in Web Pages<h1>
+  <h3>Parameters:</h3>
+  <ul>
+   <li> Language: %s</li>
+   <li> Audience: %s</li>
+   <li> Show All: %s</li>
+  </ul>
+  <table border='1' cellpadding='2' cellspacing='0'>
+   <tr>
+    <th nowrap='1'>CDR ID</th>
+    <th nowrap='1'>CDR Doc Title</th>
+    <th nowrap='1'>URL</th>
+    <th nowrap='1'>CDR Stored ExRef Title</th>
+    <th nowrap='1'>Web Page Current Title</th>
+   </tr>
+""" % (self.language, self.audience, self.jobType))
+
+        # Short circuit getting same web page multiple times
+        #  Key   = url
+        #  Value = (pageFlag, pageTitle)
+        resultCache = {}
+
+        # Process each found external reference
+        count = -1
+        total = len(rows)
+        msg = ''
+        for row in rows:
+            # For watchers
+            count += 1
+            job.setProgressMsg("Checked %d of %d URLs" % (count, total))
+
+            # As found in the database
+            docId, exRefTitle, url, docTitle = row
+
+            # Have we already seen this web page?
+            if resultCache.has_key(url):
+                # Get the result of previous fetch
+                pageFlag, pageTitle = resultCache(url)
+
+                # If previous fetch failed, don't try again, re-report failure
+                if pageFlag != "Error":
+                    # Page title may not match different doc's exRefTitle
+                    # Compare normalized strings, case insensitive
+                    normalExRefTitle = ' '.join(exRefTitle.split())
+                    if normalExRefTitle.lower() == pageTitle.lower():
+                        pageFlag = "OK"
+                    else:
+                        pageFlag = "Mismatch"
+
+                # Add the report row with the proper pageFlag
+                self.addReportRow(docId, docTitle, url, exRefTitle,
+                                  pageTitle, pageFlag)
+
+            else:
+                # Connect to remote host
+                try:
+                    response = urllib2.urlopen(url, timeout=30)
+                except Exception, info:
+                    pageFlag  = "Error"
+                    errMsg    = str(info)
+                    resultCache[url] = (pageFlag, errMsg)
+                    self.addReportRow(docId, docTitle, url, exRefTitle,
+                                      errMsg, pageFlag)
+                    continue
+
+                # Was it successful?
+                rc = response.getcode()
+                # sys.stderr.write("http response code=%d\n" % rc)
+                code200 = rc - 200
+                if code200 < 0 or code200 > 99:
+                    pageFlag = "Error"
+                    errMsg   = "%d error connecting to host"
+                    resultCache[url] = (pageFlag, errMsg)
+                    self.addReportRow(docId, docTitle, url, exRefTitle,
+                                      errMsg, pageFlag)
+                    continue
+
+                # Get the full web page from the remote host
+                pageHtml = response.read()
+                if not pageHtml:
+                    pageFlag = "Error"
+                    errMsg   = "Unable to retrieve web page from host"
+                    resultCache[url] = (pageFlag, errMsg)
+                    self.addReportRow(docId, docTitle, url, exRefTitle,
+                                      errMsg, pageFlag)
+                    continue
+
+                # Extract the title
+                parser = self.TitleParser()
+                try:
+                    parser.feed(pageHtml)
+                    pageTitle = parser.getTitleContent()
+                except Error, info:
+                    pageFlag = "Error"
+                    errMsg   = "Error parsing web page to find the title: %s" \
+                                % str(info)
+                    resultCache[url] = (pageFlag, errMsg)
+                    self.addReportRow(docId, docTitle, url, exRefTitle,
+                                      errMsg, pageFlag)
+                    continue
+
+                # Compare the stored and found titles
+                normalExRefTitle = ' '.join(exRefTitle.split())
+                if normalExRefTitle.lower() == pageTitle.lower():
+                    pageFlag = "OK"
+                else:
+                    pageFlag = "Mismatch"
+                self.addReportRow(docId, docTitle, url, exRefTitle,
+                                  pageTitle, pageFlag)
+
+        # Terminate the output html
+        self.html.append("""
+  </table>
+ </body>
+</html>
+""")
+
+        #--------------------------------------------------------------
+        # Write out the report and tell the user where it is.
+        #--------------------------------------------------------------
+        name = "/ExternalRefs-%d.html" % job.getJobId()
+        file = open(REPORTS_BASE + name, "wb")
+        file.write(cdrcgi.unicodeToLatin1(u"".join(self.html)))
+        file.close()
+        cdr.logwrite("saving %s" % (REPORTS_BASE + name), LOGFILE)
+        url = "%s/CdrReports%s" % (cdr.CBIIT_NAMES[2], name)
+        cdr.logwrite("url: %s" % url, LOGFILE)
+        msg = "Checked %d of %d URLs<br>" \
+              "Report available at <a href='%s'><u>%s</u></a>." % \
+                (count, total, url, url)
+
+        body = """\
+The ExternalRefs check report you requested can be viewed at
+%s.
+""" % (url)
+
+        subject   = "%s-%s: Report results - ExternalRefs Check" % (
+                            cdr.h.org, cdr.h.tier)
+
+        sendMail(job, subject, body)
+        job.setProgressMsg(msg)
+        job.setStatus(cdrbatch.ST_COMPLETED)
+        cdr.logwrite("Completed ExternalRefs Check report", LOGFILE)
+
+
+#----------------------------------------------------------------------
 # Class for finding URLs which are not alive.
 #----------------------------------------------------------------------
 class countPublishedDocs:
@@ -2179,7 +2542,7 @@ class countPublishedDocs:
         cdr.logwrite("Starting Published Documents Count report", LOGFILE)
 
         protQuery = """
-            SELECT doc_id, doc_version 
+            SELECT doc_id, doc_version
               FROM pub_proc_doc ppd
               JOIN active_doc d
                 ON d.id = ppd.doc_id
@@ -2195,10 +2558,10 @@ class countPublishedDocs:
         # -------------------------------------------------------------------
         def getProtocol(docId, num, cursor):
             query = """
-                SELECT xml 
-                  FROM doc_version 
+                SELECT xml
+                  FROM doc_version
                  WHERE id = %s
-                   AND num = %s 
+                   AND num = %s
         """ % (docId, num)
 
             try:
@@ -2289,7 +2652,7 @@ class countPublishedDocs:
             except cdrdb.Error, info:
                 cdr.logwrite("Error collecting CTGov filenames: %s" % \
                                                           info[1][0], LOGFILE)
-            
+
             return(ctgovCount)
 
 
@@ -2301,8 +2664,8 @@ class countPublishedDocs:
         #----------------------------------------------------------------------
         # Select the Job ID of the last Export job
         # ----------------------------------------
-        query = """SELECT MAX(id) 
-                     FROM pub_proc 
+        query = """SELECT MAX(id)
+                     FROM pub_proc
                     WHERE pub_system = 178
                       AND pub_subset = 'Export'
                       AND status = 'Success'"""
@@ -2319,7 +2682,7 @@ class countPublishedDocs:
         except cdrdb.Error, info:
             cdr.logwrite("Failure selecting last Export JobId: %s" % \
                                                           info[1][0], LOGFILE)
-             
+
         # Counting the documents by document type
         # ---------------------------------------
         query = """select dt.name, count(*)
@@ -2344,7 +2707,7 @@ class countPublishedDocs:
         except cdrdb.Error, info:
             cdr.logwrite("Failure selecting published document count: %s" % \
                                                           info[1][0], LOGFILE)
-             
+
         #----------------------------------------------------------------------
         # Create the results page.
         #----------------------------------------------------------------------
@@ -2362,18 +2725,18 @@ class countPublishedDocs:
         body         { background-color: #DFDFDF; }
         H5           { font-weight: bold;
                        font-family: Arial;
-                       font-size: 13pt; 
+                       font-size: 13pt;
                        margin: 0pt; }
-        TD.header    { font-weight: bold; 
+        TD.header    { font-weight: bold;
                        align: center; }
         TR.odd       { background-color: #F7F7F7; }
         TR.even      { background-color: #FFFFFF; }
         TR.head      { background-color: #B2B2B2; }
         *.center     { text-align: center; }
         *.footer     { font-size: 11pt;
-                       background-color: #B2B2B2; 
-                       font-weight: bold; 
-                       border-top: 2px solid black; 
+                       background-color: #B2B2B2;
+                       font-weight: bold;
+                       border-top: 2px solid black;
                        border-bottom: 2px solid black; }
   </style>
  </head>
@@ -2436,7 +2799,7 @@ class countPublishedDocs:
             </tr>
            </table>""" % total
 
-        # List an additional table for the breakdown of InScopeProtocols 
+        # List an additional table for the breakdown of InScopeProtocols
         # by status
         # -----------------------------------------------------------------
         job.setProgressMsg("Counting InScopeProtocols by status")
@@ -2569,8 +2932,8 @@ class countPublishedDocs:
 
         footer = u"""
  </body>
-</html> 
-        """     
+</html>
+        """
 
         #--------------------------------------------------------------
         # Write out the report and tell the user where it is.
@@ -2728,7 +3091,7 @@ class GlossaryTermSearch:
             self.variants = []
             for row in cursor.fetchall():
                 self.variants.append(row[0])
-                
+
     def strip(s):
         "Remove unused punctuation from glossary term."
         return s.strip(GlossaryTermSearch.punct)
@@ -2949,7 +3312,7 @@ The Glossary Term report you requested can be viewed at
     punct              = u"]['.,?!:;\u201c\u201d(){}<>"
     squeeze            = re.compile(u"[%s]" % punct)
     nonBlanks          = re.compile(u"[^\\s_-]+")
-    
+
     # Class methods.
     protocolSorter     = staticmethod(protocolSorter)
     summarySorter      = staticmethod(summarySorter)
@@ -3139,7 +3502,7 @@ class ProtocolProcessingStatusReport:
             return "LEGACY - DO NOT PUBLISH" in self.statusKeys
         def isHeld(self):
             return "HOLD" in self.statusKeys
-        
+
     def run(self):
 
         #--------------------------------------------------------------
@@ -3180,7 +3543,7 @@ class ProtocolProcessingStatusReport:
         font = ExcelWriter.Font(name = 'Arial', size = 10, bold = True)
         labelStyle = wb.addStyle(alignment = align, font = font,
                                  borders = borders)
-        
+
         #--------------------------------------------------------------
         # Create the book's sheets.
         #--------------------------------------------------------------
@@ -3231,7 +3594,7 @@ class ProtocolProcessingStatusReport:
                 wsCtGov.addCol(colNum, titleWidth)
                 wsCtGovWd.addCol(colNum, titleWidth)
             colNum += 1
-        
+
         #--------------------------------------------------------------
         # Create the label rows.
         #--------------------------------------------------------------
@@ -3321,7 +3684,7 @@ class ProtocolProcessingStatusReport:
             pub      = cdrId in publishableDocs
             protocol = self.InScopeProtocol(self, cdrId, docElem, pub)
             used     = False
-            
+
             if protocol.isResearch():
                 used = True
                 rowResearch += self.addInScopeProtocol(wsResearch,
@@ -3393,7 +3756,7 @@ class ProtocolProcessingStatusReport:
             except Exception, e:
                 cdr.logwrite("failure parsing CDR%d: %s" % (cdrId, e), LOGFILE)
                 continue
-                
+
             docElem = dom.documentElement
             protocol = self.CTGovProtocol(self, cdrId, docElem)
             if 'WITHDRAWN' not in protocol.statusKeys:
@@ -3599,7 +3962,7 @@ The Protocol Processing report you requested can be viewed at
         row = sheet.addRow(rowNum + 2, self.normalStyle)
         row.addCell(1, "COUNT of UNIQUE Trials")
         row.addCell(2, total, "Number")
-        
+
     def testReport():
         import sys
         class Job:
@@ -3897,7 +4260,7 @@ The report you requested on Spanish Glossary Terms by Status can be viewed at:
                             self.comment = xml.sax.saxutils.escape(comment)
 
 # ---------------------------------------------------------------------
-# This Protocol Owner Transfer report takes a long time because 
+# This Protocol Owner Transfer report takes a long time because
 # several elements have to be displayed for which we need to identify
 # the node location.  When a function has to be used within the query
 # the indeces are not being used.
@@ -3929,7 +4292,7 @@ class ProtocolOwnershipTransfer:
 
             #cursor.execute("""\
             #   SELECT t.doc_id, pid.value AS "Primary ID", n.value AS "NCT-ID",
-            #          t.value AS "Owner Org", p.value AS "PRS User", 
+            #          t.value AS "Owner Org", p.value AS "PRS User",
             #          d.value AS "Tr Date", s.value AS "Status"
             #     FROM query_term t
             #     JOIN query_term pid
@@ -3961,9 +4324,9 @@ class ProtocolOwnershipTransfer:
 
             cursor.execute("""\
                SELECT t.doc_id, pid.value AS "Primary ID", n.value AS "NCT-ID",
-                      t.value AS "Owner Org", p.value AS "PRS User", 
+                      t.value AS "Owner Org", p.value AS "PRS User",
                       d.value AS "Tr Date", s.value AS "Status",
-                      oo.value AS "OrgName", 
+                      oo.value AS "OrgName",
                       o.int_val AS "Org-ID", dt.name AS "DocType"
                  INTO #tprotocols
                  FROM query_term t
@@ -4007,9 +4370,9 @@ class ProtocolOwnershipTransfer:
                 --AND n.value like 'NCT%%'
                 ORDER BY s.value, n.value""", timeout = 300)
 
-            # This query is not necessary if we're only looking at 
+            # This query is not necessary if we're only looking at
             # CTGovProtocols but we need it if InScopeProtocols need to be
-            # considered.  
+            # considered.
             # I'm still waiting if we'll need to look at both doc types.
             # -------------------------------------------------------------
             cursor.execute("""\
@@ -4037,8 +4400,8 @@ class ProtocolOwnershipTransfer:
                 self.protocols[row[0]][u'blocked']  = \
                                           self.checkBlocked(cdrId, cursor)
                 self.protocols[row[0]][u'ctgovBlk'] = \
-                                          self.checkCtgovBlocked(cdrId, 
-                                                                 row[9], 
+                                          self.checkCtgovBlocked(cdrId,
+                                                                 row[9],
                                                                  cursor)
                 self.protocols[row[0]][u'grantNo'] = \
                                           getGrantNo(cdrId, row[9], cursor)
@@ -4078,7 +4441,7 @@ class ProtocolOwnershipTransfer:
     # -------------------------------------------------------------------
     # Not Transferred Protocols class to identify the elements requested
     # Only PUP information needs to get populated.  We're doing this by
-    # sending the vendor filter output through a new filter extracting 
+    # sending the vendor filter output through a new filter extracting
     # this information.
     # -------------------------------------------------------------------
     class NotTransferredProtocols:
@@ -4102,9 +4465,9 @@ class ProtocolOwnershipTransfer:
                 # Get the person name
                 # -------------------
                 cursor.execute("""\
-                  SELECT q.doc_id, u.int_val, 
-                         g.value as "FName", l.value as "LName", 
-                         c.value as Contact  
+                  SELECT q.doc_id, u.int_val,
+                         g.value as "FName", l.value as "LName",
+                         c.value as Contact
                     FROM query_term_pub q
                     JOIN query_term_pub u
                       ON q.doc_id = u.doc_id
@@ -4167,7 +4530,7 @@ class ProtocolOwnershipTransfer:
 
 
         # -----------------------------------------------------
-        # Create the dictionary holding all protocols with the 
+        # Create the dictionary holding all protocols with the
         # information to display on the spreadsheet.
         # -----------------------------------------------------
         def __init__(self, cursor):
@@ -4175,7 +4538,7 @@ class ProtocolOwnershipTransfer:
 
             cursor.execute("""\
                 SELECT s.doc_id, pid.value AS "Primary ID", n.value AS "NCT-ID",
-                       r.value as "TResponse", d.value as "TR date", 
+                       r.value as "TResponse", d.value as "TR date",
                        t.value as "Log date",
                        s.value AS "Status",  sd.value AS "Status Date" --,
                        -- ln.value AS "OrgName"
@@ -4212,13 +4575,13 @@ class ProtocolOwnershipTransfer:
                                    '/CTGovOwnershipTransferDate'
        LEFT OUTER JOIN query_term r
                     ON s.doc_id  = r.doc_id
-                   AND r.path    = '/InScopeProtocol'                        + 
-                                   '/CTGovOwnershipTransferContactLog'       + 
+                   AND r.path    = '/InScopeProtocol'                        +
+                                   '/CTGovOwnershipTransferContactLog'       +
                                    '/CTGovOwnershipTransferContactResponse'
        LEFT OUTER JOIN query_term t
                     ON s.doc_id  = t.doc_id
                    AND t.path    = '/InScopeProtocol'                        +
-                                   '/CTGovOwnershipTransferContactLog'       + 
+                                   '/CTGovOwnershipTransferContactLog'       +
                                    '/Date'
                  WHERE s.path    = '/InScopeProtocol/ProtocolAdminInfo'      +
                                    '/CurrentProtocolStatus'
@@ -4246,11 +4609,11 @@ class ProtocolOwnershipTransfer:
                 # Populate the PUP information
                 pup = self.PUP(cdrId, cursor)
                 if pup.persId:
-                    self.protocols[cdrId][u'pup'] = pup 
+                    self.protocols[cdrId][u'pup'] = pup
                 else:
                     pup = self.PUP(cdrId, cursor, 'Protocol chair')
                     self.protocols[cdrId][u'pup'] = pup
-                    
+
                 # Populate the Source information
                 # -------------------------------
                 self.protocols[cdrId][u'protSource'] = \
@@ -4259,8 +4622,8 @@ class ProtocolOwnershipTransfer:
                 # Populate the GrantNo information
                 # --------------------------------
                 self.protocols[cdrId][u'grantNo'] = \
-                                          getGrantNo(cdrId, 
-                                                     'InScopeProtocol', 
+                                          getGrantNo(cdrId,
+                                                     'InScopeProtocol',
                                                      cursor)
 
                 # Populate the Phase information
@@ -4307,8 +4670,8 @@ class ProtocolOwnershipTransfer:
         # -------------------------------------------
         def getSource(self, id, cursor):
             cursor.execute("""\
-                SELECT value 
-                  FROM query_term 
+                SELECT value
+                  FROM query_term
                  WHERE doc_id = %s
                    AND path = '/InScopeProtocol/ProtocolSources' +
                               '/ProtocolSource/SourceName'
@@ -4334,7 +4697,7 @@ class ProtocolOwnershipTransfer:
         endDate   = list(now)
 
         job.setProgressMsg("Job started")
-       
+
         # Transferred Protocols
         job.setProgressMsg("Selecting transferred protocols")
         tps  = self.TransferredProtocols(self.cursor)
@@ -4357,19 +4720,19 @@ class ProtocolOwnershipTransfer:
         style1  = wb.addStyle(alignment = align, font = font)
         urlFont = ExcelWriter.Font('blue', None, 'Times New Roman', size = 11)
         style4  = wb.addStyle(alignment = align, font = urlFont)
-        style2  = wb.addStyle(alignment = align, font = font, 
+        style2  = wb.addStyle(alignment = align, font = font,
                                  numFormat = 'YYYY-mm-dd')
         alignH  = ExcelWriter.Alignment('Left', 'Bottom', wrap = True)
-        headFont= ExcelWriter.Font(bold=True, name = 'Times New Roman', 
+        headFont= ExcelWriter.Font(bold=True, name = 'Times New Roman',
                                                                     size = 12)
-        boldFont= ExcelWriter.Font(bold=True, name = 'Times New Roman', 
+        boldFont= ExcelWriter.Font(bold=True, name = 'Times New Roman',
                                                                     size = 11)
         styleH  = wb.addStyle(alignment = alignH, font = headFont)
         style1b = wb.addStyle(alignment = align,  font = boldFont)
-            
+
         for key in wsTitle.keys():
             ws      = wb.addWorksheet(wsTitle[key], style1, 45, 1)
-            
+
             # Set the column width
             # --------------------
             if key == 'ntr':
@@ -4440,7 +4803,7 @@ class ProtocolOwnershipTransfer:
                 #exRow.addCell(15, 'Phase')
                 exRow.addCell(12, 'GrantNo')
 
-            # Add the protocol data one record at a time beginning after 
+            # Add the protocol data one record at a time beginning after
             # the header row
             # ----------------------------------------------------------
             rowNum = 1
@@ -4457,11 +4820,11 @@ class ProtocolOwnershipTransfer:
                     exRow.addCell(1, row)
                     cgUrl =  'http://www.cancer.gov/clinicaltrials/search/'
                     cgUrl += 'view?cdrid=%s&version=HealthProfessional' % row
-                    exRow.addCell(2, Prot.protocols[row][u'pId'], 
+                    exRow.addCell(2, Prot.protocols[row][u'pId'],
                                                 href = cgUrl, style = style4)
                     ctUrl = 'http://clinicaltrials.gov/ct/show'
                     ctUrl += '/%s' % Prot.protocols[row][u'nctId']
-                    exRow.addCell(3, Prot.protocols[row][u'nctId'], 
+                    exRow.addCell(3, Prot.protocols[row][u'nctId'],
                                                 href = ctUrl, style = style4)
 
                     if Prot.protocols[row].has_key('protSource'):
@@ -4482,7 +4845,7 @@ class ProtocolOwnershipTransfer:
                     if Prot.protocols[row].has_key('pup'):
                         if Prot.protocols[row][u'pup'].persFname and \
                            Prot.protocols[row][u'pup'].persLname:
-                            exRow.addCell(10, 
+                            exRow.addCell(10,
                                  Prot.protocols[row][u'pup'].persFname + \
                                   " " + Prot.protocols[row][u'pup'].persLname)
 
@@ -4508,16 +4871,16 @@ class ProtocolOwnershipTransfer:
                     exRow.addCell(1, row)
                     cgUrl =  'http://www.cancer.gov/clinicaltrials/search/'
                     cgUrl += 'view?cdrid=%s&version=HealthProfessional' % row
-                    exRow.addCell(2, Prot.protocols[row][u'pId'], 
+                    exRow.addCell(2, Prot.protocols[row][u'pId'],
                                                 href = cgUrl, style = style4)
                     ctUrl = 'http://clinicaltrials.gov/ct/show'
                     ctUrl += '/%s' % Prot.protocols[row][u'nctId']
-                    exRow.addCell(3, Prot.protocols[row][u'nctId'], 
+                    exRow.addCell(3, Prot.protocols[row][u'nctId'],
                                                 href = ctUrl, style = style4)
 
                     if Prot.protocols[row].has_key('trOrg'):
                         exRow.addCell(4, Prot.protocols[row][u'trOrg'])
-                        
+
                     if Prot.protocols[row].has_key('trUser'):
                         exRow.addCell(5, Prot.protocols[row][u'trUser'])
 
@@ -4541,7 +4904,7 @@ class ProtocolOwnershipTransfer:
                     if exRow.addCell(12, Prot.protocols[row][u'grantNo']):
                         exRow.addCell(12, Prot.protocols[row][u'grantNo'])
 
-        t = time.strftime("%Y%m%d%H%M%S")                                               
+        t = time.strftime("%Y%m%d%H%M%S")
         job.setProgressMsg("Saving spreadsheet")
 
         # Save the report.
@@ -4565,7 +4928,7 @@ class ProtocolOwnershipTransfer:
         # Tell the user where to find it.
         # -------------------------------
         body = """\
-The Protocol Ownership Transfer Report you requested can be viewed at 
+The Protocol Ownership Transfer Report you requested can be viewed at
 
   %s
 """ % (url)
@@ -4581,7 +4944,7 @@ The Protocol Ownership Transfer Report you requested can be viewed at
         job.setStatus(cdrbatch.ST_COMPLETED)
         cdr.logwrite("Completed report", LOGFILE)
 
- 
+
 #----------------------------------------------------------------------
 # Report for tracking audio pronunciation recordings.
 #----------------------------------------------------------------------
@@ -4697,7 +5060,7 @@ SELECT DISTINCT e.doc_id, c.created, t.value
         # Tell the user where to find it.
         # -------------------------------
         body = """\
-The Audio Recordings Tracking Report you requested can be viewed at 
+The Audio Recordings Tracking Report you requested can be viewed at
 
   %s
 """ % (url)
@@ -4784,7 +5147,10 @@ def protOwnershipTransfer(job):
 # Run a report of dead URLs.
 #----------------------------------------------------------------------
 def checkUrls(job):
-    report = UrlCheck()
+    if job.getParm('jobType') == "UrlErrs":
+        report = UrlCheck()
+    else:
+        report = ExRefPageTitleCheck()
     report.run(job)
 
 #----------------------------------------------------------------------
@@ -4803,7 +5169,7 @@ def orgProtocolReview(job):
     docId  = int(digits)
     report = OrgProtocolReview(docId)
     report.report(job)
-    
+
 #----------------------------------------------------------------------
 # Report on phrases matching a specified glossary term.
 #----------------------------------------------------------------------
@@ -4863,11 +5229,11 @@ if __name__ == "__main__":
     # parameters on the command line, the email argument is not optional.
     # So, if you want to perform a test invocation, append a dummy job ID
     # to the end of these arguments so it can be popped above.
-    if len(sys.argv) > 1:  
+    if len(sys.argv) > 1:
         reportName = sys.argv[1]
         email      = len(sys.argv) > 2 and sys.argv[2] or None
         parms      = sys.argv[3:]
-    
+
         # Test version of Spanish Glossary Term report; needs status, to, from.
         if reportName == 'SpanishGlossaryTermsByStatus':
             SpanishGlossaryTermsByStatus(TestJob(jobId, email, parms)).run()
