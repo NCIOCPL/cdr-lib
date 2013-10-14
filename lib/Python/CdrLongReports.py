@@ -2264,103 +2264,34 @@ class ExRefPageTitleCheck:
         # Append it to the output
         self.html.append(rowHtml)
 
+        # Count it
+        if pageFlag == "OK":
+            self.okCnt += 1
+        elif pageFlag == "Mismatch":
+            self.mismatchCnt += 1
+        elif pageFlag == "Error":
+            self.errorCnt += 1
+        else:
+            raise Exception("Internal error in ExRefPageTitleCheck. "
+                            " Unknown pageFlag %s" % pageFlag)
+
 
     #------------------------------------------------------------------
-    # Run the report.
+    # Check the titles one by one and report them.
     #------------------------------------------------------------------
-    def run(self, job):
+    def checkAllTitles(self, job):
         """
-        Conforms to the interface for all CdrLongReports.
+        Output a table of check results.
+
+        Pass:
+            job - Job object, used only for setting messages.
+
+        Return:
+            Count of output rows.
         """
-        job.setProgressMsg("Report started")
-        cdr.logwrite("Starting ExRefPageTitle report", LOGFILE)
 
-        # No restrictive query qualifiers yet
-        qualifiers = ''
-
-        # Define variable language and audience qualifiers of the
-        # SQL query to find page titles
-        if self.docType == "Summary":
-            if self.language is not None:
-                qualifiers = """
-  JOIN query_term lnq
-    ON lnq.doc_id = ptq.doc_id
-   AND lnq.path = '/Summary/SummaryMetaData/SummaryLanguage'
-   AND lnq.value = '%s'""" % self.language
-
-            if self.audience is not None:
-                qualifiers += """
-  JOIN query_term audq
-    ON audq.doc_id = ptq.doc_id
-   AND audq.path = '/Summary/SummaryMetaData/SummaryAudience'
-   AND audq.value = '%s'""" % self.audience
-
-        # Glossary types have a language but no audience
-        elif self.docType[0:8] == "Glossary":
-            if self.language is not None:
-                qualifiers = """
-  JOIN query_term lnq
-    ON lnq.doc_id = ptq.doc_id
-   AND lnq.path LIKE '/GlossaryTerm%/Language'
-   AND lnq.value = '%s'""" % self.language
-
-        # Query to select all objects of interest
-        #  ptq  = page title value query terms
-        #  urlq = url value query terms
-        query = """
-SELECT DISTINCT ptq.doc_id, ptq.value, urlq.value, doc.title
-  FROM query_term ptq
-  JOIN query_term urlq
-    ON ptq.doc_id = urlq.doc_id
-   AND SUBSTRING(ptq.node_loc, 1, LEN(ptq.node_loc) - 4) =
-       SUBSTRING(urlq.node_loc, 1, LEN(urlq.node_loc) - 4)
-%s
-  JOIN document doc
-    ON ptq.doc_id = doc.id
- WHERE ptq.path LIKE '/%s/%%/@SourceTitle'
-   AND urlq.path LIKE '/%s/%%/@cdr:xref'""" % (qualifiers,
-                                               self.docType, self.docType)
-
-        # DEBUG
-        cdr.logwrite(query)
-
-        # Select them
-        rows = []
-        try:
-            self.cursor.execute(query, timeout = 1200)
-            rows = self.cursor.fetchall()
-        except cdrdb.Error, info:
-            job.fail('Failure fetching ExRefPageTitles: %s' % info[1][0],
-                     logfile = LOGFILE)
-
-        # Might not be any
-        if len(rows) == 0:
-            job.fail("No data found for report with input parameters")
-
-        # Create the output html
-        self.html.append(u"""\
-<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
-<html>
- <head>
-  <title>ExternalRefs Report</title>
-  <style type='text/css'>
-   h1           { font-family: serif; font-size: 14pt; color: black;
-                  font-weight: bold; text-align: center; }
-   th           { font-family: Arial; font-size: 12pt; font-weight: bold; }
-   td           { font-family: Arial; font-size: 11pt; }
-   td.OK        { font-family: Arial; font-size: 11pt; color: Cyan; }
-   td.Mismatch  { font-family: Arial; font-size: 11pt; color: Red; }
-   td.Error     { font-family: Arial; font-size: 11pt; color: Darkred; }
-  </style>
- </head>
- <body>
-  <h1>Comparison of Stored Page Titles with Actual Titles in Web Pages<h1>
-  <h3>Parameters:</h3>
-  <ul>
-   <li> Language: %s</li>
-   <li> Audience: %s</li>
-   <li> Show All: %s</li>
-  </ul>
+        # Create the table to hold output data
+        self.html.append("""
   <table border='1' cellpadding='2' cellspacing='0'>
    <tr>
     <th nowrap='1'>CDR ID</th>
@@ -2369,21 +2300,20 @@ SELECT DISTINCT ptq.doc_id, ptq.value, urlq.value, doc.title
     <th nowrap='1'>CDR Stored ExRef Title</th>
     <th nowrap='1'>Web Page Current Title</th>
    </tr>
-""" % (self.language, self.audience, self.jobType))
-
+""")
         # Short circuit getting same web page multiple times
         #  Key   = url
         #  Value = (pageFlag, pageTitle)
         resultCache = {}
 
         # Process each found external reference
-        count = -1
-        total = len(rows)
+        count = 0
+        total = len(self.rows)
         msg = ''
-        for row in rows:
+        for row in self.rows:
             # For watchers
-            count += 1
             job.setProgressMsg("Checked %d of %d URLs" % (count, total))
+            count += 1
 
             # As found in the database
             docId, exRefTitle, url, docTitle = row
@@ -2411,9 +2341,9 @@ SELECT DISTINCT ptq.doc_id, ptq.value, urlq.value, doc.title
                 # Connect to remote host
                 try:
                     response = urllib2.urlopen(url, timeout=30)
-                except Exception, info:
+                except urllib2.URLError, info:
                     pageFlag  = "Error"
-                    errMsg    = str(info)
+                    errMsg    = info.reason
                     resultCache[url] = (pageFlag, errMsg)
                     self.addReportRow(docId, docTitle, url, exRefTitle,
                                       errMsg, pageFlag)
@@ -2424,6 +2354,7 @@ SELECT DISTINCT ptq.doc_id, ptq.value, urlq.value, doc.title
                 # sys.stderr.write("http response code=%d\n" % rc)
                 code200 = rc - 200
                 if code200 < 0 or code200 > 99:
+                    cdr.logwrite("http code error: rc\n%s" % (rc, str(info)))
                     pageFlag = "Error"
                     errMsg   = "%d error connecting to host"
                     resultCache[url] = (pageFlag, errMsg)
@@ -2464,9 +2395,140 @@ SELECT DISTINCT ptq.doc_id, ptq.value, urlq.value, doc.title
                 self.addReportRow(docId, docTitle, url, exRefTitle,
                                   pageTitle, pageFlag)
 
+        # Terminate table and add counters
+        self.html.append("""  </table>
+ <center>
+ <h3>Statistics</h3>
+  <table border='1' cellpadding='2' cellspacing='0'>
+   <tr><th align='right'>Matched Titles</th><td align='right'>%d</td></tr>
+   <tr><th align='right'>Mismatched Titles</th><td align='right'>%d</td></tr>
+   <tr><th align='right'>Retrieval Errors</th><td align='right'>%d</td></tr>
+  </table>
+ </center>""" % (self.okCnt, self.mismatchCnt, self.errorCnt))
+
+        return count
+
+
+    #------------------------------------------------------------------
+    # Run the report.
+    #------------------------------------------------------------------
+    def run(self, job):
+        """
+        Conforms to the interface for all CdrLongReports.
+        """
+        job.setProgressMsg("Report started")
+        cdr.logwrite("Starting ExRefPageTitle report", LOGFILE)
+
+        # No restrictive query qualifiers yet
+        qualifiers = ''
+
+        # Define variable language and audience qualifiers of the
+        # SQL query to find page titles
+        if self.docType == "Summary":
+            if self.language is not None:
+                qualifiers = """
+  JOIN query_term lnq
+    ON lnq.doc_id = ptq.doc_id
+   AND lnq.path = '/Summary/SummaryMetaData/SummaryLanguage'
+   AND lnq.value = '%s'""" % self.language
+
+            if self.audience is not None:
+                qualifiers += """
+  JOIN query_term audq
+    ON audq.doc_id = ptq.doc_id
+   AND audq.path = '/Summary/SummaryMetaData/SummaryAudience'
+   AND audq.value = '%s'""" % self.audience
+
+        # Glossary types have a language but no audience
+        elif self.docType[0:8] == "Glossary":
+            if self.language is not None:
+                qualifiers = """
+  JOIN query_term lnq
+    ON lnq.doc_id = ptq.doc_id
+   AND lnq.path LIKE '/GlossaryTerm%%/Language'
+   AND lnq.value = '%s'""" % self.language
+
+        # Query to select all objects of interest
+        #  ptq  = page title value query terms
+        #  urlq = url value query terms
+        query = """
+SELECT DISTINCT ptq.doc_id, ptq.value, urlq.value, doc.title
+  FROM query_term ptq
+  JOIN query_term urlq
+    ON ptq.doc_id = urlq.doc_id
+   AND SUBSTRING(ptq.node_loc, 1, LEN(ptq.node_loc) - 4) =
+       SUBSTRING(urlq.node_loc, 1, LEN(urlq.node_loc) - 4)
+%s
+  JOIN document doc
+    ON ptq.doc_id = doc.id
+ WHERE ptq.path LIKE '/%s/%%/@SourceTitle'
+   AND urlq.path LIKE '/%s/%%/@cdr:xref'
+ ORDER BY ptq.doc_id, ptq.value""" % (qualifiers,
+                                               self.docType, self.docType)
+
+        # DEBUG
+        cdr.logwrite(query)
+
+        # Hold rows and counters
+        self.rows = []
+        self.okCnt       = 0
+        self.mismatchCnt = 0
+        self.errorCnt    = 0
+
+        # Select them
+        try:
+            self.cursor.execute(query, timeout = 1200)
+            self.rows = self.cursor.fetchall()
+        except cdrdb.Error, info:
+            job.fail('Failure fetching ExRefPageTitles: %s' % info[1][0],
+                     logfile = LOGFILE)
+
+        # Create the output html
+        now = time.ctime()
+        self.html.append(u"""\
+<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
+<html>
+ <head>
+  <title>ExternalRefs Report</title>
+  <style type='text/css'>
+   h1           { font-family: serif; font-size: 16pt; color: black;
+                  font-weight: bold; text-align: center; }
+   h2           { font-family: serif; font-size: 14pt; color: black;
+                  font-weight: bold; text-align: center; }
+   h2           { font-family: serif; font-size: 13pt; color: black;
+                  font-weight: bold; text-align: center; }
+   th           { font-family: Arial; font-size: 12pt; font-weight: bold; }
+   td           { font-family: Arial; font-size: 11pt; }
+   td.OK        { font-family: Arial; font-size: 11pt; color: Cyan; }
+   td.Mismatch  { font-family: Arial; font-size: 11pt; color: Red; }
+   td.Error     { font-family: Arial; font-size: 11pt; color: Darkred; }
+  </style>
+ </head>
+ <body>
+  <h1>Comparison of Stored Page Titles with Actual Titles in Web Pages<h1>
+  <h2>%s</h2>
+  <h3>Parameters:</h3>
+  <ul>
+   <li> Doc Type: %s</li>
+   <li> Language: %s</li>
+   <li> Audience: %s</li>
+   <li> Show All: %s</li>
+  </ul>
+""" % (now, self.docType, self.language, self.audience, self.jobType))
+
+        # If anything found, perform checks and output results
+        count = 0
+        if len(self.rows) > 0:
+            count = self.checkAllTitles(job)
+
+        # Else just include a message
+        else:
+            self.html.append(
+              "<h2>No documents were found matching the input"
+              " parameters.</h2>\n")
+
         # Terminate the output html
         self.html.append("""
-  </table>
  </body>
 </html>
 """)
@@ -2483,7 +2545,7 @@ SELECT DISTINCT ptq.doc_id, ptq.value, urlq.value, doc.title
         cdr.logwrite("url: %s" % url, LOGFILE)
         msg = "Checked %d of %d URLs<br>" \
               "Report available at <a href='%s'><u>%s</u></a>." % \
-                (count, total, url, url)
+                (count, len(self.rows), url, url)
 
         body = """\
 The ExternalRefs check report you requested can be viewed at
