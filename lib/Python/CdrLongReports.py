@@ -169,7 +169,7 @@ def hasSitePhone(node):
 #----------------------------------------------------------------------
 def protsWithoutPhones(job):
     try:
-        conn = cdrdb.connect('CdrGuest')
+        conn   = cdrdb.connect('CdrGuest')
         cursor = conn.cursor()
         cursor.execute("""\
       SELECT /* TOP 50 */ d.id, MAX(v.num)
@@ -631,7 +631,7 @@ def outcomeMeasuresCodingReport(job):
     onlyMissing     = job.getParm('only-missing') == 'Y'
     start           = time.time()
     try:
-        conn = cdrdb.connect('CdrGuest')
+        conn   = cdrdb.connect('CdrGuest')
         cursor = conn.cursor()
         cursor.execute("""\
             SELECT v.id, MAX(v.num)
@@ -865,7 +865,7 @@ def ospReport(job):
         phaseWhere  = "AND p.path = '/InScopeProtocol/ProtocolPhase'"
         phaseWhere  = '%s AND p.value IN (%s)' % (phaseWhere, sqlPhases)
     try:
-        conn = cdrdb.connect('CdrGuest')
+        conn   = cdrdb.connect('CdrGuest')
         cursor = conn.cursor()
         cursor.execute("CREATE TABLE #terms(id INTEGER)")
         conn.commit()
@@ -1092,17 +1092,7 @@ class NonRespondentsReport:
         #--------------------------------------------------------------
         # Set up a database connection and cursor.
         #--------------------------------------------------------------
-        # Setting up the propper database source
-        # --------------------------------------
-        import cdrutil
-        h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                            filename = cdr.WORK_DRIVE + ':/etc/cdrapphosts.rc')
-        if h.org == 'OCE':
-            host = 'localhost'
-        else:
-            host = h.host['DBWIN'][0]
-
-        self.conn = cdrdb.connect('CdrGuest', dataSource = host)
+        self.conn   = cdrdb.connect('CdrGuest')
         self.cursor = self.conn.cursor()
 
     def createSpreadsheet(self, job):
@@ -1368,17 +1358,7 @@ def nonRespondentsReport(job):
 class OrgProtocolReview:
     def __init__(self, id, host = 'localhost'):
         self.id     = id
-        # Setting up the propper database source
-        # --------------------------------------
-        import cdrutil
-        h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                            filename = cdr.WORK_DRIVE + ':/etc/cdrapphosts.rc')
-        if h.org == 'OCE':
-            host = 'localhost'
-        else:
-            host = h.host['DBWIN'][0]
-
-        self.conn   = cdrdb.connect('CdrGuest', dataSource = host)
+        self.conn   = cdrdb.connect('CdrGuest')
         self.cursor = self.conn.cursor()
 
     #------------------------------------------------------------------
@@ -1880,19 +1860,9 @@ can be viewed at
 #----------------------------------------------------------------------
 class UrlCheck:
     def __init__(self):
-        # Setting up the propper database source
-        # --------------------------------------
-        import cdrutil
-        h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                            filename = cdr.WORK_DRIVE + ':/etc/cdrapphosts.rc')
-        if h.org == 'OCE':
-            host = 'localhost'
-        else:
-            host = h.host['DBWIN'][0]
-
-        self.conn    = cdrdb.connect('CdrGuest', dataSource = host)
-        self.cursor  = self.conn.cursor()
-        self.pattern = re.compile(u"([^/]+)/@cdr:xref$")
+        self.conn     = cdrdb.connect('CdrGuest')
+        self.cursor   = self.conn.cursor()
+        self.pattern  = re.compile(u"([^/]+)/@cdr:xref$")
         self.docType  = job.getParm('docType')
         self.audience = job.getParm('audience')
         self.language = job.getParm('language')
@@ -2176,8 +2146,19 @@ class ExRefPageTitleCheck:
         else:
             self.language = None
 
+        # Pattern used to find the character set in an http response header
+        self.charsetPat = re.compile(".*charset=(.*)$")
+
         # Gathers all the output
         self.html = []
+
+        #-----------------------------------------------------------------
+        # For DEV and QA servers, we can't get to the production cancer.gov
+        #  server.
+        # We need to modify URLs to go to DEV and QA cancer.gov servers.
+        # Find out what we need right here.
+        #-----------------------------------------------------------------
+        self.mu = cdr.MutateCGUrl()
 
     #------------------------------------------------------------------
     # Create an HTML SAX like parser for finding html titles
@@ -2340,7 +2321,10 @@ class ExRefPageTitleCheck:
             else:
                 # Connect to remote host
                 try:
-                    response = urllib2.urlopen(url, timeout=30)
+                    # For DEV and QA we modify the url to go to the
+                    # DEV or QA cancer.gov server
+                    chkUrl = self.mu.mutateUrl(url)
+                    response = urllib2.urlopen(chkUrl, timeout=45)
                 except urllib2.URLError, info:
                     pageFlag  = "Error"
                     errMsg    = info.reason
@@ -2372,10 +2356,23 @@ class ExRefPageTitleCheck:
                                       errMsg, pageFlag)
                     continue
 
+                # Default assumption is that page is in utf8
+                charset = 'utf-8'
+
+                # See if the page headers specify a specific encoding
+                conLine = response.headers['content-type']
+                if conLine:
+                    m = self.charsetPat.match(conLine)
+                    if m:
+                        charset = m.group(1)
+
+                # Convert to unicode as best we can
+                uniPageHtml = unicode(pageHtml, charset)
+
                 # Extract the title
                 parser = self.TitleParser()
                 try:
-                    parser.feed(pageHtml)
+                    parser.feed(uniPageHtml)
                     pageTitle = parser.getTitleContent()
                 except Error, info:
                     pageFlag = "Error"
@@ -2456,9 +2453,7 @@ SELECT DISTINCT ptq.doc_id, ptq.value, urlq.value, doc.title
   FROM query_term ptq
   JOIN query_term urlq
     ON ptq.doc_id = urlq.doc_id
-   AND SUBSTRING(ptq.node_loc, 1, LEN(ptq.node_loc) - 4) =
-       SUBSTRING(urlq.node_loc, 1, LEN(urlq.node_loc) - 4)
-%s
+   AND ptq.node_loc = urlq.node_loc %s
   JOIN document doc
     ON ptq.doc_id = doc.id
  WHERE ptq.path LIKE '/%s/%%/@SourceTitle'
@@ -2467,7 +2462,7 @@ SELECT DISTINCT ptq.doc_id, ptq.value, urlq.value, doc.title
                                                self.docType, self.docType)
 
         # DEBUG
-        cdr.logwrite(query)
+        # cdr.logwrite(query)
 
         # Hold rows and counters
         self.rows = []
@@ -2566,17 +2561,7 @@ The ExternalRefs check report you requested can be viewed at
 #----------------------------------------------------------------------
 class countPublishedDocs:
     def __init__(self, host = 'localhost'):
-        # Setting up the propper database source
-        # --------------------------------------
-        import cdrutil
-        h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                            filename = cdr.WORK_DRIVE + ':/etc/cdrapphosts.rc')
-        if h.org == 'OCE':
-            host = 'localhost'
-        else:
-            host = h.host['DBWIN'][0]
-
-        self.conn    = cdrdb.connect('CdrGuest', dataSource = host)
+        self.conn    = cdrdb.connect('CdrGuest')
         self.cursor  = self.conn.cursor()
         self.pattern = re.compile(u"([^/]+)/@cdr:xref$")
 
@@ -4072,8 +4057,8 @@ class SpanishGlossaryTermsByStatus:
     def run(self):
 
         # Get a list of all glossary term document IDs.
-        start = time.time()
-        conn = cdrdb.connect('CdrGuest')
+        start  = time.time()
+        conn   = cdrdb.connect('CdrGuest')
         cursor = conn.cursor()
         cursor.execute("""\
             SELECT d.id
@@ -4329,18 +4314,7 @@ The report you requested on Spanish Glossary Terms by Status can be viewed at:
 # ---------------------------------------------------------------------
 class ProtocolOwnershipTransfer:
     def __init__(self, host = 'localhost'):
-        #--------------------------------------------------------------
-        # Set up a database connection and cursor.
-        #--------------------------------------------------------------
-        import cdrutil
-        h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                            filename = cdr.WORK_DRIVE + ':/etc/cdrapphosts.rc')
-        if h.org == 'OCE':
-            host = 'localhost'
-        else:
-            host = h.host['DBWIN'][0]
-
-        self.conn = cdrdb.connect('CdrGuest', dataSource = host)
+        self.conn   = cdrdb.connect('CdrGuest')
         self.cursor = self.conn.cursor()
 
     # -------------------------------------------------------------------
