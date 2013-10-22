@@ -5290,3 +5290,71 @@ class ProtocolStatusHistory:
             if value.upper() in statusSet:
                 return value
         return ""
+
+#----------------------------------------------------------------------
+# Transform URLs for DEV and QA
+#----------------------------------------------------------------------
+class MutateCGUrl:
+    """
+    Class for transforming URLs that point to cancer.gov pages to URLs that
+    point to the equivalent pages on the DEV or QA versions of cancer.gov.
+
+    This enables testing in the CBIIT DEV and QA CDR servers which are
+    forbidden from talking to the cancer.gov servers.
+    """
+    def __init__(self):
+        # Where are we?
+        global h
+        self.tier = h.tier
+
+        # If in DEV or QA, we need info for the transmutations
+        if self.tier in ("DEV", "QA"):
+
+            # Where are the cancer.gov sites for this use?
+            cgHostProp  = h.getHostNames("CG")
+            mcgHostProp = h.getHostNames("CGMOBILE")
+
+            # Corresponding names
+            self.cgTargetUrlName  = "http://" + cgHostProp.qname
+            self.mcgTargetUrlName = "http://" + mcgHostProp.qname
+
+            import re
+            self.cgpat  = re.compile("(https?://(www\.)?cancer.gov)/?.*")
+            self.mcgpat = re.compile("(https?://m.cancer.gov)/?.*")
+        else:
+            self.cgtargetUrlName = None
+            self.mcgtargetUrlName = None
+
+    #------------------------------------------------------------------
+    # Convert a URL for use on DEV or QA versions of cancer.gov
+    #------------------------------------------------------------------
+    def mutateUrl(self, url):
+        """
+        Convert a url from the production server if we're not running
+        in production.
+
+        Pass:
+            url - Where we're trying to go
+
+        Return:
+            Transformed url or, if not going to cancer.gov or not on
+            DEV or QA, the original url passed to us.
+        """
+        # Default returns unmodifed url
+        retUrl = url
+
+        if self.tier in ("DEV", "QA"):
+            # Try standard browser url match
+            m = self.cgpat.match(url)
+            if m:
+                # Substitute whatever we need for this tier
+                retUrl = self.cgTargetUrlName + url[m.end(1):]
+
+            # If failed, try mobile browser url match
+            else:
+                m = self.mcgpat.match(url)
+                if m:
+                    retUrl = self.mcgTargetUrlName + url[m.end(1):]
+
+        # Return possibly transformed url
+        return retUrl
