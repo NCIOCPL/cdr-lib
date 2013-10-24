@@ -2315,8 +2315,9 @@ class ExRefPageTitleCheck:
                         pageFlag = "Mismatch"
 
                 # Add the report row with the proper pageFlag
-                self.addReportRow(docId, docTitle, url, exRefTitle,
-                                  pageTitle, pageFlag)
+                if pageFlag != "OK" or self.jobType == "AllTitles":
+                    self.addReportRow(docId, docTitle, url, exRefTitle,
+                                      pageTitle, pageFlag)
 
             else:
                 # Connect to remote host
@@ -2327,7 +2328,7 @@ class ExRefPageTitleCheck:
                     response = urllib2.urlopen(chkUrl, timeout=45)
                 except urllib2.URLError, info:
                     pageFlag  = "Error"
-                    errMsg    = info.reason
+                    errMsg    = str(info).translate(None, "<>&")
                     resultCache[url] = (pageFlag, errMsg)
                     self.addReportRow(docId, docTitle, url, exRefTitle,
                                       errMsg, pageFlag)
@@ -2340,7 +2341,7 @@ class ExRefPageTitleCheck:
                 if code200 < 0 or code200 > 99:
                     cdr.logwrite("http code error: rc\n%s" % (rc, str(info)))
                     pageFlag = "Error"
-                    errMsg   = "%d error connecting to host"
+                    errMsg   = "%d error connecting to host" % rc
                     resultCache[url] = (pageFlag, errMsg)
                     self.addReportRow(docId, docTitle, url, exRefTitle,
                                       errMsg, pageFlag)
@@ -2389,8 +2390,9 @@ class ExRefPageTitleCheck:
                     pageFlag = "OK"
                 else:
                     pageFlag = "Mismatch"
-                self.addReportRow(docId, docTitle, url, exRefTitle,
-                                  pageTitle, pageFlag)
+                if pageFlag != "OK" or self.jobType == "AllTitles":
+                    self.addReportRow(docId, docTitle, url, exRefTitle,
+                                      pageTitle, pageFlag)
 
         # Terminate table and add counters
         self.html.append("""  </table>
