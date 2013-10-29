@@ -690,7 +690,8 @@ if __name__ == "__main__":
         sys.exit(0)
     def getCursor():
         import cdrdb
-        return cdrdb.connect('CdrGuest', dataSource = 'bach').cursor()
+        return cdrdb.connect('CdrGuest').cursor()
+        #return cdrdb.connect('CdrGuest', dataSource = 'bach').cursor()
     def loadDocsOfType(t):
         cursor = getCursor()
         cursor.execute("""\
