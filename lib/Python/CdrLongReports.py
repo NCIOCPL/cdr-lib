@@ -2141,10 +2141,13 @@ class ExRefPageTitleCheck:
         language = job.getParm('language')
         if language == 'EN':
             self.language = 'English'
+            self.isoLang  = 'en'
         elif language == 'ES':
             self.language = 'Spanish'
+            self.isoLang  = 'es'
         else:
             self.language = None
+            self.isoLang  = None
 
         # Pattern used to find the character set in an http response header
         self.charsetPat = re.compile(".*charset=(.*)$")
@@ -2444,8 +2447,10 @@ class ExRefPageTitleCheck:
                 qualifiers = """
   JOIN query_term lnq
     ON lnq.doc_id = ptq.doc_id
-   AND lnq.path LIKE '/GlossaryTerm%%/Language'
-   AND lnq.value = '%s'""" % self.language
+   AND lnq.path =
+       '/GlossaryTermConcept/RelatedInformation/RelatedExternalRef/@UseWith'
+   AND lnq.value = '%s'
+   AND lnq.node_loc = urlq.node_loc""" % self.isoLang
 
         # Query to select all objects of interest
         #  ptq  = page title value query terms
@@ -2460,11 +2465,10 @@ SELECT DISTINCT ptq.doc_id, ptq.value, urlq.value, doc.title
     ON ptq.doc_id = doc.id
  WHERE ptq.path LIKE '/%s/%%/@SourceTitle'
    AND urlq.path LIKE '/%s/%%/@cdr:xref'
- ORDER BY ptq.doc_id, ptq.value""" % (qualifiers,
-                                               self.docType, self.docType)
+ ORDER BY ptq.doc_id, ptq.value""" % (qualifiers, self.docType, self.docType)
 
         # DEBUG
-        # cdr.logwrite(query)
+        cdr.logwrite(query)
 
         # Hold rows and counters
         self.rows = []
