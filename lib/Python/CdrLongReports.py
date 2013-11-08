@@ -2468,7 +2468,7 @@ SELECT DISTINCT ptq.doc_id, ptq.value, urlq.value, doc.title
  ORDER BY ptq.doc_id, ptq.value""" % (qualifiers, self.docType, self.docType)
 
         # DEBUG
-        cdr.logwrite(query)
+        # cdr.logwrite(query)
 
         # Hold rows and counters
         self.rows = []
