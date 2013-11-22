@@ -2843,11 +2843,24 @@ def updateCtl(credentials, action,
     Caller must be logged in as user with SET_SYS_VALUE privilege.
 
     Pass:
-        credentials - as elsewhere.
+        credentials - as elsewhere.  See cdr.login().
         action      - one of "Create", "Inactivate", "Install".
+                      Create:     Creates a new row in the ctl table.  If
+                                  another row exists with the same grp and
+                                  name, it will be inactivated, effectively
+                                  replaced by this new one.
+                      Inactivate: Inactivate an existing grp/name/val
+                                  without replacing it with a new one.
+                      Install:    Causes the CdrServer to load the latest
+                                  version of the ctl table into memory.  Until
+                                  this is done, or the CdrServer restarted,
+                                  the old values will still be active.
         grp         - grouping string for names in Create or Inactivate.
+                       Example: 'Publishing'
         name        - name of the value for Create or Inactivate.
+                       Example: 'ThreadCount'.
         val         - value itself, required for Create, else ignored.
+                       Example: '6'.
         comment     - optional comment to store in the table.
 
         All parameters are strings.  Max length is defined in the database,
