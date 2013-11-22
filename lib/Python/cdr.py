@@ -2862,13 +2862,13 @@ def updateCtl(credentials, action,
     # Parameters are checked in the server.  Don't need to do it here.
     cmd = "<CdrSetCtl>\n <Ctl>\n  <Action>%s</Action>\n" % action
     if grp is not None:
-        cmd += "  <Group>%s</Group>\n" % cgi.encode(grp)
+        cmd += "  <Group>%s</Group>\n" % cgi.escape(grp)
     if name is not None:
-        cmd += "  <Key>%s</Key>\n" % cgi.encode(name)
+        cmd += "  <Key>%s</Key>\n" % cgi.escape(name)
     if val is not None:
-        cmd += "  <Value>%s</Value>\n" % cgi.encode(val)
+        cmd += "  <Value>%s</Value>\n" % cgi.escape(val)
     if comment is not None:
-        cmd += "  <Comment>%s</Comment>\n" % cgi.encode(comment)
+        cmd += "  <Comment>%s</Comment>\n" % cgi.escape(comment)
     cmd += " </Ctl>\n</CdrSetCtl>\n"
 
     # Wrap it with credentials and send it
