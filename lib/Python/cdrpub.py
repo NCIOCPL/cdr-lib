@@ -1149,12 +1149,33 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
                 # In test mode, we just rewire our view of the
                 #   lastJobId.  In production, maybe not.
-                if not cdr.isProdHost():
+                #
+                # The lastJobId reported by Gatekeeper isn't necessarily
+                # a successful job in the CDR sense.  For Gatekeeper any
+                # job that arrives at the server is successful and 
+                # therefore Gatekeeper reports the *last* JobId (success
+                # or not).  For the CDR only a job for which at least 
+                # one document has been successfully processed by 
+                # Gatekeeper is considered a success.
+                # This creates a mismatch if a push job (for instance a
+                # hot-fix) is submitted but none of the documents can be
+                # processed on Gatekeeper.
+                # We're creating an overwrite to allow pushing a job
+                # after it has been determined that it's OK to do so.
+                # -------------------------------------------------------
+                ### if not cdr.isProdHost():
+                if cdr.isProdHost():
                     self.__debugLog(\
                       "For test, switching to GateKeeper lastJobId")
                     lastJobId = response.details.lastJobId
                 else:
-                    raise Exception("Aborting on lastJobId CDR / CG mismatch")
+                    if self.__params['IgnoreGKJobIDMismatch'] == 'No':
+                        raise Exception("Aborting on lastJobId CDR / \
+                                                              CG mismatch")
+                    else:
+                        self.__debugLog(\
+                          "Overwrite lastJobId CDR / CG mismatch")
+                        lastJobId = response.details.lastJobId
 
             # Prepare the server for a list of documents to send.
             msg += """%s: Sending data prolog with jobId=%d, pubType=%s,
@@ -2160,6 +2181,17 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
     #------------------------------------------------------------------
     # Return the last cg_job for any successful pushing jobs.
+    #
+    # Note: The picture of what the CDR sees as a 'successful' push job
+    #       and what Gatekeeper sees as a successful push job may not 
+    #       always match.  If a push job does *not* include any document 
+    #       for Gaterkeeper, the CDR still identifies this job as a 
+    #       success (it did not fail) but Gatekeeper won't know about
+    #       this job (it never received anything).  The next push job 
+    #       will therefore fail since both system's successful JobIDs 
+    #       will mismatch.
+    #       This is fixed by only picking up JobIDs for which documents
+    #       have been send to Gatekeeper.
     #------------------------------------------------------------------
     def __getLastCgJob(self):
         try:
@@ -2170,6 +2202,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                      WHERE pp.status = ?
                        AND pp.pub_subset LIKE ?
                        AND pp.pub_system = ?
+                       AND (SELECT count(*)
+                              FROM pub_proc_doc
+                             WHERE pub_proc = pp.id) > 0
                            """, (Publish.SUCCESS,
                                  "%s%%" % self.__pd2cg,
                                  self.__ctrlDocId)
