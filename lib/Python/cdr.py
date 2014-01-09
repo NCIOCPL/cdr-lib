@@ -104,7 +104,7 @@ def _getCbiitNames(ssl=True):
 #----------------------------------------------------------------------
 HOST_NAMES       = _getHostNames()
 CBIIT_NAMES      = _getCbiitNames()
-OPERATOR         = 'operator@cips.nci.nih.gov'
+OPERATOR         = 'NCIPDQoperator@mail.nih.gov'
 DOMAIN_NAME      = ".".join(HOST_NAMES[1].split(".")[1:])
 # PROD_DB_NAME     = CBIIT_HOSTING and 'ncidb-d065-p' or 'bach' # XXX guessing
 PROD_DB_NAME     = h.getTierHostNames('PROD', 'DBWIN').name
