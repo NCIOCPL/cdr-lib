@@ -1163,18 +1163,21 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 # We're creating an overwrite to allow pushing a job
                 # after it has been determined that it's OK to do so.
                 # -------------------------------------------------------
-                ### if not cdr.isProdHost():
-                if cdr.isProdHost():
+                ### if cdr.isProdHost():   # for testing only
+                if not cdr.isProdHost():
                     self.__debugLog(\
                       "For test, switching to GateKeeper lastJobId")
+                    msg += """%s: Switching to Gatekeeper lastJobId""" % (
+                           time.ctime())
                     lastJobId = response.details.lastJobId
                 else:
                     if self.__params['IgnoreGKJobIDMismatch'] == 'No':
-                        raise Exception("Aborting on lastJobId CDR / \
-                                                              CG mismatch")
+                        raise Exception("Aborting on lastJobId CDR / CG mismatch")
                     else:
                         self.__debugLog(\
                           "Overwrite lastJobId CDR / CG mismatch")
+                        msg += """%s: Overwrite lastJobId mismatch""" % (
+                               time.ctime())
                         lastJobId = response.details.lastJobId
 
             # Prepare the server for a list of documents to send.
