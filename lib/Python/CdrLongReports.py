@@ -2107,14 +2107,14 @@ The URL report you requested can be viewed at
         cdr.logwrite("Completed UrlCheck report", LOGFILE)
 
 #----------------------------------------------------------------------
-# Class for comparing stored ExternalRef/@ExRefPageTitle values with
+# Class for comparing stored ExternalRef/@SourceTitle values with
 # html head titles of the referenced web pages.
 #
 # This report selects all ExternalRef elements that match user entered
-# report parameters (see CheckUrls.py) that contain an ExRefPageTitle
+# report parameters (see CheckUrls.py) that contain a SourceTitle
 # attribute.  The referenced (via @cdr:xref) web page is fetched and
 # parsed. and a normalized value of the /html/head/title element is
-# compared to a similarly normalized @ExRefPageTitle.
+# compared to a similarly normalized @SourceTitle.
 #
 # If the two do not match, an error is reported.
 #----------------------------------------------------------------------
@@ -2224,7 +2224,7 @@ class ExRefPageTitleCheck:
             cdrId       Integer doc ID of doc containing the ExternalRef
             docTitle    Title of the CDR document
             url         URL of the page linked-to
-            exRefTitle  Page title stored in @ExRefPageTitle in the doc
+            exRefTitle  Page title stored in @SourceTitle in the doc
             pageTitle   HTML title found in the linked-to page
                          If document not retrieved, or no title found,
                          contains error message
