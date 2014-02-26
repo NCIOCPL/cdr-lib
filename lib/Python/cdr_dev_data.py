@@ -99,9 +99,12 @@ class Data:
     def grp_action(self, row):
         group = self.tables["grp"].map[row["grp"]]
         action = self.tables["action"].map[row["action"]]
-        doc_type = None
+        result = "permission for members of %s group to perform action %s" % (
+            repr(group), repr(action))
         if row["doc_type"]:
             doc_type = self.tables["doc_type"].map[row["doc_type"]]
+            result += " on %s documents" % repr(doc_type)
+        return result
         return (group, action, doc_type)
 
     def grp_usr(self, row):
