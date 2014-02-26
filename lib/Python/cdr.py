@@ -2953,6 +2953,84 @@ def getSchemaDocs(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
     return re.findall("<DocTitle>(.*?)</DocTitle>", resp)
 
 #----------------------------------------------------------------------
+# Get a list of enumerated values for a CDR schema simpleType.
+#----------------------------------------------------------------------
+def getSchemaEnumVals(schemaTitle, typeName, sorted=False):
+    """
+    Read in a schema from the database.  Parse it.  Extract the enumerated
+    values from a simpleType element.  Return them to the caller.
+
+    Used for constructing picklists, checkboxes, valid values, etc.
+
+    Pass:
+        schemaTitle - document.title for the schema in the database.
+                      Typical names are "SummarySchema.xml",
+                      "CTGovProtocol.xml", etc.
+        typeName    - Value of the name attribute for the simpleType.  Only
+                      simpleTypes are supported.
+        sorted      - True = sort values by value.  Else return in order
+                      found in the schema.
+
+    Return:
+        Array of string values.
+
+    Raises:
+        cdr.Exception if schemaTitle or simpleName not found.
+    """
+    from lxml import etree as lx
+
+    # Get the schema
+    qry = """
+     SELECT d.xml
+       FROM document d
+       JOIN doc_type t
+         ON d.doc_type = t.id
+      WHERE t.name = 'schema'
+        AND d.title = ?
+    """
+    try:
+        conn   = cdrdb.connect()
+        cursor = conn.cursor()
+    except cdrdb.Error, info:
+        raise Exception(
+            "Unable to connect to database in cdr.getSchemaEnumVals(): %s" %
+             str(info))
+    try:
+        cursor.execute(qry, schemaTitle)
+        row = cursor.fetchone()
+        cursor.close()
+    except cdrdb.Error, info:
+        raise Exception(
+            "Database error fetching schema in cdr.getSchemaEnumVals(): " %
+             str(info))
+    if not row:
+        raise Exception("Schema %s not found in cdr.getSchemaEnumVals()" %
+                         schemaTitle)
+
+    # Parse it
+    tree = lx.fromstring(row[0].encode('utf-8'))
+
+    # Search for enumerations of the simple type
+    # Note what we have to do with namespaces - won't work without that
+    xmlns = {"xmlns": "http://www.w3.org/2001/XMLSchema"}
+    path  = "//xmlns:simpleType[@name='%s']//xmlns:enumeration" % typeName
+    nodes = tree.xpath(path, namespaces=xmlns)
+    if not nodes:
+        raise Exception(
+            "simpleType %s not found in schema %s in cdr.getSchemaEnumVals()" %
+            (typeName, schemaTitle))
+
+    # Cumulate the values in a list
+    valList = []
+    for node in nodes:
+        valList.append(node.get("value"))
+
+    # Return in desired order
+    if sorted:
+        valList.sort()
+    return valList
+
+#----------------------------------------------------------------------
 # Holds information about a single CDR group.
 #----------------------------------------------------------------------
 class Group:
