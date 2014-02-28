@@ -6,6 +6,147 @@
 import glob
 import os
 
+class Data:
+    """
+    Selected documents and tables from a CDR instance
+
+    Attributes:
+        tables - dictionary of Table objects, indexed by table name
+        docs   - dictionary of DocType objects, indexed by type name
+    """
+    def __init__(self, source, old=None):
+        """
+        Collects table and document information for a CDR tier.
+
+        Pass:
+            source - either a directory name or a database cursor object
+            old    - optional Data object for the data from the DEV tier
+                     which was preserved before a refresh of the database
+                     from the production server
+
+        When a cursor is passed for 'source' the documents and tables
+        are read directly from the database for the local tier.  If
+        a string is passed as the 'source' argument it is assumed to
+        be the path (relative or absolute) for the location of the
+        data captured by the PullDevData.py script (q.v.).
+
+        The directory structure for the preserved data uses subdirectories
+        for each of the document types for which documents have been
+        preserved, as well as a subdirectory named 'tables' (since
+        the CDR naming convention for document types always uses the
+        best practice of using a singular noun, there should never
+        be a conflict with the name 'tables').  Within each document
+        type subdirectory is a file for each document of that type,
+        with a name in the form nnnnnn.cdr, where nnnnnn is the integer
+        form of the CDR document's ID.  Each such file contains a
+        serialized (using Python's builtin repr() function) sequence
+        of CDR document ID, document title, and document XML.  The
+        'tables' subdirectory contains one file for each preserved
+        table.  The file name is the table's name.  The first line in each
+        file is a sequence containing the names of the columns in the
+        table, in the order of the table's definition.  The subsequent
+        lines each represent one row in the database table, as a
+        sequence of values in the same column order as used in the
+        first line.
+
+        For example:
+        
+           DevData-20140227075603
+             Filter
+               100.cdr
+               101.cdr
+               103.cdr
+               :
+               :
+             PublishingSystem
+               176.cdr
+               178.cdr
+               257983.cdr
+             Schema
+               179.cdr
+               :
+               :
+             tables
+               action
+               active_status
+               :
+               :
+        """
+        self.tables = {}
+        self.docs = {}
+        if old:
+            for name in old.tables:
+                try:
+                    self.tables[name] = Table(name, source)
+                except:
+                    pass
+            for name in old.docs:
+                self.docs[name] = DocType(name, source)
+        else:
+            for path in glob.glob("%s/tables/*" % source):
+                name = os.path.basename(path)
+                self.tables[name] = Table(name, source)
+            for path in glob.glob("%s/*" % source):
+                doc_type = os.path.basename(path)
+                if doc_type != "tables":
+                    self.docs[doc_type] = DocType(doc_type, source)
+
+    def filter_set_member(self, row):
+        """
+        Returns a tuple with denormalized filter_set_member row values
+        """
+        filter_name = subset = None
+        if row["filter"]:
+            filter_name = self.docs["Filter"].map[row["filter"]].strip()
+        if row["subset"]:
+            subset = self.tables["filter_set"].map[row["subset"]].strip()
+        filter_set = self.tables["filter_set"].map[row["filter_set"]].strip()
+        return (filter_set, filter_name, subset, row["position"])
+
+    def grp_action(self, row):
+        """
+        Returns a string with denormalized grp_action row values
+        """
+        group = self.tables["grp"].map[row["grp"]]
+        action = self.tables["action"].map[row["action"]]
+        result = "permission for members of %s group to perform action %s" % (
+            repr(group), repr(action))
+        if row["doc_type"]:
+            doc_type = self.tables["doc_type"].map[row["doc_type"]]
+            result += " on %s documents" % repr(doc_type)
+        return result
+
+    def grp_usr(self, row):
+        """
+        Returns a string with denormalized grp_usr row values
+        """
+        group = self.tables["grp"].map[row["grp"]]
+        user = self.tables["usr"].map[row["usr"]]
+        return "%s's membership in group %s" % (user, group)
+
+    def link_properties(self, row):
+        """
+        Returns a tuple with denormalized link_properties row values
+        """
+        return (self.tables["link_type"].map[row["link_id"]],
+                self.tables["link_prop_type"].map[row["property_id"]],
+                row["value"], row["comment"])
+
+    def link_target(self, row):
+        """
+        Returns a tuple with denormalized link_target row values
+        """
+        return (self.tables["link_type"].map[row["source_link_type"]],
+                self.tables["doc_type"].map[row["target_doc_type"]])
+
+    def link_xml(self, row):
+        """
+        Returns a tuple with denormalized link_xml row values
+        """
+        return (self.tables["doc_type"].map[row["doc_type"]],
+                row["element"],
+                self.tables["link_type"].map[row["link_id"]])
+
 class Table:
     """
     Holds data for a CDR table.
@@ -121,96 +262,3 @@ SELECT d.id, d.title, d.xml
                 self.docs[key] = tuple(row)
                 self.map[doc_id] = doc_title
                 row = source.fetchone()
-
-class Data:
-    """
-    Selected documents and tables from a CDR instance
-
-    Attributes:
-        tables - dictionary of Table objects, indexed by table name
-        docs   - dictionary of DocType objects, indexed by type name
-    """
-    def __init__(self, source, old=None):
-        """
-        Collects table and document information for a CDR tier.
-
-        Pass:
-            source - either a directory name or a database cursor object
-            old    - optional Data object for the data from the DEV tier
-                     which was preserved before a refresh of the database
-                     from the production server
-        """
-        self.tables = {}
-        self.docs = {}
-        if old:
-            for name in old.tables:
-                try:
-                    self.tables[name] = Table(name, source)
-                except:
-                    pass
-            for name in old.docs:
-                self.docs[name] = DocType(name, source)
-        else:
-            for path in glob.glob("%s/tables/*" % source):
-                name = os.path.basename(path)
-                self.tables[name] = Table(name, source)
-            for path in glob.glob("%s/*" % source):
-                doc_type = os.path.basename(path)
-                if doc_type != "tables":
-                    self.docs[doc_type] = DocType(doc_type, source)
-
-    def filter_set_member(self, row):
-        """
-        Returns a tuple with denormalized filter_set_member row values
-        """
-        filter_name = subset = None
-        if row["filter"]:
-            filter_name = self.docs["Filter"].map[row["filter"]].strip()
-        if row["subset"]:
-            subset = self.tables["filter_set"].map[row["subset"]].strip()
-        filter_set = self.tables["filter_set"].map[row["filter_set"]].strip()
-        return (filter_set, filter_name, subset, row["position"])
-
-    def grp_action(self, row):
-        """
-        Returns a string with denormalized grp_action row values
-        """
-        group = self.tables["grp"].map[row["grp"]]
-        action = self.tables["action"].map[row["action"]]
-        result = "permission for members of %s group to perform action %s" % (
-            repr(group), repr(action))
-        if row["doc_type"]:
-            doc_type = self.tables["doc_type"].map[row["doc_type"]]
-            result += " on %s documents" % repr(doc_type)
-        return result
-
-    def grp_usr(self, row):
-        """
-        Returns a string with denormalized grp_usr row values
-        """
-        group = self.tables["grp"].map[row["grp"]]
-        user = self.tables["usr"].map[row["usr"]]
-        return "%s's membership in group %s" % (user, group)
-
-    def link_properties(self, row):
-        """
-        Returns a tuple with denormalized link_properties row values
-        """
-        return (self.tables["link_type"].map[row["link_id"]],
-                self.tables["link_prop_type"].map[row["property_id"]],
-                row["value"], row["comment"])
-
-    def link_target(self, row):
-        """
-        Returns a tuple with denormalized link_target row values
-        """
-        return (self.tables["link_type"].map[row["source_link_type"]],
-                self.tables["doc_type"].map[row["target_doc_type"]])
-
-    def link_xml(self, row):
-        """
-        Returns a tuple with denormalized link_xml row values
-        """
-        return (self.tables["doc_type"].map[row["doc_type"]],
-                row["element"],
-                self.tables["link_type"].map[row["link_id"]])
