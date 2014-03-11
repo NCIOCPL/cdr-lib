@@ -5177,6 +5177,135 @@ def getBoardNames(boardType = 'all', display = 'full', host = 'localhost'):
     return dict((row[0], row[1]) for row in cursor.fetchall())
 
 #----------------------------------------------------------------------
+# Gets a list of Summary CDR document IDs.
+#----------------------------------------------------------------------
+def getSummaryIds(language='all', audience='all', boards=[], suffix='all',
+                  status='A', published='Y', titles=False, sortby='title'):
+    """
+    Search the database for the Summary documents by the passed criteria.
+
+    Pass:
+        language - 'all' = Ignore language, get them all.
+                    Else 'English' or 'Spanish' (or 'Klingon' if you want
+                    no hits.)
+        audience - 'all' = Ignore audience.
+                    Else 'Health professionals' or 'Patients'.  Must exactly
+                    match what's in:
+                        '/Summary/SummaryMetaData/SummaryAudience'
+        boards   - [] = Ignore board, get Summaries for any board.
+                    Else a list of one or more board names.  Use names
+                    like 'Adult Treatment Editorial Board'.  Must be an exact
+                    match for what's in:
+                        'Summary/SummaryMetaData/PDQBoard/Board'
+        status   - 'A' = Active status for the document.  Else 'I' = Inactive
+                    or 'all' = both.
+        published- 'Y' = Only docs with publishable versions.  Else 'all'
+                    for docs with or without publishable versions.
+        titles   - True = return titles with the IDs.
+        sortby   - 'id' = sort by CDR ID.
+                   'title' = sort by title, can be done whether or not
+                    titles are returned.
+                    Can use any column or set of columns from the document
+                    table if desired.
+                    None = No sorting.
+
+    Return:
+        Array of arrays of document identifiers.
+        If titles are not included, these are just CDR IDs of the form:
+            [[docId,], [docId,], ...]
+        Else there is an array of pair sequences of the form:
+            [[docId, title], [docId, title], ...]
+            ...
+        If there are no hits, an empty array is returned, presumably caused
+        by an error in the passed parameters, e.g., wrong board names:
+            []
+
+    Throws:
+        cdrdb.Exception if database failure.
+    """
+    # All joins are to query_term or query_term_pub table
+    if published == 'Y':
+        qTable = 'query_term_pub'
+    else:
+        qTable = 'query_term'
+
+    # Create the base the query
+    qry = """
+SELECT d.id"""
+    if titles:
+        qry += ', d.title'
+    qry += """
+  FROM document d"""
+
+    # Add any required JOINs
+    qry += """
+  JOIN doc_type t
+    ON d.doc_type = t.id"""
+    if language != 'all':
+        qry += """
+  JOIN %s qlang
+    ON qlang.doc_id = d.id""" % qTable
+    if audience != 'all':
+        qry += """
+  JOIN %s qaud
+    ON qaud.doc_id = d.id""" % qTable
+    if boards:
+        qry += """
+  JOIN %s qboard
+    ON qboard.doc_id = d.id""" % qTable
+
+    # Add the WHERE clause
+    qry += """
+ WHERE t.name = 'Summary'"""
+    if language != 'all':
+        qry += """
+   AND qlang.path = '/Summary/SummaryMetaData/SummaryLanguage'
+   AND qlang.value = '%s'""" % language
+    if audience != 'all':
+        qry += """
+   AND qaud.path = '/Summary/SummaryMetaData/SummaryAudience'
+   AND qaud.value = '%s'""" % audience
+
+    # Boards require building up a list for an IN clause
+    if boards:
+        boardCount = len(boards)
+        i = 0
+        inBoards = ''
+        for board in boards:
+            inBoards += "'%s'" % board
+            i += 1
+            if i < boardCount:
+                inBoards += ','
+        qry += """
+   AND qboard.path = '/Summary/SummaryMetaData/PDQBoard/Board'
+   AND qboard.value IN (%s)""" % inBoards
+
+    if status != 'all':
+        qry += """
+   AND d.active_status = '%s'""" % status
+
+    if sortby:
+        qry += """
+ ORDER BY %s""" % sortby
+
+    # Debug
+    logwrite(qry)
+
+    # Execute, allowing any database exception to continue up the call tree
+    conn   = cdrdb.connect('CdrGuest')
+    cursor = conn.cursor()
+    cursor.execute(qry)
+    rows = cursor.fetchall()
+    cursor.close()
+
+    # Return results
+    if rows:
+        return rows
+    else:
+        return []
+
+
+#----------------------------------------------------------------------
 # Record an event which happened in a CDR client session.
 #----------------------------------------------------------------------
 def logClientEvent(session, desc, host = DEFAULT_HOST, port = DEFAULT_PORT):
