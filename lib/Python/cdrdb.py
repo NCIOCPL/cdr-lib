@@ -938,6 +938,7 @@ class Query:
             self._parms += parms
         else:
             self._parms.append(parms)
+    def parms(self): return tuple(self._parms)
     def cursor(self, cursor):
         self._cursor = cursor
     def execute(self, cursor=None):
