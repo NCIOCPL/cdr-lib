@@ -346,6 +346,16 @@ class Page:
         """
         self._script.append(script)
 
+    def add_output_options(self):
+        """
+        Allow the user to decide between HTML and Excel.
+        """
+        self.add("<fieldset>")
+        self.add(self.B.LEGEND("Report Format"))
+        self.add_radio("format", "Web Page", "html")
+        self.add_radio("format", "Excel Workbook", "excel")
+        self.add("</fieldset>")
+
     def send(self):
         """
         Returns the HTML page to the web server for delivery to the browser.
@@ -730,14 +740,6 @@ class Report:
                 self._classes = classes
             elif classes:
                 self._classes = " ".join(classes)
-
-    class Row:
-        """
-        Array of Cell object for a table row in a CDR report
-        """
-        def __init__(self, values, **options):
-            self._values = values
-            self._options = options
 
 #----------------------------------------------------------------------
 # Display the header for a CDR web form.
