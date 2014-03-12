@@ -371,6 +371,8 @@ class Cursor:
         Return values are not defined.
         """
 
+        if isinstance(query, Query):
+            query = str(query)
         self.__rs            = None
         self.description     = None
         self.rowcount        = -1
@@ -884,3 +886,61 @@ def strftime(format, canonicalString):
     time_tuple = time.localtime(time.mktime(time_tuple))
 
     return time.strftime(format, time_tuple)
+
+class Query:
+    def __init__(self, **args):
+        self._select = args.get("select", "")
+        self._joins = args.get("joins", [])
+        self._where = args.get("where", [])
+        self._order = args.get("order", "")
+        self._parms = args.get("parms", [])
+        self._cursor = args.get("cursor")
+    def __str__(self):
+        if not self.select:
+            raise Exception("missing select statement")
+        q = "  %s" % self._select
+        if self._joins:
+            q += "\n    " + "\n    ".join(self._joins)
+        if self._where:
+            q += "\n   WHERE " + "\n     AND ".join(self._where)
+        if self._order:
+            q += "\n%s" % self._order
+        return q
+    def select(self, select):
+        self._select = select
+    def join(self, joins, parms=None):
+        if type(joins) in (list, tuple):
+            for join in joins:
+                if not join.upper().startswith("JOIN"):
+                    join = "JOIN %s" % join
+                self._joins.append(join)
+        else:
+            if not joins.upper().startswith("JOIN"):
+                joins = "JOIN %s" % joins
+            self._joins.append(joins)
+        if type(parms) in (list, tuple):
+            self._parms += parms
+        elif parms:
+            self._parms.append(parms)
+    def where(self, conditions, parms=None):
+        if type(conditions) in (list, tuple):
+            self._where += conditions
+        else:
+            self._where.append(conditions)
+        if type(parms) in (list, tuple):
+            self._parms += parms
+        elif parms:
+            self._parms.append(parms)
+    def order(self, order):
+        self._order = "ORDER BY %s" % order
+    def parm(self, parms):
+        if type(parms) in (list, tuple):
+            self._parms += parms
+        else:
+            self._parms.append(parms)
+    def cursor(self, cursor):
+        self._cursor = cursor
+    def execute(self, cursor=None):
+        cursor = cursor or self._cursor or connect("CdrGuest").cursor()
+        cursor.execute(self, tuple(self._parms))
+        return cursor
