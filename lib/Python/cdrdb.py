@@ -888,60 +888,186 @@ def strftime(format, canonicalString):
     return time.strftime(format, time_tuple)
 
 class Query:
-    def __init__(self, **args):
-        self._select = args.get("select", "")
-        self._joins = args.get("joins", [])
+    """
+    Builder for SQL select queries.
+
+    Example usage:
+
+        columns = ('d.id AS "CDR ID"', 'd.title', 't.name AS "Type"')
+        query = cdrdb.Query('document d', columns, order='d.title')
+        query.join('doc_type t ON t.id = d.doc_type')
+        query.where('t.name IN (?,?)', ('Summary', 'GlossaryTermName'))
+        print query
+        cursor = query.execute()
+        rows = cursor.fetchall()
+    """
+
+    def __init__(self, tables, columns, **args):
+        """
+        Initializes a SQL query builder
+
+        Required arguments:
+
+            tables          string for table name with possible alias;
+                            can be a sequence of such strings, to use
+                            the old-style SQL (without JOINs)
+            columns         sequence of column names to be selected,
+                            qualified with alias if necessary; can
+                            be a single string instead of a sequence
+                            if only one column is needed; a column
+                            can be an expression
+
+        Optional arguments (most of these will be typically added
+        after the object is constructed using the building methods):
+
+            where          sequence of conditions to be added to
+                           the query's WHERE clause; can be a single
+                           condition string instead of a sequence
+            parms          sequence of parameter values to be
+                           plugged into the query where placeholders
+                           appear; can be a single value instead of
+                           a sequence
+            cursor         cursor to be used for the query
+            limit          maximum number of rows to return; defaults
+                           to no limit
+            unique         whether duplicate rows show be eliminated;
+                           defaults to False
+        """
+        self._set_tables(tables)
+        self._set_columns(columns)
+        self._joins = [Query.Join(join) for join in args.get("joins", [])]
         self._where = args.get("where", [])
         self._order = args.get("order", "")
         self._parms = args.get("parms", [])
         self._cursor = args.get("cursor")
+        self._limit = args.get("limit")
+        self._unique = args.get("unique") and True or False
+        self._str = None
+
+    class Join:
+        """
+        Used internally to represent a SQL JOIN clause
+        """
+
+        def __init__(self, sql):
+            sql = sql.strip()
+            if sql.upper().startswith("JOIN "):
+                sql = sql[5:].strip()
+            self._sql = sql
+
+        def __str__(self):
+            s = "JOIN %s" % self._sql
+            s = s.replace(" AND ", "\n     AND ")
+            s = s.replace(" ON ", "\n      ON ")
+            return s
+
     def __str__(self):
-        if not self.select:
-            raise Exception("missing select statement")
-        q = "  %s" % self._select
+        """
+        Assemble the query for execution or logging.
+
+        The format of the query string is arranged to make reading
+        by a human easier.  The assembled query is cached.
+        """
+        if self._str:
+            return self._str
+        q = "  SELECT "
+        if self._unique:
+            q += "DISINCT "
+        if self._limit is not None:
+            q += "TOP %s " % self._limit
+        q += ", ".join(self._columns)
+        q += "\n    FROM %s" % ",\n        ".join(self._tables)
         if self._joins:
-            q += "\n    " + "\n    ".join(self._joins)
+            q += "\n    " + "\n    ".join(["%s" % j for j in self._joins])
         if self._where:
             q += "\n   WHERE " + "\n     AND ".join(self._where)
         if self._order:
             q += "\n%s" % self._order
+        self._str = q
         return q
-    def select(self, select):
-        self._select = select
-    def join(self, joins, parms=None):
-        if type(joins) in (list, tuple):
-            for join in joins:
-                if not join.upper().startswith("JOIN"):
-                    join = "JOIN %s" % join
-                self._joins.append(join)
-        else:
-            if not joins.upper().startswith("JOIN"):
-                joins = "JOIN %s" % joins
-            self._joins.append(joins)
-        if type(parms) in (list, tuple):
-            self._parms += parms
-        elif parms:
-            self._parms.append(parms)
-    def where(self, conditions, parms=None):
-        if type(conditions) in (list, tuple):
-            self._where += conditions
-        else:
-            self._where.append(conditions)
-        if type(parms) in (list, tuple):
-            self._parms += parms
-        elif parms:
-            self._parms.append(parms)
+
+    def _set_tables(self, tables):
+        """
+        Internal helper method for setting the tables
+        """
+        if not tables:
+            raise Exception("no tables specified")
+        if type(tables) not in (list, tuple):
+            tables = [tables]
+        self._tables = tables
+        self._str = None
+
+    def _set_columns(self, columns):
+        """
+        Internal helper method for setting the columns
+        """
+        if not columns:
+            raise Exception("no columns specified")
+        if type(columns) not in (list, tuple):
+            columns = [columns]
+        self._columns = columns
+        self._str = None
+
+    def join(self, joins, parms=[]):
+        """
+        Add one or more JOIN clauses, optionally with parameters
+        """
+        if type(joins) not in (list, tuple):
+            joins = [joins]
+        self._joins += [Query.Join(j) for j in joins]
+        self.parm(parms)
+        self._str = None
+
+    def where(self, conditions, parms=[]):
+        """
+        Add one or more conditions for the query, optionally with parameters
+        """
+        if type(conditions) not in (list, tuple):
+            conditions = [conditions]
+        self._where += conditions
+        self.parm(parms)
+        self._str = None
+
     def order(self, order):
+        """
+        Add the column(s) to be used to sort the results
+
+        Pass in a single string (without the 'ORDER BY ' prefix) for
+        multiple columns, not a sequence of columns.
+        """
+        if order:
+            order = order.strip()
+            if order.upper().startswith("ORDER BY "):
+                order = order[9:].strip()
         self._order = "ORDER BY %s" % order
+        self._str = None
+
     def parm(self, parms):
-        if type(parms) in (list, tuple):
-            self._parms += parms
-        else:
-            self._parms.append(parms)
-    def parms(self): return tuple(self._parms)
+        """
+        Add one or more parameters to be plugged into the query
+
+        The parameters must be added in the order which matches the
+        placeholder marks (?) in the query.  It is generally safer
+        to pass the parameters into the join() and where() calls.
+        """
+        if type(parms) not in (list, tuple):
+            parms = [parms]
+        self._parms += parms
+        self._str = None
+
     def cursor(self, cursor):
+        """
+        Pass in a cursor to be used for the query.
+        """
         self._cursor = cursor
+
     def execute(self, cursor=None):
+        """
+        Assemble and execute the SQL query, returning the cursor object
+
+        As with the Miranda rule, if you do not supply a cursor,
+        one will be provided for you.
+        """
         cursor = cursor or self._cursor or connect("CdrGuest").cursor()
         cursor.execute(self, tuple(self._parms))
         return cursor
