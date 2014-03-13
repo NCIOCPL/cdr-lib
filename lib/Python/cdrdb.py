@@ -921,14 +921,16 @@ class Query:
         self._limit = None
         self._unique = False
         self._str = None
+        self._outer = False
 
     class Join:
         """
         Used internally to represent a SQL JOIN clause
         """
 
-        def __init__(self, table, *conditions):
+        def __init__(self, table, outer, *conditions):
             self.table = table.strip()
+            self.outer = outer
             self.conditions = []
             for condition in conditions:
                 if type(condition) is list:
@@ -936,7 +938,7 @@ class Query:
                 elif type(condition) is tuple:
                     self.conditions += list(condition)
                 else:
-                    self.condition.append(condition)
+                    self.conditions.append(condition)
 
     def _align(self, keyword, rest):
         """
@@ -956,16 +958,22 @@ class Query:
             return self._str
         select = "SELECT"
         if self._unique:
-            select += " DISINCT"
+            select += " DISTINCT"
         if self._limit is not None:
             select += " TOP %d" % self._limit
         if select == "SELECT" and self._order:
             select = "  SELECT"
         self._indent = len(select)
+        if self._outer:
+            more_indent = len("LEFT OUTER JOIN") - self._indent
+            if more_indent > 0:
+                select = " " * more_indent + select
+                self._indent += more_indent
         query = ["%s %s" % (select, ", ".join(self._columns))]
         query.append(self._align("FROM", self._table))
         for join in self._joins:
-            query.append(self._align("JOIN", join.table))
+            keyword = join.outer and "LEFT OUTER JOIN" or "JOIN"
+            query.append(self._align(keyword, join.table))
             keyword = "ON"
             for condition in join.conditions:
                 query.append(self._align(keyword, condition))
@@ -993,8 +1001,18 @@ class Query:
         If you don't supply at least one condition, you might be
         unpleasantly surprised by the results.
         """
-        self._joins.append(Query.Join(table, *conditions))
+        self._joins.append(Query.Join(table, False, *conditions))
         self._str = None
+        return self
+
+    def outer(self, table, *conditions):
+        """
+        Create a left outer join
+        """
+        self._joins.append(Query.Join(table, True, *conditions))
+        self._outer = True
+        self._str = None
+        return self
 
     def where(self, condition, *parms):
         """
@@ -1003,6 +1021,7 @@ class Query:
         self._conditions.append(condition)
         self.parms(*parms)
         self._str = None
+        return self
 
     def order(self, *columns):
         """
@@ -1028,6 +1047,7 @@ class Query:
                 raise Exception("invalid order column %s" % repr(column))
             self._order.append(" ".join(words))
         self._str = None
+        return self
 
     def parms(self, *parms):
         """
@@ -1048,6 +1068,7 @@ class Query:
             else:
                 self._parms.append(parm)
         self._str = None
+        return self
 
     def limit(self, limit):
         """
@@ -1057,6 +1078,7 @@ class Query:
             raise Exception("limit must be integer")
         self._limit = limit
         self._str = None
+        return self
 
     def unique(self):
         """
@@ -1064,12 +1086,14 @@ class Query:
         """
         self._unique = True
         self._str = None
+        return self
 
     def cursor(self, cursor):
         """
         Pass in a cursor to be used for the query.
         """
         self._cursor = cursor
+        return self
 
     def execute(self, cursor=None):
         """
