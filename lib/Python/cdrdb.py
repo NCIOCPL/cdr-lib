@@ -896,7 +896,16 @@ class Query:
         query = cdrdb.Query('document d', 'd.title', 't.name AS "Type"')
         query.join('doc_type t', 't.id = d.doc_type')
         query.where('t.name IN (?,?)', 'Summary', 'GlossaryTermName')
+
+        # To see the generated SQL
         print query
+
+        # To execute and cleanup
+        cursor = query.execute()
+        rows = cursor.fetchall()
+        cursor.close()
+
+        # Or alternatively if closing the cursor doesn't matter
         rows = query.execute().fetchall()
     """
 
@@ -997,7 +1006,7 @@ class Query:
         to the parms() method.  Be sure to do that immediately
         after the join() call, to ensure that the parameters are
         stored in the correct order.
-        
+
         If you don't supply at least one condition, you might be
         unpleasantly surprised by the results.
         """
