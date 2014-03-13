@@ -5179,8 +5179,8 @@ def getBoardNames(boardType = 'all', display = 'full', host = 'localhost'):
 #----------------------------------------------------------------------
 # Gets a list of Summary CDR document IDs.
 #----------------------------------------------------------------------
-def getSummaryIds(language='all', audience='all', boards=[], suffix='all',
-                  status='A', published='Y', titles=False, sortby='title'):
+def getSummaryIds(language='all', audience='all', boards=[], status='A',
+                  published=True, titles=False, sortby='title'):
     """
     Search the database for the Summary documents by the passed criteria.
 
@@ -5194,13 +5194,13 @@ def getSummaryIds(language='all', audience='all', boards=[], suffix='all',
                         '/Summary/SummaryMetaData/SummaryAudience'
         boards   - [] = Ignore board, get Summaries for any board.
                     Else a list of one or more board names.  Use names
-                    like 'Adult Treatment Editorial Board'.  Must be an exact
-                    match for what's in:
+                    like 'PDQ Adult Treatment Editorial Board'.  Must be
+                    an exact match for what's in:
                         'Summary/SummaryMetaData/PDQBoard/Board'
         status   - 'A' = Active status for the document.  Else 'I' = Inactive
                     or 'all' = both.
-        published- 'Y' = Only docs with publishable versions.  Else 'all'
-                    for docs with or without publishable versions.
+        published- True = Only docs with publishable versions.
+                   False = docs with or without publishable versions.
         titles   - True = return titles with the IDs.
         sortby   - 'id' = sort by CDR ID.
                    'title' = sort by title, can be done whether or not
@@ -5223,87 +5223,47 @@ def getSummaryIds(language='all', audience='all', boards=[], suffix='all',
     Throws:
         cdrdb.Exception if database failure.
     """
-    # All joins are to query_term or query_term_pub table
-    if published == 'Y':
-        qTable = 'query_term_pub'
-    else:
-        qTable = 'query_term'
-
-    # Create the base the query
-    qry = """
-SELECT d.id"""
-    if titles:
-        qry += ', d.title'
-    qry += """
-  FROM document d"""
-
-    # Add any required JOINs
-    qry += """
-  JOIN doc_type t
-    ON d.doc_type = t.id"""
-    if language != 'all':
-        qry += """
-  JOIN %s qlang
-    ON qlang.doc_id = d.id""" % qTable
-    if audience != 'all':
-        qry += """
-  JOIN %s qaud
-    ON qaud.doc_id = d.id""" % qTable
+    # First use of Bob's new cdrdb.Query class
+    # Converted by Bob from my old code in previous version of cdr.py
+    qtable = published and "query_term_pub" or "query_term"
+    columns = titles and ["d.id", "d.title"] or ["d.id"]
+    summary_restriction = False
+    query = cdrdb.Query("document d", *columns)
+    if language != "all":
+        query.join("%s qlang" % qtable, "qlang.doc_id = d.id")
+        query.where("qlang.path = '/Summary/SummaryMetaData/SummaryLanguage'")
+        query.where("qlang.value = ?", language)
+        summary_restriction = True
+    if audience != "all":
+        query.join("%s quad" % qtable, "quad.doc_id = d.id")
+        query.where("quad.path = '/Summary/SummaryMetaData/SummaryAudience'")
+        query.where("quad.value = ?", audience)
+        summary_restriction = True
     if boards:
-        qry += """
-  JOIN %s qboard
-    ON qboard.doc_id = d.id""" % qTable
-
-    # Add the WHERE clause
-    qry += """
- WHERE t.name = 'Summary'"""
-    if language != 'all':
-        qry += """
-   AND qlang.path = '/Summary/SummaryMetaData/SummaryLanguage'
-   AND qlang.value = '%s'""" % language
-    if audience != 'all':
-        qry += """
-   AND qaud.path = '/Summary/SummaryMetaData/SummaryAudience'
-   AND qaud.value = '%s'""" % audience
-
-    # Boards require building up a list for an IN clause
-    if boards:
-        boardCount = len(boards)
-        i = 0
-        inBoards = ''
-        for board in boards:
-            inBoards += "'%s'" % board
-            i += 1
-            if i < boardCount:
-                inBoards += ','
-        qry += """
-   AND qboard.path = '/Summary/SummaryMetaData/PDQBoard/Board'
-   AND qboard.value IN (%s)""" % inBoards
-
-    if status != 'all':
-        qry += """
-   AND d.active_status = '%s'""" % status
-
+        placeholders = ",".join(["?"] * len(boards))
+        query.join("%s qboard" % qtable, "qboard.doc_id = d.id")
+        query.where("qboard.path = '/Summary/SummaryMetaData/PDQBoard/Board'")
+        query.where("qboard.value IN (%s)" % placeholders, *list(boards))
+        summary_restriction = True
+    if not summary_restriction:
+        # Summary restriction uses query_term path to get only Summary docs
+        # Without it, we need a doc_type restriction
+        query.join("doc_type t", "d.doc_type = t.id")
+        query.where("t.name = 'Summary'")
+    if status != "all":
+        query.where("d.active_status = ?", status)
     if sortby:
-        qry += """
- ORDER BY %s""" % sortby
+        query.order(sortby)
 
-    # Debug
-    logwrite(qry)
+    # DEBUG
+    # logwrite("getSumaryIds:\n%s" % query, "foo")
 
-    # Execute, allowing any database exception to continue up the call tree
-    conn   = cdrdb.connect('CdrGuest')
-    cursor = conn.cursor()
-    cursor.execute(qry)
-    rows = cursor.fetchall()
+    # Fetch and cleanup
+    cursor = query.execute()
+    rows   = cursor.fetchall()
     cursor.close()
 
-    # Return results
-    if rows:
-        return rows
-    else:
-        return []
-
+    return rows
 
 #----------------------------------------------------------------------
 # Record an event which happened in a CDR client session.
