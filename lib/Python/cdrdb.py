@@ -1205,7 +1205,13 @@ class Query:
         return "\n".join(["%s%s" % (padding, line) for line in lines]) + end
 
 #----------------------------------------------------------------------
-# Test of new Query class.
+# Test of new Query class.  Yes, there are better ways to do what the
+# queries below are doing, but a realistic valid use case for UNIONs
+# and subqueries would be both less useful as an example to be easily
+# understood and emulated, and also probably less predictable in whether
+# current conditions in the database would actually produce any results
+# on all the tiers (I'm thinking, for example, of the very complex
+# queries used for populating mailer queues).
 #
 # Sample output from this function:
 #
