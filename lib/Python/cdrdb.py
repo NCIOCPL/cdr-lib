@@ -925,8 +925,11 @@ class Query:
         self._joins = []
         self._unions = []
         self._conditions = []
+        self._group = []
+        self._having = []
         self._order = []
         self._parms = []
+        self._into = None
         self._cursor = None
         self._limit = None
         self._unique = False
@@ -950,12 +953,14 @@ class Query:
                 else:
                     self.conditions.append(condition)
 
-    def _align(self, keyword, rest):
+    def _align(self, keyword, rest=""):
         """
         Internal helper method to make the SQL query easier to read
         """
         keyword = " " * self._indent + keyword
         return "%s %s" % (keyword[-self._indent:], rest)
+    def _set_indent(self, select):
+        return indent
 
     def __str__(self):
         """
@@ -971,15 +976,18 @@ class Query:
             select += " DISTINCT"
         if self._limit is not None:
             select += " TOP %d" % self._limit
-        if select == "SELECT" and self._order:
-            select = "  SELECT"
         self._indent = len(select)
-        if self._outer:
-            more_indent = len("LEFT OUTER JOIN") - self._indent
-            if more_indent > 0:
-                select = " " * more_indent + select
-                self._indent += more_indent
-        query = ["%s %s" % (select, ", ".join(self._columns))]
+        for attribute, keywords in (
+            (self._order, "ORDER BY"),
+            (self._outer, "LEFT OUTER JOIN"),
+            (self._group, "GROUP BY")):
+            if attribute:
+                needed = len(keywords) - self._indent
+                if needed > 0:
+                    self._indent += needed
+        query = [self._align(select, ", ".join(self._columns))]
+        if self._into:
+            query.append(self._align("INTO", self._into))
         query.append(self._align("FROM", self._table))
         for join in self._joins:
             keyword = join.outer and "LEFT OUTER JOIN" or "JOIN"
@@ -992,6 +1000,13 @@ class Query:
         for condition in self._conditions:
             query.append(self._align(keyword, condition))
             keyword = "AND"
+        if self._group:
+            query.append(self._align("GROUP BY", ", ".join(self._group)))
+        if self._having:
+            keyword = "HAVING"
+            for having in self._having:
+                query.append(self._align(keyword, having))
+                keyword = "AND"
         for union in self._unions:
             query.append(self._align("UNION"))
             query.append(str(union))
@@ -999,6 +1014,17 @@ class Query:
             query.append(self._align("ORDER BY", ", ".join(self._order)))
         self._str = "\n".join(query)
         return self._str
+
+    def into(self, name):
+        """
+        Name of table to be created by this query
+
+        Prefix the name with the octothorpe character ('#') to create
+        a temporary table.
+        """
+        self._into = name
+        self._str = None
+        return self
 
     def join(self, table, *conditions):
         """
@@ -1034,7 +1060,7 @@ class Query:
         """
         self._unions.append(query)
         self._str = None
-        return this
+        return self
 
     def outer(self, table, *conditions):
         """
@@ -1051,6 +1077,37 @@ class Query:
         """
         self._conditions.append(condition)
         self.parms(*parms)
+        self._str = None
+        return self
+
+    def group(self, *columns):
+        """
+        Add the column(s) to be used in the query's GROUP BY clause
+
+        Example usage:
+            query.group('d.id', 'd.title')
+        """
+        for column in columns:
+            if type(column) is list:
+                self._group += column
+            elif type(column) is tuple:
+                self._group += list(column)
+            else:
+                self._group.append(column)
+        self._str = None
+        return self
+        
+    def having(self, *conditions):
+        """
+        Add one or more conditions to the query's HAVING clause
+        """
+        for condition in conditions:
+            if type(condition) is list:
+                self._having += condition
+            elif type(condition) is tuple:
+                self._having += list(condition)
+            else:
+                self._having.append(condition)
         self._str = None
         return self
 
@@ -1136,3 +1193,75 @@ class Query:
         cursor = cursor or self._cursor or connect("CdrGuest").cursor()
         cursor.execute(self, tuple(self._parms))
         return cursor
+
+    @staticmethod
+    def indent(block, n=4):
+        """
+        Indent a block containing one or more lines by a number of spaces
+        """
+        if isinstance(block, Query):
+            block = str(block)
+        padding = " " * n
+        end = block.endswith("\n") and "\n" or ""
+        lines = block.splitlines()
+        return "\n".join(["%s%s" % (padding, line) for line in lines]) + end
+
+#----------------------------------------------------------------------
+# Test of new Query class.
+#
+# Sample output from this function:
+#
+# SELECT TOP 10 d.id, d.title, t.name
+#          FROM document d
+#          JOIN doc_type t
+#            ON t.id = d.doc_type
+#         WHERE d.id IN (
+#     SELECT id
+#       FROM #q1
+#      UNION
+#     SELECT doc_id
+#       FROM #q2
+# )
+#      ORDER BY 2, 1 DESC
+#
+#   514500: u'COG-AALL0434;AALL0434;NCT00408005;Phase ' (InScopeProtocol)
+#   347078: u'COG-ARST0331;NCT00075582;ARST0331;Phase ' (InScopeProtocol)
+#    62855: u'Genetics of Breast and Ovarian Cancer;Ge' (Summary)
+#   322261: u'GOG-0210;GOG-0210;Study to Collect Clini' (InScopeProtocol)
+#    65921: u'NCT00003140;MA17;U10CA025224;CAN-NCIC-MA' (CTGovProtocol)
+#    66727: u'NCT00003641;CDR0000066727;ECOG-1697;SWOG' (CTGovProtocol)
+#    67025: u'NCT00003861;CDR0000067025;U10CA076001;CA' (CTGovProtocol)
+#    68149: u'NCT00006227;GOG-0187;NCI-2011-02054;CDR0' (CTGovProtocol)
+#    68402: u'NCT00008385;CDR0000068402;ECOG-5597;CAN-' (CTGovProtocol)
+#    68608: u'NCT00020566;CDR0000068608;EURO-EWING-INT' (CTGovProtocol)
+#----------------------------------------------------------------------
+
+def _test_query():
+
+    # Create an alias for the class.
+    Q = Query
+
+    # Do everything with our own cursor.
+    cursor = connect("CdrGuest").cursor()
+
+    # Create a temporary table of documents with lots of versions.
+    q1 = Q("doc_version", "id", "COUNT(*) c")
+    q1.group("id").having("COUNT(*) > 1000").into("#q1").execute(cursor)
+
+    # Create a temporary table of documents which have been published a lot.
+    q2 = Q("pub_proc_doc", "doc_id", "COUNT(*) c")
+    q2.group("doc_id").having("COUNT(*) > 2000").into("#q2").execute(cursor)
+
+    # Create a subquery, which does a UNION of the two temporary tables.
+    q3 = Q("#q1", "id").union(Q("#q2", "doc_id"))
+
+    # Create a fourth query which uses the subquery.
+    q4 = Q("document d", "d.id", "d.title", "t.name").limit(10)
+    q4.join("doc_type t", "t.id = d.doc_type")
+    q4.where("d.id IN (\n%s\n)" % Q.indent(q3))
+    q4.order("2", "1 DESC")
+
+    # Show the final query and its results set.
+    print "%s\n" % q4
+    for row in q4.execute(cursor).fetchall():
+        print "%8d: %s (%s)" % (row[0], repr(row[1][:40]), row[2])
