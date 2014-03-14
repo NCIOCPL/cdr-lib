@@ -959,8 +959,6 @@ class Query:
         """
         keyword = " " * self._indent + keyword
         return "%s %s" % (keyword[-self._indent:], rest)
-    def _set_indent(self, select):
-        return indent
 
     def __str__(self):
         """
