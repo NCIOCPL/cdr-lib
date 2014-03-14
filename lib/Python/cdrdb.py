@@ -923,6 +923,7 @@ class Query:
         self._table = table
         self._columns = columns
         self._joins = []
+        self._unions = []
         self._conditions = []
         self._order = []
         self._parms = []
@@ -991,6 +992,9 @@ class Query:
         for condition in self._conditions:
             query.append(self._align(keyword, condition))
             keyword = "AND"
+        for union in self._unions:
+            query.append(self._align("UNION"))
+            query.append(str(union))
         if self._order:
             query.append(self._align("ORDER BY", ", ".join(self._order)))
         self._str = "\n".join(query)
@@ -1013,6 +1017,24 @@ class Query:
         self._joins.append(Query.Join(table, False, *conditions))
         self._str = None
         return self
+
+    def union(self, query):
+        """
+        Add a query to be UNIONed with this one.
+
+        Use this when you want to apply the ORDER BY clause to the UNIONed
+        queries as a whole.  Make sure only this query has an ORDER set.
+        If you need each component query to maintain its own internal order,
+        construct and serialize each separately, and assemble them by hand.
+        For example:
+
+        q1 = cdrdb.Query(...).join.(...).where(...).order(...)
+        q2 = cdrdb.Query(...).join.(...).where(...).order(...)
+        union = "SELECT * FROM (%s) q1 UNION SELECT * FROM (%s) q2" % (q1, q2)
+        """
+        self._unions.append(query)
+        self._str = None
+        return this
 
     def outer(self, table, *conditions):
         """
