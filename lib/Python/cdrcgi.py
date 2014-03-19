@@ -346,14 +346,16 @@ class Page:
         """
         self._script.append(script)
 
-    def add_output_options(self):
+    def add_output_options(self, default=None):
         """
         Allow the user to decide between HTML and Excel.
         """
+        h_checked = default == "html"
+        e_checked = default == "excel"
         self.add("<fieldset>")
         self.add(self.B.LEGEND("Report Format"))
-        self.add_radio("format", "Web Page", "html")
-        self.add_radio("format", "Excel Workbook", "excel")
+        self.add_radio("format", "Web Page", "html", checked=h_checked)
+        self.add_radio("format", "Excel Workbook", "excel", checked=e_checked)
         self.add("</fieldset>")
 
     def send(self):
