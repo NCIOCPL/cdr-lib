@@ -5215,10 +5215,9 @@ def getSummaryIds(language='all', audience='all', boards=[], status='A',
             [[docId,], [docId,], ...]
         Else there is an array of pair sequences of the form:
             [[docId, title], [docId, title], ...]
-            ...
-        If there are no hits, an empty array is returned, presumably caused
-        by an error in the passed parameters, e.g., wrong board names:
-            []
+        If titles are returned, they are unicode strings.
+        If there are no hits, an empty array [] is returned, presumably caused
+            by an error in the passed parameters, e.g., wrong board names.
 
     Throws:
         cdrdb.Exception if database failure.
@@ -5231,27 +5230,29 @@ def getSummaryIds(language='all', audience='all', boards=[], status='A',
     query = cdrdb.Query("document d", *columns)
     if language != "all":
         query.join("%s qlang" % qtable, "qlang.doc_id = d.id")
-        query.where("qlang.path = '/Summary/SummaryMetaData/SummaryLanguage'")
-        query.where("qlang.value = ?", language)
+        query.where(query.Condition("qlang.path",
+                    '/Summary/SummaryMetaData/SummaryLanguage'))
+        query.where(query.Condition("qlang.value", language))
         summary_restriction = True
     if audience != "all":
         query.join("%s quad" % qtable, "quad.doc_id = d.id")
-        query.where("quad.path = '/Summary/SummaryMetaData/SummaryAudience'")
-        query.where("quad.value = ?", audience)
+        query.where(query.Condition("quad.path",
+                    '/Summary/SummaryMetaData/SummaryAudience'))
+        query.where(query.Condition("quad.value", audience))
         summary_restriction = True
     if boards:
-        placeholders = ",".join(["?"] * len(boards))
         query.join("%s qboard" % qtable, "qboard.doc_id = d.id")
-        query.where("qboard.path = '/Summary/SummaryMetaData/PDQBoard/Board'")
-        query.where("qboard.value IN (%s)" % placeholders, *list(boards))
+        query.where(query.Condition("qboard.path",
+                    '/Summary/SummaryMetaData/PDQBoard/Board'))
+        query.where(query.Condition("qboard.value", boards, "IN"))
         summary_restriction = True
     if not summary_restriction:
         # Summary restriction uses query_term path to get only Summary docs
         # Without it, we need a doc_type restriction
         query.join("doc_type t", "d.doc_type = t.id")
-        query.where("t.name = 'Summary'")
+        query.where(query.Condition("t.name", 'Summary'))
     if status != "all":
-        query.where("d.active_status = ?", status)
+        query.where(query.Condition("d.active_status" , status))
     if sortby:
         query.order(sortby)
 
