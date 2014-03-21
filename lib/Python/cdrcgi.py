@@ -157,6 +157,8 @@ SUBBANNER = """\
 class Page:
     """
     Object used to build a web page.
+
+    See test() method below for sample usage.
     """
 
     INDENT = u"  "
@@ -190,7 +192,12 @@ class Page:
                           widget
             stylesheets - array of paths to external CSS files to be loaded;
                           defaults to the standard cdr and CdrCalendar sheets
-            session -     string identifying the CDR login session
+            session -     string identifying the CDR login session; can be
+                          used to override the current session, which will
+                          be retrieved from the CGI variables if you don't
+                          specify a replacement string here; the session
+                          string will be added as a hidden varilable if
+                          the 'action' paramater is set
             body_class -  e.g., 'report'
         """
         self._finished = False
@@ -207,7 +214,8 @@ class Page:
         self._icon = kwargs.get("icon", "/favicon.ico")
         self._js = kwargs.get("js", Page.JS)
         self._stylesheets = kwargs.get("stylesheets", Page.STYLESHEETS)
-        self._session = kwargs.get("session")
+        self._fields = cgi.FieldStorage()
+        self._session = kwargs.get("session") or getSession(self._fields)
         self._body_class = kwargs.get("body_class")
         self._start()
 
@@ -405,7 +413,7 @@ class Page:
         The code will be inserted into the HTML page immediately before
         the closing 'body' tag.
         """
-        self._script.append(script)
+        self._script.append(script.rstrip() + "\n")
 
     def add_css(self, script):
         """
@@ -414,7 +422,7 @@ class Page:
         The code will be inserted into the HTML page immediately before
         the closing 'body' tag, along with any javascript code blocks.
         """
-        self._css.append(script)
+        self._css.append(script.rstrip() + "\n")
 
     def add_output_options(self, default=None, onclick=None):
         """
@@ -598,9 +606,8 @@ class Page:
         page.add_script("""\
 function check_ra(val) {
     alert('You checked ' + val + '!');
-}
-""")
-        page.add_css("header h1 { background-color: blue; }\n")
+}""")
+        page.add_css("header h1 { background-color: blue; }")
         page._finish()
         print "".join(page._html)
 
