@@ -158,7 +158,17 @@ class Page:
     """
     Object used to build a web page.
 
-    See test() method below for sample usage.
+    Sample usage:
+
+        form = cdrcgi.Page('Simple Report', subtitle='Documents by Title',
+                           buttons=('Submit', 'Admin')
+                           action='simple-report.py')
+        form.add('<fieldset>')
+        form.add(cdrcgi.Page.B.LEGEND('Select Documents By Title'))
+        form.add_text_field('title', 'Containing')
+        form.add('</fieldset>')
+        form.add_output_options()
+        form.send()
     """
 
     INDENT = u"  "
@@ -614,6 +624,23 @@ function check_ra(val) {
 class Report:
     """
     CDR Report which can be rendered as an HTML page or as an Excel workbook.
+
+    Example usage:
+
+        R = cdrcgi.Report
+        cursor = cdrdb.connect('CdrGuest').cursor()
+        cursor.execute('''\
+            SELECT id, name
+              FROM doc_type
+          ORDER BY name''')
+        columns = (
+            R.Column('Type ID', width='75px'),
+            R.Column('Type Name', width='300px')
+        )
+        rows = cursor.fetchall()
+        table = R.Table(columns, rows, caption='Document Types')
+        report = R('Simple Report', [table])
+        report.send('html')
     """
 
     def __init__(self, title, tables, **options):
@@ -834,6 +861,34 @@ class Report:
                 pixels = float(re.sub(r"[^\d.]+", "", width))
             return int((pixels - .446) / .0272)
         return None
+
+    @staticmethod
+    def test():
+        """
+        Very crude little test to check for any obvious breakage.
+
+        Run like this from the command line:
+
+         python -c "import cdrcgi;cdrcgi.Report.test()" | sed -n /DOCTYPE/,$p
+
+        Wouldn't hurt to add more testing to this method as we get time.
+        """
+        R = Report
+        cursor = cdrdb.connect("CdrGuest").cursor()
+        cursor.execute("""\
+            SELECT id, name
+              FROM doc_type
+             WHERE active = 'Y'
+               AND name > ''
+          ORDER BY name""")
+        columns = (
+            R.Column("Type ID", width="75px"),
+            R.Column("Type Name", width="300px")
+        )
+        rows = cursor.fetchall()
+        table = R.Table(columns, rows, caption="Document Types")
+        report = R("Simple Report", [table])
+        report.send("html")
 
     class Column:
         """
@@ -1207,8 +1262,8 @@ def sanitize(formStr, dType='str', maxLen=None, noSemis=True,
                                     All forms are okay, including plain int.
         maxLen       - Max allowed string length.
         noSemis      - True = remove semicolons.
-        quoteQuotes  - True = double single quotes, i.e., "'" -> "''"
-        noDashDash   - True = convert runs of "-" to single "-"
+        quoteQuotes  - True = double single quotes, i.e., ' -> ''
+        noDashDash   - True = convert runs of '-' to single '-'
         excp         - True = raise ValueError with a specific message.
 
     Return:
