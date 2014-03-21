@@ -196,6 +196,7 @@ class Page:
         self._finished = False
         self._html = []
         self._script = []
+        self._css = []
         self._level = 0
         self._title = title
         self._banner = kwargs.get("banner", title)
@@ -301,7 +302,65 @@ class Page:
         """
         self._add_checkbox_or_radio_button("radio", group, label, value,
                                            **kwargs)
+    def add_select(self, name, label, options, default=None, **kwargs):
+        """
+        Add a picklist field.
 
+        Required positional arguments:
+
+            name            the name of the field, also used as the field's ID
+            label           string used to identify the field to the user
+            options         sequence of choices for the picklist; each member
+                            of the sequence can be a sequence of value and
+                            display, in order to have a different string
+                            displayed for the choice than the value returned
+                            when that choice is selected, or a single value,
+                            in which case the value returned will be the same
+                            as the string displayed for the option
+
+        Optional positional argument:
+
+            default         choice(s) which should be selected when the form
+                            is initially displayed; can be a sequence of
+                            values if the 'multiple' argument is passed as
+                            True; values for default are matched against
+                            the values for the choices, not against the
+                            display strings for those choices
+
+        Optional keyword arguments
+
+            multiple        if passed and set to True, allows the user to
+                            select multiple choices from the picklist
+            onchange        Javascript to be invoked when the users changes
+                            the choice(s) from the picklist
+            classes         string to be set as the 'class' attribute of
+                            the select element
+        """
+        self.add('<div class="labeled-field">')
+        self.add(Page.B.LABEL(Page.B.FOR(name), label))
+        open_tag = '<select name="%s" id="%s"' % (name, name)
+        classes = kwargs.get("classes") or kwargs.get("class_")
+        if classes:
+            open_tag += ' class="%s"' % classes
+        if type(default) not in (list, tuple):
+            default = default and [default] or []
+        if kwargs.get("multiple"):
+            open_tag += " multiple"
+        elif len(default) > 1:
+            raise Exception("Multiple defaults specified for single picklist")
+        self.add(open_tag + ">")
+        for option in options:
+            if type(option) in (list, tuple):
+                value, display = option
+            else:
+                value = display = option
+            o = Page.B.OPTION(display, value=unicode(value))
+            if value in default:
+                o.set("selected", "selected")
+            self.add(o)
+        self.add("</select>")
+        self.add("</div>")
+        
     def add_text_field(self, name, label, **kwargs):
         """
         Add a labeled text input field to an HTML form.
@@ -314,14 +373,16 @@ class Page:
 
         Optional keywork arguments:
 
-            class -         if present, used as the 'class' attribute for
+            classes -       if present, used as the 'class' attribute for
                             the input element
         """
         self.add('<div class="labeled-field">')
         self.add(Page.B.LABEL(Page.B.FOR(name), label))
         field = Page.B.INPUT(id=name, name=name)
-        if "class" in kwargs:
-            field.set("class", kwargs["class"])
+        classes = kwargs.get("classes") or kwargs.get("class_")
+        classes = classes or kwargs.get("class")
+        if classes:
+            field.set("class", classes)
         if "value" in kwargs:
             field.set("value", unicode(kwargs["value"]))
         self.add(field)
@@ -334,7 +395,7 @@ class Page:
         See documentation for the add_text_field() method, which takes
         the same arguments.
         """
-        kwargs["class"] = "CdrDateField"
+        kwargs["classes"] = "CdrDateField"
         self.add_text_field(name, label, **kwargs)
 
     def add_script(self, script):
@@ -346,7 +407,16 @@ class Page:
         """
         self._script.append(script)
 
-    def add_output_options(self, default=None):
+    def add_css(self, script):
+        """
+        Add a block of CSS rules.
+
+        The code will be inserted into the HTML page immediately before
+        the closing 'body' tag, along with any javascript code blocks.
+        """
+        self._css.append(script)
+
+    def add_output_options(self, default=None, onclick=None):
         """
         Allow the user to decide between HTML and Excel.
         """
@@ -354,8 +424,10 @@ class Page:
         e_checked = default == "excel"
         self.add("<fieldset>")
         self.add(self.B.LEGEND("Report Format"))
-        self.add_radio("format", "Web Page", "html", checked=h_checked)
-        self.add_radio("format", "Excel Workbook", "excel", checked=e_checked)
+        self.add_radio("format", "Web Page", "html", checked=h_checked,
+                       onclick=onclick)
+        self.add_radio("format", "Excel Workbook", "excel", checked=e_checked,
+                       onclick=onclick)
         self.add("</fieldset>")
 
     def send(self):
@@ -465,9 +537,16 @@ class Page:
                 self.add(Page.B.INPUT(name="Session", value=self._session,
                                       type="hidden"))
     def _finish(self):
+        """
+        Helper function called by the send() method.
+        """
         if not self._finished:
             if self._action:
                 self.add("</form>")
+            if self._css:
+                self.add("<style>")
+                self._html += self._css
+                self.add("</style>")
             if self._script:
                 self.add("<script>")
                 self._html += self._script
@@ -476,6 +555,54 @@ class Page:
             self.add("</html>")
             self._finished = True
 
+    @staticmethod
+    def test():
+        """
+        Quick check to see if anything obvious got broken by changes to the
+        Page class.
+        """
+        P = Page
+        page = P("Test", banner="A Banner", subtitle="A Subtitle",
+                 buttons=("Manny", "Moe", "Jack"), action="dummy.py",
+                 session="guest", body_class="custom-form")
+        page.add("<fieldset>")
+        page.add(P.B.LEGEND("Checkboxes"))
+        page.add_checkbox("cb", "Checkbox 1", "1", onclick=None)
+        page.add_checkbox("cb", "Checkbox 2", "2", onclick=None)
+        page.add_checkbox("cb", "Checkbox 3", "3", onclick=None)
+        page.add("</fieldset>")
+        page.add("<fieldset>")
+        page.add(P.B.LEGEND("Radio Buttons"))
+        page.add_radio("ra", "Button 1", "1")
+        page.add_radio("ra", "Button 2", "2")
+        page.add_radio("ra", "Button 3", "3")
+        page.add("</fieldset>")
+        page.add("<fieldset>")
+        page.add(P.B.LEGEND("Picklist"))
+        page.add_select("se", "Names",
+                        ("Larry", "Moe", "Curly", "Tristan", "Brunnhilde"),
+                        ("Moe", "Tristan"), multiple=True)
+        page.add("</fieldset>")
+        page.add("<fieldset>")
+        page.add(P.B.LEGEND("Text Fields"))
+        page.add_text_field("addr", "Address")
+        page.add_text_field("phone", "Phone")
+        page.add_text_field("email", "Email")
+        page.add("</fieldset>")
+        page.add("<fieldset>")
+        page.add(P.B.LEGEND("Date Fields"))
+        page.add_date_field("start", "Start")
+        page.add_date_field("end", "End", value=str(datetime.date.today()))
+        page.add("</fieldset>")
+        page.add_output_options("html")
+        page.add_script("""\
+function check_ra(val) {
+    alert('You checked ' + val + '!');
+}
+""")
+        page.add_css("header h1 { background-color: blue; }\n")
+        page._finish()
+        print "".join(page._html)
 
 class Report:
     """
