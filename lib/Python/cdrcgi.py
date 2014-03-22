@@ -224,8 +224,7 @@ class Page:
         self._icon = kwargs.get("icon", "/favicon.ico")
         self._js = kwargs.get("js", Page.JS)
         self._stylesheets = kwargs.get("stylesheets", Page.STYLESHEETS)
-        self._fields = cgi.FieldStorage()
-        self._session = kwargs.get("session") or getSession(self._fields)
+        self._session = kwargs.get("session")
         self._body_class = kwargs.get("body_class")
         self._start()
 
@@ -1041,16 +1040,19 @@ def bail(message, banner = "CDR Web Interface", extra = None, logfile = None):
     Return:
         No return. Exits here.
     """
+    page = Page("CDR Error", banner=banner, subtitle="An error has occurred",
+                js=[], stylesheets=["/stylesheets/cdr.css"])
+    p = Page.B.P(message)
+    p.set("class", "error")
+    page.add(p)
     if extra:
         for arg in extra:
-            message += "<br>%s" % cgi.escape(arg)
+            p = Page.B.P(arg)
+            p.set("class", "error")
+            page.add(p)
     if logfile:
         cdr.logwrite ("cdrcgi bailout:\n %s" % message, logfile)
-
-    page = header("CDR Error", banner, "An error has occured", "", [])
-    page = page + "<B>%s</B></FORM></BODY></HTML>" % message
-    sendPage(page)
-    sys.exit(0)
+    page.send()
 
 #----------------------------------------------------------------------
 # Encode XML for transfer to the CDR Server using utf-8.
