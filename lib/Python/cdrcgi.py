@@ -926,7 +926,9 @@ class Report:
 
         def to_td(self):
             if self._callback:
-                return self._callback(self, "html")
+                td = self._callback(self, "html")
+                if td:
+                    return td
             td = Page.B.TD()
             if self._href:
                 element = Page.B.A(href=self._href)
