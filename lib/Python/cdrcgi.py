@@ -726,7 +726,7 @@ class Report:
                             if cell._colspan:
                                 td.set("colspan", str(cell._colspan))
                             if cell._rowspan:
-                                td.set("colspan", str(cell._rowspan))
+                                td.set("rowspan", str(cell._rowspan))
                             if cell._classes:
                                 td.set("class", cell._classes)
                         page.add(td)
