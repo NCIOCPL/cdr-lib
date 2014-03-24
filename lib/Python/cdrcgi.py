@@ -924,10 +924,16 @@ class Report:
                 raise Exception("unexpected type %s for Cell classes: %s" %
                                 (type(classes), repr(classes)))
 
+        def values(self):
+            return self._value
+
+        def options(self):
+            return self._options
+
         def to_td(self):
             if self._callback:
                 td = self._callback(self, "html")
-                if td:
+                if td is not None:
                     return td
             td = Page.B.TD()
             if self._href:
