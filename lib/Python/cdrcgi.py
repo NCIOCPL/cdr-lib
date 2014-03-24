@@ -1042,14 +1042,10 @@ def bail(message, banner = "CDR Web Interface", extra = None, logfile = None):
     """
     page = Page("CDR Error", banner=banner, subtitle="An error has occurred",
                 js=[], stylesheets=["/stylesheets/cdr.css"])
-    p = Page.B.P(message)
-    p.set("class", "error")
-    page.add(p)
+    page.add(Page.B.P(message, Page.B.CLASS("error")))
     if extra:
         for arg in extra:
-            p = Page.B.P(arg)
-            p.set("class", "error")
-            page.add(p)
+            page.add(Page.B.P(arg, Page.B.CLASS("error")))
     if logfile:
         cdr.logwrite ("cdrcgi bailout:\n %s" % message, logfile)
     page.send()
