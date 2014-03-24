@@ -742,6 +742,8 @@ class Report:
                                          "height 240; align: wrap True,"
                                          "vert centre, horiz centre")
         self._data_style = xlwt.easyxf("align: wrap True, vert top;")
+        self._bold_data_style = xlwt.easyxf("align: wrap True, vert top; "
+                                            "font: bold True;")
         count = 1
         for table in self._tables:
             self._add_worksheet(book, table, count)
@@ -784,7 +786,10 @@ class Report:
             row_number += 1
             for col_number, cell in enumerate(row):
                 values = "\n".join(Report.Cell._get_values(cell))
+                style = self._data_style
                 if isinstance(cell, self.Cell):
+                    if cell._bold:
+                        style = self._bold_data_style
                     if cell._href:
                         vals = values.replace('"', '""')
                         formula = 'HYPERLINK("%s";"%s")' % (cell._href, vals)
@@ -796,10 +801,9 @@ class Report:
                         if cell._rowspan:
                             end_row += int(cell._rowspan) - 1
                         sheet.write_merge(row_number, end_row,
-                                          col_number, end_col, values,
-                                          self._data_style)
+                                          col_number, end_col, values, style)
                         continue
-                sheet.write(row_number, col_number, values, self._data_style)
+                sheet.write(row_number, col_number, values, style)
 
     @staticmethod
     def _get_excel_width(column):
@@ -905,14 +909,20 @@ class Report:
             self._rowspan = options.get("rowspan")
             self._href = options.get("href")
             self._target = options.get("target")
+            self._bold = options.get("bold")
             self._callback = options.get("callback")
             classes = options.get("classes")
-            if isinstance(classes, basestring):
+            if not classes:
+                self._classes = []
+            elif isinstance(classes, basestring):
+                self._classes = classes.split()
+            elif type(classes) in (set, tuple):
+                self._classes = list(classes)
+            elif type(classes) is list:
                 self._classes = classes
-            elif classes:
-                self._classes = " ".join(classes)
             else:
-                self._classes = None
+                raise Exception("unexpected type %s for Cell classes: %s" %
+                                (type(classes), repr(classes)))
 
         def to_td(self):
             if self._callback:
@@ -922,15 +932,19 @@ class Report:
                 element = Page.B.A(href=self._href)
                 if self._target:
                     element.set("target", self._target)
+                if self._bold:
+                    element.set("class", "strong")
             else:
                 element = td
+                if self._bold and "strong" not in self._classes:
+                    self._classes.append("strong")
             self.set_values(element, self)
             if self._colspan:
                 td.set("colspan", str(self._colspan))
             if self._rowspan:
                 td.set("rowspan", str(self._rowspan))
             if self._classes:
-                td.set("class", self._classes)
+                td.set("class", " ".join(self._classes))
             if element is not td:
                 td.append(element)
             return td
