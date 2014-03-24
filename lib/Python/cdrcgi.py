@@ -685,8 +685,9 @@ class Report:
         """
         banner = self._options.get("banner")
         subtitle = self._options.get("subtitle")
+        stylesheets=["/stylesheets/cdr.css"]
         page = Page(self._title, banner=banner, subtitle=subtitle, js=[],
-                    body_class="report")
+                    body_class="report", stylesheets=stylesheets)
         B = page.B
         for table in self._tables:
             page.add('<table class="report">')
@@ -714,21 +715,11 @@ class Report:
                     else:
                         page.add("<tr>")
                     for cell in row:
-                        values = Report._get_cell_values(cell)
-                        value = values.pop(0)
-                        td = B.TD(value)
-                        while values:
-                            value = values.pop(0)
-                            br = B.BR()
-                            br.tail = value
-                            td.append(br)
                         if isinstance(cell, self.Cell):
-                            if cell._colspan:
-                                td.set("colspan", str(cell._colspan))
-                            if cell._rowspan:
-                                td.set("rowspan", str(cell._rowspan))
-                            if cell._classes:
-                                td.set("class", cell._classes)
+                            td = cell.to_td()
+                        else:
+                            td = B.TD()
+                            self.Cell.set_values(td, cell)
                         page.add(td)
                     page.add("</tr>")
                 page.add("</tbody>")
@@ -764,6 +755,11 @@ class Report:
         print "Content-disposition: attachment; filename=%s" % book_name
         print
         book.save(sys.stdout)
+        if self._options.get("debug"):
+            name = "d:/tmp/%s" % book_name
+            fp = open(name, "wb")
+            book.save(fp)
+            fp.close()
         sys.exit(0)
 
     def _add_worksheet(self, book, table, count):
@@ -787,8 +783,12 @@ class Report:
         for row in table._rows:
             row_number += 1
             for col_number, cell in enumerate(row):
-                values = "\n".join(Report._get_cell_values(cell))
+                values = "\n".join(Report.Cell._get_values(cell))
                 if isinstance(cell, self.Cell):
+                    if cell._href:
+                        vals = values.replace('"', '""')
+                        formula = 'HYPERLINK("%s";"%s")' % (cell._href, vals)
+                        values = xlwt.Formula(formula)
                     if cell._colspan or cell._rowspan:
                         end_row, end_col = row_number, col_number
                         if cell._colspan:
@@ -800,28 +800,6 @@ class Report:
                                           self._data_style)
                         continue
                 sheet.write(row_number, col_number, values, self._data_style)
-
-    @staticmethod
-    def _get_cell_values(cell):
-        """
-        Returns the values for a table cell as an array
-
-        Passed:
-
-            cell -       either a string or number, an array of strings
-                         and/or numbers, or a Report.Cell object (whose
-                         _value member may in turn be a string, a number,
-                         or an array of strings and/or numbers)
-        """
-        if isinstance(cell, Report.Cell):
-            values = cell._value
-        else:
-            values = cell
-        if type(values) not in (list, tuple):
-            return [unicode(values)]
-        elif not values:
-            return [""]
-        return [unicode(v) for v in values]
 
     @staticmethod
     def _get_excel_width(column):
@@ -925,11 +903,70 @@ class Report:
             self._options = options
             self._colspan = options.get("colspan")
             self._rowspan = options.get("rowspan")
+            self._href = options.get("href")
+            self._target = options.get("target")
+            self._callback = options.get("callback")
             classes = options.get("classes")
             if isinstance(classes, basestring):
                 self._classes = classes
             elif classes:
                 self._classes = " ".join(classes)
+            else:
+                self._classes = None
+
+        def to_td(self):
+            if self._callback:
+                return self._callback(self, "html")
+            td = Page.B.TD()
+            if self._href:
+                element = Page.B.A(href=self._href)
+                if self._target:
+                    element.set("target", self._target)
+            else:
+                element = td
+            self.set_values(element, self)
+            if self._colspan:
+                td.set("colspan", str(self._colspan))
+            if self._rowspan:
+                td.set("rowspan", str(self._rowspan))
+            if self._classes:
+                td.set("class", self._classes)
+            if element is not td:
+                td.append(element)
+            return td
+
+        @staticmethod
+        def set_values(element, cell):
+            values = Report.Cell._get_values(cell)
+            value = values.pop(0)
+            element.text = value
+            while values:
+                value = values.pop(0)
+                br = B.BR()
+                br.tail = value
+                element.append(br)
+
+        @staticmethod
+        def _get_values(cell):
+            """
+            Returns the values for a table cell as an array
+
+            Passed:
+
+                cell -       either a string or number, an array of strings
+                             and/or numbers, or a Report.Cell object (whose
+                             _value member may in turn be a string, a number,
+                             or an array of strings and/or numbers)
+            """
+            if isinstance(cell, Report.Cell):
+                values = cell._value
+            else:
+                values = cell
+            if type(values) not in (list, tuple):
+                return [unicode(values)]
+            elif not values:
+                return [""]
+            return [unicode(v) for v in values]
 
 #----------------------------------------------------------------------
 # Display the header for a CDR web form.
