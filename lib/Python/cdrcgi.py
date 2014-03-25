@@ -1042,7 +1042,7 @@ class Report:
             element.text = value
             while values:
                 value = values.pop(0)
-                br = B.BR()
+                br = Page.B.BR()
                 br.tail = value
                 element.append(br)
 
