@@ -692,7 +692,18 @@ class Report:
         for table in self._tables:
             page.add('<table class="report">')
             if table._caption:
-                page.add(B.CAPTION(table._caption))
+                if type(table._caption) in (list, tuple):
+                    lines = list(table._caption)
+                else:
+                    lines = [table._caption]
+                line = lines.pop(0)
+                caption = B.CAPTION(line)
+                while lines:
+                    line = lines.pop(0)
+                    br = B.BR()
+                    br.tail = line
+                    caption.append(br)
+                page.add(caption)
             page.add("<thead>")
             page.add("<tr>")
             for column in table._columns:
@@ -783,9 +794,15 @@ class Report:
             if width:
                 sheet.col(col_number).width = width
         if table._caption:
-            sheet.write_merge(0, 0, 0, len(table._columns) - 1, table._caption,
-                              self._banner_style)
-            row_number = 1
+            if type(table._caption) in (list, tuple):
+                captions = table._caption
+            else:
+                captions = [table._caption]
+            for caption in captions:
+                sheet.write_merge(row_number, row_number,
+                                  0, len(table._columns) - 1,
+                                  caption, self._banner_style)
+                row_number += 1
         for col_number, column in enumerate(table._columns):
             sheet.write(row_number, col_number, column._name,
                         self._header_style)
