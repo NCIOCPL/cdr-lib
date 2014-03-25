@@ -705,18 +705,25 @@ class Report:
             page.add("</thead>")
             if table._rows:
                 if table._stripe:
-                    row_num = 1
-                    classes = ("odd", "even")
+                    prev_rowspan = 0
+                    class_ = None
                 page.add("<tbody>")
                 for row in table._rows:
                     if table._stripe:
-                        page.add('<tr class="%s">' % classes[row_num % 2])
-                        row_num += 1
+                        if not prev_rowspan:
+                            class_ = class_ == "odd" and "even" or "odd"
+                        else:
+                            prev_rowspan -= 1
+                        page.add('<tr class="%s">' % class_)
                     else:
                         page.add("<tr>")
                     for cell in row:
                         if isinstance(cell, self.Cell):
                             td = cell.to_td()
+                            if table._stripe and cell._rowspan:
+                                extra_rows = int(cell._rowspan) - 1
+                                if extra_rows > prev_rowspan:
+                                    prev_rowspan = extra_rows
                         else:
                             td = B.TD()
                             self.Cell.set_values(td, cell)
@@ -784,26 +791,55 @@ class Report:
                         self._header_style)
         for row in table._rows:
             row_number += 1
-            for col_number, cell in enumerate(row):
+            col_number = 0
+            for cell in row:
+
+                # Determine coordinates where cell should be written.
+                while col_number < len(table._columns):
+                    if table._columns[col_number]._skip > 0:
+                        table._columns[col_number]._skip -= 1
+                        col_number += 1
+                    else:
+                        break
+                if col_number >= len(table._columns):
+                    raise Exception("too many cells for row %d" % row_number)
+
+                # Assemble the values to be written
                 values = "\n".join(Report.Cell._get_values(cell))
                 style = self._data_style
                 if isinstance(cell, self.Cell):
-                    if cell._bold:
+                    if cell._sheet_style:
+                        style = cell._sheet_style
+                    elif cell._bold:
                         style = self._bold_data_style
                     if cell._href:
                         vals = values.replace('"', '""')
                         formula = 'HYPERLINK("%s";"%s")' % (cell._href, vals)
                         values = xlwt.Formula(formula)
                     if cell._colspan or cell._rowspan:
-                        end_row, end_col = row_number, col_number
-                        if cell._colspan:
-                            end_col += int(cell._colspan) - 1
-                        if cell._rowspan:
-                            end_row += int(cell._rowspan) - 1
-                        sheet.write_merge(row_number, end_row,
-                                          col_number, end_col, values, style)
+                        colspan = cell._colspan and int(cell._colspan) or 1
+                        rowspan = cell._rowspan and int(cell._rowspan) or 1
+                        r1, c1 = r2, c2 = row_number, col_number
+                        if colspan > 1:
+                            c2 += colspan - 1
+                            if c2 >= len(table._columns):
+                                raise Exception("not enough room for colspan "
+                                                "on row %d" % row_number)
+                        if rowspan > 1:
+                            extra_rows = rowspan - 1
+                            r2 += extra_rows
+                            while col_number <= c2:
+                                if table._columns[col_number]._skip > 0:
+                                    raise Exception("overlapping rowspan "
+                                                    "detected at row %d" %
+                                                    row_number)
+                                table._columns[col_number]._skip = extra_rows
+                                col_number += 1
+                        sheet.write_merge(r1, r2, c1, c2, values, style)
+                        col_number = c2 + 1
                         continue
                 sheet.write(row_number, col_number, values, style)
+                col_number += 1
 
     @staticmethod
     def _get_excel_width(column):
@@ -878,12 +914,17 @@ class Report:
         def __init__(self, name, **options):
             self._name = name
             self._options = options
+            self._skip = 0
 
     class Table:
         """
         One of (possibly) multiple tables in a CDR report
         """
         def __init__(self, columns, rows, **options):
+            if not columns:
+                raise Exception("no columns specified for table")
+            if type(columns) not in (list, tuple):
+                raise Exception("table columns must be a sequence")
             self._columns = columns
             self._rows = rows
             self._options = options
@@ -910,6 +951,7 @@ class Report:
             self._href = options.get("href")
             self._target = options.get("target")
             self._bold = options.get("bold")
+            self._sheet_style = options.get("sheet_style")
             self._callback = options.get("callback")
             classes = options.get("classes")
             if not classes:
