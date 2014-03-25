@@ -690,6 +690,8 @@ class Report:
                     body_class="report", stylesheets=stylesheets)
         B = page.B
         for table in self._tables:
+            if table._html_callback_pre:
+                table._html_callback_pre(table, page)
             page.add('<table class="report">')
             if table._caption:
                 if type(table._caption) in (list, tuple):
@@ -742,6 +744,8 @@ class Report:
                     page.add("</tr>")
                 page.add("</tbody>")
             page.add("</table>")
+            if table._html_callback_post:
+                table._html_callback_post(table, page)
         page.send()
 
     def _send_excel_workbook(self):
@@ -946,7 +950,22 @@ class Report:
             self._rows = rows
             self._options = options
             self._caption = options.get("caption")
+            self._html_callback_pre = options.get("html_callback_pre")
+            self._html_callback_post = options.get("html_callback_post")
+            self._user_data = options.get("user_data")
             self._stripe = options.get("stripe") != False
+
+        def options(self):
+            """
+            Accessor object for the table's options.
+            """
+            return self._options
+
+        def user_data(self):
+            """
+            Accessor object for data stored by the caller.
+            """
+            return self._user_data
 
     class Cell:
         """
