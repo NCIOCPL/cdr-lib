@@ -498,7 +498,7 @@ class Page:
         if checked:
             field.set("checked", "checked")
         if onclick:
-            field.set("onclick", onclick)
+            field.set("onclick", onclick.replace("-", "_"))
         if widget_class:
             field.set("class", widget_class)
         self.add(field)
