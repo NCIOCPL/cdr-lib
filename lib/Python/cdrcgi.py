@@ -208,7 +208,7 @@ class Page:
                           specify a replacement string here; the session
                           string will be added as a hidden varilable if
                           the 'action' paramater is set
-            body_class -  e.g., 'report'
+            body_classes  e.g., 'report'
         """
         self._finished = False
         self._html = []
@@ -225,7 +225,7 @@ class Page:
         self._js = kwargs.get("js", Page.JS)
         self._stylesheets = kwargs.get("stylesheets", Page.STYLESHEETS)
         self._session = kwargs.get("session")
-        self._body_class = kwargs.get("body_class")
+        self._body_classes = kwargs.get("body_classes")
         self._start()
 
     def add(self, line, post_indent=True):
@@ -256,28 +256,28 @@ class Page:
 
         Required positional arguments:
 
-            group -      used for the name of the input element
-            label -      string to indentify the checkbox to the user
-            value -      used as the 'value' attribute of the element
+            group        used for the name of the input element
+            label        string to indentify the checkbox to the user
+            value        used as the 'value' attribute of the element
 
         Optional keyword arguments:
 
-            widget_id -     override the default id, which is normally formed
+            widget_id       override the default id, which is normally formed
                             by concatenating the group and value arguments,
                             separated by a hyphen, and then lowercasing the
                             result
-            widget_class -  if present, used as the 'class' attribute for
+            widget_classes  if present, used as the 'class' attribute for
                             the input element
-            wrapper -       defaults to 'div' which keeps the field on
+            wrapper         defaults to 'div' which keeps the field on
                             a separate line from the other checkboxes;
                             set to None to have no wrapper
-            wrapper_class - if present, used as the 'class' attribute for
+            wrapper_classes if present, used as the 'class' attribute for
                             the wrapper element
-            tooltip -       if present, used as the 'title' attribute for
+            tooltip         if present, used as the 'title' attribute for
                             the label element
-            checked -       if set to True will cause the checkbox to be
+            checked         if set to True will cause the checkbox to be
                             checked by default
-            onclick -       Javascript to be invoked when the checkbox is
+            onclick         Javascript to be invoked when the checkbox is
                             clicked; defaults to check_GROUP('VALUE') where
                             GROUP is the value of the group argument and
                             VALUE is the value of the value argument
@@ -291,28 +291,28 @@ class Page:
 
         Required positional arguments:
 
-            group -      used for the name of the input element
-            label -      string to indentify the radio button to the user
-            value -      used as the 'value' attribute of the element
+            group        used for the name of the input element
+            label        string to indentify the radio button to the user
+            value        used as the 'value' attribute of the element
 
         Optional keyword arguments:
 
-            widget_id -     override the default id, which is normally formed
+            widget_id       override the default id, which is normally formed
                             by concatenating the group and value arguments,
                             separated by a hyphen, and then lowercasing the
                             result
-            widget_class -  if present, used as the 'class' attribute for
+            widget_classes  if present, used as the 'class' attribute for
                             the input element
-            wrapper -       defaults to 'div' which keeps the field on
+            wrapper         defaults to 'div' which keeps the field on
                             a separate line from the other radio buttons;
                             set to None to have no wrapper
-            wrapper_class - if present, used as the 'class' attribute for
+            wrapper_classes if present, used as the 'class' attribute for
                             the wrapper element
-            tooltip -       if present, used as the 'title' attribute for
+            tooltip         if present, used as the 'title' attribute for
                             the label element
-            checked -       if set to True will cause the radio button to be
+            checked         if set to True will cause the radio button to be
                             selected by default
-            onclick -       Javascript to be invoked when the button is
+            onclick         Javascript to be invoked when the button is
                             clicked; defaults to check_GROUP('VALUE') where
                             GROUP is the value of the group argument and
                             VALUE is the value of the value argument
@@ -352,12 +352,23 @@ class Page:
                             the choice(s) from the picklist
             classes         string to be set as the 'class' attribute of
                             the select element
+            wrapper_classes classes to be added to the div wrapper
         """
-        self.add('<div class="labeled-field">')
+        wrapper_classes = kwargs.get("wrapper_classes")
+        if wrapper_classes:
+            if isinstance(wrapper_classes, basestring):
+                wrapper_classes = wrapper_classes.split()
+        else:
+            wrapper_classes = []
+        if "labeled-field" not in wrapper_classes:
+            wrapper_classes.append("wrapper_classes")
+        self.add('<div class="%s">' % " ".join(wrapper_classes))
         self.add(Page.B.LABEL(Page.B.FOR(name), label))
         open_tag = '<select name="%s" id="%s"' % (name, name)
         classes = kwargs.get("classes") or kwargs.get("class_")
         if classes:
+            if type(classes) in (list, tuple, set):
+                classes = " ".join(classes)
             open_tag += ' class="%s"' % classes
         if type(default) not in (list, tuple):
             default = default and [default] or []
@@ -384,21 +395,32 @@ class Page:
 
         Required positional arguments:
 
-            name -          used as the 'name' attribute for the input
+            name            used as the 'name' attribute for the input
                             element
-            label -         used for the accompanying label value's content
+            label           used for the accompanying label value's content
 
         Optional keywork arguments:
 
-            classes -       if present, used as the 'class' attribute for
+            classes         if present, used as the 'class' attribute for
                             the input element
+            wrapper_classes classes to be added to the div wrapper
         """
-        self.add('<div class="labeled-field">')
+        wrapper_classes = kwargs.get("wrapper_classes")
+        if wrapper_classes:
+            if isinstance(wrapper_classes, basestring):
+                wrapper_classes = wrapper_classes.split()
+        else:
+            wrapper_classes = []
+        if "labeled-field" not in wrapper_classes:
+            wrapper_classes.append("wrapper_classes")
+        self.add('<div class="%s">' % " ".join(wrapper_classes))
         self.add(Page.B.LABEL(Page.B.FOR(name), label))
         field = Page.B.INPUT(id=name, name=name)
         classes = kwargs.get("classes") or kwargs.get("class_")
         classes = classes or kwargs.get("class")
         if classes:
+            if type(classes) in (list, tuple, set):
+                classes = " ".join(classes)
             field.set("class", classes)
         if "value" in kwargs:
             field.set("value", unicode(kwargs["value"]))
@@ -475,10 +497,10 @@ class Page:
         """
         default_widget_id = ("%s-%s" % (group, value)).replace(" ", "-")
         widget_id = kwargs.get("widget_id", default_widget_id.lower())
-        widget_class = kwargs.get("widget_class")
+        widget_classes = kwargs.get("widget_classes")
         wrapper = kwargs.get("wrapper", "div")
         wrapper_id = kwargs.get("wrapper_id")
-        wrapper_class = kwargs.get("wrapper_class")
+        wrapper_classes = kwargs.get("wrapper_classes")
         tooltip = kwargs.get("tooltip")
         checked = kwargs.get("checked") and True or False
         onclick = kwargs.get("onclick", "check_%s('%s')" % (group, value))
@@ -486,8 +508,10 @@ class Page:
             tag = "<%s" % wrapper
             if wrapper_id:
                 tag += ' id="%s"' % wrapper_id
-            if wrapper_class:
-                tag += ' class="%s"' % wrapper_class
+            if wrapper_classes:
+                if type(wrapper_classes) in (list, tuple, set):
+                    wrapper_classes = " ".join(wrapper_classes)
+                tag += ' class="%s"' % wrapper_classes
             self.add(tag + ">")
         field = Page.B.INPUT(
             id=widget_id,
@@ -499,8 +523,10 @@ class Page:
             field.set("checked", "checked")
         if onclick:
             field.set("onclick", onclick.replace("-", "_"))
-        if widget_class:
-            field.set("class", widget_class)
+        if widget_classes:
+            if type(widget_classes) in (list, tuple, set):
+                widget_classes = " ".join(widget_classes)
+            field.set("class", widget_classes)
         self.add(field)
         label = Page.B.LABEL(Page.B.FOR(widget_id), label)
         if tooltip:
@@ -525,8 +551,11 @@ class Page:
         for js in self._js:
             self.add(Page.B.SCRIPT(src=js))
         self.add("</head>")
-        if self._body_class:
-            self.add('<body class="%s">' % self._body_class)
+        if self._body_classes:
+            body_classes = self._body_classes
+            if type(body_classes) in (list, tuple, set):
+                body_classes = " ".join(body_classes)
+            self.add('<body class="%s">' % body_classes)
         else:
             self.add("<body>")
         if self._action and self._buttons:
@@ -581,7 +610,7 @@ class Page:
         P = Page
         page = P("Test", banner="A Banner", subtitle="A Subtitle",
                  buttons=("Manny", "Moe", "Jack"), action="dummy.py",
-                 session="guest", body_class="custom-form")
+                 session="guest", body_classes="custom-form")
         page.add("<fieldset>")
         page.add(P.B.LEGEND("Checkboxes"))
         page.add_checkbox("cb", "Checkbox 1", "1", onclick=None)
@@ -687,7 +716,7 @@ class Report:
         subtitle = self._options.get("subtitle")
         stylesheets=["/stylesheets/cdr.css"]
         page = Page(self._title, banner=banner, subtitle=subtitle, js=[],
-                    body_class="report", stylesheets=stylesheets)
+                    body_classes="report", stylesheets=stylesheets)
         B = page.B
         for table in self._tables:
             if table._html_callback_pre:
