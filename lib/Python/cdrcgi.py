@@ -439,7 +439,7 @@ class Page:
         """
         h_checked = default == "html"
         e_checked = default == "excel"
-        self.add("<fieldset>")
+        self.add("<fieldset id='report-format-block'>")
         self.add(self.B.LEGEND("Report Format"))
         self.add_radio("format", "Web Page", "html", checked=h_checked,
                        onclick=onclick)
