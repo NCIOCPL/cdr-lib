@@ -361,7 +361,7 @@ class Page:
         else:
             wrapper_classes = []
         if "labeled-field" not in wrapper_classes:
-            wrapper_classes.append("wrapper_classes")
+            wrapper_classes.append("labeled-field")
         self.add('<div class="%s">' % " ".join(wrapper_classes))
         self.add(Page.B.LABEL(Page.B.FOR(name), label))
         open_tag = '<select name="%s" id="%s"' % (name, name)
@@ -413,7 +413,7 @@ class Page:
         else:
             wrapper_classes = []
         if "labeled-field" not in wrapper_classes:
-            wrapper_classes.append("wrapper_classes")
+            wrapper_classes.append("labeled-field")
         self.add('<div class="%s">' % " ".join(wrapper_classes))
         self.add(Page.B.LABEL(Page.B.FOR(name), label))
         field = Page.B.INPUT(id=name, name=name)
