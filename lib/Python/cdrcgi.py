@@ -388,7 +388,7 @@ class Page:
             self.add(o)
         self.add("</select>")
         self.add("</div>")
-        
+
     def add_text_field(self, name, label, **kwargs):
         """
         Add a labeled text input field to an HTML form.
@@ -402,7 +402,8 @@ class Page:
         Optional keywork arguments:
 
             classes         if present, used as the 'class' attribute for
-                            the input element
+                            the input element.  May include multiple space
+                            separated class names.
             wrapper_classes classes to be added to the div wrapper
         """
         wrapper_classes = kwargs.get("wrapper_classes")
@@ -443,6 +444,12 @@ class Page:
 
         The code will be inserted into the HTML page immediately before
         the closing 'body' tag.
+
+        Required positional argument:
+
+            script          block of Javascript, everything that would go
+                            between <script> and </script>.  Do not include
+                            the "script" tags.
         """
         self._script.append(script.rstrip() + "\n")
 
@@ -452,6 +459,12 @@ class Page:
 
         The code will be inserted into the HTML page immediately before
         the closing 'body' tag, along with any javascript code blocks.
+
+        Required positional argument:
+
+            script          block of css rules, everything that would go
+                            between <style> and </style>.  Do not include
+                            the "style" tags.
         """
         self._css.append(script.rstrip() + "\n")
 
