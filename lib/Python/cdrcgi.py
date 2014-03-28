@@ -541,7 +541,8 @@ class Page:
                 widget_classes = " ".join(widget_classes)
             field.set("class", widget_classes)
         self.add(field)
-        label = Page.B.LABEL(Page.B.FOR(widget_id), label)
+        label = Page.B.LABEL(Page.B.FOR(widget_id), label,
+                             Page.B.CLASS("clickable"))
         if tooltip:
             label.set("title", tooltip)
         self.add(label)
