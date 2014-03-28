@@ -797,17 +797,20 @@ class Report:
         book = xlwt.Workbook(encoding="UTF-8")
         xlwt.add_palette_colour("hdrbg", 0x21)
         book.set_colour_RGB(0x21, 153, 52, 102) #993366
+        borders = "borders: top thin, bottom thin, left thin, right thin"
         self._header_style = xlwt.easyxf("pattern: pattern solid, fore_colour "
                                          "hdrbg; font: colour white, bold True;"
                                          "align: wrap True, vert centre, "
-                                         "horiz centre")
+                                         "horiz centre;" + borders)
         self._banner_style = xlwt.easyxf("pattern: pattern solid, fore_colour "
                                          "hdrbg; font: colour white, bold True,"
                                          "height 240; align: wrap True,"
-                                         "vert centre, horiz centre")
-        self._data_style = xlwt.easyxf("align: wrap True, vert top;")
+                                         "vert centre, horiz centre;"
+                                         + borders)
+        self._data_style = xlwt.easyxf("align: wrap True, vert top;"
+                                       + borders)
         self._bold_data_style = xlwt.easyxf("align: wrap True, vert top; "
-                                            "font: bold True;")
+                                            "font: bold True;" + borders)
         count = 1
         for table in self._tables:
             self._add_worksheet(book, table, count)
