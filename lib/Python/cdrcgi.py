@@ -988,6 +988,43 @@ class Report:
         One of (possibly) multiple tables in a CDR report
         """
         def __init__(self, columns, rows, **options):
+            """
+            Table constructor.
+
+            Required arguments:
+                columns - Array of Column objects, one for each column.
+
+                rows    - Array of arrays of values for the cells.  Each of
+                          the sub-arrays has one value for one cell.
+                          Values can be string or numeric.  (Or formula?)
+
+            Optional keyword arguments:
+
+                caption - Caption centered at the top of the table, full
+                          width.  If the caption is an array, each element of
+                          the array will be centered on a new line.
+
+                html_callback_pre
+                        - Reference to a function to be called before
+                          processing the table by send("html").  Note that
+                          function outputs may or may appear before the
+                          table in the output HTML.
+
+                          The function is not called when output is Excel.
+
+                html_callback_post
+                        - Reference to a function to be called after
+                          processing the table by send("html").
+
+                user_data
+                        - Store whatever the value is for return later if
+                          and when Table.user_data() is called.  Value can
+                          be anything - string, object, array, dictionary,
+                          whatever.
+
+                stripe  - Use odd / even background coloring for rows.
+                          Default=True.
+            """
             if not columns:
                 raise Exception("no columns specified for table")
             if type(columns) not in (list, tuple):
@@ -999,6 +1036,7 @@ class Report:
             self._html_callback_pre = options.get("html_callback_pre")
             self._html_callback_post = options.get("html_callback_post")
             self._user_data = options.get("user_data")
+            # Note None != False, hence True is default
             self._stripe = options.get("stripe") != False
 
         def options(self):
