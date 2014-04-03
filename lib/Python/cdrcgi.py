@@ -818,12 +818,12 @@ class Report:
             count += 1
         import msvcrt
         now = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        book_name = self._title.replace(" ", "").replace("/", "-")
+        book_name = re.sub(r"\W", "_", self._title)
         book_name += "-%s.xls" % now
         msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
-        print "Content-type: application/vnd.ms-excel"
-        print "Content-disposition: attachment; filename=%s" % book_name
-        print
+        sys.stdout.write("Content-type: application/vnd.ms-excel\r\n")
+        sys.stdout.write("Content-disposition: attachment; ")
+        sys.stdout.write("filename=%s\r\n\r\n" % book_name)
         book.save(sys.stdout)
         if self._options.get("debug"):
             name = "d:/tmp/%s" % book_name
