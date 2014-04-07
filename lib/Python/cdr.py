@@ -5193,10 +5193,15 @@ def getSummaryIds(language='all', audience='all', boards=[], status='A',
                     match what's in:
                         '/Summary/SummaryMetaData/SummaryAudience'
         boards   - [] = Ignore board, get Summaries for any board.
-                    Else a list of one or more board names.  Use names
-                    like 'PDQ Adult Treatment Editorial Board'.  Must be
-                    an exact match for what's in:
+                    Else a list of one or more board names or doc IDs.
+                    If using names, use names like
+                        'PDQ Adult Treatment Editorial Board'.
+                    Must be an exact match for what's in:
                         'Summary/SummaryMetaData/PDQBoard/Board'
+                    If using IDs, use integer docIds.
+                    NOTE: I found a case where docIds included a Summary not
+                          found by board name.  Name had not been denormalized
+                          in the stored document.
         status   - 'A' = Active status for the document.  Else 'I' = Inactive
                     or 'all' = both.
         published- True = Only docs with publishable versions.
@@ -5215,14 +5220,48 @@ def getSummaryIds(language='all', audience='all', boards=[], status='A',
             [[docId,], [docId,], ...]
         Else there is an array of pair sequences of the form:
             [[docId, title], [docId, title], ...]
+        Returned doc IDs are integers.
         If titles are returned, they are unicode strings.
         If there are no hits, an empty array [] is returned, presumably caused
-            by an error in the passed parameters, e.g., wrong board names.
+            by an error in the passed parameters, e.g., invalid board names.
 
     Throws:
         cdrdb.Exception if database failure.
     """
-    # First use of Bob's new cdrdb.Query class
+    # Spanish Summaries have no board information.
+    # If language is Spanish, we need to find the English equivalents,
+    #  then get the Spanish with TranslationOf IDs.
+    if language == 'Spanish' and boards:
+        # Get IDs and flatten the results from [[id1],[id2]...] to [id1,id2...]
+        listOfLists = getSummaryIds('English', audience, boards, status,
+                                     published, titles=False, sortby=None)
+        enSummaries = [item[0] for item in listOfLists]
+
+        # Now find Spanish translations
+        qtable  = published and "query_term_pub" or "query_term"
+        columns = titles and ["d.id", "d.title"] or ["d.id"]
+        spQry   = cdrdb.Query("document d", *columns)
+        spQry.join("%s qlang" % qtable, "qlang.doc_id = d.id")
+        spQry.where(spQry.Condition("qlang.path",
+                                    "/Summary/TranslationOf/@cdr:ref"))
+        spQry.where(spQry.Condition("qlang.int_val", enSummaries, "IN"))
+
+        # It's possible for two English Summaries (e.g., one Active one not)
+        #  to point to one Spanish translation.
+        spQry.unique()
+
+        # Apply same limits to Spanish as to English
+        if status != "all":
+            spQry.where(spQry.Condition("d.active_status" , status))
+        if sortby:
+            spQry.order(sortby)
+
+        # Fetch and return
+        cursor = spQry.execute()
+        rows   = cursor.fetchall()
+        cursor.close()
+        return rows
+
     # Converted by Bob from my old code in previous version of cdr.py
     qtable = published and "query_term_pub" or "query_term"
     columns = titles and ["d.id", "d.title"] or ["d.id"]
@@ -5242,9 +5281,16 @@ def getSummaryIds(language='all', audience='all', boards=[], status='A',
         summary_restriction = True
     if boards:
         query.join("%s qboard" % qtable, "qboard.doc_id = d.id")
-        query.where(query.Condition("qboard.path",
-                    '/Summary/SummaryMetaData/PDQBoard/Board'))
-        query.where(query.Condition("qboard.value", boards, "IN"))
+
+        # Test whether we search by name or doc ID
+        if type(boards[0]) == type(1):
+            query.where(query.Condition("qboard.path",
+                        '/Summary/SummaryMetaData/PDQBoard/Board/@cdr:ref'))
+            query.where(query.Condition("qboard.int_val", boards, "IN"))
+        else:
+            query.where(query.Condition("qboard.path",
+                        '/Summary/SummaryMetaData/PDQBoard/Board'))
+            query.where(query.Condition("qboard.value", boards, "IN"))
         summary_restriction = True
     if not summary_restriction:
         # Summary restriction uses query_term path to get only Summary docs
