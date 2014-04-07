@@ -5539,3 +5539,14 @@ class MutateCGUrl:
 
         # Return possibly transformed url
         return retUrl
+
+#----------------------------------------------------------------------
+# Pull out the portion of an editorial board name used for menu options.
+#----------------------------------------------------------------------
+def extract_board_name(doc_title):
+    board_name = doc_title.split(";")[0].strip()
+    board_name = board_name.replace("PDQ ", "").strip()
+    board_name = board_name.replace(" Editorial Board", "").strip()
+    if board_name.startswith("Cancer Complementary"):
+        board_name = board_name.replace("Cancer ", "").strip()
+    return board_name
