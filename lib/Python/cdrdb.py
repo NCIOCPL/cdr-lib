@@ -930,6 +930,7 @@ class Query:
         self._order = []
         self._parms = []
         self._unions = []
+        self._timeout = 30
         self._alias = None
         self._into = None
         self._cursor = None
@@ -937,6 +938,13 @@ class Query:
         self._unique = False
         self._str = None
         self._outer = False
+
+    def timeout(self, value):
+        """
+        Override the default timeout of 30 seconds with a new value.
+        """
+        self._timeout = int(value)
+        return self
 
     def join(self, table, *conditions):
         """
@@ -1063,7 +1071,7 @@ class Query:
         self._cursor = cursor
         return self
 
-    def execute(self, cursor=None):
+    def execute(self, cursor=None, timeout=None):
         """
         Assemble and execute the SQL query, returning the cursor object
 
@@ -1076,7 +1084,8 @@ class Query:
         """
         cursor = cursor or self._cursor or connect("CdrGuest").cursor()
         sql = str(self)
-        cursor.execute(sql, tuple(self._parms))
+        timeout = timeout = self._timeout
+        cursor.execute(sql, tuple(self._parms), timeout=timeout)
         return cursor
 
     def alias(self, alias):
@@ -1473,7 +1482,7 @@ class Query:
 
         # Test 1: ORDER BY with TOP.
         q = Q("#t1", "i").limit(1).order("1 DESC")
-        r = q.execute(c).fetchall()
+        r = q.execute(c, timeout=10).fetchall()
         R(1, q, r == [[45]])
 
         # Test 2: JOIN with COUNT.
@@ -1502,6 +1511,7 @@ class Query:
         v = ('biology', 'physics')
         q = Q("#t1 a", "a.n").join("#t2 b", "b.i = a.i").unique().order(1)
         q.where(C("b.n", v, "IN"))
+        q.timeout(5)
         r = [row[0] for row in q.execute(c).fetchall()]
         R(6, q, r == ['Alan', 'Volker'])
 
