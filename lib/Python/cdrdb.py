@@ -260,7 +260,7 @@ class Cursor:
         self.arraysize        = 100
         self.__dateTimeObject = pywintypes.Time(0)
 
-    def callproc(self, procname, parameters, timeout = 30):
+    def callproc(self, procname, parameters, timeout = 120):
         """
         Call a stored database procedure with the given name. The sequence
         of parameters must contain one entry for each argument that the
@@ -343,7 +343,7 @@ class Cursor:
         self.description = None
         self.rowcount    = -1
 
-    def execute(self, query, params = None, timeout = 30):
+    def execute(self, query, params = None, timeout = 120):
         """
         Prepare and execute a database operation (query or command).
         Parameters may be provided as sequence or mapping and will be
@@ -930,7 +930,7 @@ class Query:
         self._order = []
         self._parms = []
         self._unions = []
-        self._timeout = 30
+        self._timeout = 120
         self._alias = None
         self._into = None
         self._cursor = None
@@ -941,7 +941,7 @@ class Query:
 
     def timeout(self, value):
         """
-        Override the default timeout of 30 seconds with a new value.
+        Override the default timeout of 120 seconds with a new value.
         """
         self._timeout = int(value)
         return self
