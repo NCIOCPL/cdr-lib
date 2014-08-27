@@ -1187,7 +1187,7 @@ def getSession(fields):
     if fields.has_key(SESSION):
         session = fields[SESSION].value
         if len(session) > 0:
-            return session
+            return re.sub("[^A-Za-z0-9 -]", "", session)
 
     # Check for missing fields.
     if not fields.has_key(USERNAME) or not fields.has_key(PASSWORD):
