@@ -6,70 +6,15 @@
 # Used by CdrBatchService.py, CdrBatchInfo.py, and by individual
 # batch jobs.
 #
-# $Log: not supported by cvs2svn $
-# Revision 1.16  2007/09/14 01:53:07  ameyer
-# Return None if no results in getJobStatusHTML().
-#
-# Revision 1.15  2007/09/14 01:11:43  ameyer
-# Added bits of backward compatible flexibility to existing functions.
-# Added getJobStatusHTML().
-#
-# Revision 1.14  2006/09/26 14:32:13  ameyer
-# Fixed encoding bug spotted by Bob in getParm.
-#
-# Revision 1.13  2005/11/30 04:15:12  ameyer
-# Added getEmailList().
-#
-# Revision 1.12  2005/10/21 03:55:49  ameyer
-# Pre-declared self.__conn in class CdrBatch so that if the connection
-# cannot be created, the fail() routine will not crash trying to reference
-# self.__conn to find out if it needs to be closed.
-#
-# Revision 1.11  2004/02/26 22:04:01  ameyer
-# Modified argument accessor to convert list values to utf-8, not
-# assuming the argument value is a simple string as before.
-#
-# Revision 1.10  2004/02/25 02:25:46  ameyer
-# Removed another unneeded commit.
-#
-# Revision 1.9  2004/02/24 22:57:26  ameyer
-# Modified fetchone() call to fetchall() to insure that cursor has
-# been cleared.  Will write error if not.
-#
-# Revision 1.8  2004/02/24 22:43:12  ameyer
-# Modified BatchJob object to set autocommit on saved cursor.
-# Removed a couple of commit statements that were otherwise needed.
-#
-# Revision 1.7  2003/12/30 20:37:29  ameyer
-# Significant modifications to mechanism for passing parameters from
-# interactive to batch programs.  Now providing for passing of sequences
-# and for proper type conversions.
-#
-# Revision 1.6  2003/10/23 13:21:24  bkline
-# Added missing placeholder for string argument conversion in logging
-# of database exception error.
-#
-# Revision 1.5  2003/09/17 02:53:22  ameyer
-# Added support for stringification of non-string args passed to batch jobs.
-#
-# Revision 1.4  2003/05/08 20:40:15  bkline
-# Added ability to queue a batch job on a different server.
-#
-# Revision 1.3  2003/03/27 15:20:19  ameyer
-# Added activeCount function to support callers needing to know if
-# the job they want to start is already running.
-#
-# Revision 1.2  2002/09/19 18:02:21  ameyer
-# Fixed some bugs revealed by pychecker.
-# Add unicode->utf-8 conversion for parameters retrieved from the database.
-#
-# Revision 1.1  2002/08/02 03:43:34  ameyer
-# common routines for batch jobs.  Inherit from here.
-#
+# JIRA::OCECDR-3800 - eliminated security vulnerabilities
 #
 #----------------------------------------------------------------------
-
-import sys, string, cdr, cdrdb, cdrutil
+import sys
+import string
+import cdr
+import cdrdb
+import cdrutil
+import cdrcgi
 
 #----------------------------------------------------------------------
 # Module level constants
@@ -913,3 +858,42 @@ class CdrBatch:
         tupMsg = tuple(newMsg)
 
         cdr.logwrite (tupMsg, logfile)
+
+    #------------------------------------------------------------------
+    # Show the user how to monitor the status of the report job.
+    #------------------------------------------------------------------
+    def show_status_page(self, session, title, subtitle, script,
+                         extra_buttons=None):
+        """
+        Build a cdrcgi.Page object showing a link which can be followed
+        to view the status of the batch job just queued up.  Send the
+        page to the user's browser.
+
+        Pass:
+            session       - message string(s) to write
+            title         - string for banner and /html/head/title element
+            subtitle      - string to display below the banner
+            script        - handler for buttons
+            extra_buttons - action buttons to be prepended to the
+                            buttons for jumping to the main menu
+                            or logging out; a single button can
+                            be passed as a string; multiple buttons
+                            are passed as a sequence of strings (optional)
+        """
+        buttons = extra_buttons or []
+        if isinstance(buttons, basestring):
+            buttons = [buttons]
+        parms   = "%s=%s&jobId=%s" % (cdrcgi.SESSION, session, self.__jobId)
+        url     = "getBatchStatus.py?%s" % parms
+        link    = cdrcgi.Page.B.A("link", href=url)
+        start   = "To monitor the status of the job, click this "
+        item    = "View Batch Job Status"
+        finish  = " or use the CDR Administration menu to select '%s'." % item
+        page    = cdrcgi.Page(title, subtitle=subtitle, action=script,
+                              buttons=buttons + [cdrcgi.MAINMENU, "Log Out"],
+                              session=session)
+        page.add("<fieldset>")
+        page.add(page.B.H4("Report has been queued for background processing"))
+        page.add(page.B.P(start, link, finish))
+        page.add("</fieldset>")
+        page.send()

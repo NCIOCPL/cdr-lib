@@ -995,7 +995,7 @@ class Query:
             Query._add_sequence_or_value(column, self._group)
         self._str = None
         return self
-        
+
     def having(self, condition):
         """
         Adds a condition to the query's HAVING clause
@@ -1084,7 +1084,8 @@ class Query:
         """
         cursor = cursor or self._cursor or connect("CdrGuest").cursor()
         sql = str(self)
-        timeout = timeout = self._timeout
+        if not timeout:
+            timeout = self._timeout
         cursor.execute(sql, tuple(self._parms), timeout=timeout)
         return cursor
 
@@ -1098,7 +1099,7 @@ class Query:
                   SELECT this, that
                     FROM whatever
               ) AS xxx
-        
+
         Example usage:
 
             q1 = cdrdb.Query('whatever', 'this', 'that').alias('xxx')
@@ -1141,6 +1142,16 @@ class Query:
         self._into = name
         self._str = None
         return self
+
+    def log(self, **parms):
+        import cdr
+        logfile = parms.get("logfile", cdr.DEFAULT_LOGDIR + "/query.log")
+        label = parms.get("label", "QUERY")
+        output = u"%s:\n%s" % (label, self)
+        if self._parms:
+            parms = ["PARAMETERS:"] + [repr(p) for p in self._parms]
+            output += "\n" + u"\n\t".join(parms)
+        cdr.logwrite(output, logfile)
 
     def __str__(self):
         """
@@ -1300,7 +1311,7 @@ class Query:
             query.append(self._align(keyword, test + " ("))
             query.append(Query.indent(serialized))
             self._parms += nested._parms
-                
+
         # Handle a sequence of values.
         elif condition.test.upper() in ("IN", "NOT IN"):
 

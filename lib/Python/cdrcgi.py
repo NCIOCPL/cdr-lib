@@ -21,12 +21,20 @@
 #----------------------------------------------------------------------
 # Import external modules needed.
 #----------------------------------------------------------------------
-import cgi, cdr, cdrdb, sys, re, string, socket, xml.sax.saxutils, textwrap
+import cdr
+import cdrdb
+import cgi
 import datetime
-import time, os
 import lxml.html
 import lxml.html.builder
+import os
+import re
+import sys
+import textwrap
+import time
+import urllib
 import xlwt
+import xml.sax.saxutils
 
 #----------------------------------------------------------------------
 # Get some help tracking down CGI problems.
@@ -428,6 +436,45 @@ class Page:
         self.add(field)
         self.add("</div>")
 
+    def add_textarea_field(self, name, label, **kwargs):
+        """
+        Add a labeled text input field to an HTML form.
+
+        Required positional arguments:
+
+            name            used as the 'name' attribute for the input
+                            element
+            label           used for the accompanying label value's content
+
+        Optional keywork arguments:
+
+            classes         if present, used as the 'class' attribute for
+                            the input element.  May include multiple space
+                            separated class names.
+            wrapper_classes classes to be added to the div wrapper
+            value           initial value for the field (optional)
+        """
+        wrapper_classes = kwargs.get("wrapper_classes")
+        if wrapper_classes:
+            if isinstance(wrapper_classes, basestring):
+                wrapper_classes = wrapper_classes.split()
+        else:
+            wrapper_classes = []
+        if "labeled-field" not in wrapper_classes:
+            wrapper_classes.append("labeled-field")
+        self.add('<div class="%s">' % " ".join(wrapper_classes))
+        self.add(Page.B.LABEL(Page.B.FOR(name), label))
+        value = unicode(kwargs.get("value", ""))
+        field = Page.B.TEXTAREA(value, id=name, name=name)
+        classes = kwargs.get("classes") or kwargs.get("class_")
+        classes = classes or kwargs.get("class")
+        if classes:
+            if type(classes) in (list, tuple, set):
+                classes = " ".join(classes)
+            field.set("class", classes)
+        self.add(field)
+        self.add("</div>")
+
     def add_date_field(self, name, label, **kwargs):
         """
         Add a labeled date input field to an HTML form.
@@ -437,6 +484,18 @@ class Page:
         """
         kwargs["classes"] = "CdrDateField"
         self.add_text_field(name, label, **kwargs)
+
+    def add_menu_link(self, script, display, session=None, **kwargs):
+        """
+        Add a list item containing a CDR admin menu link.
+        """
+        url = script
+        if session:
+            kwargs[SESSION] = session
+        if kwargs:
+            url = "%s?%s" % (url, urllib.urlencode(kwargs))
+        link = Page.B.A(display, href=url)
+        self.add(Page.B.LI(link))
 
     def add_script(self, script):
         """
@@ -708,6 +767,8 @@ class Report:
         self._title = title
         self._tables = tables
         self._options = options
+        if isinstance(tables, Report.Table):
+            self._tables = [tables]
 
     def send(self, fmt="html"):
         """
@@ -753,9 +814,12 @@ class Report:
             page.add("<tr>")
             for column in table._columns:
                 cell = B.TH(column._name)
-                if "width" in column._options:
-                    width = column._options["width"]
-                    cell.set("style", "width:%s;" % width)
+                for opt in column._options:
+                    if opt == "width":
+                        width = column._options["width"]
+                        cell.set("style", "width:%s;" % width)
+                    else:
+                        cell.set(opt, column._options[opt])
                 page.add(cell)
             page.add("</tr>")
             page.add("</thead>")
@@ -812,6 +876,10 @@ class Report:
                                        + borders)
         self._bold_data_style = xlwt.easyxf("align: wrap True, vert top; "
                                             "font: bold True;" + borders)
+        self._right_data_style = xlwt.easyxf("align: wrap True, horiz right, "
+                                             "vert top;" + borders)
+        self._center_data_style = xlwt.easyxf("align: wrap True, vert top, "
+                                              "horiz centre;" + borders)
         count = 1
         for table in self._tables:
             self._add_worksheet(book, table, count)
@@ -879,6 +947,10 @@ class Report:
                         style = cell._sheet_style
                     elif cell._bold:
                         style = self._bold_data_style
+                    elif cell._right:
+                        style = self._right_data_style
+                    elif cell._center:
+                        style = self._center_data_style
                     if cell._href:
                         vals = values.replace('"', '""')
                         formula = 'HYPERLINK("%s";"%s")' % (cell._href, vals)
@@ -1071,8 +1143,11 @@ class Report:
             self._href = options.get("href")
             self._target = options.get("target")
             self._bold = options.get("bold")
+            self._right = options.get("right")
+            self._center = options.get("center")
             self._sheet_style = options.get("sheet_style")
             self._callback = options.get("callback")
+            self._title = options.get("title")
             classes = options.get("classes")
             if not classes:
                 self._classes = []
@@ -1115,6 +1190,8 @@ class Report:
                 td.set("rowspan", str(self._rowspan))
             if self._classes:
                 td.set("class", " ".join(self._classes))
+            if self._title:
+                td.set("title", self._title)
             if element is not td:
                 td.append(element)
             return td
@@ -2370,7 +2447,7 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
      <A         HREF = "%s">%s</A>
     </TD>
    </TR>
-""" % (i + 1, string.replace(title, ";", "; "), dtcol, href, docId)
+""" % (i + 1, title.replace(";", "; "), dtcol, href, docId)
 
         # Requested by LG, Issue #193.
         if docType == "Protocol":
@@ -2571,3 +2648,9 @@ def makeCssForPrettyXml(tagNameColor="blue", attrNameColor="maroon",
  .xml-attr-value { color: %s; }
 </style>
 """ % (tagNameColor, tagNameWeight, attrNameColor, attrValueColor)
+
+#----------------------------------------------------------------------
+# Determine whether a parameter is a valid ISO date.
+#----------------------------------------------------------------------
+def is_date(date):
+    return re.match(r"^\d\d\d\d-\d\d-\d\d$", str(date)) and True or False
