@@ -2385,7 +2385,9 @@ def advancedSearchResultsPageTop(subTitle, nRows, strings):
              COLSPAN = "4"
                class = "page">&nbsp;</TD>
    </TR>
-""" % (subTitle, subTitle, nRows, unicode(strings, 'latin-1'))
+""" % (subTitle, subTitle, nRows, cgi.escape(unicode(strings, 'latin-1')))
+    # Note cgi.escape call above to block XSS attack vulnerability
+    # discovered by Appscan
 
 #----------------------------------------------------------------------
 # Construct HTML page for advanced search results.
