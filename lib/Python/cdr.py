@@ -570,6 +570,10 @@ def strptime(str, format):
 
     The actual ValueError message from Python may not always be
     understandable by non-programming users.
+
+    Pass:
+        str    - Date or datetime as a character string.
+        format - Python strptime format string, e.g. '%Y-%m-%d %H:%M:%S'
     """
     tm = None
     try:
@@ -577,6 +581,41 @@ def strptime(str, format):
     except ValueError:
         tm = None
     return tm
+
+#----------------------------------------------------------------------
+# Validate from/to date/time strings using strptime.
+# Wraps the exception handling.
+#----------------------------------------------------------------------
+def valFromToDates(format, fromDate, toDate, minFrom=None, maxTo=None):
+    """
+    Turns out there are many places where we have from and to dates or
+    datetimes.  This packages the validation to prevent invalid dates
+    and obviate XSS security vulnerabilities.
+
+    If this is too restrictive, at least check that integers are passed
+    when integers are expected.
+
+    Pass:
+        format   - Python strptime format, e.g., '%Y-%m-%d'
+        fromDate - Begining date
+        toDate   - Ending date
+        minFrom  - Minimum beginning date, if any checking desired.
+        maxTo    - Maximum ending date, if any checking desired.
+
+    Return:
+        True  - Data passes validation.
+        False - One or more failures.
+    """
+    if not strptime(fromDate, format) or not strptime(toDate, format):
+        return False
+    if fromDate > toDate:
+        return False
+    if minFrom and fromDate < fromDate:
+        return False
+    if maxTo and toDate < toDate:
+        return False
+
+    return True
 
 #----------------------------------------------------------------------
 # Report elapsed time.
@@ -3001,7 +3040,7 @@ def getSchemaEnumVals(schemaTitle, typeName, sorted=False):
         cursor.close()
     except cdrdb.Error, info:
         raise Exception(
-            "Database error fetching schema in cdr.getSchemaEnumVals(): " %
+            "Database error fetching schema in cdr.getSchemaEnumVals(): %s" %
              str(info))
     if not row:
         raise Exception("Schema %s not found in cdr.getSchemaEnumVals()" %
