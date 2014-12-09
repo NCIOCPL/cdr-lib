@@ -13,7 +13,6 @@ import sys
 import string
 import cdr
 import cdrdb
-import cdrutil
 import cdrcgi
 
 #----------------------------------------------------------------------
@@ -132,9 +131,9 @@ def sendSignal (conn, jobId, newStatus, whoami):
     try:
         qry = """
           UPDATE batch_job
-             SET status = '%s', status_dt = GETDATE()
-           WHERE id = %d""" % (newStatus, jobId)
-        conn.cursor().execute (qry)
+             SET status = ?, status_dt = GETDATE()
+           WHERE id = ?"""
+        conn.cursor().execute (qry, (newStatus, jobId))
 
     except cdrdb.Error, info:
         msg = "Unable to update job status" % info[1][0]
@@ -198,6 +197,7 @@ def getJobStatus (idStr=None, name=None, ageStr=None, status=None):
         raise BatchException (msg)
 
     # Create query
+    qmarks = []
     qry = "SELECT id, name, started, status, status_dt, progress " \
           "  FROM batch_job WHERE ("
 
@@ -206,13 +206,15 @@ def getJobStatus (idStr=None, name=None, ageStr=None, status=None):
 
     # Job id, if it exists, is a singleton
     if jobId:
-        qry += " id=%d" % jobId
+        qry += " id=?"
+        qmarks.append(jobId)
 
     # Others may be combined
     else:
         if jobName:
             # User can enter a substring
-            qry += "name LIKE '%%%s%%'" % jobName
+            qry += "name LIKE ?"
+            qmarks.append('%' + jobName + '%')
             clauses = 1
         if jobAge:
             # Days to look backward
@@ -224,12 +226,14 @@ def getJobStatus (idStr=None, name=None, ageStr=None, status=None):
             if clauses:
                 qry += " AND "
             if type(jobStatus) == type(""):
-                qry += "status='%s'" % jobStatus
+                qry += "status=?"
+                qmarks.append(jobStatus)
             else:
                 qry += "status IN ("
                 count = 0
                 for stat in jobStatus:
-                    qry += "'%s'" % stat
+                    qry += '?'
+                    qmarks.append(stat)
                     count += 1
                     if (count < len(jobStatus)):
                         qry += ','
@@ -241,7 +245,7 @@ def getJobStatus (idStr=None, name=None, ageStr=None, status=None):
         # Execute query
         conn = cdrdb.connect ("CdrGuest")
         cursor = conn.cursor()
-        cursor.execute (qry)
+        cursor.execute (qry, qmarks)
         rows = cursor.fetchall()
         cursor.close()
 
@@ -333,14 +337,13 @@ def activeCount (jobName):
         SELECT count(*) FROM batch_job
          WHERE status IN ('%s', '%s', '%s')
            AND started >= DATEADD(DAY, -1, GETDATE())
-           AND name LIKE '%s'""" % (ST_QUEUED, ST_INITIATING, ST_IN_PROCESS,
-                                 jobName)
+           AND name LIKE ?""" % (ST_QUEUED, ST_INITIATING, ST_IN_PROCESS)
 
     try:
         # Execute query
         conn = cdrdb.connect ("CdrGuest")
         cursor = conn.cursor()
-        cursor.execute (qry)
+        cursor.execute (qry, jobName)
         row = cursor.fetchone()
         cursor.close()
 
