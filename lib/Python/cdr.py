@@ -5240,7 +5240,7 @@ def getSummaryAudiences():
     Return a list of all Audience values that are used for Summaries.
     See getSummaryLanguages().
     """
-    return ('Health Professionals', 'Patients')
+    return ('Health professionals', 'Patients')
 
 #----------------------------------------------------------------------
 # Gets a list of Summary CDR document IDs.
