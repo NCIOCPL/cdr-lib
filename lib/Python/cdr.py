@@ -5216,6 +5216,33 @@ def getBoardNames(boardType = 'all', display = 'full', host = 'localhost'):
     return dict((row[0], row[1]) for row in cursor.fetchall())
 
 #----------------------------------------------------------------------
+# Gets a list of Summary languages.
+#----------------------------------------------------------------------
+def getSummaryLanguages():
+    """
+    Return a list of all languages that are used for Summaries.
+
+    Implemented as a quick return of the constant tuple ('English','Spanish').
+    This could be turned into a database query but I'm not sure it's
+    worth the small time needed for the query for data that hasn't changed
+    during the life of the system.
+
+    If we add more languages, there's one place here to update for all
+    scripts that use this function.
+    """
+    return ('English','Spanish')
+
+#----------------------------------------------------------------------
+# Gets a list of Audience values
+#----------------------------------------------------------------------
+def getSummaryAudiences():
+    """
+    Return a list of all Audience values that are used for Summaries.
+    See getSummaryLanguages().
+    """
+    return ('Health Professionals', 'Patients')
+
+#----------------------------------------------------------------------
 # Gets a list of Summary CDR document IDs.
 #----------------------------------------------------------------------
 def getSummaryIds(language='all', audience='all', boards=[], status='A',
