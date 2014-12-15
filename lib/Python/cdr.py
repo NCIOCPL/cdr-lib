@@ -610,9 +610,9 @@ def valFromToDates(format, fromDate, toDate, minFrom=None, maxTo=None):
         return False
     if fromDate > toDate:
         return False
-    if minFrom and fromDate < fromDate:
+    if minFrom and fromDate < minFrom:
         return False
-    if maxTo and toDate < toDate:
+    if maxTo and toDate > maxTo:
         return False
 
     return True
