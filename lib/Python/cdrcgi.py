@@ -413,6 +413,7 @@ class Page:
                             the input element.  May include multiple space
                             separated class names.
             wrapper_classes classes to be added to the div wrapper
+            password        if True, value is not displayed
         """
         wrapper_classes = kwargs.get("wrapper_classes")
         if wrapper_classes:
@@ -433,6 +434,8 @@ class Page:
             field.set("class", classes)
         if "value" in kwargs:
             field.set("value", unicode(kwargs["value"]))
+        if kwargs.get("password"):
+            field.set("type", "password")
         self.add(field)
         self.add("</div>")
 
@@ -632,8 +635,11 @@ class Page:
         else:
             self.add("<body>")
         if self._action and self._buttons:
-            self.add("""<form action="/cgi-bin/cdr/%s" method="%s">""" %
-                     (self._action, self._method))
+            prefix = "/cgi-bin/cdr/"
+            if "/" in self._action:
+                prefix=""
+            self.add("""<form action="%s%s" method="%s">""" %
+                     (prefix, self._action, self._method))
             self.add("<header>")
             self.add("<h1>%s" % self._banner)
             self.add("<span>")
@@ -1257,39 +1263,23 @@ def rptHeader(title, bkgd = 'FFFFFF', stylesheet=''):
 
 #----------------------------------------------------------------------
 # Get a session ID based on current form field values.
+# Can't use this funtion to log into the CDR any more (OCECDR-3849).
+# Scrub the returned value.
 #----------------------------------------------------------------------
 def getSession(fields):
-
-    # If we already have a Session field value, use it.
-    if fields.has_key(SESSION):
-        session = fields[SESSION].value
-        if len(session) > 0:
-            return re.sub("[^A-Za-z0-9 -]", "", session)
-
-    # Check for missing fields.
-    if not fields.has_key(USERNAME) or not fields.has_key(PASSWORD):
-        return None
-    userId = fields[USERNAME].value
-    password = fields[PASSWORD].value
-    if len(userId) == 0 or len(password) == 0:
-        return None
-
-    # Log on to the CDR Server.
-    if fields.has_key(PORT):
-        session = cdr.login(userId, password, port = cdr.getPubPort())
-    else:
-        session = cdr.login(userId, password)
-    if session.find("<Err") >= 0: return None
-    else:                         return session
+    session = fields.getvalue(SESSION)
+    if session:
+        return re.sub("[^A-Za-z0-9 -]", "", session)
+    return None
 
 #----------------------------------------------------------------------
-# Get the name of the submitted request.
+# Get the name of the submitted request. Scrub the returned value.
 #----------------------------------------------------------------------
 def getRequest(fields):
-
-    # Make sure the request field exists.
-    if not fields.has_key(REQUEST): return None
-    else:                           return fields[REQUEST].value
+    request = fields.getvalue(REQUEST)
+    if request:
+        return re.sub("[^A-Za-z0-9 -]", "", request)
+    return None
 
 #----------------------------------------------------------------------
 # Send an HTML page back to the client.
@@ -1393,42 +1383,17 @@ def logout(session):
     # Make sure we have a session to log out of.
     if not session: bail('No session found.')
 
-    # Create the page header.
-    title   = "CDR Administration"
-    section = "Login Screen"
-    buttons = ["Log In"]
-    hdr     = header(title, title, section, "Admin.py", buttons)
-
     # Perform the logout.
     error = cdr.logout(session)
     message = error or "Session Logged Out Successfully"
 
-    # Put up the login screen.
-    form = """\
-        <H3>%s</H3>
-           <TABLE CELLSPACING='0'
-                  CELLPADDING='0'
-                  BORDER='0'>
-            <TR>
-             <TD ALIGN='right'>
-              <B>CDR User ID:&nbsp;</B>
-             </TD>
-             <TD><INPUT NAME='UserName'></TD>
-            </TR>
-            <TR>
-             <TD ALIGN='right'>
-              <B>CDR Password:&nbsp;</B>
-             </TD>
-             <TD><INPUT NAME='Password'
-                        TYPE='password'>
-             </TD>
-            </TR>
-           </TABLE>
-          </FORM>
-         </BODY>
-        </HTML>\n""" % message
-
-    sendPage(hdr + form)
+    # Display a page with a link to log back in.
+    title   = "CDR Administration"
+    buttons = ["Log In"]
+    action="/cgi-bin/secure/admin.py"
+    page = Page(title, subtitle=message, buttons=buttons, action=action)
+    page.add(Page.B.P("Thanks for spending quality time with the CDR!"))
+    page.send()
 
 #----------------------------------------------------------------------
 # Display the CDR Administation Main Menu.

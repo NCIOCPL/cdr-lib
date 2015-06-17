@@ -348,7 +348,7 @@ def sendMail(sender, recips, subject = "", body = "", html = 0):
     if not recips:
         raise Exception("sendMail: no recipients specified")
     if type(recips) != type([]) and type(recips) != type(()):
-        return Exception("sendMail: recipients must be a "
+        raise Exception("sendMail: recipients must be a "
                          "list of email addresses")
     recipList = recips[0]
     for recip in recips[1:]:
@@ -411,6 +411,10 @@ def getConnection(db='emailers'):
     pw = cdrpw.password(env, tier, db)
     appHost = AppHost(env, tier, filename="/etc/cdrapphosts.rc")
     port = env == "CBIIT" and 3600 or 3306
+    # XXX TODO: we should move the ports to an .rc file, since CBIIT keeps
+    #           changing them.
+    if env == "CBIIT" and tier == "QA":
+        port = 3631
     if db == "glossifier":
         host = appHost.host["GLOSSIFIERDB"][0]
     else:

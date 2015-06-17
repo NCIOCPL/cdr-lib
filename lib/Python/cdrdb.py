@@ -778,6 +778,8 @@ def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr'):
             port = 55733
         elif h.tier == "STAGE":
             port = 55459
+        elif h.tier == "QA":
+            port = 53100
         if user.upper() == "CDR":
             user = "cdrsqlaccount"
     else:

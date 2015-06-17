@@ -15,6 +15,8 @@
 # BZIssue::5178 - Shorter URLS Needed For Successful Conversion of
 #                 QC Reports into Word
 # BZIssue::5296 - Check for errors in delDoc()
+# JIRA::OCECDR-3845 - Encrypt traffic from external clients
+# JIRA::OCECDR-3849 - Integration with NIH Active Directory (AD)
 #
 #----------------------------------------------------------------------
 
@@ -24,12 +26,16 @@
 import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
 import os, smtplib, time, atexit, cdrdb, tempfile, traceback, difflib
 import xml.sax.saxutils, datetime, subprocess, cdrutil
+import math
+import urllib
+import lxml.etree as etree
 
 #----------------------------------------------------------------------
 # Find out the drive on which the CDR working files are stored.
+# Start checking with C and work our way up to Z.
 #----------------------------------------------------------------------
 def _getWorkingDrive():
-    for drive in ('D', 'C', 'E', 'F'):
+    for drive in string.ascii_uppercase[2:]:
         try:
             os.stat(drive + ":/cdr/lib/python")
             return drive
@@ -48,7 +54,7 @@ def _getHostNames():
     Return the server host name as a tuple of:
         naked host name
         fully qualified host name
-        fully qualified name, prefixed by "http://"
+        fully qualified name, prefixed by "http[s]://"
     """
     global CBIIT_HOSTING
     try:
@@ -57,7 +63,7 @@ def _getHostNames():
         fqdn = fp.read().strip()
         fp.close()
         CBIIT_HOSTING = True
-        return (fqdn.split(".")[0], fqdn, "http://%s" % fqdn)
+        return (fqdn.split(".")[0], fqdn, "https://%s" % fqdn)
     except:
         # This method works on CTB/OCE hosts.
         CBIIT_HOSTING = False
@@ -82,7 +88,7 @@ def _getCbiitNames(ssl=True):
     Return the server host name as a tuple of:
         naked host name
         fully qualified host name
-        fully qualified name, prefixed by "http://"
+        fully qualified name, prefixed by "http[s]://"
     """
     # Use "http" or "https" protocol
     if ssl: s = 's'
@@ -132,10 +138,6 @@ DEFAULT_HOST     = 'localhost'
 DEFAULT_PORT     = 2019
 BATCHPUB_PORT    = 2020
 URDATE           = '2002-06-22'
-LOGON_STRING     = ("<CdrCommandSet><CdrCommand><CdrLogon>"
-                    "<UserName>%s</UserName><Password>%s</Password>"
-                    "</CdrLogon></CdrCommand>")
-LOGOFF_STRING    = "<CdrCommand><CdrLogoff/></CdrCommand></CdrCommandSet>"
 PYTHON           = WORK_DRIVE + ":\\python\\python.exe"
 PERL             = WORK_DRIVE + ":\\bin\\Perl.exe"
 BASEDIR          = WORK_DRIVE + ":/cdr"
@@ -414,6 +416,32 @@ def setGlobalSendCommandsTimeout(newTimeout):
     SENDCMDS_TIMEOUT = newTimeout
 
 #----------------------------------------------------------------------
+# CBIIT now requires that connections to the CDR Server from other
+# hosts be encrypted. See https://tracker.nci.nih.gov/browse/OCECDR-3845.
+#----------------------------------------------------------------------
+def tunnelCommands(cmds, timeout):
+    url = "%s/cgi-bin/cdr/https-tunnel.ashx" % CBIIT_NAMES[2]
+    limit = time.time() + timeout
+    attempts = 0
+    while time.time() < limit:
+        try:
+            attempts += 1
+            conn = urllib.urlopen(url, cmds)
+            return conn.read()
+        except Exception, e:
+            logwrite("tunnelCommands (attempt %d): %s" % (attempts, e))
+            now = time.time()
+            if now >= limit:
+                logwrite("tunnelCommands: Giving up on connect failure")
+                break
+            sleep = SENDCMDS_SLEEP
+            if now + sleep > limit:
+                sleep = math.ceil(limit - now)
+            time.sleep(sleep)
+    raise Exception("tunnelCommands could not connect.  "
+                    "See info in %s" % DEFAULT_LOGFILE)
+
+#----------------------------------------------------------------------
 # Send a set of commands to the CDR Server and return its response.
 #----------------------------------------------------------------------
 def sendCommands(cmds, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=None):
@@ -424,6 +452,10 @@ def sendCommands(cmds, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=None):
     # See setGlobalSendCommandsTimeout() above to change for entire process.
     if timeout is None:
         timeout = SENDCMDS_TIMEOUT
+
+    # Approach mandated by CBIIT for outside connections to the CDR server.
+    if DEFAULT_HOST != "localhost":
+        return tunnelCommands(cmds, timeout)
 
     if host != DEFAULT_HOST:
         # Resolve logical host name to actual network name
@@ -534,30 +566,66 @@ host=%s port=%d current netstat=
     return resp
 
 #----------------------------------------------------------------------
-# Wrap a command in a CdrCommandSet element.
+# Wrap a command in a CdrCommandSet element. Command can be an etree node,
+# or a UTF-8 string. Credentials can be a string or a tuple containing
+# user name and password. In the latter case we insert logon and logoff
+# commands around the commands passed to this function.
+#
+# Returns a string with one of the two following structures:
+#
+#               CdrCommandSet
+#                  SessionId
+#                  CdrCommand ...
+#
+#               CdrCommandSet
+#                 CdrCommand
+#                   CdrLogon ...
+#                 CdrCommand ...
+#                 CdrCommand
+#                   CdrLogoff
+#
 #----------------------------------------------------------------------
 def wrapCommand(command, credentials):
 
-    # If credentials is a tuple, then we have a userId/passWord pair.
-    if type(credentials) == type(()):
-        login = LOGON_STRING % credentials
-        return "%s<CdrCommand>%s</CdrCommand>%s" % (login, command,
-                                                    LOGOFF_STRING)
+    # Do we already have a session ID?
+    if isinstance(credentials, tuple):
+        sessionId = None
+    elif isinstance(credentials, unicode):
+        sessionId = credentials.encode("ascii")
+    else:
+        sessionId = credentials
 
-    # Else we have a session ID.  Session strings are always ascii,
-    #  however the duplication and manipulation of sessions, including
-    #  retrieval from the DB, can cause undesirable conversions to unicode
-    # Unicode credentials cause problems by forcing the command, which may
-    #  be a large utf-8 XML doc, to unicode, which will cause a
-    #  UnicodeDecodeError in the implicit conversion that doesn't know
-    #  that the command string is utf-8 and not ascii.
-    if type(credentials) == type(u""):
-        credentials = credentials.encode('ascii')
+    # If the command is a node, we can build the command set with XML tools.
+    # (We should have done all commands this way, but the tools weren't
+    # as capable back when we started as they are now).
+    if isinstance(command, etree._Element):
+        commandSet = etree.Element("CdrCommandSet")
+        if sessionId:
+            etree.SubElement(commandSet, "SessionId").text = sessionId
+        else:
+            commandSet.append(createLoginCommand(*credentials))
+        cdr_command = etree.SubElement(commandSet, "CdrCommand")
+        cdr_command.append(command)
+        if not sessionId:
+            logoff = etree.SubElement(commandSet, "CdrCommand")
+            logoff.append(etree.Element("CdrLogoff"))
+        return etree.tostring(commandSet)
 
-    # Wrap the command
-    return """<CdrCommandSet><SessionId>%s</SessionId>
-              <CdrCommand>%s</CdrCommand>
-              </CdrCommandSet>""" % (credentials, command)
+    # Otherwise, we use string manipulation to build the command set.
+    commandSet = ["<CdrCommandSet>"]
+    if sessionId:
+        commandSet.append("<SessionId>")
+        commandSet.append(sessionId)
+        commandSet.append("</SessionId>")
+    else:
+        commandSet.append(etree.tostring(createLoginCommand(*credentials)))
+    commandSet.append("<CdrCommand>")
+    commandSet.append(command)
+    commandSet.append("</CdrCommand>")
+    if not sessionId:
+        commandSet.append("<CdrCommand><CdrLogoff/></CdrCommand>")
+    commandSet.append("</CdrCommandSet>")
+    return "".join(commandSet)
 
 #----------------------------------------------------------------------
 # Validate date/time strings using strptime.
@@ -565,7 +633,7 @@ def wrapCommand(command, credentials):
 #----------------------------------------------------------------------
 def strptime(str, format):
     """
-    Wrap time.strptime() in a wrapper that performs the exception
+    Wrap time.strptime() in a function that performs the exception
     handling and just returns None if an exception was generated.
 
     The actual ValueError message from Python may not always be
@@ -813,12 +881,45 @@ def extract_multiple(pattern, response):
     else:     return getErrors(response)
 
 #----------------------------------------------------------------------
+# Create login command. If password is None or empty, name represents
+# an NIH domain account name which has already been authenticated.
+# Otherwise, the user is to be authenticated against credentials
+# stored in the CDR database.
+#----------------------------------------------------------------------
+def createLoginCommand(user, password):
+    command = etree.Element("CdrCommand")
+    logon = etree.SubElement(command, "CdrLogon")
+    etree.SubElement(logon, "UserName").text = user
+    if password:
+        etree.SubElement(logon, "Password").text = password
+    return command
+
+#----------------------------------------------------------------------
+# Log in using Windows authentication verified through a connection
+# to IIS.
+#----------------------------------------------------------------------
+def windowsLogin(user, password):
+    import requests
+    url = "%s/cgi-bin/secure/login.py" % CBIIT_NAMES[2]
+    requests.packages.urllib3.disable_warnings()
+    auth = requests.auth.HTTPDigestAuth(user, password)
+    response = requests.get(url, auth=auth, verify=False)
+    return response.text.strip()
+
+#----------------------------------------------------------------------
 # Log in to the CDR Server.  Returns session ID.
+# If passWord is None, userId is an NIH domain account name.
 #----------------------------------------------------------------------
 def login(userId, passWord, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
+    # If we're not running directly on the CDR, we must log in using
+    # Windows authentication.
+    if DEFAULT_HOST != "localhost":
+        return windowsLogin(userId, passWord)
+
     # Send the login request to the server.
-    cmds = LOGON_STRING % (userId, passWord) + "</CdrCommandSet>"
+    command = createLoginCommand(userId, passWord)
+    cmds = "<CdrCommandSet>%s</CdrCommandSet>" % etree.tostring(command)
     resp = sendCommands(cmds, host, port)
 
     # Extract the session ID.
@@ -1383,44 +1484,52 @@ def _addRepDocComment(doc, comment):
 
     """
     Add or replace DocComment element in CdrDocCtl.
-    Done by text manipulation.
+    Done via XML parsing.
 
     Pass:
-        doc - Full document in CdrDoc format.
-        comment - Comment to insert.
+        doc - Full document in CdrDoc format, unicode or utf-8
+        comment - Comment to insert, unicode or utf-8
 
     Return:
-        Full CdrDoc with DocComment element inserted or replaced.
-
-    Assumptions:
-        Both doc and comment must be UTF-8.  (Else must add conversions here.)
+        Full CdrDoc as utf-8 with DocComment element inserted or replaced.
     """
-
-    # Sanity check.
+    # Sanity checks.  Failure here means caller passed bad parms
     if not doc:
         raise Exception("_addRepDocComment(): missing doc argument")
 
-    # Search for and delete existing DocComment
-    delPat = re.compile (r"\n*<DocComment.*</DocComment>\n*", re.DOTALL)
-    newDoc = delPat.sub ('', doc).replace('<DocComment/>', '')
-
-    # Search for CdrDocCtl to insert new DocComment after it
-    newDoc = newDoc.replace('<CdrDocCtl/>', '<CdrDocCtl></CdrDocCtl>')
-    insPat = re.compile (r"(?P<first>.*<CdrDocCtl[^>]*>)\n*(?P<last>.*)",
-                         re.DOTALL)
-    insRes = insPat.search (newDoc)
-    if insRes:
-        parts = insRes.group ('first', 'last')
-    if not insRes or len (parts) != 2:
-        # Should never happen unless there's a bug
-        raise Exception("addRepDocComment: No CdrDocCtl in doc:\n%s" % doc)
-
-    # Comment must be compatible with CdrDoc utf-8
+    # Data must be utf-8
+    if type(doc) == type(u""):
+        doc = doc.encode('utf-8')
     if type(comment) == type(u""):
         comment = comment.encode('utf-8')
 
-    # Insert comment
-    return (parts[0] + "\n<DocComment>"+comment+"</DocComment>\n" + parts[1])
+    # Parse doc wrapper, elements only include the CdrDoc elements
+    # Actual content is all in a CDATA section, which must be recognized
+    # Have to override the default lxml behavior to do that
+    from lxml import etree as lx
+    parser = lx.XMLParser(strip_cdata=False)
+    tree = lx.fromstring(doc, parser=parser)
+
+    # Parent element for DocComment
+    found = tree.findall('CdrDocCtl')
+    if len(found) == 0:
+        raise Exception("_addRepDocComment: No CdrDocCtl in doc:\n%s" % doc)
+    docCtl = found[0]
+
+    # Create the new DocComment element, newline tail makes it prettier
+    newCmt = lx.Element('DocComment')
+    newCmt.text = comment
+    newCmt.tail = "\n"
+
+    # Find DocComment, if it exists
+    docCmt = docCtl.findall('DocComment')
+    if len(docCmt):
+        docCtl.replace(docCmt[0], newCmt)
+    else:
+        docCtl.append(newCmt)
+
+    # Return re-serialized doc
+    return lx.tostring(tree, pretty_print=True)
 
 #----------------------------------------------------------------------
 # Internal subroutine to add or replace DocActiveStatus element in CdrDocCtl.
@@ -3172,14 +3281,17 @@ class User:
                  email    = None,
                  phone    = None,
                  groups   = [],
-                 comment  = None):
+                 comment  = None,
+                 authMode = "network"):
         self.name         = name
+        self.password     = password
         self.fullname     = fullname
         self.office       = office
         self.email        = email
         self.phone        = phone
         self.groups       = groups
         self.comment      = comment
+        self.authMode     = authMode
 
 #----------------------------------------------------------------------
 # Retrieves information about a CDR group.
@@ -3187,7 +3299,9 @@ class User:
 def getUser(credentials, uName, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Create the command
-    cmd = "<CdrGetUsr><UserName>%s</UserName></CdrGetUsr>" % uName
+    cmd = etree.Element("CdrGetUsr")
+    etree.SubElement(cmd, "UserName").text = uName
+    cmd  = etree.tostring(cmd)
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -3195,27 +3309,27 @@ def getUser(credentials, uName, host = DEFAULT_HOST, port = DEFAULT_PORT):
     if err: return err
 
     # Parse the response.
-    name     = re.findall("<UserName>(.*?)</UserName>", resp)[0]
-    user     = User(name)
-    fullname = re.findall("<FullName>(.*?)</FullName>", resp)
-    office   = re.findall("<Office>(.*?)</Office>", resp)
-    email    = re.findall("<Email>(.*?)</Email>", resp)
-    phone    = re.findall("<Phone>(.*?)</Phone>", resp)
-    groups   = re.findall("<GrpName>(.*?)</GrpName>", resp)
-    cmtExpr  = re.compile("<Comment>(.*?)</Comment>", re.DOTALL)
-    comment  = cmtExpr.findall(resp)
-    user.groups = groups
-    if fullname: user.fullname = fullname[0]
-    if office:   user.office   = office[0]
-    if email:    user.email    = email[0]
-    if phone:    user.phone    = phone[0]
-    if comment:  user.comment  = comment[0]
-
-    # Passwords are no longer stored in the server, but we create
-    #  a place for one in the User object.
-    user.password = ''
-
-    return user
+    root = etree.XML(resp)
+    for responseNode in root.findall("CdrResponse/CdrGetUsrResp"):
+        for userNode in responseNode.findall("UserName"):
+            user = User(userNode.text)
+            for child in responseNode:
+                if child.tag == "FullName":
+                    user.fullname = child.text
+                elif child.tag == "Office":
+                    user.office = child.text
+                elif child.tag == "Email":
+                    user.email = child.text
+                elif child.tag == "Phone":
+                    user.phone = child.text
+                elif child.tag == "Comment":
+                    user.comment = child.text
+                elif child.tag == "GrpName":
+                    user.groups.append(child.text)
+                elif child.tag == "AuthenticationMode":
+                    user.authMode = child.text
+            return user
+    return "User %s not found" % repr(uName)
 
 #----------------------------------------------------------------------
 # Add or update the database record for a CDR user.
@@ -3223,6 +3337,7 @@ def getUser(credentials, uName, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # Pass:
 #   credentials - Session for person creating the user (not the user himself).
 #   uName       - Name of user whose record should be modified.
+#   user        - Object containing the values to be stored for the user
 #   host        - Which server to use.
 #   port        - Which port.
 #
@@ -3235,38 +3350,28 @@ def putUser(credentials, uName, user, host = DEFAULT_HOST,
 
     # Create the command
     if uName:
-        # Credential must be
-        cmd = "<CdrModUsr><UserName>%s</UserName>" % uName
+        cmd = etree.Element("CdrModUsr")
+        etree.SubElement(cmd, "UserName").text = uName
         if user.name and uName != user.name:
-            cmd += "<NewName>%s</NewName>" % user.name
+            etree.SubElement(cmd, "NewName").text = user.name
     else:
-        cmd = "<CdrAddUsr><UserName>%s</UserName>" % user.name
+        cmd = etree.Element("CdrAddUsr")
+        etree.SubElement(cmd, "UserName").text = user.name
 
-    # Add the user's password.
-    # Note: If user.password is empty, server will leave existing pw alone.
-    #       It will NOT remove the password.
-    cmd += "<Password>%s</Password>" % user.password
-
-    # Add the optional single elements.
+    etree.SubElement(cmd, "AuthenticationMode").text = user.authMode
+    etree.SubElement(cmd, "Password").text = user.password
     if user.fullname is not None:
-        cmd += "<FullName>%s</FullName>" % user.fullname
+        etree.SubElement(cmd, "FullName").text = user.fullname
     if user.office is not None:
-        cmd += "<Office>%s</Office>" % user.office
+        etree.SubElement(cmd, "Office").text = user.office
     if user.email is not None:
-        cmd += "<Email>%s</Email>" % user.email
+        etree.SubElement(cmd, "Email").text = user.email
     if user.phone is not None:
-        cmd += "<Phone>%s</Phone>" % user.phone
+        etree.SubElement(cmd, "Phone").text = user.phone
     if user.comment is not None:
-        cmd += "<Comment>%s</Comment>" % user.comment
-
-    # Add the groups.
-    if user.groups:
-        for group in user.groups:
-            cmd += "<GrpName>%s</GrpName>" % group
-
-    # Finish the command.
-    if uName: cmd += "</CdrModUsr>"
-    else:     cmd += "</CdrAddUsr>"
+        etree.SubElement(cmd, "Comment").text = user.comment
+    for group in user.groups:
+        etree.SubElement(cmd, "GrpName").text = group
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -3282,7 +3387,8 @@ def putUser(credentials, uName, user, host = DEFAULT_HOST,
 def delUser(credentials, usr, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
     # Create the command
-    cmd = "<CdrDelUsr><UserName>%s</UserName></CdrDelUsr>" % usr
+    cmd = etree.Element("CdrDelUsr")
+    etree.SubElement(cmd, "UserName").text = usr
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -3654,11 +3760,65 @@ def getEmailList(groupName, host = 'localhost'):
     return [row[0] for row in cursor.fetchall()]
 
 #----------------------------------------------------------------------
+# Object for a mime attachment.
+#----------------------------------------------------------------------
+class EmailAttachment:
+    def __init__(self, bytes=None, filepath=None, content_type=None):
+        """
+        Construct an email attachment object
+
+        Pass:
+
+            bytes         - optional sequence of bytes for the attachment
+            filepath      - optional path where bytes for attachment can
+                            be found; required if bytes is not specified;
+                            can be specified even if bytes is also specified,
+                            so that the Content-disposition header can use it
+            content_type  - option slash-delimited mime type/subtype; e.g.:
+                            text/rtf
+        """
+        if bytes is None and filepath is None:
+            raise Exception("EmailAttachment: must specify bytes or filepath")
+        if content_type is None:
+            if filepath:
+                import mimetypes
+                content_type, encoding = mimetypes.guess_type(filepath)
+                if content_type is None or encoding is not None:
+                    content_type = "application/octet-stream"
+        self.maintype, self.subtype = content_type.split("/")
+        if bytes is None:
+            mode = self.maintype == "text" and "r" or "rb"
+            fp = open(filepath, mode)
+            bytes = fp.read()
+            fp.close()
+        self.bytes = bytes
+        self.filepath = filepath
+        if self.maintype == "text":
+            from email.mime.text import MIMEText
+            self.mime_object = MIMEText(self.bytes, _subtype=self.subtype)
+        elif self.maintype == "audio":
+            from email.mime.audio import MIMEAudio
+            self.mime_object = MIMEAudio(self.bytes, _subtype=self.subtype)
+        elif self.maintype == "image":
+            from email.mime.image import MIMEImage
+            self.mime_object = MIMEImage(self.bytes, _subtype=self.subtype)
+        else:
+            from email.mime.base import MIMEBase
+            from email import encoders
+            self.mime_object = MIMEBase(self.maintype, self.subtype)
+            self.mime_object.set_payload(self.bytes)
+            encoders.encode_base64(self.mime_object)
+        if filepath is not None:
+            self.mime_object.add_header("Content-disposition", "attachment",
+                                        filename=os.path.basename(filepath))
+
+#----------------------------------------------------------------------
 # Eventually we'll use this to send all email messages; for right
 # now I'm using this for a selected set of applications to test
 # it.
 #----------------------------------------------------------------------
-def sendMailMime(sender, recips, subject, body, bodyType = 'plain'):
+def sendMailMime(sender, recips, subject, body, bodyType = 'plain',
+                 attachments=None):
     """
     Send an email message via SMTP to a list of recipients.  This
     version supports Unicode in the subject and body.  The message
@@ -3676,6 +3836,8 @@ def sendMailMime(sender, recips, subject, body, bodyType = 'plain'):
                      or contain only ASCII characters or be UTF-8 encoded
         body       - payload for the message; must be a unicode object
                      or contain only ASCII characters or be UTF-8 encoded
+        bodyType   - subtype for MIMEText object (e.g., 'plain', 'html')
+        attachments - optional sequence of EmailAttachment objects
     """
     if not recips:
         raise Exception("sendMail: no recipients specified")
@@ -3711,6 +3873,16 @@ def sendMailMime(sender, recips, subject, body, bodyType = 'plain'):
     # Create the message object.
     message = MIMEText(encodedBody, bodyType, charset)
 
+    # Add attachments if present.
+    if attachments:
+        from email.mime.multipart import MIMEMultipart
+        wrapper = MIMEMultipart()
+        wrapper.preamble = "This is a multipart MIME message"
+        wrapper.attach(message)
+        for attachment in attachments:
+            wrapper.attach(attachment.mime_object)
+        message = wrapper
+
     # Plug in the headers.
     message['From']    = sender
     message['To']      = ",\n  ".join(recips)
@@ -3732,9 +3904,11 @@ def sendMailMime(sender, recips, subject, body, bodyType = 'plain'):
 #----------------------------------------------------------------------
 # Send email to a list of recipients.
 #----------------------------------------------------------------------
-def sendMail(sender, recips, subject = "", body = "", html = 0, mime = False):
-    if mime:
-        return sendMailMime(sender, recips, subject, body)
+def sendMail(sender, recips, subject = "", body = "", html = 0, mime = False,
+             attachments=None):
+    if mime or attachments:
+        return sendMailMime(sender, recips, subject, body,
+                            attachments=attachments)
     if not recips:
         raise Exception("sendMail: no recipients specified")
     if type(recips) not in (tuple, list):
@@ -4857,7 +5031,7 @@ def getHostName():
     Return the server host name as a tuple of:
         naked host name
         fully qualified host name
-        fully qualified name, prefixed by "http://"
+        fully qualified name, prefixed by "https://"
     """
     return HOST_NAMES
 

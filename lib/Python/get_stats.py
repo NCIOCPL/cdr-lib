@@ -34,7 +34,7 @@
 # message.
 #
 # ******************************************************************
-import sys, os, ftplib, time, shutil, cdrutil
+import sys, os, ftplib, time, shutil, cdrutil, datetime
 
 # Setting the variables
 # ---------------------
@@ -46,18 +46,19 @@ else:
     FTPBASE = '/home/cdroperator/test'
 FTPDIR  = '%s/pub/pdq/full' % FTPBASE
 ftpFile = '%s/getchanges.ftp' % tmpDir
-pubDir  = '/u/ftp/pub/pdq/full'
+# pubDir  = '/u/ftp/pub/pdq/full'
 
-FTPSERVER = 'cipsftp.nci.nih.gov'
-FTPUSER   = 'operator'
-FTPPWD    = '***REMOVED***'
+today = datetime.date.today()
+one_day = datetime.timedelta(1)
+one_week = datetime.timedelta(7)
+last_week = today - one_week
+year, week, weekday = last_week.isocalendar()
+# year, week, weekday = today.isocalendar()
+WEEK = "%04d%02d" % (year, week)
+WEEKHDR = "Week %02d, %04d" % (week, year)
 
-now     = time.time()
-lastWk  = time.time() - 5 * 24 * 60 * 60
-relDate = time.strftime("%G%V", time.localtime(lastWk))
-relDateHdr = time.strftime("Week %V, %G", time.localtime(lastWk))
-rchanges= '%s.changes'     % relDate
-lchanges= '%s_changes.txt' % relDate
+rchanges= '%s.changes'     % WEEK
+lchanges= '%s_changes.txt' % WEEK
 
 class CommandResult:                                                            
     def __init__(self, code, output):                                           
@@ -106,7 +107,7 @@ for line in lines:
 # -----------------------------------
 print 'Writing formatted changes file...'
 sf = open(PDQLOG + '/' + lchanges, 'w')
-sf.write('\n\n       Changed Documents for %s\n' % relDateHdr)
+sf.write('\n\n       Changed Documents for %s\n' % WEEKHDR)
 sf.write('       ===================================\n\n')
 sf.write('Document Type            added  modified  removed\n')
 sf.write('---------------------  -------  --------  -------\n')
@@ -115,7 +116,7 @@ docType = stat.keys()
 docType.sort()
 
 for docs in docType:
-   sf.write('%20s:  %7s  %8s  %7s\n' % (docs.replace('.' + relDate, ''), 
+   sf.write('%20s:  %7s  %8s  %7s\n' % (docs.replace('.' + WEEK, ''), 
                                  stat[docs]['added'], 
                                  stat[docs]['modified'], 
                                  stat[docs]['removed']))
