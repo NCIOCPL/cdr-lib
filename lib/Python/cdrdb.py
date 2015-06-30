@@ -773,7 +773,7 @@ def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr'):
 
     adoConn = win32com.client.Dispatch("ADODB.Connection")
     if CBIIT_HOSTING:
-        port = 55373
+        port = 52400
         if h.tier == "PROD":
             port = 55733
         elif h.tier == "STAGE":
