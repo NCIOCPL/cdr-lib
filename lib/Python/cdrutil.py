@@ -413,8 +413,9 @@ def getConnection(db='emailers'):
     port = env == "CBIIT" and 3600 or 3306
     # XXX TODO: we should move the ports to an .rc file, since CBIIT keeps
     #           changing them.
-    if env == "CBIIT" and tier == "QA":
-        port = 3631
+    if env == "CBIIT":
+        if tier in ("DEV", "QA"):
+            port = 3631
     if db == "glossifier":
         host = appHost.host["GLOSSIFIERDB"][0]
     else:
