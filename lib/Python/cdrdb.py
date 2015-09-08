@@ -1355,12 +1355,12 @@ class Query:
         if isinstance(join.table, Query):
 
             # Make sure it has been provided with an alias.
-            alias = join._alias
+            alias = join.table._alias
             if not alias:
                 raise Exception("resultset expression without alias")
 
             # SQL Server won't accept placeholders here.
-            if join.parms():
+            if join.table.parms():
                 raise Exception("Placeholders not allowed in joined "
                                 "resultset expression")
 

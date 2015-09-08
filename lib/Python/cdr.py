@@ -17,6 +17,7 @@
 # BZIssue::5296 - Check for errors in delDoc()
 # JIRA::OCECDR-3845 - Encrypt traffic from external clients
 # JIRA::OCECDR-3849 - Integration with NIH Active Directory (AD)
+# Fixed security flaws in code to fetch user name from session.
 #
 #----------------------------------------------------------------------
 
@@ -112,24 +113,16 @@ HOST_NAMES       = _getHostNames()
 CBIIT_NAMES      = _getCbiitNames()
 OPERATOR         = 'NCIPDQoperator@mail.nih.gov'
 DOMAIN_NAME      = ".".join(HOST_NAMES[1].split(".")[1:])
-# PROD_DB_NAME     = CBIIT_HOSTING and 'ncidb-d065-p' or 'bach' # XXX guessing
 PROD_DB_NAME     = h.getTierHostNames('PROD', 'DBWIN').name
-# DEV_DB_NAME      = CBIIT_HOSTING and '***REMOVED***' or 'mahler'
 DEV_DB_NAME      = h.getTierHostNames('DEV', 'DBWIN').name
-# CBIIT_CDR_PROD   = "nciws-p141-v.nci.nih.gov" # XXX Is this right???
 CBIIT_CDR_PROD   = h.getTierHostNames('PROD', 'APP').name
-# CBIIT_CDR_DEV    = "***REMOVED***.nci.nih.gov"
 CBIIT_CDR_DEV    = h.getTierHostNames('DEV', 'APP').name
-# CTB_CDR_PROD     = "bach.nci.nih.gov"
-# CTB_CDR_DEV      = "mahler.nci.nih.gov"
-PROD_HOST        = CBIIT_HOSTING and CBIIT_CDR_PROD or CTB_CDR_PROD
-DEV_HOST         = CBIIT_HOSTING and CBIIT_CDR_DEV  or CTB_CDR_PROD
+PROD_HOST        = CBIIT_CDR_PROD
+DEV_HOST         = CBIIT_CDR_DEV
 PUB_NAME         = HOST_NAMES[0]
 EMAILER_PROD     = 'pdqupdate.cancer.gov'  # usage for OCE only
 EMAILER_DEV      = 'verdi.nci.nih.gov'     # usage for OCE only
-# GPMAILER         = '%s.%s' % (h.host['EMAILERS'][0], h.host['EMAILERS'][1])
 GPMAILER         = h.getHostNames('EMAILERS').qname
-# GPMAILERDB       = '%s.%s' % (h.host['DBNIX'][0], h.host['DBNIX'][1])
 GPMAILERDB       = h.getHostNames('DBNIX').qname
 EMAILER_CGI      = '/PDQUpdate/cgi-bin'    # usage for OCE only
 CVSROOT          = "verdi.nci.nih.gov:/usr/local/cvsroot"
@@ -958,20 +951,30 @@ def idSessionUser(mySession, getSession):
 
     # Search user/session tables
     try:
-        cursor.execute (\
-            "SELECT u.name, '' AS pw" \
-            "  FROM usr u, session s " \
-            " WHERE u.id = s.usr " \
-            "   AND s.name = '%s'" % getSession)
+        cursor.execute (
+            "SELECT u.name, '' AS pw"
+            "  FROM usr u, session s "
+            " WHERE u.id = s.usr "
+            "   AND s.name = ?", getSession)
         usrRow = cursor.fetchone()
         if type(usrRow)==type(()) or type(usrRow)==type([]):
-            return (usrRow[0], '')
+            return tuple(usrRow)
         else:
-            # return "User unknown for session %s" % getSession
             return usrRow
     except cdrdb.Error, info:
         return "Error selecting usr for session: %s - %s" % \
-                (getSession, info[1][0])
+                (repr(getSession), info[1][0])
+
+#----------------------------------------------------------------------
+# Find out if the user for a session is a member of the specified group.
+#----------------------------------------------------------------------
+def member_of_group(session, group):
+    try:
+        name = idSessionUser(session, session)[0]
+        user = getUser(session, name)
+        return group in user.groups
+    except:
+        return False
 
 #----------------------------------------------------------------------
 # Duplicate a session, retrieving the name of a new session on behalf of
@@ -1762,7 +1765,7 @@ def repDoc(credentials, file = None, doc = None, comment = '',
            checkIn = 'N', val = 'N', reason = '', ver = 'N',
            verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
            activeStatus = None, blob = None, blobFile = None, delBlob=0,
-           host = DEFAULT_HOST, port = DEFAULT_PORT,
+           delAllBlobVersions = 0, host = DEFAULT_HOST, port = DEFAULT_PORT,
            errorLocators = 'N'):
 
     """
@@ -1775,6 +1778,9 @@ def repDoc(credentials, file = None, doc = None, comment = '',
                           Passing an empty blob will have the same effect,
                            i.e., blob='', not blob=None, which has no effect
                            on blobs.
+        delAllBlobVersions - True (or 1) = Delete all blobs associated with
+                           this doc or any of its versions.  Only for Media
+                           PDQ Board meeting recordings.
     """
 
     # Load the document if necessary.
@@ -1801,6 +1807,10 @@ def repDoc(credentials, file = None, doc = None, comment = '',
     if delBlob:
         blob = ''
     doc = _addDocBlob(doc, blob, blobFile)
+    if delAllBlobVersions:
+        delBlobVers = '<DelAllBlobVersions>Y</DelAllBlobVersions>'
+    else:
+        delBlobVers = ''
 
     # Create the command.
     checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
@@ -1809,9 +1819,8 @@ def repDoc(credentials, file = None, doc = None, comment = '',
     reason  = "<Reason>%s</Reason>" % (reason)
     doLinks = "<SetLinks>%s</SetLinks>" % setLinks
     ver     = "<Version Publishable='%s'>%s</Version>" % (verPublishable, ver)
-    cmd     = "<CdrRepDoc>%s%s%s%s%s%s</CdrRepDoc>" % (checkIn, val, ver,
-                                                       doLinks, reason, doc)
-
+    cmd     = "<CdrRepDoc>%s%s%s%s%s%s%s</CdrRepDoc>" % (checkIn, val, ver,
+                                          delBlobVers, doLinks, reason, doc)
     # Submit the commands.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
 
@@ -2857,6 +2866,37 @@ def getDoctypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
     return types
 
 #----------------------------------------------------------------------
+# Gets the list of currently known CDR document formats.
+#----------------------------------------------------------------------
+def getDocFormats(conn=None):
+    """
+    Gets document format names, in alpha order.
+
+    Pass:
+        conn - Optional existing db connection.
+
+    Return:
+        List of legal format names, unicode charset.
+
+    Raises:
+        Database exception if unable to get connection.
+    """
+    if conn is None:
+        # Get a connection, raising exception if failed
+        conn = cdrdb.connect()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT name FROM format ORDER BY name")
+    rows = cursor.fetchall()
+    cursor.close()
+
+    if not rows:
+        raise Exception("Unable to select document format names")
+
+    formats = [row[0] for row in rows]
+    return formats
+
+#----------------------------------------------------------------------
 # Add a value to the sys_value table.
 #----------------------------------------------------------------------
 def addSysValue(credentials, name, value="", program=None, notes=None,
@@ -3280,7 +3320,7 @@ class User:
                  office   = None,
                  email    = None,
                  phone    = None,
-                 groups   = [],
+                 groups   = None,
                  comment  = None,
                  authMode = "network"):
         self.name         = name
@@ -3289,12 +3329,12 @@ class User:
         self.office       = office
         self.email        = email
         self.phone        = phone
-        self.groups       = groups
+        self.groups       = groups or []
         self.comment      = comment
         self.authMode     = authMode
 
 #----------------------------------------------------------------------
-# Retrieves information about a CDR group.
+# Retrieves information about a CDR user.
 #----------------------------------------------------------------------
 def getUser(credentials, uName, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
@@ -5397,9 +5437,11 @@ def getSummaryLanguages():
     Return a list of all languages that are used for Summaries.
 
     Implemented as a quick return of the constant tuple ('English','Spanish').
-    This could be turned into a database query but I'm not sure it's
-    worth the small time needed for the query for data that hasn't changed
-    during the life of the system.
+
+    This could be implemented as a database query but it adds a bit of time
+    and the chances of it being more accurate are about equally good and bad
+    since an additional language might be introduced experimentally but not
+    intended to appear in all lists yet.
 
     If we add more languages, there's one place here to update for all
     scripts that use this function.
@@ -5412,7 +5454,8 @@ def getSummaryLanguages():
 def getSummaryAudiences():
     """
     Return a list of all Audience values that are used for Summaries.
-    See getSummaryLanguages().
+
+    See getSummaryLanguages() for query vs. literals discussion.
     """
     return ('Health professionals', 'Patients')
 
@@ -5785,7 +5828,6 @@ class MutateCGUrl:
             self.cgTargetUrlName  = "http://" + cgHostProp.qname
             self.mcgTargetUrlName = "http://" + mcgHostProp.qname
 
-            import re
             self.cgpat  = re.compile("(https?://(www\.)?cancer.gov)/?.*")
             self.mcgpat = re.compile("(https?://m.cancer.gov)/?.*")
         else:

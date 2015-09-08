@@ -15,6 +15,7 @@
 # BZIssue::4205
 # BZIssue::4381
 # BZIssue::4653 CTRO Access to CDR Admin
+# Fixed some security weaknesses and enhanced Page and Report classes.
 #
 #----------------------------------------------------------------------
 
@@ -35,6 +36,11 @@ import time
 import urllib
 import xlwt
 import xml.sax.saxutils
+
+#----------------------------------------------------------------------
+# Do this once, right after loading the module. Used in Report class.
+#----------------------------------------------------------------------
+xlwt.add_palette_colour("hdrbg", 0x21)
 
 #----------------------------------------------------------------------
 # Get some help tracking down CGI problems.
@@ -63,6 +69,8 @@ def _getWebServerName():
 # useful (for example, ISPLAIN, or THISHOST) but are retained in case
 # older code relies on them.
 #----------------------------------------------------------------------
+DATETIMELEN = len("YYYY-MM-DD HH:MM:SS")
+TAMPERING = "CGI parameter tampering detected"
 USERNAME = "UserName"
 PASSWORD = "Password"
 PORT     = "Port"
@@ -79,6 +87,8 @@ THISHOST = SPLTNAME[0]
 ISPLAIN  = "." not in THISHOST
 DOMAIN   = "." + ".".join(SPLTNAME[1:])
 DAY_ONE  = cdr.URDATE
+NEWLINE  = "@@@NEWLINE-PLACEHOLDER@@@"
+BR       = "@@@BR-PLACEHOLDER@@@"
 HEADER   = u"""\
 <!DOCTYPE HTML PUBLIC '-//W3C//DTD HTML 4.01 Transitional//EN'
                       'http://www.w3.org/TR/html4/loose.dtd'>
@@ -180,8 +190,15 @@ class Page:
     """
 
     INDENT = u"  "
-    JS = ("/js/jquery.js", "/js/CdrCalendar.js")
-    STYLESHEETS = ("/stylesheets/CdrCalendar.css", "/stylesheets/cdr.css")
+    CDN = "https://ajax.googleapis.com/ajax/libs/"
+    JS = (
+        CDN + "jquery/2.1.4/jquery.min.js",
+        CDN + "jqueryui/1.11.4/jquery-ui.min.js"
+    )
+    STYLESHEETS = (
+        CDN + "jqueryui/1.11.4/themes/smoothness/jquery-ui.css",
+        "/stylesheets/cdr.css"
+    )
     B = lxml.html.builder
 
     def __init__(self, title, **kwargs):
@@ -218,7 +235,7 @@ class Page:
                           the 'action' paramater is set
             body_classes  e.g., 'report'
         """
-        self._finished = False
+        self._finished = self._have_date_field = False
         self._html = []
         self._script = []
         self._css = []
@@ -361,6 +378,8 @@ class Page:
             classes         string to be set as the 'class' attribute of
                             the select element
             wrapper_classes classes to be added to the div wrapper
+            tooltip         if present, used as the 'title' attribute for
+                            the select element
         """
         wrapper_classes = kwargs.get("wrapper_classes")
         if wrapper_classes:
@@ -371,7 +390,10 @@ class Page:
         if "labeled-field" not in wrapper_classes:
             wrapper_classes.append("labeled-field")
         self.add('<div class="%s">' % " ".join(wrapper_classes))
-        self.add(Page.B.LABEL(Page.B.FOR(name), label))
+        label = Page.B.LABEL(Page.B.FOR(name), label)
+        #if tooltip:
+        #    label.set("title", tooltip)
+        self.add(label)
         open_tag = '<select name="%s" id="%s"' % (name, name)
         classes = kwargs.get("classes") or kwargs.get("class_")
         if classes:
@@ -384,6 +406,12 @@ class Page:
             open_tag += " multiple"
         elif len(default) > 1:
             raise Exception("Multiple defaults specified for single picklist")
+        tooltip = kwargs.get("tooltip")
+        if tooltip:
+            open_tag += ' title="%s"' % tooltip.replace('"', "&quot;")
+        onchange = kwargs.get("onchange")
+        if onchange:
+            open_tag += ' onchange="%s"' % onchange.replace('"', "&quot;")
         self.add(open_tag + ">")
         for option in options:
             if type(option) in (list, tuple):
@@ -414,6 +442,8 @@ class Page:
                             separated class names.
             wrapper_classes classes to be added to the div wrapper
             password        if True, value is not displayed
+            tooltip         if present, used as the 'title' attribute for
+                            the input element
         """
         wrapper_classes = kwargs.get("wrapper_classes")
         if wrapper_classes:
@@ -426,6 +456,9 @@ class Page:
         self.add('<div class="%s">' % " ".join(wrapper_classes))
         self.add(Page.B.LABEL(Page.B.FOR(name), label))
         field = Page.B.INPUT(id=name, name=name)
+        tooltip = kwargs.get("tooltip")
+        if tooltip:
+            field.set("title", tooltip)
         classes = kwargs.get("classes") or kwargs.get("class_")
         classes = classes or kwargs.get("class")
         if classes:
@@ -436,6 +469,10 @@ class Page:
             field.set("value", unicode(kwargs["value"]))
         if kwargs.get("password"):
             field.set("type", "password")
+        if kwargs.get("readonly"):
+            field.set("readonly", "readonly")
+        if kwargs.get("disabled"):
+            field.set("disabled", "disabled")
         self.add(field)
         self.add("</div>")
 
@@ -456,6 +493,8 @@ class Page:
                             separated class names.
             wrapper_classes classes to be added to the div wrapper
             value           initial value for the field (optional)
+            tooltip         if present, used as the 'title' attribute for
+                            the textarea element
         """
         wrapper_classes = kwargs.get("wrapper_classes")
         if wrapper_classes:
@@ -466,9 +505,13 @@ class Page:
         if "labeled-field" not in wrapper_classes:
             wrapper_classes.append("labeled-field")
         self.add('<div class="%s">' % " ".join(wrapper_classes))
-        self.add(Page.B.LABEL(Page.B.FOR(name), label))
+        label = Page.B.LABEL(Page.B.FOR(name), label)
+        self.add(label)
         value = unicode(kwargs.get("value", ""))
         field = Page.B.TEXTAREA(value, id=name, name=name)
+        tooltip = kwargs.get("tooltip")
+        if tooltip:
+            field.set("title", tooltip)
         classes = kwargs.get("classes") or kwargs.get("class_")
         classes = classes or kwargs.get("class")
         if classes:
@@ -487,6 +530,7 @@ class Page:
         """
         kwargs["classes"] = "CdrDateField"
         self.add_text_field(name, label, **kwargs)
+        self._have_date_field = True
 
     def add_menu_link(self, script, display, session=None, **kwargs):
         """
@@ -499,6 +543,15 @@ class Page:
             url = "%s?%s" % (url, urllib.urlencode(kwargs))
         link = Page.B.A(display, href=url)
         self.add(Page.B.LI(link))
+
+    def add_hidden_field(self, name, value):
+        "Utility method to insert a hidden CGI field."
+        if not value:
+            value = u""
+        if not isinstance(value, basestring):
+            value = str(value)
+        value = value and str(value) or ""
+        self.add(Page.B.INPUT(name=name, value=value, type="hidden"))
 
     def add_script(self, script):
         """
@@ -559,9 +612,11 @@ class Page:
         """
         indent = class_.INDENT * level
         if not "\n" in block:
-            return u"%s%s\n" % (indent, block)
-        lines = block.splitlines()
-        return u"".join([u"%s%s\n" % (indent, line) for line in lines])
+            result = u"%s%s\n" % (indent, block)
+        else:
+            lines = block.splitlines()
+            result = u"".join([u"%s%s\n" % (indent, line) for line in lines])
+        return result.replace(NEWLINE, "\n").replace(BR, "<br>")
 
     def _add_checkbox_or_radio_button(self, widget, group, label, value,
                                      **kwargs):
@@ -659,13 +714,25 @@ class Page:
                 self.add("""<form action="/cgi-bin/cdr/%s" method="%s">""" %
                          (self._action, self._method))
             if self._session:
-                self.add(Page.B.INPUT(name="Session", value=self._session,
-                                      type="hidden"))
+                self.add_hidden_field(SESSION, self._session)
+
     def _finish(self):
         """
         Helper function called by the send() method.
         """
         if not self._finished:
+            if self._have_date_field:
+                self.add_script("""\
+jQuery(function() {
+    jQuery('.CdrDateField').datepicker({
+        dateFormat: 'yy-mm-dd',
+        showOn: 'button',
+        buttonImageOnly: true,
+        buttonImage: "/images/calendar.png",
+        buttonText: "Select date",
+        dayNamesMin: [ "S", "M", "T", "W", "T", "F", "S" ]
+    });
+});""")
             if self._action:
                 self.add("</form>")
             if self._css:
@@ -769,6 +836,14 @@ class Report:
                           Excel output
             subtitle -    displayed underneath the banner on a web page;
                           not used for Excel output
+            page_opts -   dictionary of options to be passed to Page
+                          constructor for HTML output (for example, to
+                          get navigation buttons on the report page's
+                          banner); for more extensive modifications to
+                          the page, derive your own class from the
+                          Report class and override _create_html_page()
+            css -         optional string or sequence of strings to be
+                          added to the report page if HTML
         """
         self._title = title
         self._tables = tables
@@ -789,15 +864,31 @@ class Report:
         else:
             self._send_excel_workbook()
 
+    def _create_html_page(self, **opts):
+        """
+        Separated out from _send_html() so it can be overridden.
+        """
+        return Page(self._title, **opts)
+
     def _send_html(self):
         """
         Internal helper method for Report.send()
         """
-        banner = self._options.get("banner")
-        subtitle = self._options.get("subtitle")
-        stylesheets=["/stylesheets/cdr.css"]
-        page = Page(self._title, banner=banner, subtitle=subtitle, js=[],
-                    body_classes="report", stylesheets=stylesheets)
+        opts = {
+            "banner": self._options.get("banner"),
+            "subtitle": self._options.get("subtitle"),
+            "stylesheets": ["/stylesheets/cdr.css"],
+            "body_classes": "report",
+            "js": []
+        }
+        opts.update(self._options.get("page_opts") or {})
+        page = self._create_html_page(**opts)
+        css = self._options.get("css")
+        if css:
+            if isinstance(css, basestring):
+                css = [css]
+            for c in css:
+                page.add_css(c)
         B = page.B
         for table in self._tables:
             if table._html_callback_pre:
@@ -823,7 +914,7 @@ class Report:
                 for opt in column._options:
                     if opt == "width":
                         width = column._options["width"]
-                        cell.set("style", "width:%s;" % width)
+                        cell.set("style", "min-width:%s;" % width)
                     else:
                         cell.set(opt, column._options[opt])
                 page.add(cell)
@@ -859,33 +950,101 @@ class Report:
             page.add("</table>")
             if table._html_callback_post:
                 table._html_callback_post(table, page)
+        elapsed = self._options.get("elapsed")
+        if elapsed:
+            page.add(page.B.P("elapsed: %s" % elapsed,
+                              page.B.CLASS("footnote")))
         page.send()
+
+    @staticmethod
+    def xf(**opts):
+        """
+        By default cells are top aligned vertically, with horizontal
+        alignment determined by the type of data (right for integers,
+        left for everything else), without bold font, and with word
+        wrapping turned on. This function wraps the style creation
+        functionality so that report writers can create a custom style
+        object to override the default styling by passing the object
+        as the value of the sheet_style optional argument for the
+        Cell class constructor. If the options here don't support
+        the styling you want, you can adjust the properties of the
+        returned object yourself.
+
+        https://github.com/python-excel/xlwt/blob/master/xlwt/Formatting.py
+
+        Optional arguments:
+
+            header - if True, apply bold font with white text against
+                     a colored background centered in the cell; used
+                     for column headers
+            banner - same as header, with increased height (for first row)
+            wrap   - if set to False, turns off word wrapping
+            horiz  - one of:
+                       "left"
+                       "center"
+                       "right"
+                       "general" (the default)
+            vert    - one of:
+                       "top" (the default)
+                       "center"
+                       "bottom"
+            easyxf  - if set, overrides the default string passed to
+                      xlwt.easyxf(), creating the object to which the
+                      other options will be applied
+        """
+        horz = {
+            "left": xlwt.Alignment.HORZ_LEFT,
+            "center": xlwt.Alignment.HORZ_CENTER,
+            "right": xlwt.Alignment.HORZ_RIGHT,
+            "general": xlwt.Alignment.HORZ_GENERAL
+        }
+        vert = {
+            "top": xlwt.Alignment.VERT_TOP,
+            "center": xlwt.Alignment.VERT_CENTER,
+            "bottom": xlwt.Alignment.VERT_BOTTOM
+        }
+        wrap = {
+            True: xlwt.Alignment.WRAP_AT_RIGHT,
+            False: xlwt.Alignment.NOT_WRAP_AT_RIGHT
+        }
+        settings = {
+            "borders": "top thin, bottom thin, left thin, right thin",
+            "align": "wrap True, vert top"
+        }
+        if opts.get("header") or opts.get("banner"):
+            font = ["colour white", "bold True"]
+            if opts.get("banner"):
+                font.append("height 240")
+            settings["pattern"] = "pattern solid, fore_colour hdrbg"
+            settings["font"] = ", ".join(font)
+            settings["align"] = "wrap True, vert centre, horiz centre"
+        default = ";".join(["%s: %s" % (k, settings[k]) for k in settings])
+        style = xlwt.easyxf(opts.get("easyxf", default))
+        if "wrap" in opts:
+            style.alignment.wrap = wrap.get(opts["wrap"],
+                                            xlwt.Alignment.WRAP_AT_RIGHT)
+        if "horiz" in opts:
+            style.alignment.horz = horz.get(opts["horiz"],
+                                            xlwt.Alignment.HORZ_GENERAL)
+        if "vert" in opts:
+            style.alignment.vert = vert.get(opts["vert"],
+                                            xlwt.Alignment.VERT_TOP)
+        if "bold" in opts:
+            style.font.bold = opts["bold"] and True or False
+        return style
 
     def _send_excel_workbook(self):
         """
         Internal helper method for Report.send()
         """
         book = xlwt.Workbook(encoding="UTF-8")
-        xlwt.add_palette_colour("hdrbg", 0x21)
         book.set_colour_RGB(0x21, 153, 52, 102) #993366
-        borders = "borders: top thin, bottom thin, left thin, right thin"
-        self._header_style = xlwt.easyxf("pattern: pattern solid, fore_colour "
-                                         "hdrbg; font: colour white, bold True;"
-                                         "align: wrap True, vert centre, "
-                                         "horiz centre;" + borders)
-        self._banner_style = xlwt.easyxf("pattern: pattern solid, fore_colour "
-                                         "hdrbg; font: colour white, bold True,"
-                                         "height 240; align: wrap True,"
-                                         "vert centre, horiz centre;"
-                                         + borders)
-        self._data_style = xlwt.easyxf("align: wrap True, vert top;"
-                                       + borders)
-        self._bold_data_style = xlwt.easyxf("align: wrap True, vert top; "
-                                            "font: bold True;" + borders)
-        self._right_data_style = xlwt.easyxf("align: wrap True, horiz right, "
-                                             "vert top;" + borders)
-        self._center_data_style = xlwt.easyxf("align: wrap True, vert top, "
-                                              "horiz centre;" + borders)
+        self._data_style = self.xf()
+        self._header_style = self.xf(header=True)
+        self._banner_style = self.xf(banner=True)
+        self._bold_data_style = self.xf(bold=True)
+        self._right_data_style = self.xf(horiz="right")
+        self._center_data_style = self.xf(horiz="center")
         count = 1
         for table in self._tables:
             self._add_worksheet(book, table, count)
@@ -946,7 +1105,9 @@ class Report:
                     raise Exception("too many cells for row %d" % row_number)
 
                 # Assemble the values to be written
-                values = "\n".join(Report.Cell._get_values(cell))
+                values = Report.Cell._get_values(cell, True)
+                if type(values) is not int:
+                    values = u"\n".join(values)
                 style = self._data_style
                 if isinstance(cell, self.Cell):
                     if cell._sheet_style:
@@ -958,8 +1119,8 @@ class Report:
                     elif cell._center:
                         style = self._center_data_style
                     if cell._href:
-                        vals = values.replace('"', '""')
-                        formula = 'HYPERLINK("%s";"%s")' % (cell._href, vals)
+                        vals = unicode(values).replace(u'"', u'""')
+                        formula = u'HYPERLINK("%s";"%s")' % (cell._href, vals)
                         values = xlwt.Formula(formula)
                     if cell._colspan or cell._rowspan:
                         colspan = cell._colspan and int(cell._colspan) or 1
@@ -1214,7 +1375,7 @@ class Report:
                 element.append(br)
 
         @staticmethod
-        def _get_values(cell):
+        def _get_values(cell, preserve_int=False):
             """
             Returns the values for a table cell as an array
 
@@ -1229,11 +1390,103 @@ class Report:
                 values = cell._value
             else:
                 values = cell
+            if type(values) is int and preserve_int:
+                return values
             if type(values) not in (list, tuple):
                 return [unicode(values)]
             elif not values:
                 return [""]
             return [unicode(v) for v in values]
+
+class Control:
+    """
+    Base class for top-level controller for a CGI script, which
+    puts up a request form (typically for a report), collects
+    the options specified by the user, and fulfills the request.
+    """
+    PAGE_TITLE = "CDR Administration"
+    REPORTS_MENU = SUBMENU = "Reports Menu"
+    ADMINMENU = MAINMENU
+    SUBMIT = "Submit"
+    LOG_OUT = "Log Out"
+    def __init__(self, title=None, subtitle=None, **opts):
+        """
+        Sets up a skeletal controller; derived class fleshes it out,
+        including fetching and validating options for the specific
+        report.
+        """
+        self.started = datetime.datetime.now()
+        self.title = title or ""
+        self.subtitle = subtitle
+        self.opts = opts
+        if self.opts.get("open_cursor", True):
+            self.cursor = cdrdb.connect("CdrGuest").cursor()
+        else:
+            self.cursor = None
+        self.fields = cgi.FieldStorage()
+        self.session = getSession(self.fields, cursor=self.cursor)
+        self.request = getRequest(self.fields)
+        self.buttons = []
+        for button in (self.SUBMIT, self.SUBMENU, self.ADMINMENU, self.LOG_OUT):
+            if button:
+                self.buttons.append(button)
+        self.script = os.path.basename(sys.argv[0])
+    def run(self):
+        "Derived class overrides this method if there are custom actions."
+        try:
+            if self.request == MAINMENU:
+                navigateTo("Admin.py", self.session)
+            elif self.request == self.REPORTS_MENU:
+                navigateTo("Reports.py", self.session)
+            elif self.request == self.LOG_OUT:
+                logout(self.session)
+            elif self.request == self.SUBMIT:
+                self.show_report()
+            else:
+                self.show_form()
+        except Exception, e:
+            bail(str(e))
+    def show_report(self):
+        "Override this method if you have a non-tabular report."
+        tables = self.build_tables()
+        buttons = []
+        for button in (self.SUBMENU, self.ADMINMENU, self.LOG_OUT):
+            if button:
+                buttons.append(button)
+        opts = {
+            "banner": self.title or "",
+            "subtitle": self.subtitle,
+            "page_opts": {
+                "buttons": buttons,
+                "action": buttons and self.script or None
+            }
+        }
+        opts = self.set_report_options(opts)
+        report = Report(self.PAGE_TITLE or "", tables, **opts)
+        report.send()
+    def show_form(self):
+        opts = {
+            "buttons": self.buttons,
+            "action": self.script,
+            "subtitle": self.title,
+            "session": self.session
+        }
+        opts = self.set_form_options(opts)
+        form = Page(self.PAGE_TITLE or "", **opts)
+        self.populate_form(form)
+        form.send()
+    def build_tables(self):
+        "Stub, to be overridden by real controllers."
+        return []
+    def set_report_options(self, opts):
+        "Stub, to be overridden by real controllers."
+        return opts
+    def set_form_options(self, opts):
+        "Stub, to be overridden by real controllers."
+        return opts
+    def populate_form(self, form):
+        "Stub, to be overridden by real controllers."
+        pass
 
 #----------------------------------------------------------------------
 # Display the header for a CDR web form.
@@ -1262,24 +1515,65 @@ def rptHeader(title, bkgd = 'FFFFFF', stylesheet=''):
     return html
 
 #----------------------------------------------------------------------
+# Scrubber
+#----------------------------------------------------------------------
+def scrubStr(chkStr, charset="[^A-Za-z0-9 -]", bailout=True,
+             msg="Invalid content in data"):
+    """
+    Ensure that only legal characters appear in the passed string.
+
+    Pass:
+        chkStr  - String to scrub.
+        charset - Allowed characters in the string.  The default set is
+                  suitable for Request, Session, and possibly other strings.
+        bailout - True = bail(msg) if any unallowed chars found.
+        msg     - Default bail msg, purposely vague to avoid giving
+                  clues to hackers.
+
+    Return:
+        If scrubbed string is unchanged or bailout == False:
+            Return scrubbed string.
+        Returns passed string if it's None or ''
+    """
+    if not chkStr:
+        return chkStr
+
+    scrub = re.sub(charset, "", chkStr)
+    if scrub != chkStr and bailout:
+        bail(msg)
+
+    return scrub
+
+#----------------------------------------------------------------------
 # Get a session ID based on current form field values.
 # Can't use this funtion to log into the CDR any more (OCECDR-3849).
-# Scrub the returned value.
+# Validate the returned value.
 #----------------------------------------------------------------------
-def getSession(fields):
-    session = fields.getvalue(SESSION)
-    if session:
-        return re.sub("[^A-Za-z0-9 -]", "", session)
-    return None
+def getSession(fields, **opts):
+    session = fields.getvalue(SESSION, None)
+
+    # Bail if required session is missing. I'm tempted to make required
+    # the default.
+    if not session:
+        if opts.get("required"):
+            bail("Session missing")
+        else:
+            return session
+
+    # Make sure it's an active session.
+    query = cdrdb.Query("session", "id")
+    query.where(query.Condition("name", session))
+    query.where("ended IS NULL")
+    rows = query.execute(opts.get("cursor")).fetchall()
+    if not rows:
+        bail("Session not active")
+    return session
 
 #----------------------------------------------------------------------
 # Get the name of the submitted request. Scrub the returned value.
 #----------------------------------------------------------------------
 def getRequest(fields):
-    request = fields.getvalue(REQUEST)
-    if request:
-        return re.sub("[^A-Za-z0-9 -]", "", request)
-    return None
+    return scrubStr(fields.getvalue(REQUEST, None))
 
 #----------------------------------------------------------------------
 # Send an HTML page back to the client.
@@ -1317,7 +1611,8 @@ def sendPage(page, textType = 'html', parms='', docId='', docType='',
 #----------------------------------------------------------------------
 # Emit an HTML page containing an error message and exit.
 #----------------------------------------------------------------------
-def bail(message, banner = "CDR Web Interface", extra = None, logfile = None):
+def bail(message=TAMPERING, banner="CDR Web Interface", extra=None,
+         logfile=None):
     """
     Send an error page to the browser with a specific banner and title.
     Pass:
@@ -1398,74 +1693,48 @@ def logout(session):
 #----------------------------------------------------------------------
 # Display the CDR Administation Main Menu.
 #----------------------------------------------------------------------
-def mainMenu(session, news = None):
-
-    # Save the session text, before converting to "?Session=session"
-    sessionText = session
-
-    userPair = cdr.idSessionUser(session, session)
-    session  = "?%s=%s" % (SESSION, session)
-    title    = "CDR Administration"
-    section  = "Main Menu"
-    buttons  = []
-    hdr      = u"" + header(title, title, section, "", buttons)
-    extra    = news and ("<H2>%s</H2>\n" % news) or ""
-    menu     = """\
-    <ol>
-"""
-    # We don't use EditFilters anymore
-    # --------------------------------
-    #try:
-    #    if userPair[0].lower() == 'venglisc':
-    #        menu += """\
-    # <li>
-    #  <a href='%s/EditFilters.py%s'>Manage Filters (Just for you, Volker!)</a>
-    # </li>
-#""" % (BASE, session)
-    #except:
-    #    pass
+def mainMenu(session, news=None):
 
     try:
-        # Identify the groups of the user
-        # -------------------------------
-        # userInfo = cdr.getUser((userPair[0], userPair[1]), userPair[0])
-        userInfo = cdr.getUser(sessionText, userPair[0])
+        name = cdr.idSessionUser(session, session)[0]
+        user = cdr.getUser(session, name)
     except:
-        bail('Unable to identify permissions for user. '
-             'Has your session timed out?')
-
-    # If returne from getUser is a string, it's an error message
-    if type(userInfo) == type(""):
-        bail(userInfo)
-
-    # Creating a menu for users with only GUEST permission and one
-    # for all others
-    # ------------------------------------------------------------
-    if 'GUEST' in userInfo.groups and len(userInfo.groups) < 2:
-        for item in (
-            ('GuestUsers.py',    'Guest User'                      ),
-            ('Logout.py',        'Log Out'                         )
-            ):
-            menu += """\
-     <li><a href='%s/%s%s'>%s</a></li>
-""" % (BASE, item[0], session, item[1])
+        user = ""
+    if isinstance(user, basestring):
+        bail("Missing or expired session")
+    menus = (
+        ("Board Manager Menu Users", "BoardManagers.py", "OCCM Board Managers"),
+        ("CIAT/OCCM Staff Menu Users", "CiatCipsStaff.py", "CIAT/OCCM Staff"),
+        ("Developer/SysAdmin Menu Users", "DevSA.py",
+         "Developers/System Administrators")
+    )
+    available = []
+    for group, script, label in menus:
+        if group in user.groups:
+            available.append((script, label))
+    if available:
+        available.append(("Logout.py", "Log Out"))
     else:
-        for item in (
-            ('BoardManagers.py', 'OCCM Board Managers'             ),
-            ('CiatCipsStaff.py', 'CIAT/OCCM Staff'                 ),
-            ('DevSA.py',         'Developers/System Administrators'),
-            ('GuestUsers.py',    'Guest User'                      ),
-            ('Logout.py',        'Log Out'                         )
-            ):
-            menu += """\
-     <li><a href='%s/%s%s'>%s</a></li>
-""" % (BASE, item[0], session, item[1])
+        available = [("GuestUsers.py", "Guest User")]
 
-    sendPage(hdr + extra + menu + """\
-    </ol>
-  </form>
- </body>
-</html>""")
+    # If user is only in one of the groups above (with 'Logout' added),
+    # make the menu for that group the landing page and jump directly to
+    # it. The navigateTo() call doesn't return. But don't bypass this
+    # page if there's news to show.
+    if len(available) < 3 and not news:
+        navigateTo(available[0][0], session)
+
+    opts = { "subtitle": "Main Menu", "body_classes": "admin-menu" }
+    page = Page("CDR Administration", **opts)
+    section  = "Main Menu"
+    if news:
+        style = "color: green; font-weight: bold; font-style: italic;"
+        page.add(page.B.P(news, style=style))
+    page.add("<ol>")
+    for script, label in available:
+         page.add_menu_link(script, label, session)
+    page.add("</ol>")
+    page.send()
 
 #----------------------------------------------------------------------
 # Navigate to menu location or publish preview.
@@ -1658,9 +1927,9 @@ def pubStatusList(conn, fName):
 """ % fName
 
 #----------------------------------------------------------------------
-# Generate picklist for countries.
+# Generate picklist for countries.  See generateHtmlPicklist() comments.
 #----------------------------------------------------------------------
-def countryList(conn, fName):
+def countryList(conn, fName, valCol=-1):
     query  = """\
   SELECT d.id, d.title
     FROM document d
@@ -1670,12 +1939,13 @@ def countryList(conn, fName):
 ORDER BY d.title
 """
     pattern = "<option value='CDR%010d'>%s &nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern)
+    return generateHtmlPicklist(conn, fName, query, pattern,
+                                valCol=valCol, valPat='CDR%010d')
 
 #----------------------------------------------------------------------
 # Generate picklist for states.
 #----------------------------------------------------------------------
-def stateList(conn, fName):
+def stateList(conn, fName, valCol=-1):
     query  = """\
 SELECT DISTINCT s.id,
                 s.title,
@@ -1688,12 +1958,13 @@ SELECT DISTINCT s.id,
           WHERE clink.path = '/PoliticalSubUnit/Country/@cdr:ref'
        ORDER BY 2, 3"""
     pattern = "<option value='CDR%010d'>%s [%s]&nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern)
+    return generateHtmlPicklist(conn, fName, query, pattern,
+                                valCol=valCol, valPat='CDR%010d')
 
 #----------------------------------------------------------------------
 # Generate picklist for GlossaryAudience.
 #----------------------------------------------------------------------
-def glossaryAudienceList(conn, fName):
+def glossaryAudienceList(conn, fName, valCol=-1):
     defaultOpt = "<option value='' selected>Select an audience...</option>\n"
     query  = """\
 SELECT DISTINCT value, value
@@ -1703,13 +1974,13 @@ SELECT DISTINCT value, value
        ORDER BY 1"""
     pattern = "<option value='%s'>%s&nbsp;</option>"
     return generateHtmlPicklist(conn, fName, query, pattern,
-                                firstOpt = defaultOpt)
+                    firstOpt=defaultOpt, valCol=valCol, valPat='CDR%010d')
 
 #----------------------------------------------------------------------
 # Generate picklist for GlossaryTermStatus.
 #----------------------------------------------------------------------
 def glossaryTermStatusList(conn, fName,
-                           path = '/GlossaryTermName/TermNameStatus'):
+                           path='/GlossaryTermName/TermNameStatus', valCol=-1):
     defaultOpt = "<option value='' selected>Select a status...</option>\n"
     query  = """\
 SELECT DISTINCT value, value
@@ -1718,13 +1989,13 @@ SELECT DISTINCT value, value
        ORDER BY 1""" % path
     pattern = "<option value='%s'>%s&nbsp;</option>"
     return generateHtmlPicklist(conn, fName, query, pattern,
-                                firstOpt = defaultOpt)
+                                firstOpt=defaultOpt, valCol=valCol)
 
 
 #----------------------------------------------------------------------
 # Generate picklist for GlossaryTermStatus.
 #----------------------------------------------------------------------
-def glossaryTermDictionaryList(conn, fName):
+def glossaryTermDictionaryList(conn, fName, valCol=-1):
     defaultOpt = "<option value='' selected>Select a dictionary...</option>\n"
     query  = """\
 SELECT DISTINCT value, value
@@ -1734,8 +2005,22 @@ SELECT DISTINCT value, value
        ORDER BY 1"""
     pattern = "<option value='%s'>%s&nbsp;</option>"
     return generateHtmlPicklist(conn, fName, query, pattern,
-                                firstOpt = defaultOpt)
+                                firstOpt=defaultOpt, valCol=valCol)
 
+
+#----------------------------------------------------------------------
+# Generate picklist for OrganizationType
+#----------------------------------------------------------------------
+def organizationTypeList(conn, fName, valCol=-1):
+    query  = """\
+  SELECT DISTINCT value, value
+    FROM query_term
+   WHERE path = '/Organization/OrganizationType'
+     AND value IS NOT NULL
+     AND value <> ''
+ORDER BY 1"""
+    pattern = "<option value='%s'>%s &nbsp;</option>"
+    return generateHtmlPicklist(conn, fName, query, pattern, valCol=valCol)
 
 #----------------------------------------------------------------------
 # Generic HTML picklist generator.
@@ -1745,10 +2030,25 @@ SELECT DISTINCT value, value
 # in the pattern argument, and in the correct order.
 #
 # For example invocations, see stateList and countryList above.
+#
+# Similarly, if valCol >= 0, there must be an actual column corresponding
+# to the valCol number.  See comments below.
 #----------------------------------------------------------------------
-def generateHtmlPicklist(conn, fieldName, query, pattern,
-                         selAttrs=None, firstOpt=None, lastOpt=None):
+def generateHtmlPicklist(conn, fieldName, query, pattern, selAttrs=None,
+                         firstOpt=None, lastOpt=None, valCol=-1, valPat=None):
     """
+    Generate one of two outputs:
+
+     1) A string of HTML that implements a option list (picklist) for a
+        <select> element in an HTML form field, or
+     2) A list of values that the user might have picked from in order to
+        validate that nothing untoward happened betwixt list selection
+        and selection processing.
+
+    The goal is to enable a program to use identical software to create a
+    picklist and to validate a selection from that list in case of bugs or
+    hacking (or AppScan) attempts to upset it.
+
     Pass:
         conn      - Database connection.
         fieldName - Name of the entire selection field, <select name=...
@@ -1761,6 +2061,22 @@ def generateHtmlPicklist(conn, fieldName, query, pattern,
                       e.g.: "<option value='any' selected='1'>Any</option>\n"
         lastOpt   - Optional line(s) at the end of the option list
                       e.g.: "<option value='all'>All</option>\n"
+        valCol    - If valCol > -1, this call is not to generate a picklist,
+                    but to generate a validation list for checking the
+                    picklist.  valCol is the column number of the query rows.
+                      e.g.: query = SELECT id, name FROM ...
+                            if valCol == 0, return a list of ids.
+                            if valCol == 1, return a list of names.
+                    Bad things may happen if valCol >= the number of actual
+                    columns selected in the query.
+        valPat    - If not None, impose this string intepolation pattern on
+                    each returned valid value
+                      e.g., valPat='CDR%010d'
+
+    Return:
+        if valCol < 0:  Return a string of HTML containing a select option
+                        list from which a user can pick a value.
+        if valCol >= 0: Return a list of the values which may be picked.
     """
     # Select rows from the database
     try:
@@ -1772,6 +2088,14 @@ def generateHtmlPicklist(conn, fieldName, query, pattern,
     except cdrdb.Error, info:
         bail('Failure retrieving %s list from CDR: %s' % (fieldName,
                                                           info[1][0]))
+
+    # For validation, we don't need HTML, just a list of valid values
+    if valCol >= 0:
+        if valPat:
+            return [valPat % row[valCol] for row in rows]
+        return [row[valCol] for row in rows]
+
+    # Else generate a picklist
     html = "  <select name='%s'" % fieldName
 
     # Add any requested attributes to the select
@@ -1804,7 +2128,51 @@ def generateHtmlPicklist(conn, fieldName, query, pattern,
 #----------------------------------------------------------------------
 def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
                             conn, errors = "", extraField = None):
+    """
+    Create a form to take in parameters for advanced searches.
+    This routine creates many types of forms, based on passed parameters.
 
+    Pass:
+        session   - String identifying the CDR login session
+        title     - HTML TITLE of the form on screen.
+        script    - Name of the ACTION script in cgi-bin/cdr that will
+                    process the FORM node created by this script.
+        fields    - A sequence of sequences.  Each element of the containing
+                    sequence describes one field of the form.  The sequence
+                    with an individual field description contains:
+                        Label to display to the user.
+                        HTML form field name.
+                        Optional function identifier to invoke to generate
+                            additional information, such as a select list.
+                            If present, the function will be called, passing
+                            an active database connection and the name of
+                            the HTML form field for which the function is
+                            being invoked, i.e., field[1] of this sequence.
+                    Each field is displayed as a row in a table on the form.
+        buttons   - A sequence of sequences defining form buttons.
+                    Each inner sequence contains three elements:
+                        Button type, e.g., 'submit', 'reset'
+                        Button HTML element name, e.g., 'HelpButton'
+                        Button Label, e.g., 'Help'
+                    Buttons are displayed in a row at the bottom of the form.
+        subtitle  - A subtitle displayed to the user, immediately under the
+                    title "CDR Advanced Search"
+        conn      - An active database connection, passed back in a script
+                    function invocation if needed.  May be None if there
+                    are no function needing to be invoked.  See
+                    "Optional function identifier" above.
+        errors    - An optional error string, displayed near the top of the
+                    form page when it is desirable to tell a user that
+                    an error occurred.
+        extraField- Optional extra rows to add to the form table between the
+                    form fields and the buttons at the bottom.
+
+    Return:
+        A string of HTML containing the base content of the form.  It is the
+        caller's responsibility to add anything else desired to the bottom of
+        the form, then add the closing </FORM>, </BODY>, and </HTML> tags.
+        The caller may then send the form page to the client.
+"""
     html = """\
 <!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
 <HTML>
@@ -2621,3 +2989,249 @@ def makeCssForPrettyXml(tagNameColor="blue", attrNameColor="maroon",
 #----------------------------------------------------------------------
 def is_date(date):
     return re.match(r"^\d\d\d\d-\d\d-\d\d$", str(date)) and True or False
+
+def _valParmHelper(val, bailout=True, reveal=True, msg=None):
+    """
+    If validation has failed for a value, this helper function handles
+    bailouts and messages.
+
+    Pass:
+        val     - value which failed validation
+        bailout - True = Invoke cdrcgi.bail()
+        reveal  - False = hide the value that failed, else show it in the
+                  bail.  Only meaningful if bailout == True.
+        msg     - Custom message to display on error.  Else use defaults.
+                  Only meaningful if bailout == True.
+
+    Return:
+        False, or no return if bailing out.
+    """
+    if bailout:
+        if reveal:
+            if not msg:
+                msg = 'Invalid parameter value received: "%s"' % val
+        else:
+            if not msg:
+                msg = 'Invalid parameter value received'
+        bail(msg)
+
+    # Caller just wants pass/fail, no bail
+    return False
+
+# Default values for valParm functions
+# To change defaults for all valParm calls in a single script:
+# In the script that imports cdrcgi:
+#    cdrcgi.BAILOUT_DEFAULT = False # A new value for all valParm calls
+# Other scripts are unaffected
+BAILOUT_DEFAULT = True # True = bail() if validation faile
+REVEAL_DEFAULT  = True # True = Reveal invalid values to the user
+
+# Some common, frequently used, pre-tested, validation patterns
+VP_UNSIGNED_INT = r'^\d+$'
+VP_SIGNED_INT   = r'^(-|\+)?\d+$'
+VP_PADDED_INT   = r'^\s*\d+\s*$'
+VP_SIGNED_PAD   = r'^\s*(-|\+)?\d+\s*$'
+VP_US_ZIPCODE   = r'^\s*\d{5}(-\d{4})?\s*$'
+
+def valParmVal(val, **opts):
+    """
+    Validate a value, typically a CGI parameter, against a list
+    of valid values or a regular expression.
+
+    This should not be too expensive in the intended cases of validating
+    parameters passed in from CGI forms.
+
+    Note that regex and valList are both optional. If both are empty,
+    and emptyOK is False, then the value(s) will always fail validation.
+
+    Pass:
+        val     - Value(s) to validate.
+                  May be a single value, a list of values, or even a list
+                  of lists of values.
+        valList - List of valid values. If only a single value is
+                  acceptable, it can be passed either as a string,
+                  or as a sequence containing a single string.
+        regex   - Regular expression for testing validity.
+                  Use $ at the end of the expression, unless you
+                  want the value(s) accepted if the beginning of
+                  each value matches the expression
+        iCase   - if True, ignore case when testing the value(s)
+        emptyOK - If True, empty/missing values are accepted as valid.
+                  If val is a sequence this option is applied to the
+                  individual values in the sequence, not to the sequence
+                  itself. In other words, if an empty sequence is
+                  passed for val, True is always returned. If that's
+                  not appropriate, use a separate test of your sequence
+                  to ensure that it has at least one element.
+
+        See _valParmHelper for the rest.
+
+    Return:
+        True = passed, False = failed, or no return if bailout.
+    """
+    if hasattr(val, "__iter__"):
+        return all([valParmVal(v, **opts) for v in val])
+    if not val and (opts.get("emptyOK") or opts.get("empty_ok")):
+        return True
+
+    # Get the other optional parameters.
+    regex = opts.get("regex")
+    bailout = opts.get("bailout", BAILOUT_DEFAULT) and True or False
+    reveal = opts.get("reveal", REVEAL_DEFAULT) and True or False
+    icase = (opts.get("icase") or opts.get("iCase")) and True or False
+    msg = opts.get("msg")
+
+    # Validate the value against a regular expression
+    if regex:
+        flags = icase and re.IGNORECASE or 0
+        if re.match(regex, val, flags):
+            return True
+    else:
+        values = opts.get("valList") or opts.get("val_list") or []
+        if isinstance(values, basestring):
+            values = [values]
+        cval = val
+        if icase:
+            values = [v.lower() for v in values]
+            cval = val.lower()
+        if cval in values:
+            return True
+        fp = open("d:/tmp/val-parm-val.log", "a")
+        fp.write("cval=%s values=%s\n" % (cval, values))
+        fp.close()
+    return _valParmHelper(val, bailout, reveal, msg)
+
+def valParmEmail(val, **opts):
+    """
+    Validate an email format.
+
+    This uses the Python email.utils.parseaddr() function to break the address
+    into name and email parts, then does ultra simple additional validation.
+
+    It is a very permissive function.  It will not catch every error, but
+    should allow all valid addresses through.  Accepts anything with:
+
+        text1@text2 - where text2 includes at least one '.'.
+
+    Pass:
+        val = Email address to validate
+        See _valParmHelper for the rest.
+
+    Return:
+        Email portion of the string, e.g., for '"Alan Meyer" <***REMOVED***>'
+        returns '***REMOVED***'.  Test for "not False"
+        Note: email address may still be wrong and even absurdly wrong.
+
+        False = Failed format checking
+                Note: email address may still be
+    """
+
+    # Allow missing val if so requested.
+    if not val and (opts.get("empty_ok") or opts.get("emptyOK")):
+        return True
+
+    # Get the optional paramaters
+    bailout = opts.get("bailout", BAILOUT_DEFAULT) and True or False
+    reveal = opts.get("reveal", REVEAL_DEFAULT) and True or False
+    msg = opts.get("msg")
+
+    # Parse out the parts
+    from email.utils import parseaddr
+    (name, email) = parseaddr(val)
+
+    # If it's completely screwed up
+    if not email:
+        return _valParmHelper(val, bailout, reveal, msg)
+
+    # Simple validation, may improve it later, but full RFC requires
+    # an incredible thousand character regex.
+    match = re.search(r"[^@]+@[^@\.]+\.[^@]+$", email)
+    if match:
+        return email
+
+    return _valParmHelper(val, bailout, reveal, msg)
+
+def valParmDate(val, fmt="ISOdate", **opts):
+    """
+    Uses time.strptime for validation via cdr.strptime().  This will validate
+    semantics as well as format.
+
+    Pass:
+        val    - Date as a string.
+        fmt    - Standard python datetime format, or 'ISOdate'.
+                 Default is ISOdate, no time, e.g., '2015-07-04'.
+                 Invalid date format can also cause False to be returned.
+        See _valParmHelper for the rest.
+
+    Return:
+        True = passed, False = failed, or no return if bail.
+    """
+
+    # Allow missing value if so requested.
+    if not val and (opts.get("empty_ok") or opts.get("emptyOK")):
+        return True
+
+    # Get the optional paramaters
+    fmt = opts.get("fmt", "ISOdate")
+    bailout = opts.get("bailout", BAILOUT_DEFAULT) and True or False
+    reveal = opts.get("reveal", REVEAL_DEFAULT) and True or False
+    msg = opts.get("msg")
+
+    # strptime accepts a non-ISO format, e.g., 2015-7-4 instead of 2015-07-04
+    # Don't allow that if ISO is requested
+    if fmt == 'ISOdate':
+        if not is_date(val):
+            return _valParmHelper(val, bailout, reveal, msg)
+
+        # Pattern passed, set format for strptime value check
+        fmt = '%Y-%m-%d'
+
+    # Check the numbers against actual dates
+    try:
+        if cdr.strptime(val, fmt) is not None:
+            return True
+    except ValueError:
+        pass
+
+    # Special case for handling datetime that might have optional
+    # milliseconds or microseconds attached
+    try:
+        fmt2 = fmt + ".%f"
+        if cdr.strptime(val, fmt2) is not None:
+            return True
+    except ValueError:
+        pass
+
+    # Date check failed
+    return _valParmHelper(val, bailout, reveal, msg)
+
+def log_fields(fields, **opts):
+    """
+    Log the parameters sent to a CGI script.
+
+    Pass:
+        fields    - from cgi.FieldStorage()
+        program   - name of script to be logged (optional)
+        logfile   - optional override of cdr.DEFAULT_LOGFILE
+
+    Return:
+        nothing
+    """
+    program = opts.get("program")
+    logfile = opts.get("logfile")
+    values = []
+    for name in fields.keys():
+        field = fields[name]
+        if hasattr(field, "value"):
+            value = field.value
+        else:
+            value = [item.value for item in field]
+        values.append((name, value))
+    if program:
+        message = "%s called with %s" % (repr(program), repr(dict(values)))
+    else:
+        message = repr(dict(values))
+    if logfile:
+        cdr.logwrite(message, logfile)
+    else:
+        cdr.logwrite(message)
