@@ -5,8 +5,18 @@
 # Simple Web service helper classes.
 #
 #----------------------------------------------------------------------
-import os, sys, re, xml.dom.minidom
+import lxml.etree as etree
+import os
+import re
+import sys
+import xml.dom.minidom
 
+USE_ETREE = False
+
+#----------------------------------------------------------------------
+# Custom exception class to let handlers catch problems with HTTP
+# method specification.
+#----------------------------------------------------------------------
 class WrongMethod(Exception):
     pass
 
@@ -28,11 +38,13 @@ except ImportError:
 # document used to transmit the request.
 #
 #   message  - the raw XML for the request
-#   doc      - the DOM node for top-level element of the document
+#   doc      - the node for top-level element of the document
 #   type     - string for the name of the command
 #   logLevel - value controlling how much logging is performed
 #              by the server; set by the client using the HTTP
 #              headers.
+#
+# 2015-12-08: add option to use lxml.etree instead of minidom
 #----------------------------------------------------------------------
 class Request:
 
@@ -66,7 +78,7 @@ Access-Control-Allow-Methods: POST, GET, OPTIONS
 
 """)
                 sys.exit(0)
-                
+
             if requestMethod != "POST":
                 raise WrongMethod("Request method should be POST; was %s" %
                                   requestMethod)
@@ -92,15 +104,18 @@ Access-Control-Allow-Methods: POST, GET, OPTIONS
             if debugLog:
                 debugLog("message: %s" % self.message, 2)
         try:
-            dom = xml.dom.minidom.parseString(self.message)
+            if USE_ETREE:
+                self.doc = etree.XML(self.message)
+                self.type = self.doc.tag
+            else:
+                dom = xml.dom.minidom.parseString(self.message)
+                self.doc  = dom.documentElement
+                self.type = self.doc.nodeName
         except Exception, e:
             debugLog("Failure parsing request: %s" % e)
             debugLog(repr(self.message))
             raise Exception("Failure parsing request: %s" % e)
-        self.doc  = dom.documentElement
-        self.type = self.doc.nodeName
         try:
-            #self.logLevel = int(self.doc.getAttribute('log-level'))
             self.logLevel = int(debugLevel)
         except:
             self.logLevel = 1
@@ -130,8 +145,9 @@ Access-Control-Allow-Methods: POST, GET, OPTIONS
 class Response:
 
     def __init__(self, body):
+        if not isinstance(body, basestring):
+            body = etree.tostring(body, pretty_print=True)
         self.body = body
-        
 
     def send(self, contentType = 'text/xml'):
         if type(self.body) == unicode:
