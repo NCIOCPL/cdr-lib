@@ -2948,7 +2948,7 @@ class countPublishedDocs:
         for status in ctgovKeys:
             # Counting total of active and closed CTGovProtocols
             # --------------------------------------------------
-            if status in ('Active', 'Approved-not yet active'):
+            if status in ('Active', 'Not yet active'):
                  acount += ctgovCount[status]
             else:
                  ccount += ctgovCount[status]
