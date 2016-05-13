@@ -242,6 +242,24 @@ class CdrRepublisher:
         self.__docs = {}
         if docList:
             for docId in docList:
+                # Users might accidentally try to publish individual
+                # modules.  Need to ensure we're dealing with a true
+                # summary document
+                # --------------------------------------------------
+                self.__cursor.execute("""\
+                    SELECT 'x'
+                      FROM query_term
+                     WHERE path = '/Summary/@ModuleOnly'
+                       AND doc_id = ?""",
+                                      docId, timeout = 300)
+                row = self.__cursor.fetchone()
+                if row:
+                    cdr.logwrite("republish(): *** Invalid document",
+                                                                 cdr.PUBLOG)
+                    cdr.logwrite("             *** Skipping module %s" % docId,
+                                                                 cdr.PUBLOG)
+                    continue
+
                 self.__addDocumentToSet(docId)
 
         # Add to the list documents identified by previous publishing job
@@ -274,22 +292,36 @@ class CdrRepublisher:
                         ON t.id = v.doc_type
                       JOIN document d
                         ON d.id = v.id
+           LEFT OUTER JOIN query_term_pub q
+                        ON v.id = q.doc_id
+                       AND q.path = '/Summary/@ModuleOnly'
                      WHERE v.publishable = 'Y'
                        AND v.val_status = 'V'
                        AND d.active_status = 'A'
-                       AND t.name = ?""", docType, timeout = 300)
+                       AND t.name = ?
+                       AND q.value is null
+                  ORDER BY v.id""", docType, timeout = 300)
 
             # ... or just those already sent to Cancer.gov, as requested.
             else:
+                # If selecting summaries we need to prevent summary modules
+                # from being picked up for publishing.  These documents 
+                # should not exist in pub_proc_cg but might end up being
+                # pushed if accidentally published via a hot-fix.
+                # ---------------------------------------------------------
                 self.__cursor.execute("""\
-                    SELECT d.id
-                      FROM document d
+                    SELECT a.id
+                      FROM active_doc a
                       JOIN pub_proc_cg c
-                        ON c.id = d.id
+                        ON c.id = a.id
+           LEFT OUTER JOIN query_term_pub q
+                        ON c.id = q.doc_id
+                       AND q.path = '/Summary/@ModuleOnly'
                       JOIN doc_type t
-                        ON t.id = d.doc_type
+                        ON t.id = a.doc_type
                      WHERE t.name = ?
-                       AND d.active_status = 'A'""", docType, timeout = 300)
+                       AND q.value IS NULL
+                  ORDER BY a.id""", docType, timeout = 300)
             rows = self.__cursor.fetchall()
             for row in rows:
                 self.__addDocumentToSet(row[0])

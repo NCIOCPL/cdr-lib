@@ -40,10 +40,8 @@ import sys, os, ftplib, time, shutil, cdrutil, datetime
 # ---------------------
 tmpDir  = '/tmp'
 PDQLOG  = '/home/cdroperator/prod/log/pdq'
-if cdrutil.isProductionHost():
-    FTPBASE = '/u/ftp/cdr'
-else:
-    FTPBASE = '/home/cdroperator/test'
+FTPBASE = '/u/ftp/cdr'
+# FTPBASE = '/home/cdroperator/test'
 FTPDIR  = '%s/pub/pdq/full' % FTPBASE
 ftpFile = '%s/getchanges.ftp' % tmpDir
 # pubDir  = '/u/ftp/pub/pdq/full'
@@ -79,7 +77,13 @@ ftpFile = '%s' % (rchanges)
 os.chdir(PDQLOG)
 print "FtpFile: %s" % ftpFile
 
-shutil.copy2('%s/%s' % (FTPDIR, ftpFile), '%s/%s' % (PDQLOG, ftpFile))
+try:
+    shutil.copy2('%s/%s' % (FTPDIR, ftpFile), '%s/%s' % (PDQLOG, ftpFile))
+except:
+    print '***Error in get_stats'
+    print '***   stats-file not found: %s' % ftpFile
+    print '***   Run fixISOweek in /u/ftp/cdr to recover'
+    sys.exit(1)
 
 # Reading the data in
 # -------------------

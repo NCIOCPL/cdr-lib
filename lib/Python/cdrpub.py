@@ -13,12 +13,28 @@
 # BZIssue::4869 - [Internal] Remove Parameter IncludeLinkedDocs
 # BZIssue::5176 - Modify Publishing Program
 # OCECDR-3570   - Rerun Previous Publishing Run
+# OCECDR-3951   - Add per document type error thresholds
 #
 #----------------------------------------------------------------------
 
-import cdr, cdrdb, os, re, string, sys, xml.dom.minidom
-import socket, cdr2gk, time, threading, glob, base64, AssignGroupNums
+# Standard library imports
+import base64
+import glob
+import os
+import re
+import sys
+import threading
+import time
+import xml.dom.minidom
+
+# Third-party imports
 import lxml.etree
+
+# Local application/library specific imports
+import cdr
+import cdrdb
+import cdr2gk
+import AssignGroupNums
 
 #-----------------------------------------------------------------------
 # Value for controlling debugging output.  None means no debugging
@@ -150,7 +166,7 @@ class Publish:
         __cdrHttp  = "https://%s.%s/cgi-bin/cdr" % (cdr.h.host['APPC'][0],
                                                     cdr.h.host['APPC'][1])
     __interactiveMode   = 0
-    __checkPushedDocs   = 0
+    __pushAllDocs       = False
     ## __includeLinkedDocs = 0
     __reportOnly        = 0
     __validateDocs      = 0
@@ -223,6 +239,8 @@ class Publish:
         self.__errorsBeforeAborting = 0
         self.__warningCount         = 0
         self.__publishIfWarnings    = "No"
+        self.__perDoctypeErrors     = {}
+        self.__perDoctypeMaxErrors  = {}
 
         # Cacheing not yet turned on
         self.__cacheingOn = 0
@@ -282,7 +300,7 @@ class Publish:
             cdr.logwrite('email = %s' % self.__email, LOG, tback=0)
 
         self.__jobTime     = row[5]
-        self.__no_output   = row[6]
+        self.__withOutput  = row[6] == "N"
         self.__userName    = row[7]
         self.__passWord    = row[8]
         self.__credentials = cdr.login(self.__userName,
@@ -394,15 +412,27 @@ class Publish:
         if self.__params.has_key("InteractiveMode"):
             self.__interactiveMode = \
                 self.__params["InteractiveMode"] == "Yes"
-        if self.__params.has_key("CheckPushedDocs"):
-            self.__checkPushedDocs = \
-                self.__params["CheckPushedDocs"] == "Yes"
+        if self.__params.has_key("PushAllDocs"):
+            self.__pushAllDocs = \
+                self.__params["PushAllDocs"] == "Yes"
         if self.__params.has_key("ReportOnly"):
             self.__reportOnly = \
                 self.__params["ReportOnly"] == "Yes"
         if self.__params.has_key("ValidateDocs"):
             self.__validateDocs = \
                 self.__params["ValidateDocs"] == "Yes"
+
+        # Prevent collisions resulting from mismatch between database
+        # and file system (typically caused by a database refresh from
+        # prod on the lower tiers). Let failures throw exceptions.
+        # See https://tracker.nci.nih.gov/browse/OCECDR-3895.
+        if not self.__isCgPushJob() and self.__outputDir:
+            for path in glob.glob(self.__outputDir + "*"):
+                if os.path.isdir(path) and "-" not in os.path.basename(path):
+                    stat = os.stat(path)
+                    stamp = time.strftime("%Y%m%d%H%M%S",
+                                          time.localtime(stat.st_mtime))
+                    os.rename(path, "%s-%s" % (path, stamp))
 
     #---------------------------------------------------------------
     # This is the major public entry point to publishing.
@@ -434,6 +464,7 @@ class Publish:
             self.__specs = self.__getSpecs(subset)
 
             # Get the name-value pairs of options.  Error handling set here.
+            # OCECDR-3951: also extract per document type error thresholds.
             options = self.__getOptions(subset)
 
             # Get the destination type.
@@ -533,7 +564,7 @@ class Publish:
                         self.__publishDoc(doc, filters, destType, dest)
                         numDocs += 1
                         if numDocs % self.__logDocModulus == 0:
-                            msg = "%s: Filtered/validated %d docs<BR>" % (
+                            msg = "%s: Filtered/validated %d docs. " % (
                                                                  time.ctime(),
                                                                  numDocs)
                             self.__updateMessage(msg)
@@ -544,6 +575,8 @@ class Publish:
                         self.__alreadyPublished.add(doc.getDocId())
                         userListedDocsRemaining -= 1
                         if not userListedDocsRemaining: break
+
+            # End of first loop through SubsetSpecification nodes.
 
             # Make sure all the user-listed documents are accounted for.
             for doc in self.__userDocList:
@@ -589,6 +622,7 @@ class Publish:
                             self.__addPubProcDocRows(specSubdirs[i])
                     i += 1
 
+            # End of the second loop through SubsetSpecification nodes.
             msg = "%s: Finish filtering/validating all %d docs<BR>" % (
                                                                time.ctime(),
                                                                numDocs)
@@ -608,112 +642,148 @@ class Publish:
                 msg = "%s: Total of 0 docs failed<BR>" % time.ctime()
                 self.__updateMessage(msg)
 
-            # XXX How do we get back in to finish?  [RMK 2004-11-08]
-            if self.__publishIfWarnings == "Ask" and self.__warningCount:
-                self.__updateStatus(Publish.WAIT, "Warnings encountered")
 
             # Rename the output directory from its working name.
             # Create a pushing job if it is a vendor job; or push
             # filtered documents to CG if it is a cg job.
-            else:
-                # Pushing job could have "Message only" checked in theory.
-                if self.__no_output != "Y" or self.__isCgPushJob():
+            # Here's where the final (for this run) job statuses get set.
+            # NB: the __updateStatus() method will refuse to change the
+            # status of the job if the current status is Success (see
+            # comments on that method below). This means if you set the
+            # status to Success you better be sure you're not going to
+            # want to subsequently check any conditions which might
+            # alter that status!
 
-                    # XXX Don't understand why Peter is trying to rename
-                    #     the output directory for a CG-push job, which
-                    #     doesn't create an output directory.
-                    #     [RMK 2004-11-08]
-                    if dest and dest_base:
+            # This block handles most publishing jobs (export jobs which
+            # produce output and pushing jobs).
+            if self.__withOutput or self.__isCgPushJob():
+
+                # Rename the output directory from JobNNNNN.InProcess
+                # to JobNNNNN (dest_base will be empty for push jobs).
+                if dest_base:
+                    try:
+                        os.rename(dest, dest_base)
+                    except Exception, e:
                         try:
-                            os.rename(dest, dest_base)
+                            msg = ("renaming %s to %s: %s" %
+                                   (repr(dest), repr(dest_base), e))
+                            self.__debugLog(msg)
                         except:
                             pass
 
-                    if not self.__isPrimaryJob() or self.__reportOnly:
-                        self.__updateStatus(Publish.SUCCESS)
-                    elif not self.__canPush():
-                        # It is a failure for the separately started pushing
-                        # job, not for the vendor job.
-                        if self.__isCgPushJob():
-                            self.__updateStatus(Publish.FAILURE)
-                        else:
-                            self.__updateStatus(Publish.SUCCESS)
-
-                    # Push docs or create a pushing job.
-                    else:
-
-                        # Is it a pushing job?
-                        if self.__isCgPushJob():
-
-                            # Make sure output_dir is reset to "" for pushing
-                            # jobs, no matter whether user has forgot to check
-                            # the "Message only" box.
-                            self.__nullOutputDir()
-
-                            # Get the vendor_job and vendor_dest from
-                            # the appropriate subset.
-                            vendorInfo    = self.__findVendorData()
-                            vendor_job    = vendorInfo[0]
-                            vendor_dest   = vendorInfo[1]
-
-                            if not vendor_job:
-                                self.__updateStatus(Publish.FAILURE,
-                                    "Not enough vendor info found.<BR>")
-                            else:
-
-                                # A long pushing job of many hours starts!
-                                self.__pushDocsToCG(vendor_job, vendor_dest)
-
-                                # There is no exception thrown.
-                                self.__updateStatus(Publish.VERIFYING)
-
-                        # It is a vendor job. Create a pushing job and let
-                        # it run in its own way.
-                        else:
-                            self.__updateStatus(Publish.SUCCESS)
-
-                            pushSubsetName = "%s_%s" % (self.__pd2cg,
-                                                        self.__subsetName)
-                            msg = ""
-
-                            # A few parameters are passed to the push job
-                            # --------------------------------------------
-                            # Not all Subset types have the GKPushJobDescription
-                            # parameter.  Need to check for existance.
-                            if self.__params.has_key('GKPushJobDescription'):
-                                parms = ([('GKPushJobDescription',
-                                        self.__params['GKPushJobDescription'])])
-                            else:
-                                parms = []
-
-                            parms.append(('GKServer',
-                                          self.__params['GKServer']))
-                            parms.append(('GKPubTarget',
-                                          self.__params['GKPubTarget']))
-                            resp = cdr.publish(self.__credentials,
-                                "Primary",
-                                pushSubsetName,
-                                parms = parms,
-                                email = self.__email,
-                                noOutput = 'Y',
-                                port = self.__pubPort)
-                            if not resp[0]:
-                                msg += "%s: <B>Failed:</B><BR>" % time.ctime()
-                                msg += "<I>%s</I><BR>"          % resp[1]
-                                msg += "%s: Please run job "    % time.ctime()
-                                msg += "%s separately.<BR>"     % pushSubsetName
-                            else:
-                                msg += "%s: Pushing filtered "    % time.ctime()
-                                msg += "documents to Cancer.gov is in "
-                                msg += "progress with job %s<BR>" % resp[0]
-                                msg += "%s: You will receive a "  % time.ctime()
-                                msg += "second email when it is done.<BR>"
-
-                            self.__updateMessage(msg)
-                else:
+                # If this is a QC filter publishing job (or any job
+                # type not controlled by the primary publishing control
+                # document), there's no such thing as failure.
+                if not self.__isPrimaryJob():
                     self.__updateStatus(Publish.SUCCESS)
 
+                # Mark job as failed if it wasn't a live job. This makes
+                # sure that logic to find the most recent live job of a
+                # specified type won't find this one.
+                elif self.__reportOnly:
+                    self.__updateStatus(Publish.FAILURE,
+                                        "The job status is set to Failure "
+                                        "because it was running for pre-"
+                                        "publishing reports.<BR>")
+
+                # OCECDR-3951: check doctype-specific thresholds.
+                elif self.__perDoctypeErrorThresholdExceeded():
+                    self.__updateStatus(Publish.FAILURE,
+                            "Error threshold(s) exceeded.<br>")
+
+                # If we've made it this far without setting the job
+                # status to Success or Failure, this is a push job,
+                # or an export job for which a push job would be
+                # created.
+                elif self.__anotherPushJobPending():
+
+                    # It is a failure for the separately started pushing
+                    # job, not for the vendor job.
+                    if self.__isCgPushJob():
+                        self.__updateStatus(Publish.FAILURE)
+                    else:
+                        self.__updateStatus(Publish.SUCCESS)
+
+                # Push docs or create a pushing job.
+                else:
+
+                    # Is it a pushing job?
+                    if self.__isCgPushJob():
+
+                        # Make sure output_dir is reset to "" for pushing
+                        # jobs, no matter whether user has forgot to check
+                        # the "Message only" box.
+                        self.__nullOutputDir()
+
+                        # Get the vendor_job and vendor_dest from
+                        # the appropriate subset.
+                        vendorInfo    = self.__findVendorData()
+                        vendor_job    = vendorInfo[0]
+                        vendor_dest   = vendorInfo[1]
+
+                        if not vendor_job:
+                            self.__updateStatus(Publish.FAILURE,
+                                "Not enough vendor info found.<BR>")
+                        else:
+
+                            # A long pushing job of many hours starts!
+                            self.__pushDocsToCG(vendor_job, vendor_dest)
+
+                            # There is no exception thrown.
+                            self.__updateStatus(Publish.VERIFYING)
+
+                    # It is a vendor job. Create a pushing job and let
+                    # it run in its own way.
+                    else:
+                        self.__updateStatus(Publish.SUCCESS)
+
+                        pushSubsetName = "%s_%s" % (self.__pd2cg,
+                                                    self.__subsetName)
+                        msg = ""
+
+                        # A few parameters are passed to the push job
+                        # --------------------------------------------
+                        # Not all Subset types have the GKPushJobDescription
+                        # parameter.  Need to check for existance.
+                        if self.__params.has_key('GKPushJobDescription'):
+                            parms = ([('GKPushJobDescription',
+                                    self.__params['GKPushJobDescription'])])
+                        else:
+                            parms = []
+
+                        parms.append(('GKServer',
+                                      self.__params['GKServer']))
+                        parms.append(('GKPubTarget',
+                                      self.__params['GKPubTarget']))
+                        resp = cdr.publish(self.__credentials,
+                            "Primary",
+                            pushSubsetName,
+                            parms = parms,
+                            email = self.__email,
+                            noOutput = 'Y',
+                            port = self.__pubPort)
+                        if not resp[0]:
+                            msg += "%s: <B>Failed:</B><BR>" % time.ctime()
+                            msg += "<I>%s</I><BR>"          % resp[1]
+                            msg += "%s: Please run job "    % time.ctime()
+                            msg += "%s separately.<BR>"     % pushSubsetName
+                        else:
+                            msg += "%s: Pushing filtered "    % time.ctime()
+                            msg += "documents to Cancer.gov is in "
+                            msg += "progress with job %s<BR>" % resp[0]
+                            msg += "%s: You will receive a "  % time.ctime()
+                            msg += "second email when it is done.<BR>"
+
+                        self.__updateMessage(msg)
+            else:
+
+                # Non-push jobs with no output always succeed.
+                self.__updateStatus(Publish.SUCCESS)
+
         except SystemExit:
+            # Handlers for try block opened all the way at the top of
+            # the publish() method start here.
+            #
             # __invokeProcessScript() can exit, which raises SystemExit
             # Since we catch all exceptions below, we would catch this one
             #   in the general Except clause and report an
@@ -744,12 +814,6 @@ class Publish:
             except:
                 pass
             self.cacheingOn = 0
-
-        # Mark job as failed if it wasn't a live job.
-        if self.__reportOnly:
-            self.__updateStatus(Publish.FAILURE, """The job status is
-                set to Failure because it was running for pre-publishing
-                reports.<BR>""")
 
         # Update first_pub in all_docs table.
         self.__updateFirstPub()
@@ -813,7 +877,7 @@ class Publish:
                 pass
 
             # Rename output directory to indicate failure
-            if self.__no_output != "Y":
+            if self.__withOutput:
                 try:
                     os.rename(dest, dest_base + ".FAILURE")
                 except:
@@ -871,9 +935,9 @@ class Publish:
 
     #------------------------------------------------------------------
     # Allow only one pushing job to run.
-    # Return 0 if there is a pending pushing job.
+    # Return True if there is a pending pushing job.
     #------------------------------------------------------------------
-    def __canPush(self):
+    def __anotherPushJobPending(self):
         try:
             cursor = self.__conn.cursor()
             cursor.execute("""\
@@ -894,12 +958,12 @@ class Publish:
                         (time.ctime(), row[0])
                 msg += "push again later.<BR>"
                 self.__updateMessage(msg)
-                return 0
+                return True
 
         except cdrdb.Error, info:
             raise Exception("Failure finding pending pushing jobs "
                             "for job %d: %s" % (self.__jobId, info[1][0]))
-        return 1
+        return False
 
     #------------------------------------------------------------------
     # Determine whether this is a job to push documents to Cancer.gov.
@@ -1081,15 +1145,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 self.__updateStatus(Publish.SUCCESS, msg)
                 return
 
-            # This is not needed anymore and is handled using the table
-            # pub_proc_nlm
-            # (2007-04-26, VE)
-            # Remember any hotfix jobs that need to be exported to NLM.
-            #if pubTypeCG == "Hotfix":
-            #    cursor.execute("""\
-            #       INSERT INTO ctgov_export (pub_proc)
-            #            VALUES (?)""", self.__jobId)
-
             # Get last successful cg_jobId. GateKeeper does not
             # care which subset it belongs to.
             # Returns 0 if there is no previous success.
@@ -1154,10 +1209,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 #
                 # The lastJobId reported by Gatekeeper isn't necessarily
                 # a successful job in the CDR sense.  For Gatekeeper any
-                # job that arrives at the server is successful and 
+                # job that arrives at the server is successful and
                 # therefore Gatekeeper reports the *last* JobId (success
-                # or not).  For the CDR only a job for which at least 
-                # one document has been successfully processed by 
+                # or not).  For the CDR only a job for which at least
+                # one document has been successfully processed by
                 # Gatekeeper is considered a success.
                 # This creates a mismatch if a push job (for instance a
                 # hot-fix) is submitted but none of the documents can be
@@ -1382,7 +1437,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
         # Wipe out all rows in pub_proc_cg_work. Only one job can be run
         # for Cancer.gov transaction. This is guaranteed by calling
-        # __canPush().
+        # __anotherPushJobPending().
         try:
             cursor.execute("""
                 DELETE pub_proc_cg_work
@@ -1459,6 +1514,13 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     fileTxt = open(path, "rb").read()
                     fileTxt = unicode(fileTxt, 'utf-8')
 
+                # The pub_proc_doc table may say push is not forced,
+                # but the user may have overridden that in a job parameter.
+                if self.__pushAllDocs:
+                    needsPush = True
+
+                # If push is not forced, decide by comparing the newly
+                #  exported doc to the last published version.
                 if not needsPush:
                     # Whitespace-normalized compare to stored file
                     if spNorm.sub(u" ", xml) != spNorm.sub(u" ", fileTxt):
@@ -1699,7 +1761,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
         # Wipe out all rows in pub_proc_cg_work. Only one job can be run
         # for Cancer.gov transaction. This is guaranteed by calling
-        # __canPush().
+        # __anotherPushJobPending().
         try:
             cursor.execute("""
                 DELETE pub_proc_cg_work
@@ -1745,7 +1807,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
         # Wipe out all rows in pub_proc_cg_work. Only one job can be run
         # for Cancer.gov transaction. This is guaranteed by calling
-        # __canPush().
+        # __anotherPushJobPending().
         try:
             cursor.execute("""
                 DELETE pub_proc_cg_work
@@ -1801,6 +1863,11 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     path   = "%s/%s/CDR%d.xml" % (vendor_dest, subdir, docId)
                     fileTxt   = open(path, "rb").read()
                     fileTxt   = unicode(fileTxt, 'utf-8')
+
+                # The pub_proc_doc table may say push is not forced,
+                # but the user may have overridden that in a job parameter.
+                if self.__pushAllDocs:
+                    needsPush = True
 
                 # XXX Why aren't we doing the same normalization here as
                 #     in the original __createWorkPPC() method? [RMK
@@ -2188,12 +2255,12 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
     # Return the last cg_job for any successful pushing jobs.
     #
     # Note: The picture of what the CDR sees as a 'successful' push job
-    #       and what Gatekeeper sees as a successful push job may not 
-    #       always match.  If a push job does *not* include any document 
-    #       for Gaterkeeper, the CDR still identifies this job as a 
+    #       and what Gatekeeper sees as a successful push job may not
+    #       always match.  If a push job does *not* include any document
+    #       for Gaterkeeper, the CDR still identifies this job as a
     #       success (it did not fail) but Gatekeeper won't know about
-    #       this job (it never received anything).  The next push job 
-    #       will therefore fail since both system's successful JobIDs 
+    #       this job (it never received anything).  The next push job
+    #       will therefore fail since both system's successful JobIDs
     #       will mismatch.
     #       This is fixed by only picking up JobIDs for which documents
     #       have been send to Gatekeeper.
@@ -2225,59 +2292,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             msg = """Failure executing query to find last successful
                      cg_job: %s<BR>""" % info[1][0]
             raise Exception(msg)
-
-##    #------------------------------------------------------------------
-##    # Update pub_proc_doc table and __userDocList with all linked
-##    # documents.
-##    #
-##    # Note: See comment above.  This function is not used anymore.
-##    #------------------------------------------------------------------
-##    def __addLinkedDocsToPPD(self):
-##
-##        # Build the input hash.
-##        docPairList = {}
-##        for doc in self.__userDocList:
-##            docPairList[doc.getDocId()] = doc.getVersion()
-##
-##        # Find all the linked documents.
-##        resp      = findLinkedDocs(docPairList)
-##        msg       = resp[0]
-##        idVerHash = resp[1]
-##        self.__updateMessage(msg)
-##
-##        # Insert all pairs into PPD. Because these linked documents are
-##        # not in PPD yet, it should succeed with all insertions.
-##        try:
-##            cursor = self.__conn.cursor()
-##            for docId in idVerHash.keys():
-##
-##                # Update the PPD table.
-##                cursor.execute ("""
-##                    INSERT INTO pub_proc_doc
-##                                (pub_proc, doc_id, doc_version)
-##                         VALUES  (?, ?, ?)
-##                                """, (self.__jobId, docId, idVerHash[docId])
-##                               )
-##
-##                # Update the __userDocList.
-##                cursor.execute ("""
-##                         SELECT t.name
-##                           FROM doc_type t, document d
-##                          WHERE d.doc_type = t.id
-##                            AND d.id = ?
-##                                """, docId
-##                               )
-##                row = cursor.fetchone()
-##                if row and row[0]:
-##                    self.__userDocList.append(Doc(docId, idVerHash[docId],
-##                                                  row[0], recorded=True))
-##                else:
-##                    msg = "Failed in adding docs to __userDocList.<BR>"
-##                    raise Exception(msg)
-##        except cdrdb.Error, info:
-##            msg = 'Failure adding linked docs to PPD for job %d: %s' % (
-##                  self.__jobId, info[1][0])
-##            raise Exception(msg)
 
     #------------------------------------------------------------------
     # Launch some number of publishing threads.
@@ -2609,7 +2623,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     invalDoc = "InvalidDocs"
 
             # Save the output as instructed.
-            if self.__no_output != 'Y' and filteredDoc:
+            if self.__withOutput and filteredDoc:
                 try:
                     if invalDoc:
                         subDir = invalDoc
@@ -2652,8 +2666,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
     #------------------------------------------------------------------
     # Handle errors and warnings.  Value of -1 for __errorsBeforeAborting
     # means never abort no matter how many errors are encountered.
-    # If __publishIfWarnings has the value "Ask" we record the warnings
-    # and keep going.
+    # If __publishIfWarnings has a value other than "No" we record the
+    # warnings and keep going.
     #------------------------------------------------------------------
     def __checkProblems(self, doc, errors, warnings):
 
@@ -2666,6 +2680,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
         # Check errors
         if errors:
+            # OCECDR-3951: keep track of error by document type
+            doctype = doc.getDocTypeStr()
+            count = self.__perDoctypeErrors.get(doctype, 0)
+            self.__perDoctypeErrors[doctype] = count + 1
             self.__addDocMessages(doc, errors, Publish.SET_FAILURE_FLAG)
             self.__errorCount += 1
             if self.__errorsBeforeAborting != -1:
@@ -2980,11 +2998,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 sender    = self.__cdrEmail
                 subject   = "%s-%s: CDR Publishing Job Status" % (cdr.h.org,
                                                                   cdr.h.tier)
-                if type(self.__email) == type("") or \
-                   type(self.__email) == type(u""):
-                    receivers = string.replace(self.__email, ";", ",")
-                    receivers = string.split(receivers, ",")
-                elif type(self.__email) == type([]):
+                if isinstance(self.__email, basestring):
+                    receivers = self.__email.replace(";", ",").split(",")
+                elif type(self.__email) is list:
                     receivers = self.__email
 
                 message   = """
@@ -3127,7 +3143,7 @@ Please do not reply to this message.
                             if self.__params.has_key('AbortOnError'):
                                 abortOnError = self.__params['AbortOnError']
                         elif name == "PublishIfWarnings":
-                            if value not in ["Yes", "No", "Ask"]:
+                            if value not in ("Yes", "No"):
                                 raise Exception("Invalid value for "
                                                 "PublishIfWarnings: %s" %
                                                 value)
@@ -3141,7 +3157,33 @@ Please do not reply to this message.
                         except:
                             raise Exception("Invalid value for AbortOnError: "
                                             "%s" % abortOnError)
-                break
+
+            # Extract error thresholds specific to document types.
+            elif node.nodeName == "PerDoctypeErrorThresholds":
+                for n in node.childNodes:
+                    if n.nodeName == "PerDoctypeErrorThreshold":
+                        doctype = threshold = None
+                        for m in n.childNodes:
+                            if m.nodeName == "Doctype":
+                                doctype = cdr.getTextContent(m)
+                            elif m.nodeName == "MaxErrors":
+                                threshold = cdr.getTextContent(m)
+                        try:
+                            threshold = int(threshold)
+                        except:
+                            raise Exception("invalid error threshold %s" %
+                                            repr(threshold))
+                        if not doctype:
+                            raise Exception("PerDoctypeErrorThreshold missing "
+                                            "required Doctype element")
+                        if doctype in self.__perDoctypeMaxErrors:
+                            existing = self.__perDoctypeMaxErrors[doctype]
+                            if existing != threshold:
+                                raise Exception("Conflicting error thresh"
+                                                "holds for %s" % repr(doctype))
+                        self.__perDoctypeMaxErrors[doctype] = threshold
+                        self.__debugLog("%d errors allowed for %s documents" %
+                                        (threshold, doctype))
 
         return options
 
@@ -3298,6 +3340,7 @@ Please do not reply to this message.
     #----------------------------------------------------------------
     # Handle process script, if one is specified, in which case
     # control is not returned to the caller.
+    # XXX (RMK 2016-04-07) Why isn't the job status set?
     #----------------------------------------------------------------
     def __invokeProcessScript(self, subset):
         scriptName = ""
@@ -3411,7 +3454,7 @@ Please do not reply to this message.
                  WHERE id        = ?""", (msg, self.__jobId))
             self.__debugLog(
                  'Interim-Export updated pub_proc messages with "%s"'
-                 %  msg, LOG)
+                 %  msg)
         except cdrdb.Error, info:
             msg = 'Failure updating message: %s' % info[1][0]
             raise Exception(msg)
@@ -3538,6 +3581,24 @@ Please do not reply to this message.
         # End critical section
         self.__lockLog.release()
 
+    #----------------------------------------------------------------------
+    # Check to see if any error thresholds specific to individual document
+    # types have been exceeded. If so, log the problem and return True.
+    #----------------------------------------------------------------------
+    def __perDoctypeErrorThresholdExceeded(self):
+        answer = False
+        for doctype in self.__perDoctypeErrors:
+            if doctype in self.__perDoctypeMaxErrors:
+                allowed = self.__perDoctypeMaxErrors[doctype]
+                actual = self.__perDoctypeErrors[doctype]
+                if actual > allowed:
+                    msg = ("%s %s failures allowed; %s encountered" %
+                           (allowed, doctype, actual))
+                    self.__debugLog(msg)
+                    self.__updateMessage(msg + "<br>")
+                    answer = True
+        return answer
+
 #-----------------------------------------------------------------------
 # class: ErrObject
 #    This class encapsulates the DTD validating errors.
@@ -3594,7 +3655,6 @@ def validateDoc(filteredDoc, docId = 0, dtd = cdr.DEFAULT_DTD):
 
     # Extract any validation errors from the error object
     errLog = pdqDtd.error_log.filter_from_errors()
-    errObj      = errLog
 
     return errLog
 

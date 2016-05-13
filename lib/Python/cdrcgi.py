@@ -69,6 +69,8 @@ def _getWebServerName():
 # useful (for example, ISPLAIN, or THISHOST) but are retained in case
 # older code relies on them.
 #----------------------------------------------------------------------
+VERSION = "201603211524"
+CDRCSS = "/stylesheets/cdr.css?v=%s" % VERSION
 DATETIMELEN = len("YYYY-MM-DD HH:MM:SS")
 TAMPERING = "CGI parameter tampering detected"
 USERNAME = "UserName"
@@ -179,7 +181,7 @@ class Page:
     Sample usage:
 
         form = cdrcgi.Page('Simple Report', subtitle='Documents by Title',
-                           buttons=('Submit', 'Admin')
+                           buttons=('Submit', 'Admin'),
                            action='simple-report.py')
         form.add('<fieldset>')
         form.add(cdrcgi.Page.B.LEGEND('Select Documents By Title'))
@@ -197,7 +199,7 @@ class Page:
     )
     STYLESHEETS = (
         CDN + "jqueryui/1.11.4/themes/smoothness/jquery-ui.css",
-        "/stylesheets/cdr.css"
+        CDRCSS
     )
     B = lxml.html.builder
 
@@ -233,7 +235,8 @@ class Page:
                           specify a replacement string here; the session
                           string will be added as a hidden varilable if
                           the 'action' paramater is set
-            body_classes  e.g., 'report'
+            body_classes -e.g., 'report'
+            enctype -     (for form element; e.g., "multipart/form-data")
         """
         self._finished = self._have_date_field = False
         self._html = []
@@ -251,7 +254,10 @@ class Page:
         self._stylesheets = kwargs.get("stylesheets", Page.STYLESHEETS)
         self._session = kwargs.get("session")
         self._body_classes = kwargs.get("body_classes")
+        self._enctype = kwargs.get("enctype")
         self._start()
+
+    def get_action(self): return self._action
 
     def add(self, line, post_indent=True):
         """
@@ -282,7 +288,7 @@ class Page:
         Required positional arguments:
 
             group        used for the name of the input element
-            label        string to indentify the checkbox to the user
+            label        string to identify the checkbox to the user
             value        used as the 'value' attribute of the element
 
         Optional keyword arguments:
@@ -317,7 +323,7 @@ class Page:
         Required positional arguments:
 
             group        used for the name of the input element
-            label        string to indentify the radio button to the user
+            label        string to identify the radio button to the user
             value        used as the 'value' attribute of the element
 
         Optional keyword arguments:
@@ -442,6 +448,7 @@ class Page:
                             separated class names.
             wrapper_classes classes to be added to the div wrapper
             password        if True, value is not displayed
+            upload          if True, type is set to "file"
             tooltip         if present, used as the 'title' attribute for
                             the input element
         """
@@ -469,6 +476,8 @@ class Page:
             field.set("value", unicode(kwargs["value"]))
         if kwargs.get("password"):
             field.set("type", "password")
+        if kwargs.get("upload"):
+            field.set("type", "file")
         if kwargs.get("readonly"):
             field.set("readonly", "readonly")
         if kwargs.get("disabled"):
@@ -643,6 +652,8 @@ class Page:
                     wrapper_classes = " ".join(wrapper_classes)
                 tag += ' class="%s"' % wrapper_classes
             self.add(tag + ">")
+        if not isinstance(value, basestring):
+            value = str(value)
         field = Page.B.INPUT(
             id=widget_id,
             type=widget,
@@ -693,8 +704,11 @@ class Page:
             prefix = "/cgi-bin/cdr/"
             if "/" in self._action:
                 prefix=""
-            self.add("""<form action="%s%s" method="%s">""" %
-                     (prefix, self._action, self._method))
+            enctype = ""
+            if self._enctype:
+                enctype = " enctype=\"%s\"" % self._enctype
+            self.add("""<form action="%s%s" method="%s"%s>""" %
+                     (prefix, self._action, self._method, enctype))
             self.add("<header>")
             self.add("<h1>%s" % self._banner)
             self.add("<span>")
@@ -877,7 +891,7 @@ class Report:
         opts = {
             "banner": self._options.get("banner"),
             "subtitle": self._options.get("subtitle"),
-            "stylesheets": ["/stylesheets/cdr.css"],
+            "stylesheets": [CDRCSS],
             "body_classes": "report",
             "js": []
         }
@@ -1221,6 +1235,8 @@ class Report:
             self._name = name
             self._options = options
             self._skip = 0
+        def set_name(self, name):
+            self._name = name
 
     class Table:
         """
@@ -1403,12 +1419,33 @@ class Control:
     Base class for top-level controller for a CGI script, which
     puts up a request form (typically for a report), collects
     the options specified by the user, and fulfills the request.
+
+    The call tree for this class looks something like this:
+
+      __init__() [implied invokation when the object is created]
+      run() [invoked explicitly by the writer of the CGI script]
+        logout() [if the button for logging out is clicked]
+        navigate_to() [if a button to navigate elsewhere is clicked]
+        show_report() [if Submit is clicked]
+          build_tables()
+          set_report_options()
+          report.send()
+        show_form() [if not button was clicked]
+           set_form_options()
+           populate_form()
+           form.send()
     """
     PAGE_TITLE = "CDR Administration"
     REPORTS_MENU = SUBMENU = "Reports Menu"
     ADMINMENU = MAINMENU
     SUBMIT = "Submit"
     LOG_OUT = "Log Out"
+    FORMATS = ("html", "excel")
+    BOARD_NAME = "/Organization/OrganizationNameInformation/OfficialName/Name"
+    AUDIENCES = ("Health Professional", "Patient")
+    LANGUAGES = ("English", "Spanish")
+    SUMMARY_SELECTION_METHODS = ("id", "title", "board")
+
     def __init__(self, title=None, subtitle=None, **opts):
         """
         Sets up a skeletal controller; derived class fleshes it out,
@@ -1426,6 +1463,7 @@ class Control:
         self.fields = cgi.FieldStorage()
         self.session = getSession(self.fields, cursor=self.cursor)
         self.request = getRequest(self.fields)
+        self.format = self.fields.getvalue("format", self.FORMATS[0])
         self.buttons = []
         for button in (self.SUBMIT, self.SUBMENU, self.ADMINMENU, self.LOG_OUT):
             if button:
@@ -1463,7 +1501,7 @@ class Control:
         }
         opts = self.set_report_options(opts)
         report = Report(self.PAGE_TITLE or "", tables, **opts)
-        report.send()
+        report.send(self.format)
     def show_form(self):
         opts = {
             "buttons": self.buttons,
@@ -1487,6 +1525,241 @@ class Control:
     def populate_form(self, form):
         "Stub, to be overridden by real controllers."
         pass
+    @staticmethod
+    def get_referer():
+        "Find out which page called us."
+        return os.environ.get("HTTP_REFERER")
+
+    def get_boards(self):
+        """
+        Assemble a dictionary of the PDQ board names, indexed by
+        CDR Organization document ID. Trim the names to their
+        short forms, pruning away the "PDQ" prefix and the
+        "Editorial Board" suffix.
+        """
+
+        query = cdrdb.Query("query_term n", "n.doc_id", "n.value")
+        query.join("query_term t", "t.doc_id = n.doc_id")
+        query.join("active_doc a", "a.id = n.doc_id")
+        query.where("t.path = '/Organization/OrganizationType'")
+        query.where("n.path = '%s'" % self.BOARD_NAME)
+        query.where("t.value = 'PDQ Editorial Board'")
+        rows = query.execute(self.cursor).fetchall()
+        boards = {}
+        prefix, suffix = "PDQ ", " Editorial Board"
+        for org_id, name in rows:
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+            if name.endswith(suffix):
+                name = name[:-len(suffix)]
+            boards[org_id] = name
+        return boards
+
+    def add_summary_selection_fields(self, form, **opts):
+        """
+        Display the fields used to specify which summaries should be
+        select for a report, using one of several methods:
+
+            * by summary document ID
+            * by summary title
+            * by summary board
+
+        There are two branches taken by this method. If the user has
+        elected to select a summary by summary title, and the summary
+        title fragment matches more than one summary, then a follow-up
+        page is presented on which the user selects one of the summaries
+        and re-submits the report request. Otherwise, the user is shown
+        options for choosing a selection method, which in turn displays
+        the fields appropriate to that method dynamically. We also add
+        JavaScript functions to handle the dynamic control of field display.
+        If the 'boards' attribute exists, it is used for the board check
+        boxes. Otherwise, we call our get_boards() method ourselves.
+
+        Pass:
+            form     - Page object on which to show the fields
+            titles   - an optional array of SummaryTitle objects
+            audience - if False, omit Audience buttons (default is True)
+            language - if False, omit Language buttons (default is True)
+
+        Return:
+            nothing (the form object is populated as a side effect)
+        """
+
+        #--------------------------------------------------------------
+        # Show the second stage in a cascading sequence of the form if we
+        # have invoked this method directly from build_tables(). Widen
+        # the form to accomodate the length of the title substrings
+        # we're showing.
+        #--------------------------------------------------------------
+        titles = opts.get("titles")
+        if titles:
+            form.add_css("fieldset { width: 600px; }")
+            form.add_hidden_field("method", "id")
+            form.add("<fieldset>")
+            form.add(form.B.LEGEND("Choose Summary"))
+            for t in titles:
+                form.add_radio("cdr-id", t.display, t.id, tooltip=t.tooltip)
+            form.add("</fieldset>")
+
+        else:
+            # Fields for the original form.
+            form.add("<fieldset>")
+            form.add(form.B.LEGEND("Selection Method"))
+            form.add_radio("method", "By PDQ Board", "board", checked=True)
+            form.add_radio("method", "By CDR ID", "id")
+            form.add_radio("method", "By Summary Title", "title")
+            form.add("</fieldset>")
+            self.add_board_fieldset(form)
+            if opts.get("audience", True):
+                self.add_audience_fieldset(form)
+            if opts.get("language", True):
+                self.add_language_fieldset(form)
+            form.add("<fieldset class='by-id-block hidden'>")
+            form.add(form.B.LEGEND("Summary Document ID"))
+            form.add_text_field("cdr-id", "CDR ID")
+            form.add("</fieldset>")
+            form.add("<fieldset class='by-title-block hidden'>")
+            form.add(form.B.LEGEND("Summary Title"))
+            form.add_text_field("title", "Title",
+                                tooltip="Use wildcard (%) as appropriate.")
+            form.add("</fieldset>")
+            form.add_script(self.get_script_for_summary_selection_form())
+
+    def add_board_fieldset(self, form):
+        form.add("<fieldset class='by-board-block' id='board-set'>")
+        form.add(form.B.LEGEND("Board"))
+        form.add_checkbox("board", "All Boards", "all", checked=True)
+        boards = getattr(self, "boards")
+        if not boards:
+            boards = self.get_boards()
+        for board_id in sorted(boards, key=boards.get):
+            form.add_checkbox("board", boards.get(board_id),
+                              board_id, widget_classes="ind")
+        form.add("</fieldset>")
+        form.add_script(self.get_script_for_summary_selection_form())
+
+    def add_audience_fieldset(self, form):
+        form.add("<fieldset class='by-board-block'>")
+        form.add(form.B.LEGEND("Audience"))
+        checked = True
+        for value in self.AUDIENCES:
+            form.add_radio("audience", value, value, checked=checked)
+            checked = False
+        form.add("</fieldset>")
+
+    def add_language_fieldset(self, form):
+        form.add("<fieldset class='by-board-block'>")
+        form.add(form.B.LEGEND("Language"))
+        checked = True
+        for value in self.LANGUAGES:
+            form.add_radio("language", value, value, checked=checked)
+            checked = False
+        form.add("</fieldset>")
+
+    def validate_audience(self):
+        if self.audience and self.audience not in self.AUDIENCES:
+            cdrcgi.bail(cdrcgi.TAMPERING)
+
+    def validate_language(self):
+        if self.language and self.language not in self.LANGUAGES:
+            cdrcgi.bail(cdrcgi.TAMPERING)
+
+    def validate_boards(self):
+        if not self.board or "all" in self.board:
+            self.board = ["all"]
+        else:
+            boards = []
+            for board in self.board:
+                try:
+                    board = int(board)
+                except:
+                    cdrcgi.bail(cdrcgi.TAMPERING)
+                if board not in self.boards:
+                    cdrcgi.bail(cdrcgi.TAMPERING)
+                boards.append(board)
+            self.board = boards
+
+    def validate_selection_method(self):
+        if self.selection_method not in self.SUMMARY_SELECTION_METHODS:
+            cdrcgi.bail(msg)
+
+    def get_int_cdr_id(self, value):
+        if value:
+            try:
+                return cdr.exNormalize(value)[1]
+            except:
+                cdrcgi.bail("Invalid format for CDR ID")
+        return None
+
+    def summaries_for_title(self, fragment):
+        """
+        Find the summaries that match the user's title fragment. Note
+        that the user is responsible for adding any non-trailing SQL
+        wildcards to the fragment string. If the title is longer than
+        60 characters, truncate with an ellipsis, but add a tooltip
+        showing the whole title. We create a local class for the
+        resulting list.
+        """
+
+        class SummaryTitle:
+            def __init__(self, doc_id, display, tooltip=None):
+                self.id = doc_id
+                self.display = display
+                self.tooltip = tooltip
+
+        query = cdrdb.Query("document d", "d.id", "d.title")
+        query.join("doc_type t", "t.id = d.doc_type")
+        query.where("t.name = 'Summary'")
+        query.where(query.Condition("d.title", fragment + "%", "LIKE"))
+        query.order("d.title")
+        rows = query.execute(self.cursor).fetchall()
+        summaries = []
+        for doc_id, title in rows:
+            if len(title) > 60:
+                short_title = title[:57] + "..."
+                summary = SummaryTitle(doc_id, short_title, title)
+            else:
+                summary = SummaryTitle(doc_id, title)
+            summaries.append(summary)
+        return summaries
+
+    def get_script_for_summary_selection_form(self):
+        " Local JavaScript to manage sections of the form dynamically."
+        return """\
+function check_set(name, val) {
+    var all_selector = "#" + name + "-all";
+    var ind_selector = "#" + name + "-set .ind";
+    if (val == "all") {
+        if (jQuery(all_selector).prop("checked"))
+            jQuery(ind_selector).prop("checked", false);
+        else
+            jQuery(all_selector).prop("checked", true);
+    }
+    else if (jQuery(ind_selector + ":checked").length > 0)
+        jQuery(all_selector).prop("checked", false);
+    else
+        jQuery(all_selector).prop("checked", true);
+}
+function check_board(board) { check_set("board", board); }
+function check_method(method) {
+    switch (method) {
+        case 'id':
+            jQuery('.by-board-block').hide();
+            jQuery('.by-id-block').show();
+            jQuery('.by-title-block').hide();
+            break;
+        case 'board':
+            jQuery('.by-board-block').show();
+            jQuery('.by-id-block').hide();
+            jQuery('.by-title-block').hide();
+            break;
+        case 'title':
+            jQuery('.by-board-block').hide();
+            jQuery('.by-id-block').hide();
+            jQuery('.by-title-block').show();
+            break;
+    }
+}"""
 
 #----------------------------------------------------------------------
 # Display the header for a CDR web form.
@@ -1564,9 +1837,15 @@ def getSession(fields, **opts):
     query = cdrdb.Query("session", "id")
     query.where(query.Condition("name", session))
     query.where("ended IS NULL")
-    rows = query.execute(opts.get("cursor")).fetchall()
+    try:
+        rows = query.execute(opts.get("cursor")).fetchall()
+    except:
+        # Looks like there's a bug in ADODB, triggered when a query
+        # parameter is longer than the target column's definition.
+        bail("Invalid session ID")
     if not rows:
         bail("Session not active")
+
     return session
 
 #----------------------------------------------------------------------
@@ -3032,6 +3311,7 @@ VP_SIGNED_INT   = r'^(-|\+)?\d+$'
 VP_PADDED_INT   = r'^\s*\d+\s*$'
 VP_SIGNED_PAD   = r'^\s*(-|\+)?\d+\s*$'
 VP_US_ZIPCODE   = r'^\s*\d{5}(-\d{4})?\s*$'
+VP_DATETIME     = r"^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$"
 
 def valParmVal(val, **opts):
     """

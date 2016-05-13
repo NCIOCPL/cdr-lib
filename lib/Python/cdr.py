@@ -4285,7 +4285,8 @@ class Log:
 
     def __init__(self, filename,
                  dirname=DEFAULT_LOGDIR, banner=_DEFAULT_BANNER,
-                 logTime=True, logPID=True, level=DEFAULT_LOGLVL):
+                 logTime=True, logPID=True, level=DEFAULT_LOGLVL,
+                 logTier=False):
         """
         Creates log object.
 
@@ -4300,6 +4301,9 @@ class Log:
                        (Possibly override with environment
                        variable or by calling function to change
                        level.)
+            logTier  - Prepend tier ID (DEV, QA, etc.) to each log msg.
+                       Tier will always be under the banner if there
+                       is one.
 
         Raises:
             IOError if log cannot be opened.
@@ -4320,13 +4324,20 @@ class Log:
         self.__level   = level
         self.__fp      = None
 
+        # Find the tier once and format it
+        if logTier:
+            self.__logTier = cdrutil.getTier() + ':'
+        else:
+            self.__logTier = False
+
         # Open for append, unbuffered
         self.__filename = dirname + '/' + filename
         self.__fp = open(self.__filename, "a", 0)
 
         # If there's a banner, write it with stamps
         if banner:
-            self.writeRaw("%s\n%s\n" % (banner, time.ctime()), level)
+            self.writeRaw("\n%s\nTIER: %s  DATETIME: %s\n" %
+                          (banner, cdrutil.getTier(), time.ctime()))
 
     def write(self, msgs, level=DEFAULT_LOGLVL, tback=False,
               stdout=False, stderr=False):
@@ -4351,6 +4362,8 @@ class Log:
             return
 
         # Write process id and timestamp
+        if self.__logTier:
+            self.__fp.write(self.__logTier)
         if self.__logPID:
             self.__fp.write(self.__pid)
         if self.__logTime:

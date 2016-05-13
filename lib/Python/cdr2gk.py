@@ -8,7 +8,13 @@
 # BZIssue::4123
 #
 #----------------------------------------------------------------------
-import cdr, httplib, re, sys, time, xml.dom.minidom, socket, string
+import cdr
+import cdrutil
+import httplib
+import re
+import sys
+import time
+import xml.dom.minidom
 
 #----------------------------------------------------------------------
 # Module data.
@@ -30,6 +36,9 @@ HEADERS             = {
 if cdr.h.org == 'OCE' and not cdr.isProdHost():
     testhost        = "gatekeeperGK.cancer.gov"
     host = testhost
+
+TIER                = cdrutil.getTier()
+SOURCE_TIER         = "CDR-%s" % TIER
 
 #----------------------------------------------------------------------
 # Module-level class definitions.
@@ -110,7 +119,7 @@ class DocumentStatusList:
         Object with a single public attribute ('docs'), which contains
         a list of zero or more DocumentLocation objects.
     """
-    
+
     def __init__(self, node):
         self.docs = []
         for child in node.childNodes:
@@ -122,7 +131,7 @@ class StatusSummaryDocument:
         Information about one of the documents in a CDR push job.
 
         Public attributes:
-        
+
             packetNumber
                 position of the document within the push job
 
@@ -165,8 +174,8 @@ class StatusSummaryDocument:
         self.status          = node.getAttribute('status')
         self.dependentStatus = node.getAttribute('dependentStatus')
         self.location        = node.getAttribute('location')
-                                
-                                
+
+
 class StatusSummary:
 
     """
@@ -188,8 +197,9 @@ class StatusSummary:
                 Receiving or DataReceived
 
             source
-                only value used for this version of the GateKeeper is
-                "CDR"
+                This does not seem to be used anywhere.  The source
+                element sent to Gatekeeper is established separately
+                from this.
 
             initiated
                 date/time the job was started
@@ -239,7 +249,7 @@ class PubEventResponse:
     """
     Holds detailed information from a response to a request initiation
     or data prolog message.
-    
+
     Public attributes:
 
         pubType
@@ -351,7 +361,7 @@ class Response:
             SOAP fault object containing faultcode and faultstring
             members in the case of a SOAP failure
     """
-    
+
     def __init__(self, xmlString, publishing = True, statusRequest = False):
 
         """Extract the values from the server's XML response string."""
@@ -467,7 +477,7 @@ def logString(commandType, value, forceLog = False):
         if type(value) is unicode:
             value = value.encode('utf-8')
         f = open(LOGFILE, "ab")
-        f.write("==== %s %s (host=%s) ====\n%s\n" % 
+        f.write("==== %s %s (host=%s) ====\n%s\n" %
                 (time.ctime(), str(commandType), str(host),
                  [re.sub("\r", "", value)]))
 
@@ -487,7 +497,7 @@ def sendRequest(body, app = application, host = None, headers = HEADERS):
     request = """\
 <?xml version='1.0' encoding='utf-8'?>
 <soap:Envelope xmlns:soap='%s'
-               xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' 
+               xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance'
                xmlns:xsd='http://www.w3.org/2001/XMLSchema'>
  <soap:Body>
 %s
@@ -495,7 +505,7 @@ def sendRequest(body, app = application, host = None, headers = HEADERS):
 </soap:Envelope>""" % (soapNamespace, body)
 
     logString("REQUEST", request)
-    
+
     # Defensive programming.
     tries = MAX_RETRIES
     response = None
@@ -516,9 +526,8 @@ def sendRequest(body, app = application, host = None, headers = HEADERS):
 
             # We can stop trying now, we got it.
             tries = 0
-            
+
         except Exception, e:
-            import cdr
             cdr.logwrite("caught http exception: %s" % e, LOGFILE, tback = True)
             waitSecs = (MAX_RETRIES + 1 - tries) * RETRY_MULTIPLIER
             logString("RETRY",
@@ -532,7 +541,7 @@ def sendRequest(body, app = application, host = None, headers = HEADERS):
     if not response:
         raise Exception("tried to connect %d times unsuccessfully" %
                         MAX_RETRIES)
-    
+
     if response.status != 200:
         resp = response.read()
         logString("HTTP ERROR", resp)
@@ -557,7 +566,7 @@ def initiateRequest(pubType, pubTarget):
     """
     request = """\
   <Request xmlns='%s'>
-   <source>CDR</source>  
+   <source>%s</source>
    <requestID>Status Check</requestID>
    <message>
     <PubEvent>
@@ -565,14 +574,14 @@ def initiateRequest(pubType, pubTarget):
      <pubTarget>%s</pubTarget>
     </PubEvent>
    </message>
-  </Request>""" % (gatekeeperNamespace, pubType, pubTarget)
+  </Request>""" % (gatekeeperNamespace, SOURCE_TIER, pubType, pubTarget)
     xmlString = sendRequest(request, host = host)
     return Response(xmlString)
 
 def sendDataProlog(jobDesc, jobId, pubType, pubTarget, lastJobId):
     request = u"""\
   <Request xmlns='%s'>
-   <source>CDR</source>   
+   <source>%s</source>
    <requestID>%s</requestID>
    <message>
     <PubEvent>
@@ -582,18 +591,18 @@ def sendDataProlog(jobDesc, jobId, pubType, pubTarget, lastJobId):
      <lastJobID>%s</lastJobID>
     </PubEvent>
    </message>
-  </Request>""" % (gatekeeperNamespace, jobId, pubType, pubTarget, jobDesc,
-                   lastJobId)
+  </Request>""" % (gatekeeperNamespace, SOURCE_TIER, jobId, pubType,
+                   pubTarget, jobDesc, lastJobId)
     xmlString = sendRequest(request, host = host)
     return Response(xmlString)
 
 def sendDocument(jobId, docNum, transType, docType, docId, docVer,
-                 groupNumber, doc = ""): 
+                 groupNumber, doc = ""):
 
     # Avoid the overhead of converting the doc to Unicode and back.
     request = (u"""\
   <Request xmlns='%s'>
-   <source>CDR</source>   
+   <source>%s</source>
    <requestID>%s</requestID>
    <message>
     <PubData>
@@ -602,7 +611,8 @@ def sendDocument(jobId, docNum, transType, docType, docId, docVer,
      <CDRDoc Type    = '%s'
              ID      = 'CDR%010d'
              Version = '%d'
-             Group   = '%d'>""" % (gatekeeperNamespace, jobId, docNum,
+             Group   = '%d'>""" % (gatekeeperNamespace, SOURCE_TIER,
+                                   jobId, docNum,
                                    transType, docType, docId, docVer,
                                    groupNumber)).encode('utf-8') + doc + """\
 </CDRDoc>
@@ -615,7 +625,7 @@ def sendDocument(jobId, docNum, transType, docType, docId, docVer,
 def sendJobComplete(jobId, pubType, count, status):
     request = u"""\
   <Request xmlns='%s'>
-   <source>CDR</source>   
+   <source>%s</source>
    <requestID>%s</requestID>
    <message>
     <PubEvent>
@@ -624,7 +634,7 @@ def sendJobComplete(jobId, pubType, count, status):
      <status>%s</status>
     </PubEvent>
    </message>
-  </Request>""" % (gatekeeperNamespace, jobId, pubType, count, status)
+  </Request>""" % (gatekeeperNamespace, SOURCE_TIER, jobId, pubType, count, status)
 
     response = sendRequest(request, host = host)
     return Response(response)
@@ -637,7 +647,7 @@ def pubPreview(xml, typ):
   </ReturnXML>
 """ % (xml, typ)
     xmlString = sendRequest(
-        request, 
+        request,
         app     = '/CDRPreviewWS/CDRPreview.asmx',
         host    = host,
         headers = { 'Content-type': 'text/xml; charset="utf-8"',
@@ -664,17 +674,18 @@ def requestStatus(statusType, requestId = ""):
     if statusType == 'DocumentLocation':
         body = u"""\
   <RequestStatus xmlns='%s'>
-   <source>CDR</source>
+   <source>%s</source>
    <!-- <requestID></requestID> -->
    <statusType>%s</statusType>
-  </RequestStatus>""" % (gatekeeperNamespace, statusType)
+  </RequestStatus>""" % (gatekeeperNamespace, SOURCE_TIER, statusType)
     else:
         body = u"""\
   <RequestStatus xmlns='%s'>
-   <source>CDR</source>
+   <source>%s</source>
    <requestID>%s</requestID>
    <statusType>%s</statusType>
-  </RequestStatus>""" % (gatekeeperNamespace, requestId, statusType)
+  </RequestStatus>""" % (gatekeeperNamespace, SOURCE_TIER, requestId,
+                         statusType)
     xmlString = sendRequest(body, host = host, headers = headers)
     # print xmlString
     return Response(xmlString, False, True)
@@ -739,7 +750,7 @@ if __name__ == "__main__":
         response = sendJobComplete(jobId, 'Export', nDocs, 'complete')
         print "response:\n%s" % response
         sys.exit(0)
-        
+
     # Get the document IDs from the command line.
     if len(sys.argv) > 1 and sys.argv[1].startswith('type='):
         docIds = loadDocsOfType(sys.argv[1][5:])
