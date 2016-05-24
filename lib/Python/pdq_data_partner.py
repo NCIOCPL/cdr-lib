@@ -172,6 +172,8 @@ INSERT INTO %s (%s)
             self.record_type = cls
             for name in cls.COLS:
                 value = fields.getvalue(name)
+                if value:
+                    value = unicode(value, "utf-8")
                 if name == cls.KEY:
                     self.key = value
                 elif name != cls.LAST_MOD:
