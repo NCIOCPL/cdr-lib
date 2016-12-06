@@ -11,7 +11,8 @@
 #
 #----------------------------------------------------------------------
 
-import cgi, cdr, cdrdb, urllib2, time, cdrcgi, re, lxml.etree as etree
+import cgi, cdr, cdrdb, time, cdrcgi, re, lxml.etree as etree
+import requests
 
 #----------------------------------------------------------------------
 # Charlie used globals here.  I'm keeping them in case outside code
@@ -58,7 +59,7 @@ def mapType(nciThesaurusType):
         "SY"               : "Synonym",
         "INDCode"          : "IND code",
         "NscCode"          : "NSC code",
-        "CAS_Registry_Name": "CAS Registry name" 
+        "CAS_Registry_Name": "CAS Registry name"
     }.get(nciThesaurusType, "????")
 
 #----------------------------------------------------------------------
@@ -255,8 +256,8 @@ def fetchConcept(code):
     parms = "query=org.LexGrid.concepts.Entity[@_entityCode=%s]" % code
     url   = "http://%s/%s?%s" % (host, app, parms)
     try:
-        conn = urllib2.urlopen(url)
-        doc  = conn.read()
+        response = requests.get(url)
+        doc  = response.content
     except Exception, e:
         err = "<error>EVS server unavailable: %s</error>" % e
         return None
@@ -447,7 +448,7 @@ def updateTerm(session, cdrId, conceptCode, doUpdate=False,
     if error:
         return "<error>Unable to retrieve %s - %s</error>" % (docId, error)
     tree = etree.XML(doc.xml)
-    
+
     #------------------------------------------------------------------
     # This check may be obsolete, but Charlie left no documentation
     # behind, so I'm leaving it in place.  XXX Check with the users.
@@ -485,7 +486,7 @@ def updateTerm(session, cdrId, conceptCode, doUpdate=False,
                         if syn.mappedTermGroup == otherName.nameType:
                             found = True
                             break
-                                
+
                 #------------------------------------------------------
                 # It's not already in the document; add it.
                 #------------------------------------------------------
@@ -505,7 +506,7 @@ def updateTerm(session, cdrId, conceptCode, doUpdate=False,
 
         if doUpdate:
             doc.xml = etree.tostring(tree, pretty_print=True)
-            
+
             #--------------------------------------------------------------
             # Charlie's code never made publishable versions for drug terms.
             # I'm assuming that was a mistake.  XXX Check with the users.
@@ -614,7 +615,7 @@ def getThingsToUpdate(isDrugUpdate, excelSSName):
             rows = cursor.fetchall()
         except cdrdb.Error, info:
             return 'Failure retrieving Summary documents: %s' % info[1][0]
-             
+
         if not rows:
             return 'No Records Found for Selection'
 
@@ -629,7 +630,7 @@ def getThingsToUpdate(isDrugUpdate, excelSSName):
             sheet = book[0]
             for row in sheet.rows:
                 cdridsToSkipDef.append(row[0].val)
-     
+
         for doc_id, value in rows:
             value = value.strip()
             if doc_id in cdridsToSkipDef:
@@ -709,8 +710,8 @@ def updateAllTerms(job, session, excelNoDefFile, excelOutputFile, doUpdate,
     for i in range(len(headings)):
         row.addCell(i + 1, headings[i])
 
-    rowNum = 2        
-    
+    rowNum = 2
+
     itemCnt = 0
     for docConceptPair in docConceptPairs:
         row = ws.addRow(rowNum, style1, 40)

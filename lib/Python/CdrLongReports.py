@@ -21,7 +21,7 @@
 #----------------------------------------------------------------------
 import cdr, cdrdb, xml.dom.minidom, time, cdrcgi, cgi, sys, socket, cdrbatch
 import string, re, urlparse, httplib, traceback, xml.sax.saxutils
-import urllib2, HTMLParser, ExcelWriter, NCIThes, lxml.etree as etree
+import requests, HTMLParser, ExcelWriter, NCIThes, lxml.etree as etree
 
 #----------------------------------------------------------------------
 # Module values.
@@ -2305,7 +2305,7 @@ class ExRefPageTitleCheck:
             # Have we already seen this web page?
             if resultCache.has_key(url):
                 # Get the result of previous fetch
-                pageFlag, pageTitle = resultCache(url)
+                pageFlag, pageTitle = resultCache[url]
 
                 # If previous fetch failed, don't try again, re-report failure
                 if pageFlag != "Error":
@@ -2328,17 +2328,17 @@ class ExRefPageTitleCheck:
                     # For DEV and QA we modify the url to go to the
                     # DEV or QA cancer.gov server
                     chkUrl = self.mu.mutateUrl(url)
-                    response = urllib2.urlopen(chkUrl, timeout=45)
-                except urllib2.URLError, info:
-                    pageFlag  = "Error"
-                    errMsg    = str(info).translate(None, "<>&")
+                    response = requests.get(chkUrl, timeout=45.0)
+                except Exception, e:
+                    pageFlag = "Error"
+                    errMsg = str(e).translate(None, "<>&")
                     resultCache[url] = (pageFlag, errMsg)
                     self.addReportRow(docId, docTitle, url, exRefTitle,
                                       errMsg, pageFlag)
                     continue
 
                 # Was it successful?
-                rc = response.getcode()
+                rc = response.status_code
                 # sys.stderr.write("http response code=%d\n" % rc)
                 code200 = rc - 200
                 if code200 < 0 or code200 > 99:
@@ -2351,7 +2351,7 @@ class ExRefPageTitleCheck:
                     continue
 
                 # Get the full web page from the remote host
-                pageHtml = response.read()
+                pageHtml = response.content
                 if not pageHtml:
                     pageFlag = "Error"
                     errMsg   = "Unable to retrieve web page from host"
@@ -2378,7 +2378,7 @@ class ExRefPageTitleCheck:
                 try:
                     parser.feed(uniPageHtml)
                     pageTitle = parser.getTitleContent()
-                except Error, info:
+                except Exception, info:
                     pageFlag = "Error"
                     errMsg   = "Error parsing web page to find the title: %s" \
                                 % str(info)
