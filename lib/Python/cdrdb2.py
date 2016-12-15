@@ -1,3 +1,6 @@
+#----------------------------------------------------------------------
+# Rewrite of cdrdb.py to avoid dependencies and odd behavior of ADO/DB.
+#----------------------------------------------------------------------
 import pymssql
 import time
 import os
@@ -63,13 +66,15 @@ def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr',
     """
 
     global CBIIT_HOSTING
+    global h
+    tier = h.tier
     if dataSource != CDR_DB_SERVER:
         # Default server name established above
         # If it's anything else, establish the network name here
-        global h
         hostInfo = h.getTierHostNames(dataSource, 'DBWIN')
         if hostInfo:
-            dataSource = hostInfo.qname()
+            dataSource = hostInfo.qname
+            tier = hostInfo.tier
 
     if CBIIT_HOSTING:
         ports = {
@@ -78,12 +83,12 @@ def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr',
             "QA": 53100,
             "DEV": 52400
         }
-        port = ports.get(h.tier, 52400)
+        port = ports.get(tier, 52400)
         if user.upper() == "CDR":
             user = "cdrsqlaccount"
     else:
         port = 32408
-    password = cdrpw.password(h.org, h.tier, db, user)
+    password = cdrpw.password(h.org, tier, db, user)
     if timeout is None:
         timeout = DEFAULT_TIMEOUT
     return pymssql.connect(server=dataSource, port=port, user=user,

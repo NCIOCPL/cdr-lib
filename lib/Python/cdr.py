@@ -1,7 +1,5 @@
 #----------------------------------------------------------------------
 #
-# $Id$
-#
 # Module of common CDR routines.
 #
 # Usage:
@@ -30,6 +28,8 @@ import xml.sax.saxutils, datetime, subprocess, cdrutil
 import math
 import urllib
 import lxml.etree as etree
+import logging
+import cdrdb2
 
 #----------------------------------------------------------------------
 # Find out the drive on which the CDR working files are stored.
@@ -3783,21 +3783,15 @@ def exceptionInfo():
     return eMsg
 
 #----------------------------------------------------------------------
-# Gets the email addresses for members of a group.
+# Gets the email addresses for members of a group. Use cdrdb2 so
+# we can work in a multi-threaded environment.
 #----------------------------------------------------------------------
 def getEmailList(groupName, host = 'localhost'):
-    ### conn = cdrdb.connect(dataSource = host)
-    conn = cdrdb.connect()
-    cursor = conn.cursor()
-    cursor.execute("""\
-        SELECT u.email
-          FROM usr u
-          JOIN grp_usr gu
-            ON gu.usr = u.id
-          JOIN grp g
-            ON g.id = gu.grp
-         WHERE g.name = ?""", groupName)
-    return [row[0] for row in cursor.fetchall()]
+    query = cdrdb2.Query("usr u", "u.email")
+    query.join("grp_usr gu", "gu.usr = u.id")
+    query.join("grp g", "g.id = gu.grp")
+    query.where(query.Condition("g.name", groupName))
+    return [row[0] for row in query.execute().fetchall()]
 
 #----------------------------------------------------------------------
 # Object for a mime attachment.
@@ -4431,7 +4425,7 @@ class Log:
         # Can only close the file if we were able to open it earlier.
         # Permission problems exist and file pointer is None.
         # -----------------------------------------------------------
-        if type(self.__fp) == 'file':
+        if isinstance(self.__fp, file):
             self.__fp.close()
 
 #----------------------------------------------------------------------
@@ -5891,3 +5885,55 @@ def extract_board_name(doc_title):
     if board_name.startswith("Cancer Complementary"):
         board_name = board_name.replace("Cancer ", "").strip()
     return board_name
+
+#----------------------------------------------------------------------
+# The CDR has too many ways to do logging already. In spite of this,
+# I'm adding yet another logging class, this one based on the standard
+# library's logging module. The immediate impetus for doing this is the
+# fact that we have to use that module in the new CDR Scheduler. The
+# Logger class below is only used as a namespace wrapper, with a factory
+# method for instantiating logger objects.
+#----------------------------------------------------------------------
+class Logging:
+    FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
+    LEVELS = {
+        "info": logging.INFO,
+        "debug": logging.DEBUG,
+        "warn": logging.WARN,
+        "warning": logging.WARNING,
+        "critical": logging.CRITICAL,
+        "error": logging.ERROR
+    }
+    class Formatter(logging.Formatter):
+        """Make our own logging formatter to get the time stamps right."""
+        converter = datetime.datetime.fromtimestamp
+        def formatTime(self, record, datefmt=None):
+            ct = self.converter(record.created)
+            if datefmt:
+                s = ct.strftime(datefmt)
+            else:
+                t = ct.strftime("%Y-%m-%d %H:%M:%S")
+                s = "%s.%03d" % (t, record.msecs)
+            return s
+    @classmethod
+    def get_logger(cls, name, **opts):
+        """
+        Factory method for instantiating a logging object.
+
+        name       required name for the logger
+        path       optional path for the log file
+        format     optional override for the default log format pattern
+        level      optional verbosity for logging, defaults to info
+        propagate  if True, the base handler also writes our entries
+        """
+
+        path = opts.get("path", "%s/%s.log" % (DEFAULT_LOGDIR, name))
+        handler = logging.FileHandler(path)
+        formatter = cls.Formatter(opts.get("format", cls.FORMAT))
+        handler.setFormatter(formatter)
+        level = opts.get("level", "info")
+        logger = logging.getLogger(name)
+        logger.addHandler(handler)
+        logger.setLevel(cls.LEVELS.get(level, logging.INFO))
+        logger.propagate = opts.get("propagate", False)
+        return logger
