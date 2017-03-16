@@ -1,9 +1,151 @@
 #----------------------------------------------------------------------
 #
-# $Id$
+# Wrappers for identifying server configuration values, and utilities
+# specific to the CDR Linux servers.
 #
 #----------------------------------------------------------------------
-import MySQLdb, sys, time, os, socket, cdrpw
+import MySQLdb
+import time
+import os
+import socket
+import cdrpw
+import urllib2
+import urllib
+import json
+import pkg_resources
+import hashlib
+
+class Settings:
+    def __init__(self, db=None):
+        self.db = db
+        self.org = getEnvironment()
+        self.tier = getTier()
+        self.environ = dict(os.environ)
+        self.path = [p for p in os.environ["PATH"].split(":")]
+        self.hosts = self.get_hosts()
+        self.python = self.get_python_settings()
+        self.release = open("/etc/redhat-release").read().strip()
+        self.mysql = self.get_mysql_settings()
+        self.system = self.get_system_info()
+        self.files = self.get_files()
+    def get_files(self):
+        files = {}
+        site = { "emailers": "gpmailers" }.get(self.db, self.db)
+        self.walk(files, "/web/%s" % site)
+        self.walk(files, "/usr/local/cdr/lib/Python")
+        return files
+    def walk(self, files, path):
+        for path, dirs, filenames in os.walk(path):
+            directory = files
+            for name in path.split("/")[1:]:
+                if name not in directory:
+                    directory[name] = {}
+                directory = directory[name]
+            for name in filenames:
+                if not name.endswith(".pyc"):
+                    self.add_file(path, name, directory)
+    def add_file(self, path, name, files):
+        try:
+            path = "%s/%s" % (path, name)
+            fp = open(path, "rb")
+            bytes = fp.read()
+            fp.close()
+            md5 = hashlib.md5()
+            md5.update(bytes)
+            md5 = md5.hexdigest().lower()
+        except Exception, e:
+            md5 = "unreadable"
+        files[name] = md5
+    def get_system_info(self):
+        info = {}
+        for name in ("kernel-release", "kernel-version", "processor"):
+            command = "uname --%s" % name
+            try:
+                value = runCommand(command).output.strip()
+                info[name] = value
+            except Exception, e:
+                log("%s: %s" % (command, e))
+        return info
+    def get_hosts(self):
+        try:
+            hosts = {}
+            h = AppHost(self.org, self.tier)
+            for key in h.lookup:
+                org, tier, use = key
+                host = ".".join(h.lookup[key])
+                if org not in hosts:
+                    hosts[org] = {}
+                if tier not in hosts[org]:
+                    hosts[org][tier] = {}
+                hosts[org][tier][use] = host
+            return hosts
+        except Exception, e:
+            log("Settings.get_hosts(): %s" % e)
+            return {}
+    def get_python_settings(self):
+        env = pkg_resources.Environment()
+        settings = {}
+        for name in env:
+            for package in env[name]:
+                settings[package.project_name] = package.version
+        return settings
+    def get_mysql_settings(self):
+        if not self.db:
+            return {}
+        try:
+            cursor = getConnection(self.db).cursor()
+            cursor.execute("SHOW VARIABLES")
+            return dict(cursor.fetchall())
+        except Exception, e:
+            log("Settings.get_mysql_settings(): %s" % e)
+            return {}
+    def serialize(self, indent=None):
+        return json.dumps({
+            "release": self.release,
+            "environ": self.environ,
+            "python": self.python,
+            "path": self.path,
+            "mysql": self.mysql,
+            "tier": self.tier,
+            "hosts": self.hosts,
+            "org": self.org,
+            "system": self.system,
+            "files": self.files
+        }, indent=indent)
+
+
+def can_do(session, action, doctype=""):
+    """
+    Authorization check used on CDR Linux servers. Ask the Windows
+    server for this tier to make the determination.
+
+    Pass:
+        session - ID of the user's current CDR session login
+        action - what the user wants to do
+        doctype - optional document type the user wants to do it with
+
+    Return:
+        True if the user can perform the specified action
+        Otherwise false
+    """
+
+    org = getEnvironment()
+    tier = getTier()
+    app_host = AppHost(org, tier)
+    url = app_host.makeCdrCgiUrl(tier, "check-auth.py")
+    parms = urllib.urlencode({
+        "Session": session,
+        "action": action,
+        "doctype": doctype
+    })
+    try:
+        response = urllib2.urlopen(url, parms)
+        return response.read().strip() == "Y"
+    except Exception, e:
+        log("can_do(%s, %s, %s): %s" % (repr(session), repr(action),
+                                        repr(doctype), e))
+        log("url=%s" % repr(url))
+        return False
 
 def translateTier(tier):
     """
@@ -433,7 +575,7 @@ Content-type: text/%s; charset=utf-8
 
 %s""" % (textType, page)
     print output.encode('utf-8')
-    sys.exit(0)
+    exit(0)
 
 #----------------------------------------------------------------------
 # Used by Genetics Professional emailers to generate obfuscated URL.

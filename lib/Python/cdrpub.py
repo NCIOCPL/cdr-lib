@@ -1,7 +1,5 @@
 #----------------------------------------------------------------------
 #
-# $Id$
-#
 # Module used by CDR Publishing daemon to process queued publishing jobs.
 #
 # BZIssue::2207 - Added pubProcDate parameter with initialization
@@ -660,7 +658,12 @@ class Publish:
 
                 # Rename the output directory from JobNNNNN.InProcess
                 # to JobNNNNN (dest_base will be empty for push jobs).
-                if dest_base:
+                # Note: The value for dest_base is always set to a directory
+                #       path in the server for every job even though a 
+                #       directory does not get created for push jobs.  
+                #       The value will be reset to an empty string in the 
+                #       database for push jobs downstream.
+                if dest_base and not self.__isCgPushJob():
                     try:
                         os.rename(dest, dest_base)
                     except Exception, e:
@@ -713,6 +716,9 @@ class Publish:
                         # Make sure output_dir is reset to "" for pushing
                         # jobs, no matter whether user has forgot to check
                         # the "Message only" box.
+                        # Note: The value for output_dir is set to an empty
+                        #       string (''), not set to NULL as the name
+                        #       of the method suggests.
                         self.__nullOutputDir()
 
                         # Get the vendor_job and vendor_dest from
@@ -3462,6 +3468,8 @@ Please do not reply to this message.
 
     #----------------------------------------------------------------------
     # Set output_dir to "" in pub_proc table.
+    # This method is named incorrectly.  The value for output_dir is set
+    # to an empty string instead of setting it to NULL. Big difference!!!
     #----------------------------------------------------------------------
     def __nullOutputDir(self):
         try:

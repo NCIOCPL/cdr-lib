@@ -1,7 +1,5 @@
 #----------------------------------------------------------------------
 #
-# $Id$
-#
 # Support routines for SOAP communication with Cancer.Gov's GateKeeper.
 #
 # BZIssue::3491

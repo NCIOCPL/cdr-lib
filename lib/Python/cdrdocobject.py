@@ -1,23 +1,5 @@
 #----------------------------------------------------------------------
-#
-# $Id$
-#
 # Types for data extracted from CDR documents of specific document types.
-#
-# $Log: not supported by cvs2svn $
-# Revision 1.4  2008/05/06 18:06:09  bkline
-# Restored some portions of previous version which had inadvertently
-# been overwritten.
-#
-# Revision 1.3  2008/05/06 17:40:22  bkline
-# Added new classes for protocols and organizations.
-#
-# Revision 1.2  2006/06/08 19:10:09  bkline
-# Renamed __incPersonTitle to __ptHandling in ContactInfo class.
-#
-# Revision 1.1  2005/07/08 21:36:10  bkline
-# Python classes for data extracted from CDR documents.
-#
 #----------------------------------------------------------------------
 import cdr, sys, xml.dom.minidom, time
 

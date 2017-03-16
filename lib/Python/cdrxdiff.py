@@ -28,9 +28,6 @@
 # Callers may also specify a filter list (by name, id, or set name) and
 # parameter list to be invoked in pre-filtering documents before diff'ing
 # them.
-#
-# $Id$
-#
 #---------------------------------------------------------
 import os, sys, cgi, re, difflib, textwrap, cdr, cdrcgi
 

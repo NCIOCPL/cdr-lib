@@ -12,7 +12,7 @@
         doc.addPara('I must bid you adieu ....')
         doc.addPara('Sincerely, Abigail')
         doc.write('DearJohn.rtf')
-        
+
         Also provides a subclass of Document, FormLetter, which is
         used for generating CDR Board Member Correspondence mailers.
 
@@ -53,13 +53,13 @@ import time, re
 _nonAsciiPattern = re.compile(u"([\u0080-\uFFFD])")
 
 def fix(text):
-    
+
     """
     Escape problematic characters for RTF.  Returns a cleaned-up
     version of the passed string, converted to 7-bit ASCII,
     suitable for insertion into an RTF document.
     """
-    
+
     text = text.replace("\\", "\\\\")
     text = text.replace("{", "\\{").replace("}", "\\}")
     text = _nonAsciiPattern.sub(_replace, text)
@@ -68,26 +68,26 @@ def fix(text):
     return text
 
 def _replace(match):
-    
+
     "Function passed to regular expression sub() method."
-    
+
     return _rtfForUnicodeChar(match.group(1))
 
 def _rtfForUnicodeChar(ch):
-    
+
     "Convert a Unicode character into its RTF representation."
-    
+
     code = ord(ch)
     return "{\\uc1\\u%d?}" % code
 
 class Font:
-    
+
     """
     Object for representing a single font in an RTF document.
 
     Switch to a font by inserting the command \\fN in the body of
     the document, where N is the ID (number) of the desired font.
-    
+
     A default RtfWriter Document has three fonts pre-registered:
 
         Document.SERIF     (ID 0: Times New Roman; family roman)
@@ -98,7 +98,7 @@ class Font:
     in a document.  This method ensures that unique IDs are
     generated for the registered fonts.
     """
-    
+
     def __init__(self, id, name, family = "nil", alt = None):
 
         """
@@ -109,7 +109,7 @@ class Font:
         and/or an alternate font to be used if the named font is
         not found.
         """
-        
+
         self.__id     = id
         self.__name   = name
         self.__family = family
@@ -118,26 +118,26 @@ class Font:
     def getId(self):
 
         "Access method for ID used to set the font later in the document."
-        
+
         return self.__id
-    
+
     def getName(self):
 
         "Access method for the font's name (e.g., 'Times New Roman')."
-        
+
         return self.__name
-    
+
     def getFamily(self):
 
         "Access method for the generic font category (e.g., 'swiss')."
-        
+
         return self.__family
-    
+
     def getAlternateFont(self):
 
         """Access method for name of alternate font to be used if the
         specified font in the font table is not available."""
-        
+
         return self.__alt
 
     def getRtf(self):
@@ -178,7 +178,7 @@ class List:
 
     See also MiscellaneousDoc.addList()
     """
-    
+
     BULLETED  = 1   # listid for un-numbered lists
     ARABIC    = 0   # number type for numbered lists
     ROMAN_UC  = 1   # (I., II., III., IV., etc.)
@@ -204,7 +204,7 @@ class List:
             id   - The identifier used to create the list
                    in the document.
         """
-        
+
         self.id                 = List.__getNextId()
         self.__numberType       = numberType
         if self.__numberType != List.NONE:
@@ -275,7 +275,7 @@ class Document:
         directly, as can the defaultFont and extraHeader attributes.
 
     """
-    
+
     #------------------------------------------------------------------
     # Class constants.
     #------------------------------------------------------------------
@@ -295,7 +295,7 @@ class Document:
         """
         Creates a new RTF document object.  All arguments are optional.
         """
-        
+
         self.title       = title
         self.author      = author
         self.company     = company
@@ -324,11 +324,11 @@ class Document:
     def write(self, file):
 
         """
-        Serializes the RTF document to disk.  Argument can either be a 
+        Serializes the RTF document to disk.  Argument can either be a
         path (absolute or relative) name for the file, or an open file
         object.
         """
-        
+
         if isinstance(file, (str, unicode)):
             f = open(file, "wb")
         else:
@@ -348,7 +348,7 @@ class Document:
         processing must be done to the document before saving it
         (for example, plugging in values for delimited placeholders).
         """
-        
+
         rtf = '{' + self.__getHeader() + self.__getInfo() + self.__getDocFmt()
         for bodyPart in self.__bodyParts:
             rtf += bodyPart
@@ -360,7 +360,7 @@ class Document:
         Appends a string containing RTF markup to be used in the
         body of the document.
         """
-        
+
         self.__bodyParts.append(rawContent)
 
     def addPara(self, text):
@@ -370,7 +370,7 @@ class Document:
         two paragraph marks.  Override this method to alter this
         behavior.
         """
-        
+
         self.__bodyParts.append(fix(text) + "\\par\\par\n")
 
     def addFont(self, name, family = "nil", alt = None):
@@ -385,7 +385,7 @@ class Document:
         and/or the name of an alternate font to be used if the
         desired font is not present.
         """
-        
+
         id = len(self.fonts)
         self.fonts.append(Font(id, name, family, alt))
         return id
@@ -400,11 +400,11 @@ class Document:
         by this method.
         2008-03-17: added support for most other list types.
         """
-        
+
         newList = List(numberType)
         self.lists.append(newList)
         return newList.id
-    
+
     def __getHeader(self):
 
         """
@@ -422,26 +422,26 @@ class Document:
                 self.__getColorTable() +
                 self.__getListTables()  +
                 self.__getGenerator())
-    
+
     def __getFontTable(self):
 
         """
         Private method to assemble the header's font table for the
         document.
         """
-        
+
         fontTable = "{\\fonttbl\n"
         for font in self.fonts:
             fontTable += "%s\n" % font.getRtf()
         return fontTable + "}\n"
-    
+
     def __getColorTable(self):
 
         """
         Private method to assemble the header's color table for the
         document.
         """
-        
+
         if not self.colors:
             return ""
         colorTable = "{\\colortbl\n"
@@ -459,7 +459,7 @@ class Document:
         Private method used to assemble the header information for
         tables found in the document.
         """
-        
+
         listTables = "{\\*\\listtable\n"
         overrideTables = "{\\listoverridetable\n"
         for listDef in self.lists:
@@ -475,13 +475,13 @@ class Document:
         Private method to create the string identifying the software
         used to generate the RTF document.
         """
-        
+
         return "{\\*\\generator %s;}\n" % fix(self.generator)
 
     def __getDocFmt(self):
 
         "Private method to assemble the document formatting information."
-        
+
         # Add \truncatefontheight to have font sizes rounded down, not up
         # Add \lytprtmet to use printer metrics for page layout
         return ("\\pard\\plain"              # clear out settings
@@ -495,7 +495,7 @@ class Document:
     def __getInfo(self):
 
         "Private method to assemble the optional document metadata."
-        
+
         info = "{\\info\n"
         if self.title:
             info += "{\\title %s}\n" % fix(self.title)
@@ -507,11 +507,11 @@ class Document:
         if self.subject:
             info += "{\\subject %s}\n" % fix(self.subject)
         return info + '}\n'
-    
+
     def __getTime(self):
 
         "Private method to generate the document creation time."
-        
+
         now = time.localtime()
         return "\\yr%d \\mo%d \\dy%d \\hr%d \\min%d \\sec%d" % (now[0],
                                                                 now[1],
@@ -521,7 +521,7 @@ class Document:
                                                                 now[5])
 
 class FormLetter(Document):
-    
+
     """
     Subclass for RTF document used to generate PDQ Board Member mailers.
 
@@ -584,8 +584,8 @@ class FormLetter(Document):
            * Create a new file in the output directory for the job,
              and write the string for this letter into the file.
     """
-    
-    def __init__(self, 
+
+    def __init__(self,
                  title      = "[CDR Form Letter]",
                  subject    = None,
                  template   = None,
@@ -610,7 +610,7 @@ class FormLetter(Document):
         custom section is passed as the optional invitePara parameter.
         The remaining parameters are self-explanatory.
         """
-        
+
         Document.__init__(self, title, author, company, subject)
         self.generator       = "CDR RTF Writer"
         self.pngName         = pngName       # location of bitmap file for logo
@@ -643,7 +643,7 @@ class FormLetter(Document):
         Private method used to embed a serialized representation of
         an image (in this case, the DHHS logo used in the letterhead).
         """
-        
+
         if not image:
             raise Exception("image not found")
         if bin:
@@ -699,7 +699,7 @@ class FormLetter(Document):
                            "%s}\n"           # NCI
                            % (tab, self.baskervilleFont, dhhs,
                               self.SANSSERIF, phs, line, nih, nci))
-        
+
     def __loadMiscDoc(self, match):
 
         """
@@ -714,14 +714,14 @@ class FormLetter(Document):
         invoked indirectly by the sub() method of the regular
         expression object for the pattern.
         """
-        
+
         miscDoc = MiscellaneousDoc(self, match.group(1))
         return miscDoc.getRtf()
 
 class MiscellaneousDoc:
 
     "Object that knows how to convert a CDR Miscellaneous document to RTF."
-    
+
     def __init__(self, letter, name):
 
         """
@@ -731,7 +731,7 @@ class MiscellaneousDoc:
         the miscellaneous document are to be inserted, and the
         title of the CDR document to be loaded.
         """
-        
+
         import xml.dom.minidom, cdr
         self.letter = letter
         attr  = 'CdrAttr/MiscellaneousDocument/MiscellaneousDocumentTitle'
@@ -769,7 +769,7 @@ class MiscellaneousDoc:
         Private method to convert an XML Para element to the equivalent
         RTF markup.
         """
-        
+
         self.pieces.append(MiscellaneousDoc.__getText(node).strip())
         self.pieces.append("\\par\\par\n")
 
@@ -779,7 +779,7 @@ class MiscellaneousDoc:
         Private method to extract the text nodes from the XML
         document and convert them to RTF marked-up content.
         """
-        
+
         pieces = []
         for child in node.childNodes:
             if child.nodeType == child.TEXT_NODE:
@@ -804,7 +804,7 @@ class MiscellaneousDoc:
         alter its appearance (for example, to apply boldface or
         italic rendering for the text).
         """
-        
+
         pieces.append("{\\%s " % code)
         for child in node.childNodes:
             if child.nodeType == child.TEXT_NODE:
@@ -818,10 +818,10 @@ class MiscellaneousDoc:
         Private method to convert an XML ExternalRef element to the
         RTF equivalent.  Not yet implemented.
         """
-        
+
         raise Exception("__addRef not yet implemented")
     __addRef = staticmethod(__addRef)
-    
+
     def __addList(self, node, name):
 
         """
@@ -829,7 +829,7 @@ class MiscellaneousDoc:
         registering a new list for the document if the list is a
         numbered list.
         """
-        
+
         if name == "OrderedList":
             listId = self.letter.addList(List.ARABIC)
         else:

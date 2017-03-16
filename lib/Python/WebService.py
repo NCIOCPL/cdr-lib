@@ -1,6 +1,5 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
-# $Id$
 #
 # Simple Web service helper classes.
 #

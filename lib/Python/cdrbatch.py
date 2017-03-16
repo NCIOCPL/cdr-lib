@@ -1,13 +1,10 @@
 #----------------------------------------------------------------------
-# $Id$
-#
 # Internal module defining a CdrBatch class for managing batch jobs.
 #
 # Used by CdrBatchService.py, CdrBatchInfo.py, and by individual
 # batch jobs.
 #
 # JIRA::OCECDR-3800 - eliminated security vulnerabilities
-#
 #----------------------------------------------------------------------
 import sys
 import string
@@ -425,7 +422,7 @@ class CdrBatch:
             host = cdr.h.host['DBWIN'][0]
 
         # Set job id to None or passed value
-        self.__jobId = jobId
+        self.__jobId = jobId and int(jobId) or None
 
         # No errors yet in new job
         self.__failure = None
@@ -456,59 +453,43 @@ class CdrBatch:
 
             # Args are loaded into a dictionary - with type checking
             if args:
-                if type(args) != type (()) and type(args) != type([]):
-                    self.fail (\
-                        "Job arguments must be passed as a tuple of tuples")
+                if not isinstance(args, (tuple, list)):
+                    self.fail("Job arguments must be passed as a sequence")
 
                 for argPair in args:
-                    if type(argPair) != type(()) or len(argPair) != 2:
-                        self.fail (\
-                            "Individual job arguments must be tuples of " +\
+                    if not isinstance(argPair, tuple) or len(argPair) != 2:
+                        self.fail (
+                            "Individual job arguments must be tuples of "
                             "(argname, argvalue)")
 
-                    # Insure usable types
-                    argKey = argPair[0]
-                    argVal = argPair[1]
+                    # Ensure that we have usable types
+                    argKey, argVal = argPair
 
                     # Keys have to be strings
-                    if type(argKey) != type(""):
-                        self.fail (\
+                    if not isinstance(argKey, basestring):
+                        self.fail (
                           "Expecting job argument name of type string.\n" +
                           "Got keytype=%s for arg key=%s val=%s" %
-                          (str(type(argKey)), str(argKey), str(argVal)))
+                          (type(argKey), argKey, argVal))
 
-                    # Convert integers to strings
-                    if type(argVal) == type(0):
-                        argVal = str(argVal)
-
-                    # Convert simple strings to sequences for uniformity
-                    typVal = type(argVal)
-                    valSeq = []
-                    if (typVal == type("") or typVal == type(u"")):
-                        valSeq.append (argVal)
-
-                    # Or it may already be a sequence
-                    elif (typVal == type(()) or typVal == type([])):
-                        valSeq = argVal
-
-                    # Not supporting any other types at this time
+                    # Convert values to mutable sequence
+                    if isinstance(argVal, (list, tuple)):
+                        values = list(argVal)
                     else:
-                        self.fail (\
-                          "Expecting job argument value of type string, " +
-                          "unicode or sequence\n"
-                          "Got valtype=%s for arg key=%s val=%s" %
-                          (str(type(argVal)), argKey, str(argVal)))
+                        values = [argVal]
 
                     # Components of sequence have to be strings
-                    for val in valSeq:
-                        if (type(val)!=type("") and type(val)!=type(u"")):
-                            self.fail (\
-                          "Expecting job arg sequence values to be strings\n"+\
-                          "Got valpart type=%s for arg key=%s val=%s" %
-                          (str(type(val)), argKey, str(val)))
+                    for i, value in enumerate(values):
+                        if value is None:
+                            values[i] = ""
+                        elif isinstance(value, (int, bool, float)):
+                            values[i] = str(value)
+                        elif not isinstance(value, basestring):
+                            self.fail("Got arg value of type %s for %s" %
+                                      (type(value), argKey))
 
                     # Store key + arg list in dictionary, by name of arg
-                    self.__args[argKey] = valSeq
+                    self.__args[argKey] = values
 
             # Others don't exist until job is queued and/or run
             self.__status      = None
@@ -652,9 +633,11 @@ class CdrBatch:
     # Caller should say if he wants 16 bit unicode preserved
     # Else we convert to utf-8.
     #------------------------------------------------------------------
-    def getParm(self, key, ucode=0):
-        if self.__args.has_key (key):
+    def getParm(self, key, ucode=False):
+        if key in self.__args:
             val = self.__args[key]
+            if isinstance(val, (tuple, list)) and len(val) == 1:
+                val = val[0]
             if ucode:
                 # Simply return what we have
                 return val
@@ -710,12 +693,14 @@ class CdrBatch:
         # If there are any arguments, save them for batch job to retrieve
         # Args are a dictionary containing pairs of:
         #    Argument name (a string)
-        #    Argument values (a sequence of one or more strings)
+        #    Argument values (a string or a sequence of one or more strings)
         if self.__args:
             # For each argument name (key)
             for key in self.__args.keys():
 
                 valSeq = self.__args[key]
+                if isinstance(valSeq, basestring):
+                    valSeq = [valSeq]
 
                 # For each value in the sequence of values for this key
                 for val in valSeq:
@@ -811,6 +796,11 @@ class CdrBatch:
         Pass:
             New status, must be one of allowed ones for a batch job.
         """
+
+        # Nothing to do if we're testing.
+        if not self.__jobId:
+            return
+
         try:
             sendSignal (self.__conn, self.__jobId, newStatus, PROC_BATCHJOB)
             self.__status = newStatus
@@ -822,6 +812,11 @@ class CdrBatch:
     # Set the user progress message
     #------------------------------------------------------------------
     def setProgressMsg (self, newMsg):
+
+        # Don't bother for test jobs.
+        if not self.__jobId:
+            return
+
         # The internal one
         self.__progressMsg = newMsg
 
@@ -848,9 +843,9 @@ class CdrBatch:
             logfile - where to write.
         """
         if self.__jobId:
-            newMsg = ["Job %d '%s': " % (self.__jobId, self.__jobName)]
+            newMsg = ["Job %d '%s':" % (self.__jobId, self.__jobName)]
         else:
-            newMsg = ["Job '%s': " % self.__jobName]
+            newMsg = ["Job '%s':" % self.__jobName]
 
 
         # Construct a tuple of messages including job identification

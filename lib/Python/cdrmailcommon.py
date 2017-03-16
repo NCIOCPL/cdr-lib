@@ -1,12 +1,7 @@
 #----------------------------------------------------------------------
-#
-# $Id$
-#
 # Mailer classes needed both by the CGI and by the batch portion of the
 # mailer software.
-#
 #----------------------------------------------------------------------
-
 import sys, cdr, cdrdb, cdrutil, cgi, re
 
 

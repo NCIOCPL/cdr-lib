@@ -1,7 +1,5 @@
 #----------------------------------------------------------------------
 #
-# $Id$
-#
 # Password lookup for CDR MySQL accounts.  This information is
 # separated out so that CBIIT can patch in different upper-tier
 # passwords without risking that updates to larger modules would

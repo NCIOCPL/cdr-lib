@@ -22,29 +22,8 @@ r"""
     opening and closing quotes for u'"'.
 """
 
-#----------------------------------------------------------------------
-#
-# $Id$
-#
-# $Log: not supported by cvs2svn $
-# Revision 1.5  2004/02/03 18:30:08  bkline
-# Added \leq and \geq symbols.
-#
-# Revision 1.4  2003/06/02 19:36:44  bkline
-# Plugged in mappings for directional quote characters.
-#
-# Revision 1.3  2002/11/08 21:47:59  bkline
-# Added alternating double quote support.
-#
-# Revision 1.2  2001/10/20 18:46:59  bkline
-# Filled in a few holes; used dot-less i for accented glyphs.
-#
-# Revision 1.1  2001/10/20 04:19:03  bkline
-# Initial revision
-#
-#----------------------------------------------------------------------
-
 import re
+
 codeMap = {
     0x0022: r"""\tQ{}""",
     0x0023: r"""\#""",

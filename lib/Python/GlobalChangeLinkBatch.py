@@ -1,6 +1,4 @@
 #----------------------------------------------------------------------
-# $Id$
-#
 # Batch portion of GlobalChangeLink.py.
 # This is derived from the original SimpleLinkGlobalChangeBatch.py,
 #   modified to add more complex capability.

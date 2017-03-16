@@ -5,9 +5,6 @@
 # This is the batch portion of a report launched by CTGovUpdateReport.py.
 #
 # Done for Bugzilla issue #1881
-#
-# $Id$
-#
 #----------------------------------------------------------------------
 
 import sys, time, cdr, cdrdb, cdrxdiff, cdrbatch, CTGovUpdateCommon

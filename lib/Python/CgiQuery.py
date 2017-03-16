@@ -1,14 +1,9 @@
 #!/usr/bin/python
 #----------------------------------------------------------------------
-#
-# $Id$
-#
 # Base class for CGI database query interface.
-#
 # BZIssue::4710
-#
 #----------------------------------------------------------------------
-import cgi, sys, time, cdrdb
+import cgi, sys, time, cdrdb, cdrcgi
 
 class CgiQuery:
 
@@ -179,12 +174,11 @@ Cache-control: no-cache, must-revalidate
     def createSS(self):
         "Create Excel spreadsheet from query results"
         try:
-            import ExcelWriter
             if sys.platform == "win32":
                 import os, msvcrt
                 msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
-            book = ExcelWriter.Workbook()
-            sheet = book.addWorksheet("Ad-hoc Query Report")
+            styles = cdrcgi.ExcelStyles()
+            sheet = styles.add_sheet("Ad-hoc Query Report")
             cursor = self.conn.cursor()
             start = time.time()
             cursor.execute(self.queryText, timeout = self.timeout)
@@ -192,29 +186,22 @@ Cache-control: no-cache, must-revalidate
             if not cursor.description:
                 raise Exception('No query results')
             colNum = 1
-            style = book.addStyle(font=ExcelWriter.Font(bold=True))
-            row = sheet.addRow(1, style)
-            for col in cursor.description:
-                row.addCell(colNum, col and col[0] or u"")
-                colNum += 1
-            vals = cursor.fetchone()
-            rowNum = 2
-            while vals:
-                row = sheet.addRow(rowNum)
-                rowNum += 1
-                colNum = 1
-                for val in vals:
-                    row.addCell(colNum, val or u"")
-                    colNum += 1
-                vals = cursor.fetchone()
-            row = sheet.addRow(rowNum)
-            footer = u"%d row(s) retrieved (%.3f seconds)" % (rowNum - 2, secs)
-            row.addCell(1, footer)
+            for i, info in enumerate(cursor.description):
+                sheet.write(0, i, info and info[0] or u"", styles.bold)
+            values = cursor.fetchone()
+            row = 1
+            while values:
+                for i, value in enumerate(values):
+                    sheet.write(row, i, value)
+                values = cursor.fetchone()
+                row += 1
+            footer = u"%d row(s) retrieved (%.3f seconds)" % (row - 1, secs)
+            sheet.write_merge(row, row, 0, len(cursor.description) - 1, footer)
             now = time.strftime("%Y%m%d%H%M%S")
             print "Content-type: application/vnd.ms-excel"
             print "Content-Disposition: attachment; filename=sdlm-%s.xls" % now
             print
-            book.write(sys.stdout, True)
+            styles.book.save(sys.stdout)
         except cdrdb.Error, info:
             self.bail("Failure executing query:\n%s\n%s" % (
                 cgi.escape(self.queryText),

@@ -1334,40 +1334,36 @@ class Doc:
         # ... and the other for passing in a CdrDoc element to be parsed.
         else:
             if encoding.lower() != 'utf-8':
-                # Have to do this because of poor choice of parameter name
-                # 'type'.  Ouch! :-<}
-                if x.__class__ == u"".__class__:
+                if isinstance(x, unicode):
                     x = x.encode('utf-8')
                 else:
                     x = unicode(x, encoding).encode('utf-8')
+            root          = etree.fromstring(x)
             self.encoding = encoding
             self.ctrl     = {}
             self.xml      = ''
             self.blob     = None
-            docElem       = xml.dom.minidom.parseString(x).documentElement
-            self.id       = docElem.getAttribute('Id').encode('ascii') or None
-            self.type     = docElem.getAttribute('Type').encode(
-                                                              'ascii') or None
-            for node in docElem.childNodes:
-                if node.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
-                    if node.nodeName == 'CdrDocCtl':
-                        self.parseCtl(node)
-                    elif node.nodeName == 'CdrDocXml':
-                        self.xml = getTextContent(node).encode(encoding)
-                    elif node.nodeName == 'CdrDocBlob':
-                        self.extractBlob(node)
+            self.id       = root.get("Id", "").encode("ascii") or None
+            self.type     = root.get("Type", "").encode("ascii") or None
+            for node in root:
+                if node.tag == "CdrDocCtl":
+                    self.parseCtl(node)
+                elif node.tag == "CdrDocXml":
+                    self.xml = get_text(node, "").encode(encoding)
+                elif node.tag == "CdrDocBlob":
+                    self.extractBlob(node)
+
     def parseCtl(self, node):
         """
         Parse a CdrDocCtl node to extract all its elements into the ctrl
         dictionary.
 
         Pass:
-            DOM node for CdrDocCtl.
+            ElementTree node for CdrDocCtl.
         """
-        for child in node.childNodes:
-            if child.nodeType == xml.dom.minidom.Node.ELEMENT_NODE:
-                self.ctrl[child.nodeName.encode('ascii')] = \
-                    getTextContent(child).encode(self.encoding)
+
+        for child in node:
+            self.ctrl[child.tag] = get_text(child, "").encode(self.encoding)
 
     def extractBlob(self, node):
         """
@@ -1376,8 +1372,8 @@ class Doc:
         Pass:
             DOM node for CdrDocBlob.
         """
-        encodedBlob = getTextContent(node)
-        self.blob   = base64.decodestring(encodedBlob.encode('ascii'))
+
+        self.blob = base64.decodestring(get_text(node))
 
     def __str__(self):
         """
@@ -2493,7 +2489,8 @@ class dtinfo:
                  schema     = None,
                  vvLists    = None,
                  comment    = None,
-                 error      = None):
+                 error      = None,
+                 active     = None):
         self.type           = type
         self.format         = format
         self.versioning     = versioning
@@ -2504,6 +2501,7 @@ class dtinfo:
         self.vvLists        = vvLists
         self.comment        = comment
         self.error          = error
+        self.active         = active
 
     def getChildren(self, parent=None):
         """
@@ -2537,6 +2535,7 @@ class dtinfo:
           Format: %s
       Versioning: %s
          Created: %s
+          Active: %s
  Schema Modified: %s
           Schema:
 %s
@@ -2548,6 +2547,7 @@ class dtinfo:
        self.format or '',
        self.versioning or '',
        self.created or '',
+       self.active or '',
        self.schema_mod or '',
        self.schema or '',
        self.dtd or '',
@@ -2555,77 +2555,59 @@ class dtinfo:
 
 #----------------------------------------------------------------------
 # Retrieve document type information from the CDR.
+# Add active flag (OCECDR-4091).
 #----------------------------------------------------------------------
-def getDoctype(credentials, doctype, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getDoctype(credentials, doctype, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
-    cmd = "<CdrGetDocType Type='%s' GetEnumValues='Y'/>" % doctype
+    cmd = etree.Element("CdrGetDocType", Type=doctype, GetEnumValues="Y")
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
 
-    # Extract the response.
-    results = extract("<CdrGetDocTypeResp (.*)</CdrGetDocTypeResp>", resp)
-    errors = getErrors(results, False, True)
-    if errors: return dtinfo(error = errors)
+    # Check for problems.
+    errors = getErrors(resp, False, True)
+    if errors: return dtinfo(error=errors)
 
-    # Build the regular expressions.
-    typeExpr       = re.compile("Type=['\"]([^'\"]*)['\"]")
-    formatExpr     = re.compile("Format=['\"]([^'\"]*)['\"]")
-    versioningExpr = re.compile("Versioning=['\"]([^'\"]*)['\"]")
-    createdExpr    = re.compile("Created=['\"]([^'\"]*)['\"]")
-    schemaModExpr  = re.compile("SchemaMod=['\"]([^'\"]*)['\"]")
-    commentExpr    = re.compile("<Comment>(.*)</Comment>", re.DOTALL)
-    dtdExpr        = re.compile(r"<DocDtd>\s*<!\[CDATA\[(.*)\]\]>\s*</DocDtd>",
-                                re.DOTALL)
-    schemaExpr     = re.compile(r"<DocSchema>(.*)</DocSchema>", re.DOTALL)
-    enumSetExpr    = re.compile(r"""<EnumSet\s+Node\s*=\s*"""
-                                r"""['"]([^'"]+)['"]\s*>(.*?)</EnumSet>""",
-                                re.DOTALL)
-    vvExpr         = re.compile("<ValidValue>(.*?)</ValidValue>", re.DOTALL)
-
-    # Parse out the components.
-    dtype      = typeExpr      .search(results)
-    dformat    = formatExpr    .search(results)
-    versioning = versioningExpr.search(results)
-    created    = createdExpr   .search(results)
-    schema_mod = schemaModExpr .search(results)
-    dtd        = dtdExpr       .search(results)
-    schema     = schemaExpr    .search(results)
-    comment    = commentExpr   .search(results)
-    enumSets   = enumSetExpr   .findall(results)
-
-    # Extract the valid value lists, if any
-    vvLists = []
-    if enumSets:
-        for enumSet in enumSets:
-            vvList = [xml.sax.saxutils.unescape(v) for v in
-                      vvExpr.findall(enumSet[1])]
-            vvLists.append((enumSet[0], vvList))
+    # Extract the information from the response.
+    dtd = schema = comment = ""
+    vv_lists = []
+    root = etree.fromstring(resp)
+    for node in root.findall("CdrResponse/CdrGetDocTypeResp"):
+        dtype = node.get("Type", "")
+        dformat = node.get("Format", "")
+        versioning = node.get("Versioning", "")
+        created = node.get("Created", "")
+        schema_mod = node.get("SchemaMod", "")
+        active = node.get("Active", "")
+        for child in node:
+            if child.tag == "Comment":
+                comment = child.text or ""
+            if child.tag == "DocDtd":
+                dtd = child.text or ""
+            if child.tag == "DocSchema":
+                schema = child.text or ""
+            if child.tag == "EnumSet":
+                values = [vv.text for vv in child.findall("ValidValue")]
+                vv_lists.append((child.get("Node"), values))
 
     # Return a dtinfo instance.
-    return dtinfo(type       = dtype      and dtype     .group(1) or '',
-                  format     = dformat    and dformat   .group(1) or '',
-                  versioning = versioning and versioning.group(1) or '',
-                  created    = created    and created   .group(1) or '',
-                  schema_mod = schema_mod and schema_mod.group(1) or '',
-                  dtd        = dtd        and dtd       .group(1) or '',
-                  schema     = schema     and schema    .group(1) or '',
-                  comment    = comment    and comment   .group(1) or '',
-                  vvLists    = vvLists                            or None)
+    return dtinfo(dtype, dformat, versioning, created, schema_mod, dtd,
+                  schema, vv_lists, comment, active=active)
 
 #----------------------------------------------------------------------
 # Create a new document type for the CDR.
 #----------------------------------------------------------------------
-def addDoctype(credentials, info, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def addDoctype(credentials, info, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
-    cmd = "<CdrAddDocType Type='%s' Format='%s' Versioning='%s'>"\
-          "<DocSchema>%s</DocSchema>"\
-        % (info.type, info.format, info.versioning, info.schema)
+    cmd = etree.Element("CdrAddDocType")
+    cmd.set("Type", info.type)
+    cmd.set("Format", info.format)
+    cmd.set("Versioning", info.versioning)
+    etree.SubElement(cmd, "DocSchema").text = info.schema
     if info.comment:
-        cmd = cmd + "<Comment>%s</Comment>" % info.comment
-    cmd = cmd + "</CdrAddDocType>"
+        etree.SubElement(cmd, "Comment").text = info.comment
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -2635,16 +2617,24 @@ def addDoctype(credentials, info, host = DEFAULT_HOST, port = DEFAULT_PORT):
 
 #----------------------------------------------------------------------
 # Modify existing document type information in the CDR.
+# Optionally modify the active status of the document type (OCECDR-4091).
 #----------------------------------------------------------------------
-def modDoctype(credentials, info, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def modDoctype(credentials, info, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
-    cmd = "<CdrModDocType Type='%s' Format='%s' Versioning='%s'>"\
-          "<DocSchema>%s</DocSchema>"\
-        % (info.type, info.format, info.versioning, info.schema)
+    cmd = etree.Element("CdrModDocType")
+    cmd.set("Type", info.type)
+    cmd.set("Format", info.format)
+    cmd.set("Versioning", info.versioning)
+    active = getattr(info, "active")
+
+    # OCECDR-4091: do it this way for backward compatibility in case
+    # some code is creating an info class by hand. :-0
+    if active:
+        cmd.set("Active", active)
+    etree.SubElement(cmd, "DocSchema").text = info.schema
     if info.comment:
-        cmd = cmd + "<Comment>%s</Comment>" % info.comment
-    cmd = cmd + "</CdrModDocType>"
+        etree.SubElement(cmd, "Comment").text = info.comment
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials), host, port)
@@ -5061,7 +5051,7 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, chgOnly=True, useCDATA=False):
 # Tell the caller if we are on the development host.
 #----------------------------------------------------------------------
 def isDevHost():
-    return HOST_NAMES[1].upper() == DEV_HOST.upper()
+    return HOST_NAMES[0].upper() == DEV_HOST.upper()
 
 #----------------------------------------------------------------------
 # Tell the caller if we are on the development host.
@@ -5925,15 +5915,51 @@ class Logging:
         format     optional override for the default log format pattern
         level      optional verbosity for logging, defaults to info
         propagate  if True, the base handler also writes our entries
+        multiplex  if True, add new handler even there already is one
         """
 
-        path = opts.get("path", "%s/%s.log" % (DEFAULT_LOGDIR, name))
-        handler = logging.FileHandler(path)
-        formatter = cls.Formatter(opts.get("format", cls.FORMAT))
-        handler.setFormatter(formatter)
-        level = opts.get("level", "info")
         logger = logging.getLogger(name)
-        logger.addHandler(handler)
+        level = opts.get("level", "info")
         logger.setLevel(cls.LEVELS.get(level, logging.INFO))
         logger.propagate = opts.get("propagate", False)
+        if not logger.handlers or opts.get("multiplex"):
+            path = opts.get("path", "%s/%s.log" % (DEFAULT_LOGDIR, name))
+            handler = logging.FileHandler(path)
+            formatter = cls.Formatter(opts.get("format", cls.FORMAT))
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
         return logger
+
+def get_text(node, default=None):
+    """
+    Assemble the concatenated text nodes for an element of the document.
+
+    Note that the call to node.itertext() must include the wildcard
+    string argument to specify that we want to avoid recursing into
+    nodes which are not elements. Otherwise we will get the content
+    of processing instructions, and how ugly would that be?!?
+
+    Pass:
+        node - element node from an XML document parsed by the lxml package
+        default - what to return if the node is None
+
+    Return:
+        default if node is None; otherwise concatenated string node descendants
+    """
+
+    if node is None:
+        return default
+    return u"".join(node.itertext("*"))
+
+def ordinal(n):
+    """
+    Convert number to ordinal string.
+    """
+
+    n = int(n)
+    endings = { 1: "st", 2: "nd", 3: "rd" }
+    ending = "th" if 4 < n % 100 <= 20 else endings.get(n %10, "th")
+    return "{0}{1}".format(n, ending)
+
+def make_timestamp():
+    return datetime.datetime.now().strftime("%Y%m%d%H%M%S")

@@ -1,12 +1,10 @@
 #----------------------------------------------------------------------
-#
-# $Id$
-#
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
-#
 #----------------------------------------------------------------------
 import cdr, cdrdb, cdrglblchg, sys, time, copy
+import datetime
+import random
 
 LOGFILE = cdr.DEFAULT_LOGDIR + '/ModifyDocs.log'
 
@@ -1051,6 +1049,8 @@ class Doc(object):
         # Response missing first element means save failed
         # Almost certainly caused by locked doc
         if not response[0]:
+            capture_transaction(self.session, docStr, ver, val, pub,
+                                self.comment, self.activeStatus, response[1])
             raise Exception("Failure saving changes for CDR%010d: %s" %
                             (self.id, response[1]))
 
@@ -1066,3 +1066,55 @@ class Doc(object):
 
         # Remember the message used to describe this version of the document.
         self.__messages.append(msg)
+
+def capture_transaction(session, doc, ver, val, pub, comment, status, error):
+    """
+    Create a repro case for a failed document save.
+
+    Although the comment above says a failure is almost certainly caused
+    by a locked document, that is unlikely, since the software has already
+    checked for that condition. This function creates a script in the
+    standard CDR log directory which can be used to recreate the failure.
+    To run it, you must:
+        1. Create a CDR session
+        2. Use it to check out the document
+        3. Pass your session ID to this script on the command line
+    Pass:
+        all of the values passed to cdr.repDoc() above, and the
+        second element of the tuple returned by cdr.repDoc().
+    """
+
+    try:
+        stamp = str(datetime.datetime.now())
+        for c in "-: ":
+            stamp = stamp.replace(c, "")
+        stamp += "-" + str(random.random())
+        path = "%s/ModifyDocsFailure-%s.py" % (cdr.DEFAULT_LOGDIR, stamp)
+        log = "ModifyDocsTest-%s.out" % stamp
+        assertion = "session is required"
+        warning = "make sure the document is checked out before running this"
+        with open(path, "w") as fp:
+            fp.write("import sys\nimport cdr\n")
+            fp.write("assert len(sys.argv) > 1, %r\n" % assertion)
+            fp.write("print %r\n" % warning)
+            fp.write("# error: %r\n" % error)
+            fp.write("response = cdr.repDoc(\n")
+            fp.write("    sys.argv[1],\n")
+            fp.write("    doc=%r,\n" % doc)
+            fp.write("    ver=%r,\n" % ver)
+            fp.write("    val=%r,\n" % val)
+            fp.write("    verPublishable=%r,\n" % pub)
+            fp.write("    reason=%r,\n" % comment)
+            fp.write("    comment=%r,\n" % comment)
+            fp.write("    showWarnings='Y',\n")
+            fp.write("    activeStatus=%r)\n" % status)
+            fp.write("print response[0] and 'Success' or 'Failure'\n")
+            fp.write("with open(%r, 'w') as fp:\n" % log)
+            fp.write("    fp.write(repr(response))\n")
+            fp.write("print 'response in %s'\n" % log)
+    except Exception, e:
+        raise
+        try:
+            sys.stderr.write("\ncapture_transaction(): %s\n" % e)
+        except:
+            pass

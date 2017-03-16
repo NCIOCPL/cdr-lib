@@ -2,37 +2,12 @@
 # ******************************************************************
 # File Name: get_stats.py
 #            ------------
-# Script that gets the changes file from the FTP server for the 
+# Script that gets the changes file from the FTP server for the
 # latest full load and creates a formatted TXT file for inclusion
 # with the vendor notification message.
 # Intermediate files are stored in the $PDQLOG directory.
 # ------------------------------------------------------------------
-# $Author: venglisc $      
 # Created:              Volker Englisch  - 2006-03-20
-# $Locker:  $
-# 
-# $Source: /usr/local/cvsroot/production/prod/bin/get_stats.py,v $
-# $Revision: 1.5 $
-#
-# History:
-# $Log: not supported by cvs2svn $
-# Revision 1.4  2009/01/05 20:18:31  venglisc
-# Corrected the calculation for 'lastWk' since it displayed last year instead
-# of currect year (200801 instead 200901).
-#
-# Revision 1.3  2008/01/08 19:27:48  venglisc
-# Modified Week format for weeks to display between 01...53 instead of
-# 00...53.
-#
-# Revision 1.2  2007/09/07 16:17:53  venglisc
-# Replaced FTP process with Python ftplib commands.  Adjusting for more
-# frequent publishing.
-#
-# Revision 1.1  2006/03/20 17:51:19  venglisc
-# Initial copy of the script retrieving the statistics file for PDQ updates
-# and reformatting its output to be included in the vendor notification
-# message.
-#
 # ******************************************************************
 import sys, os, ftplib, time, shutil, cdrutil, datetime
 
@@ -58,16 +33,16 @@ WEEKHDR = "Week %02d, %04d" % (week, year)
 rchanges= '%s.changes'     % WEEK
 lchanges= '%s_changes.txt' % WEEK
 
-class CommandResult:                                                            
-    def __init__(self, code, output):                                           
-        self.code   = code                                                      
-        self.output = output                                                    
+class CommandResult:
+    def __init__(self, code, output):
+        self.code   = code
+        self.output = output
 
-def runCommand(command):                                                        
-    commandStream = os.popen('%s 2>&1' % command)                               
-    output = commandStream.read()                                               
-    code = commandStream.close()                                                
-    return CommandResult(code, output)         
+def runCommand(command):
+    commandStream = os.popen('%s 2>&1' % command)
+    output = commandStream.read()
+    code = commandStream.close()
+    return CommandResult(code, output)
 
 # Creating the ftp files to perform the download
 # ----------------------------------------------
@@ -120,9 +95,9 @@ docType = stat.keys()
 docType.sort()
 
 for docs in docType:
-   sf.write('%20s:  %7s  %8s  %7s\n' % (docs.replace('.' + WEEK, ''), 
-                                 stat[docs]['added'], 
-                                 stat[docs]['modified'], 
+   sf.write('%20s:  %7s  %8s  %7s\n' % (docs.replace('.' + WEEK, ''),
+                                 stat[docs]['added'],
+                                 stat[docs]['modified'],
                                  stat[docs]['removed']))
 sf.write('\n')
 sf.close()

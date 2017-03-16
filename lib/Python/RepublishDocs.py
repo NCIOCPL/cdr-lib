@@ -1,35 +1,10 @@
 #----------------------------------------------------------------------
 #
-# $Id$
-#
 # Module for republishing a set of documents, regardless of whether
 # what we would send to Cancer.gov is identical with what we sent
 # for the last push job.
 #
 # BZIssue::4855 - Add GKTarget Parameter to Re-publishing Job Interface
-#
-# Revision 1.6  2007/05/16 15:54:54  bkline
-# Fixed call to append() (by making argument a tuple).
-#
-# Revision 1.5  2007/05/16 02:09:02  bkline
-# Added new parameter gkHost.
-#
-# Revision 1.4  2007/05/11 16:06:46  bkline
-# Added missing WHERE clause to SQL query for finding documents published
-# by a specified job.
-#
-# Revision 1.3  2007/05/09 18:39:24  bkline
-# Added parameter indicating that only failed documents should be
-# re-published for a specified job.
-#
-# Revision 1.2  2007/05/07 01:16:20  bkline
-# Added test driver, substantial logging and debugging instrumentation,
-# and significant optimizations for the parts that were taking so long
-# that it would not have been possible to invoke the module from a CGI
-# script.
-#
-# Revision 1.1  2007/05/04 19:34:29  bkline
-# New module for nightly publishing project.
 #
 #----------------------------------------------------------------------
 import cdr, cdr2gk, cdrdb, cdrcgi, time

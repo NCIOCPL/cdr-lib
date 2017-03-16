@@ -1,6 +1,4 @@
 #----------------------------------------------------------------------
-# $Id$
-#
 # Perform a global change
 #
 # This is the background half of a process begun interactively with
@@ -21,9 +19,7 @@
 # Command line:
 #   Last argument = job id of the Global Change job to run.
 #                   Identifies row in batch_job table.
-#
 #----------------------------------------------------------------------
-
 import sys, socket, time, string, re, cdr, cdrbatch, cdrglblchg, cdrcgi, traceback
 
 

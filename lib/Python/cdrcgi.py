@@ -1,7 +1,4 @@
 #----------------------------------------------------------------------
-#
-# $Id$
-#
 # Common routines for creating CDR web forms.
 #
 # BZIssue::1000
@@ -16,7 +13,7 @@
 # BZIssue::4381
 # BZIssue::4653 CTRO Access to CDR Admin
 # Fixed some security weaknesses and enhanced Page and Report classes.
-#
+# JIRA::OCECDR-4170 - add new ExcelStyles class
 #----------------------------------------------------------------------
 
 #----------------------------------------------------------------------
@@ -25,7 +22,9 @@
 import cdr
 import cdrdb
 import cgi
+import copy
 import datetime
+import lxml.etree as etree
 import lxml.html
 import lxml.html.builder
 import os
@@ -173,6 +172,391 @@ SUBBANNER = """\
     </TR>
    </TABLE>
 """
+
+class ExcelStyles:
+    """
+    Styles for an Excel workbook.
+
+    Used for rewriting legacy reports originally using ExcelWriter,
+    in cases where we don't want to spend the time on a more extensive
+    rewrite of the report to use the Page/Report/Control classes below.
+
+    Example usage:
+
+    import cdrcgi
+    styles = cdrcgi.ExcelStyles()
+    sheet = styles.add_sheet("Sample Report")
+    sheet.set_panes_frozen(True)
+    sheet.set_horz_split_pos(1)
+    widths = 10, 60, 100
+    labels = "CDR ID", "Title", "Comments"
+    assert(len(widths) == len(labels))
+    for i, chars in enumerate(widths):
+        sheet.col(i).width = styles.chars_to_width(chars)
+    sheet.write_merge(0, 0, 0, len(labels) - 1, "Sample Report", styles.banner)
+    for i, label in enumerate(labels):
+        sheet.write(1, i, label, styles.header)
+    data = (
+        (500000, "Title of the first document", "A comment on the document"),
+        (600000, "Title for the next document", "Another comment"),
+        (700000, "Last document title", "Final comment")
+    )
+    for i, values in enumerate(data):
+        for col, value in enumerate(values):
+            sheet.write(i + 2, col, value, styles.left)
+    styles.book.save("sample-report.xls")
+    """
+
+    BORDERS = "borders: top hair, bottom hair, left hair, right hair"
+    LEFT = "align: wrap True, horiz left, vert top"
+    RIGHT = "align: wrap True, horiz right, vert top"
+    CENTER = "align: wrap True, horiz center, vert center"
+    CENTER_TOP = "align: wrap True, horiz center, vert top"
+    RED = "font: color red"
+    BLUE = "font: color blue"
+    MAROON = "font: color dark_red"
+    TEAL = "font: color teal"
+    PURPLE = "font: color violet"
+    WHITE = "font: color white"
+    HYPERLINK = "font: color blue, underline single"
+    TWIPS = 20
+
+    def __init__(self):
+        """
+        Create some commonly useful style objects.
+        """
+
+        self.book = xlwt.Workbook(encoding="UTF-8")
+        self.left = self.style(self.LEFT)
+        self.right = self.style(self.RIGHT)
+        self.center = self.style(self.CENTER_TOP)
+        self.banner = self.style(self.CENTER, self.bold_font(12))
+        self.header = self.style(self.CENTER, self.bold_font())
+        self.bold = self.style(self.bold_font())
+        self.red = self.style(self.RED)
+        self.blue = self.style(self.BLUE)
+        self.teal = self.style(self.TEAL)
+        self.purple = self.style(self.PURPLE)
+        self.maroon = self.style(self.MAROON)
+        self.white = self.style(self.WHITE)
+        self.error = self.style(self.bold_font(color="red"))
+        self.url = self.style(self.HYPERLINK, self.LEFT)
+
+    def add_sheet(self, name, **opts):
+        """
+        Create a new worksheet, possibly with frozen rows or columns.
+
+        Pass:
+            name         - required string for the worksheet's name
+            frozen_rows  - optional keyword argument for the number of rows
+                           which should always be visible at the top
+            frozen_cols  - optional keyword argument for the number of
+                           columns which should always be visible at the
+                           left
+            cell_overwrite_ok - optional keyword argument to override the
+                           default behavior which prevents the code from
+                           writing to the same cell more than once (see
+                           http://stackoverflow.com/questions/41770461).
+        Return:
+            new object representing a new Excel worksheet
+        """
+
+        cell_overwrite_ok = opts.get("cell_overwrite_ok") and True or False
+        sheet = self.book.add_sheet(name, cell_overwrite_ok)
+        sheet.print_grid = True
+        frozen_rows = opts.get("frozen_rows")
+        frozen_cols = opts.get("frozen_cols")
+        if frozen_rows:
+            sheet.panes_frozen = True
+            sheet.horz_split_pos = int(frozen_rows)
+        if frozen_cols:
+            sheet.panes_frozen = True
+            sheet.vert_split_pos = int(frozen_cols)
+        return sheet
+
+    def write_headers(self, sheet, labels, widths=None, **opts):
+        """
+        Write the header labels for each of the columns in an Excel
+        worksheet, and (optionally) set the column widths.
+
+        Pass:
+            sheet - reference to an xlwt.Worksheet object
+            labels - sequence of strings to write for the header labels
+            widths - optional column widths, in number of characters
+
+        Named options:
+            blank - integer representing the number blank rows to leave
+                    immediately above the row for the column labels
+            banners - sequence of strings to be written to the top of the
+                      sheet; the first string is written in a larger font
+
+        Return:
+            row number for the first data column
+        """
+
+        if widths:
+            assert(len(labels) == len(widths))
+            self.set_widths(sheet, widths)
+        row = 0
+        banners = opts.get("banners")
+        if banners:
+            style = self.banner
+            for banner in banners:
+                sheet.write_merge(row, row, 0, len(labels) - 1, banner, style)
+                sytle = self.header
+                row += 1
+        row += opts.get("blank", 0)
+        for i, label in enumerate(labels):
+            sheet.write(row, i, label, self.header)
+        return row + 1
+
+    @staticmethod
+    def link(url, label):
+        """
+        Wrap the value inside a hyperlink to the specified url.
+        """
+
+        return xlwt.Formula(u'HYPERLINK("%s";"%s")' % (url, label))
+
+    def adjust_color(self, name, rgb):
+        """
+        Modify the values for a color in the book's palette.
+
+        Pass:
+            name  - name of a color in the xlwt color map
+            rgb   - six-digit hex string for the new color values
+        """
+
+        color_slot = xlwt.Style.colour_map.get(name)
+        if not color_slot:
+            raise Exception("set_color(): invalid color name %s" % repr(name))
+        try:
+            r, g, b = int(rgb[:2], 16), int(rgb[2:4], 16), int(rgb[4:6], 16)
+        except:
+            raise Exception("set_color(): bad argument %s" % repr(rgb))
+        self.book.set_colour_RGB(color_slot, r, g, b)
+
+    @classmethod
+    def bold_font(cls, point_size=10, color=None):
+        """
+        Return the string for a bold font of a certain size.
+
+        The string will be passed (possibly as part of a larger string)
+        to the xlwt.easyxf() function by our own style() method to create
+        an xlwt.XFStyle object.
+        """
+
+        font = "font: bold True, height %d" % (cls.TWIPS * point_size)
+        if color:
+            font += ", color %s" % color
+        return font
+
+    @classmethod
+    def set_size(cls, style, point_size=10):
+        """
+        Modify the font size for an existing xlwt XFStyle object.
+
+        Pass:
+            style      - reference to an xlwt.XFStyle object
+            point_size - new size specified in (possibly fractional) points,
+                         which will be converted to twips, which the xlwt
+                         package expects
+        """
+
+        style.font.height = int(point_size * cls.TWIPS)
+
+    @classmethod
+    def set_row_height(cls, row, point_size):
+        """
+        Adjust the height of a row in an Excel worksheet.
+
+        Pass:
+            row        - reference to an xlwt.Row object
+            point_size - new height specified in (possibly fractional) points,
+                         which will be converted to twips, which the xlwt
+                         package expects
+
+        """
+
+        row.height_mismatch = True
+        row.height = cls.TWIPS * point_size
+
+    @staticmethod
+    def style(*definitions):
+        """
+        Contruct an xlwt.XFStyle object for formatting cell content.
+
+        Pass:
+            one anonymous argument for each style group which needs
+            to be modified; the arguments are strings in the format:
+
+                group_name: attribute-name attribute-value[, ...]
+
+            The style groups include:
+                * font
+                * align[ment]
+                * border[s]
+                * pattern
+                * protection
+
+            See http://xlwt.readthedocs.io/en/latest/api.html and the
+            xlwt source code (including examples) for more information.
+        """
+
+        return xlwt.easyxf("; ".join(definitions))
+
+    @staticmethod
+    def font(spec):
+        """
+        Construct an xlwt.Font object for formatting cell content segments.
+
+        This is used to support calling sheet.write_rich_text(). For example:
+
+            styles = cdrcgi.ExcelStyles()
+            sheet = styles.add_sheet("Rich Text")
+            sheet.col(0).width = 5000
+            name = "atezolizumab"
+            comment = "For NCT01375842; No info available at this time"
+            font = styles.font("italic true, color green")
+            segments = (name + "\n", (comment, font))
+            sheet.write_rich_text(0, 0, segments, styles.left)
+
+            See http://xlwt.readthedocs.io/en/latest/api.html and the
+            xlwt source code (including examples) for more information.
+
+            Pass:
+                spec - string providing desired attribute values in the form
+                       name value[, name value[, ...]
+            Return:
+                a new xlwt.Font object
+        """
+
+        return xlwt.easyfont(spec)
+
+    @staticmethod
+    def set_color(style, color="black"):
+        """
+        Change the foreground color for an xlwt.Style object.
+
+        Pass:
+            style - reference to an xlwt.Style object
+            color - string identifying one of the colors which can
+                    be used in the workbook's cells; examples of
+                    valid names include red, dark_red, blue, teal,
+                    violet, white, black. For the complete list,
+                    refer to the source code in:
+                       $PYTHON/lib/site-packages/xlwt/Styles.py
+        """
+
+        try:
+            style.font.colour_index = xlwt.Style.colour_map[color]
+        except:
+            raise Exception("set_color(): invalid color %s" % repr(color))
+
+    @staticmethod
+    def set_background(style, color="white"):
+        """
+        Change the foreground color for an xlwt.Style object.
+
+        Pass:
+            style - reference to an xlwt.Style object
+            color - string identifying one of the colors which can
+                    be used in the workbook's cells; examples of
+                    valid names include red, dark_red, blue, teal,
+                    violet, white, black. For the complete list,
+                    refer to the source code in:
+                       $PYTHON/lib/site-packages/xlwt/Styles.py
+        """
+
+        style.pattern.pattern = xlwt.Pattern.SOLID_PATTERN
+        try:
+            style.pattern.pattern_fore_colour = xlwt.Style.colour_map[color]
+        except:
+            raise Exception("set_background(): invalid color %s" % repr(color))
+
+    @staticmethod
+    def link(url, label):
+        """
+        Prepare a value for display as a hyperling in a worksheet cell.
+
+        Pass:
+            url   - HTTP[S] address for the link
+            label - the value to be displayed for the cell
+        """
+
+        return xlwt.Formula(u'HYPERLINK("%s";"%s")' % (url, label))
+
+    @staticmethod
+    def clone(style):
+        """
+        Create a copy of an xlwt.Style object, which can be altered
+        (for example, by calling Style.set_color(), or Style.set_background()).
+        """
+
+        return copy.deepcopy(style)
+
+    @staticmethod
+    def lookup_color(name):
+        """
+        Find the color code used internally by Excel for the named color.
+        """
+
+        return xlwt.Style.colour_map.get(name)
+
+    @staticmethod
+    def points_to_width(points):
+        """
+        Convert column width from points to BIFF COLINFO units.
+
+        Unfortunately, Microsoft has used a number of different ways over
+        the years to represent Excel column widths. The xlwt package uses
+        the original BIFF units, which (according to Microsoft's docs) is
+        "[w]idth of the columns in 1/256 of the width of the zero character,
+        using default font (first FONT record in the file)." Many of our
+        older reports were written when XML Excel files were Microsoft's
+        format du jour, which measured the column width in points. This
+        conversion is an approximation, because the scaling of column
+        widths as they increase isn't strictly proportional. But it's close
+        enough.
+        """
+
+        return int(points * 49)
+
+    @staticmethod
+    def chars_to_width(chars):
+        """
+        Convert width in number of characters to internal BIFF units.
+        Determined by experimentation, as I didn't find this formula
+        documented anywhere. My guess is that the extra 200 represents
+        cell padding.
+        """
+
+        return int(chars * 256 + 200)
+
+    @classmethod
+    def set_width(cls, sheet, col, chars):
+        """
+        Set the width of a column in an Excel worksheet.
+
+        Pass:
+            sheet - reference to an xlwt.Worksheet object
+            col - integer identifying the worksheet column (based 0)
+            chars - amount of horizontal space for the column in units
+                    of the width of the zero character ("0") using the
+                    default font (the first FONT record in the file);
+                    see chars_to_width() above
+        """
+
+        sheet.col(col).width = cls.chars_to_width(chars)
+
+    @classmethod
+    def set_widths(cls, sheet, widths):
+        """
+        Set the column widths for an Excel worksheet.
+        """
+
+        for i, chars in enumerate(widths):
+            cls.set_width(sheet, i, chars)
 
 class Page:
     """
@@ -443,6 +827,7 @@ class Page:
 
         Optional keywork arguments:
 
+            value           default value for field
             classes         if present, used as the 'class' attribute for
                             the input element.  May include multiple space
                             separated class names.
@@ -1022,7 +1407,6 @@ class Report:
             False: xlwt.Alignment.NOT_WRAP_AT_RIGHT
         }
         settings = {
-            "borders": "top thin, bottom thin, left thin, right thin",
             "align": "wrap True, vert top"
         }
         if opts.get("header") or opts.get("banner"):
@@ -1085,6 +1469,7 @@ class Report:
         """
         name = table._options.get("sheet_name", "Sheet%d" % count)
         sheet = book.add_sheet(name)
+        sheet.print_grid = True
         row_number = 0
         for col_number, column in enumerate(table._columns):
             width = Report._get_excel_width(column)
@@ -1371,6 +1756,12 @@ class Report:
                 td.set("colspan", str(self._colspan))
             if self._rowspan:
                 td.set("rowspan", str(self._rowspan))
+            if self._center:
+                if "center" not in self._classes:
+                    self._classes.append("center")
+            elif self._right:
+                if "right" not in self._classes:
+                    self._classes.append("right")
             if self._classes:
                 td.set("class", " ".join(self._classes))
             if self._title:
@@ -1445,6 +1836,8 @@ class Control:
     AUDIENCES = ("Health Professional", "Patient")
     LANGUAGES = ("English", "Spanish")
     SUMMARY_SELECTION_METHODS = ("id", "title", "board")
+    LOGNAME = "reports"
+    LOGLEVEL = "info"
 
     def __init__(self, title=None, subtitle=None, **opts):
         """
@@ -1454,6 +1847,7 @@ class Control:
         """
         self.started = datetime.datetime.now()
         self.title = title or ""
+        self.logger = self.get_logger()
         self.subtitle = subtitle
         self.opts = opts
         if self.opts.get("open_cursor", True):
@@ -1511,6 +1905,21 @@ class Control:
         }
         opts = self.set_form_options(opts)
         form = Page(self.PAGE_TITLE or "", **opts)
+        form.add_script("""\
+function check_set(name, val) {
+    var all_selector = "#" + name + "-all";
+    var ind_selector = "#" + name + "-set .ind";
+    if (val == "all") {
+        if (jQuery(all_selector).prop("checked"))
+            jQuery(ind_selector).prop("checked", false);
+        else
+            jQuery(all_selector).prop("checked", true);
+    }
+    else if (jQuery(ind_selector + ":checked").length > 0)
+        jQuery(all_selector).prop("checked", false);
+    else
+        jQuery(all_selector).prop("checked", true);
+}""")
         self.populate_form(form)
         form.send()
     def build_tables(self):
@@ -1525,6 +1934,19 @@ class Control:
     def populate_form(self, form):
         "Stub, to be overridden by real controllers."
         pass
+
+    def get_logger(self):
+        """
+        Create a logging object.
+
+        Separated out so derived classes can completely customize this.
+        """
+
+        logger = cdr.Logging.get_logger(self.LOGNAME, level=self.LOGLEVEL)
+        if self.title:
+            logger.info("started %s", self.title)
+        return logger
+
     @staticmethod
     def get_referer():
         "Find out which page called us."
@@ -1538,13 +1960,21 @@ class Control:
         "Editorial Board" suffix.
         """
 
+        return self.get_pdq_editorial_boards(self.cursor)
+
+    @classmethod
+    def get_pdq_editorial_boards(cls, cursor=None):
+        """
+        Expose this functionality to non-CGI code.
+        """
+
         query = cdrdb.Query("query_term n", "n.doc_id", "n.value")
         query.join("query_term t", "t.doc_id = n.doc_id")
         query.join("active_doc a", "a.id = n.doc_id")
         query.where("t.path = '/Organization/OrganizationType'")
-        query.where("n.path = '%s'" % self.BOARD_NAME)
+        query.where("n.path = '%s'" % cls.BOARD_NAME)
         query.where("t.value = 'PDQ Editorial Board'")
-        rows = query.execute(self.cursor).fetchall()
+        rows = query.execute(cursor).fetchall()
         boards = {}
         prefix, suffix = "PDQ ", " Editorial Board"
         for org_id, name in rows:
@@ -1558,7 +1988,7 @@ class Control:
     def add_summary_selection_fields(self, form, **opts):
         """
         Display the fields used to specify which summaries should be
-        select for a report, using one of several methods:
+        selected for a report, using one of several methods:
 
             * by summary document ID
             * by summary title
@@ -1580,6 +2010,11 @@ class Control:
             titles   - an optional array of SummaryTitle objects
             audience - if False, omit Audience buttons (default is True)
             language - if False, omit Language buttons (default is True)
+            id-label - optional string for the CDR ID field (defaults
+                       to "CDR ID" but can be overridden, for example,
+                       to say "CDR ID(s)" if multiple IDs are accepted)
+            id-tip   - optional string for the CDR ID field for popup
+                       help (e.g., "separate multiple IDs by spaces")
 
         Return:
             nothing (the form object is populated as a side effect)
@@ -1600,6 +2035,7 @@ class Control:
             for t in titles:
                 form.add_radio("cdr-id", t.display, t.id, tooltip=t.tooltip)
             form.add("</fieldset>")
+            self.new_tab_on_submit(form)
 
         else:
             # Fields for the original form.
@@ -1614,11 +2050,12 @@ class Control:
                 self.add_audience_fieldset(form)
             if opts.get("language", True):
                 self.add_language_fieldset(form)
-            form.add("<fieldset class='by-id-block hidden'>")
+            form.add("<fieldset class='by-id-block'>")
             form.add(form.B.LEGEND("Summary Document ID"))
-            form.add_text_field("cdr-id", "CDR ID")
+            form.add_text_field("cdr-id", opts.get("id-label", "CDR ID"),
+                                tooltip=opts.get("id-tip"))
             form.add("</fieldset>")
-            form.add("<fieldset class='by-title-block hidden'>")
+            form.add("<fieldset class='by-title-block'>")
             form.add(form.B.LEGEND("Summary Title"))
             form.add_text_field("title", "Title",
                                 tooltip="Use wildcard (%) as appropriate.")
@@ -1626,7 +2063,8 @@ class Control:
             form.add_script(self.get_script_for_summary_selection_form())
 
     def add_board_fieldset(self, form):
-        form.add("<fieldset class='by-board-block' id='board-set'>")
+        classes = ["by-board-block"]
+        form.add("<fieldset class='%s' id='board-set'>" % " ".join(classes))
         form.add(form.B.LEGEND("Board"))
         form.add_checkbox("board", "All Boards", "all", checked=True)
         boards = getattr(self, "boards")
@@ -1636,21 +2074,26 @@ class Control:
             form.add_checkbox("board", boards.get(board_id),
                               board_id, widget_classes="ind")
         form.add("</fieldset>")
-        form.add_script(self.get_script_for_summary_selection_form())
 
-    def add_audience_fieldset(self, form):
-        form.add("<fieldset class='by-board-block'>")
+    def add_audience_fieldset(self, form, include_any=False):
+        form.add("<fieldset id='audience-block' class='by-board-block'>")
         form.add(form.B.LEGEND("Audience"))
         checked = True
+        if include_any:
+            form.add_radio("audience", "Any", "", checked=True)
+            checked = False
         for value in self.AUDIENCES:
             form.add_radio("audience", value, value, checked=checked)
             checked = False
         form.add("</fieldset>")
 
-    def add_language_fieldset(self, form):
-        form.add("<fieldset class='by-board-block'>")
+    def add_language_fieldset(self, form, include_any=False):
+        form.add("<fieldset id='language-block' class='by-board-block'>")
         form.add(form.B.LEGEND("Language"))
         checked = True
+        if include_any:
+            form.add_radio("language", "Any", "", checked=True)
+            checked = False
         for value in self.LANGUAGES:
             form.add_radio("language", value, value, checked=checked)
             checked = False
@@ -1658,11 +2101,11 @@ class Control:
 
     def validate_audience(self):
         if self.audience and self.audience not in self.AUDIENCES:
-            cdrcgi.bail(cdrcgi.TAMPERING)
+            bail()
 
     def validate_language(self):
         if self.language and self.language not in self.LANGUAGES:
-            cdrcgi.bail(cdrcgi.TAMPERING)
+            bail()
 
     def validate_boards(self):
         if not self.board or "all" in self.board:
@@ -1673,23 +2116,71 @@ class Control:
                 try:
                     board = int(board)
                 except:
-                    cdrcgi.bail(cdrcgi.TAMPERING)
+                    bail()
                 if board not in self.boards:
-                    cdrcgi.bail(cdrcgi.TAMPERING)
+                    bail()
                 boards.append(board)
             self.board = boards
 
     def validate_selection_method(self):
         if self.selection_method not in self.SUMMARY_SELECTION_METHODS:
-            cdrcgi.bail(msg)
+            bail()
+
+    def get_cdr_ref_int(self, node):
+        """
+        Extract and return integer from cdr:ref attribute on passed node.
+        Return None if valid ID not found.
+        """
+
+        cdr_ref = node.get("{cips.nci.nih.gov/cdr}ref")
+        if not cdr_ref:
+            return None
+        integer = re.sub("[^\\d]+", "", cdr_ref)
+        return integer and int(integer) or None
+
+    def get_doc_title(self, doc_id):
+        """
+        Fetch the title column from the all_docs table for a CDR document.
+        """
+
+        query = cdrdb.Query("document", "title")
+        query.where(query.Condition("id", doc_id))
+        row = query.execute(self.cursor).fetchone()
+        return row and row[0] or ""
 
     def get_int_cdr_id(self, value):
+        """
+        Convert CDR ID to integer. Exit with an error message on failure.
+        """
+
         if value:
             try:
                 return cdr.exNormalize(value)[1]
             except:
                 cdrcgi.bail("Invalid format for CDR ID")
         return None
+
+    def get_parsed_doc_xml(self, doc_id, doc_version=None):
+        """
+        Fetch the xml for a CDR document and return the root element object.
+        """
+
+        xml = self.get_doc_xml(doc_id, doc_version)
+        return etree.fromstring(xml.encode("utf-8"))
+
+    def get_doc_xml(self, doc_id, doc_version=None):
+        """
+        Fetch the XML for a CDR document. Caller handles exceptions.
+        Return value is Unicode. Encode if necessary.
+        """
+
+        if doc_version:
+            query = cdrdb.Query("doc_version", "xml")
+            query.where(query.Condition("num", doc_version))
+        else:
+            query = cdrdb.Query("document", "xml")
+        query.where(query.Condition("id", doc_id))
+        return query.execute(self.cursor).fetchone()[0]
 
     def summaries_for_title(self, fragment):
         """
@@ -1707,7 +2198,8 @@ class Control:
                 self.display = display
                 self.tooltip = tooltip
 
-        query = cdrdb.Query("document d", "d.id", "d.title")
+        fragment = unicode(fragment, "utf-8")
+        query = cdrdb.Query("active_doc d", "d.id", "d.title")
         query.join("doc_type t", "t.id = d.doc_type")
         query.where("t.name = 'Summary'")
         query.where(query.Condition("d.title", fragment + "%", "LIKE"))
@@ -1723,23 +2215,96 @@ class Control:
             summaries.append(summary)
         return summaries
 
+    class UploadedFile:
+        """
+        Information about a file upload field's values (including bytes).
+
+        The caller is responsible for ensuring that standard input is
+        set to binary mode when running on Windows.
+
+        Instance values:
+            filename - the name of the uploaded file
+            bytes - the binary content of the file
+        """
+
+        def __init__(self, control, field_name):
+            """
+            Collect and return the bytes for a file field.
+
+            Pass:
+            field_name - name of the file upload field
+            """
+
+            control.logger.info("loading file upload field %r", field_name)
+            self.filename = self.bytes = None
+            if field_name not in control.fields:
+                return
+            val = control.fields[field_name]
+            if val.file:
+                self.filename = val.filename
+                control.logger.info("file name is %r", self.filename)
+                bytes = []
+                more_bytes = val.file.read()
+                while more_bytes:
+                    control.logger.info("read %d bytes from file",
+                                        len(more_bytes))
+                    bytes.append(more_bytes)
+                    more_bytes = val.file.read()
+            else:
+                bytes = [val.value]
+            self.bytes = "".join(bytes)
+            control.logger.info("total bytes for file: %d", len(self.bytes))
+
+
+    def new_tab_on_submit(self, form):
+        """
+        Take over the onclick event for the Submit button in order to
+        show the report in a new tab. This avoids the problem of the
+        request to resubmit a form unnecessarily when navigating back
+        to the base report request form through an intermediate form
+        (such as the one to choose from multiple matching titles).
+
+        Pass:
+            form - reference to the form object to which the script is added
+        """
+
+        form.add_script("""\
+jQuery("input[value='Submit']").click(function(e) {
+    var parms = jQuery("form").serialize();
+    if (!/Request=Submit/.test(parms)) {
+        if (parms)
+            parms += "&";
+        parms += "Request=Submit";
+    }
+    var url = "%s?" + parms;
+    window.open(url, "_blank");
+    e.preventDefault();
+});""" % self.script);
+
+    @staticmethod
+    def toggle_display(function_name, show_value, class_name):
+        """
+        Create JavaScript function to show or hide elements.
+
+        Pass:
+            function_name  - name of the JavaScript function to create
+            show_value     - controlling element's value causing show
+            class_name     - class of which the controlled blocks are members
+        Return:
+            source code for JavaScript function
+        """
+
+        return """\
+function %s(value) {
+    if (value == "%s")
+        jQuery(".%s").show();
+    else
+        jQuery(".%s").hide();
+}""" % (function_name, show_value, class_name, class_name)
+
     def get_script_for_summary_selection_form(self):
         " Local JavaScript to manage sections of the form dynamically."
         return """\
-function check_set(name, val) {
-    var all_selector = "#" + name + "-all";
-    var ind_selector = "#" + name + "-set .ind";
-    if (val == "all") {
-        if (jQuery(all_selector).prop("checked"))
-            jQuery(ind_selector).prop("checked", false);
-        else
-            jQuery(all_selector).prop("checked", true);
-    }
-    else if (jQuery(ind_selector + ":checked").length > 0)
-        jQuery(all_selector).prop("checked", false);
-    else
-        jQuery(all_selector).prop("checked", true);
-}
 function check_board(board) { check_set("board", board); }
 function check_method(method) {
     switch (method) {
@@ -1759,7 +2324,10 @@ function check_method(method) {
             jQuery('.by-title-block').show();
             break;
     }
-}"""
+}
+jQuery(function() {
+    check_method(jQuery("input[name='method']:checked").val());
+});"""
 
 #----------------------------------------------------------------------
 # Display the header for a CDR web form.
@@ -1823,7 +2391,10 @@ def scrubStr(chkStr, charset="[^A-Za-z0-9 -]", bailout=True,
 # Validate the returned value.
 #----------------------------------------------------------------------
 def getSession(fields, **opts):
-    session = fields.getvalue(SESSION, None)
+    try:
+        session = fields.getvalue(SESSION, None)
+    except:
+        return "guest"
 
     # Bail if required session is missing. I'm tempted to make required
     # the default.
@@ -1831,7 +2402,7 @@ def getSession(fields, **opts):
         if opts.get("required"):
             bail("Session missing")
         else:
-            return session
+            return "guest"
 
     # Make sure it's an active session.
     query = cdrdb.Query("session", "id")
@@ -2019,11 +2590,11 @@ def mainMenu(session, news=None):
 # Navigate to menu location or publish preview.
 #----------------------------------------------------------------------
 def navigateTo(where, session, **params):
-    url = "http://%s%s/%s?%s=%s" % (WEBSERVER,
-                                    BASE,
-                                    where,
-                                    SESSION,
-                                    session)
+    url = "https://%s%s/%s?%s=%s" % (WEBSERVER,
+                                     BASE,
+                                     where,
+                                     SESSION,
+                                     session)
 
     # Concatenate additional Parameters to URL for PublishPreview
     # -----------------------------------------------------------
@@ -2758,6 +3329,8 @@ def addNewFormOnPage(session, script, fields, buttons, subtitle,
 
 
 #----------------------------------------------------------------------
+# XXX This functionality has become pretty crusty over time. Replace it.
+#
 # Construct query for advanced search page.
 #
 # The caller passes the following arguments:

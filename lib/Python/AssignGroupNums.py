@@ -32,36 +32,6 @@ import sys, re, time, cdr, cdrdb
 #
 # These assumptions mean that the class must be instantiated in the
 # push job that calls __createWorkPPC().
-#
-# $Id$
-#
-# $Log: not supported by cvs2svn $
-# Revision 1.7  2007/05/07 01:34:54  bkline
-# Modified logic to handle links between new documents correctly.  Used
-# cdr.Exception class.  Replaced some sequences with sets.
-#
-# Revision 1.6  2007/05/02 21:10:26  bkline
-# Added use of cg_new column to detect documents which aren't available
-# on Cancer.gov even though they're in the pub_proc_cg table.
-#
-# Revision 1.5  2007/04/25 03:51:44  ameyer
-# Numerous bug fixes.  This is the first tested version.
-#
-# Revision 1.4  2007/04/25 00:54:47  ameyer
-# Added some debugging.
-# Fixed what I think was a bug.
-# Version is still not fully tested.
-#
-# Revision 1.3  2007/04/24 01:46:20  ameyer
-# Fixed some bugs.
-# Added diagnostics to __main__ for stand-alone runs.
-#
-# Revision 1.2  2007/04/20 17:42:47  bkline
-# Corrected db connection code ('connect()' for 'cursor()').
-#
-# Revision 1.1  2007/04/11 02:03:03  ameyer
-# Initial version, not yet tested.
-#
 #----------------------------------------------------------------------
 class GroupNums:
 
