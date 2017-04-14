@@ -242,7 +242,7 @@ class AppHost:
     #  good reason (I can't think what that could be.)
     org  = None  # 'CBIIT' or 'OCE'
     tier = None  # 'DEV', 'QA', 'PROD', maybe others
-    host = {}    # '***REMOVED***', etc.
+    host = {}
 
     # The actual names of the current machine, as reported by the OS
     # This variable doesn't come from the config file
@@ -389,10 +389,6 @@ class AppHost:
 
         Example:
             makeCdrCgiUrl('PROD', 'CTGov.py', 'Y')
-        Results:
-            We have to choose one or the other of these as a default
-            "https://dev.cdr.nci.nih.gov/CTGov.py"
-            or qa.cdr... or cdr...
 
         Pass:
             tier    - One of 'PROD', 'DEV', 'bach', etc.
