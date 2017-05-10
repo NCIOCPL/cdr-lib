@@ -25,27 +25,8 @@
         Add support for ExternalRef elements in miscellaneous docs.
 """
 
-#----------------------------------------------------------------------
-#
-# $Id$
-#
-# Module for generating RTF documents.
-#
-# $Log: not supported by cvs2svn $
-# Revision 1.5  2008/03/18 12:40:16  bkline
-# Added support for most common numbered list types.
-#
-# Revision 1.4  2005/03/03 14:42:30  bkline
-# Fixed documentation typos.
-#
-# Revision 1.3  2005/02/24 04:32:04  bkline
-# Cleanup of pydoc comments.
-#
-# Revision 1.2  2005/02/24 02:20:35  bkline
-# Fleshed out comments for pydoc.
-#
-#----------------------------------------------------------------------
-import time, re
+import re
+import time
 
 #----------------------------------------------------------------------
 # Regular expression pattern to recognize non-ASCII characters.
