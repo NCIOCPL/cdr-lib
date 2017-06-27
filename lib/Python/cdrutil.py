@@ -548,12 +548,7 @@ def getConnection(db='emailers'):
     tier = getTier()
     pw = cdrpw.password(env, tier, db)
     appHost = AppHost(env, tier, filename="/etc/cdrapphosts.rc")
-    port = env == "CBIIT" and 3600 or 3306
-    # XXX TODO: we should move the ports to an .rc file, since CBIIT keeps
-    #           changing them.
-    if env == "CBIIT":
-        if tier in ("DEV", "QA"):
-            port = 3631
+    port = 3631
     if db == "glossifier":
         host = appHost.host["GLOSSIFIERDB"][0]
     else:
