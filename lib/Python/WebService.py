@@ -8,9 +8,7 @@ import lxml.etree as etree
 import os
 import re
 import sys
-import xml.dom.minidom
-
-USE_ETREE = False
+import cdrdb2 as cdrdb
 
 #----------------------------------------------------------------------
 # Custom exception class to let handlers catch problems with HTTP
@@ -27,10 +25,8 @@ try:
     msvcrt.setmode (0, os.O_BINARY) # stdin  = 0
     msvcrt.setmode (1, os.O_BINARY) # stdout = 1
     WINDOWS = True
-    LOGFILE = cdr.DEFAULT_LOGDIR + "/WebService.log"
 except ImportError:
     WINDOWS = False
-    LOGFILE = "/weblogs/glossifier/WebService.log"
 
 #----------------------------------------------------------------------
 # Object representing a client request, extracted from the XML
@@ -47,22 +43,27 @@ except ImportError:
 #----------------------------------------------------------------------
 class Request:
 
-    def __init__(self, standalone = False, debugLog = None):
+    def __init__(self, standalone=False, logger=None):
         self.message  = None
         self.doc      = None
         self.type     = None
         self.logLevel = 0
+        self.logger   = logger
         if standalone:
             self.message = sys.stdin.read()
             self.client  = 'Standalone'
             debugLevel    = "0"
         else:
+            defaultLevel  = self.defaultLevel()
             requestMethod = os.getenv("REQUEST_METHOD")
             self.client   = os.getenv("REMOTE_ADDR")
             remoteHost    = os.getenv("REMOTE_HOST")
-            debugLevel    = os.getenv("HTTP_X_DEBUG_LEVEL") or "1"
-            if debugLevel > "1":
-                self.dumpenv()
+            debugLevel    = os.getenv("HTTP_X_DEBUG_LEVEL") or defaultLevel
+            if debugLevel > "1" and logger is not None:
+                logger.setLevel("DEBUG")
+                logger.debug("debugging level set to %s", debugLevel)
+                if debugLevel > "2":
+                    self.dumpenv()
             if remoteHost and remoteHost != self.client:
                 self.client += " (%s)" % remoteHost
             if not requestMethod:
@@ -100,42 +101,32 @@ Access-Control-Allow-Methods: POST, GET, OPTIONS
             except Exception, e:
                 raise Exception("Failure reading request: %s" % str(e))
             self.message = "".join(blocks)
-            if debugLog:
-                debugLog("message: %s" % self.message, 2)
+            if logger:
+                logger.debug("message: %r", self.message)
         try:
-            if USE_ETREE:
-                self.doc = etree.XML(self.message)
-                self.type = self.doc.tag
-            else:
-                dom = xml.dom.minidom.parseString(self.message)
-                self.doc  = dom.documentElement
-                self.type = self.doc.nodeName
+            self.doc = etree.XML(self.message)
+            self.type = self.doc.tag
         except Exception, e:
-            debugLog("Failure parsing request: %s" % e)
-            debugLog(repr(self.message))
+            if logger:
+                logger.exception("Failure parsing request")
             raise Exception("Failure parsing request: %s" % e)
         try:
             self.logLevel = int(debugLevel)
         except:
             self.logLevel = 1
 
+    def defaultLevel(self):
+        query = cdrdb.Query("ctl", "val")
+        query.where("grp = 'WebService'")
+        query.where("name = 'DebugLevel'")
+        row = query.execute().fetchone()
+        return row and row[0] or "1"
+
     def dumpenv(self):
-        import os, time
-        now = time.strftime("%Y-%m-%d %H:%M:%S")
-        divider = "=" * 60
-        lines = [divider, now + ": WebService environment", divider]
-        for e in os.environ:
+        lines = ["WebService environment", "=" * 60]
+        for e in sorted(os.environ):
             lines.append("%s=%s" % (e, os.environ[e]))
-        lines.append("")
-        try:
-            f = open(LOGFILE, 'a')
-        except:
-            try:
-                f = open('/tmp/WebService.log', 'a')
-            except:
-                return
-        f.write("\n".join(lines) + "\n")
-        f.close()
+        self.logger.debug("\n".join(lines))
 
 #----------------------------------------------------------------------
 # Object for the server's response to the client's request.  Contains
@@ -143,7 +134,8 @@ Access-Control-Allow-Methods: POST, GET, OPTIONS
 #----------------------------------------------------------------------
 class Response:
 
-    def __init__(self, body):
+    def __init__(self, body, logger=None):
+        self.logger = logger
         if not isinstance(body, basestring):
             body = etree.tostring(body, pretty_print=True)
         self.body = body
@@ -159,6 +151,8 @@ class Response:
             sys.stdout.write("Access-Control-Allow-Origin: *\n")
         sys.stdout.write("\n")
         sys.stdout.write(self.body)
+        if self.logger:
+            self.logger.debug("sending %r", self.body)
         sys.exit(0)
 
 #----------------------------------------------------------------------
@@ -167,7 +161,8 @@ class Response:
 #----------------------------------------------------------------------
 class ErrorResponse(Response):
 
-    def __init__(self, error):
+    def __init__(self, error, logger=None):
+        self.logger = logger
         if type(error) == unicode:
             error = error.encode('utf-8')
         self.body = "<ERROR>%s</ERROR>" % error
