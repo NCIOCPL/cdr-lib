@@ -2887,131 +2887,18 @@ def getDocFormats(conn=None):
     return formats
 
 #----------------------------------------------------------------------
-# Add a value to the sys_value table.
+# Fetch a value from the ctl table.
 #----------------------------------------------------------------------
-def addSysValue(credentials, name, value="", program=None, notes=None,
-                host = DEFAULT_HOST, port = DEFAULT_PORT):
-    """
-    Add a value to sys_value table on server.
-    Parameters:
-        credentials, port, host = standard stuff.
-        name    = Name of the value.
-        value   = Value string, can be empty.
-        program = Optional program name.
-        notes   = Documentation to store with name.
-    Return:
-        None.
-        Raises Exception if failure.
-    """
-    _sysValue(credentials, "Add", name, value, program, notes, host, port)
+def getControlValue(group, name):
+    query = cdrdb2.Query("ctl", "val")
+    query.where(query.Condition("grp", group))
+    query.where(query.Condition("name", name))
+    query.where("inactivated IS NULL")
+    row = query.execute().fetchone()
+    return row and row[0] or None
 
 #----------------------------------------------------------------------
-# Replace a value in the sys_value table.
-#----------------------------------------------------------------------
-def repSysValue(credentials, name, value="", program=None, notes=None,
-                host = DEFAULT_HOST, port = DEFAULT_PORT):
-    """
-    Replace a value to sys_value table on server.
-    Parameters:
-        See addSysValue
-    Return:
-        None.
-        Raises Exception if failure.
-    """
-    _sysValue(credentials, "Rep", name, value, program, notes, host, port)
-
-#----------------------------------------------------------------------
-# Replace a value in the sys_value table.
-#----------------------------------------------------------------------
-def delSysValue(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
-    """
-    Delete row from sys_value table on server.
-    Parameters:
-        credentials, port, host = standard stuff.
-        name = "name" column of the row to delete.
-    Return:
-        None.
-        Raises Exception if failure.
-    """
-    _sysValue(credentials, "Del", name, host=host, port=port)
-
-#----------------------------------------------------------------------
-# Retrieve a value from the sys_value table by its name.
-#----------------------------------------------------------------------
-def getSysValue(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
-    """
-    Retrieve value from sys_value table on server by its name.
-    Parameters:
-        credentials, port, host = standard stuff.
-          (Any credentials will do, no special authorization required.)
-        name = "name" column of the row from which to retrieve value.
-    Return:
-        Value string:
-            May be empty string.
-            Returns None if NULL in database.
-        Raises Exception if failure.
-    """
-    return _sysValue(credentials, "Get", name, host=host, port=port)
-
-#----------------------------------------------------------------------
-# Internal routine to do the work of add/rep/del/getSysValue.
-#----------------------------------------------------------------------
-def _sysValue(credentials, action, name, value=None, program=None,
-              notes=None, host=DEFAULT_HOST, port=DEFAULT_PORT):
-    """
-    Add a value to sys_value table on server.
-    Parameters:
-        credentials, port, host = standard stuff.
-        action  = One of "Add", "Rep", "Del", "Get"
-                    Unchecked - this should only be called by the four
-                    front-end routines above that guarantee this.
-        name    = Name of the value.
-        value   = Value string, can be empty.
-        program = Optional program name.
-        notes   = Documentation to store with name.
-    Return:
-        None.
-        Raises Exception if failure.
-    """
-    # Required for anything
-    if not credentials:
-        raise Exception("No credentials passed to %sSysValue" % action)
-    if not name:
-        raise Exception("No name passed to %sSysValue" % action)
-
-    # Create command
-    tag = "Cdr" + action + "SysValue"
-    cmd = " <%s>\n  <Name>%s</Name>\n" % (tag, name)
-    if value != None:
-        cmd += "  <Value>%s</Value>\n" % value
-    if program:
-        cmd += "  <Program>%s</Program>\n" % program
-    if notes:
-        cmd += "  <Notes>%s</Notes>\n" % notes
-    cmd += " </%s>\n" % tag
-
-    # Wrap with credentials and command structure
-    cmd = wrapCommand (cmd, credentials)
-
-    # Submit to server
-    resp = sendCommands (cmd, host, port)
-
-    # Did server report error?
-    errs = getErrors (resp, 0)
-    if len(errs) > 0:
-        raise Exception("Server error on %sSysValue:\n%s" % (action,errs))
-
-    # Do we need to return a value?
-    if action == "Get":
-        valPat   = re.compile("<Value>(.*)</Value>", re.DOTALL)
-        valMatch = valPat.search (resp)
-        if valMatch:
-            return valMatch.group(1)
-
-    return None
-
-#----------------------------------------------------------------------
-# Update the ctl table.  Like the above for sys_value
+# Update the ctl table.
 #----------------------------------------------------------------------
 def updateCtl(credentials, action,
               grp=None, name=None, val=None, comment=None):
