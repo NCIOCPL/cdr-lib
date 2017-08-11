@@ -38,7 +38,7 @@ import requests
 import cdr
 import cdrbatch
 import cdrcgi
-import cdrdb
+import cdrdb2 as cdrdb
 
 
 class BatchReport:

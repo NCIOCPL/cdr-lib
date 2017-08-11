@@ -9,7 +9,7 @@
 import sys
 import string
 import cdr
-import cdrdb
+import cdrdb2 as cdrdb
 import cdrcgi
 
 #----------------------------------------------------------------------
@@ -87,13 +87,13 @@ def sendSignal (conn, jobId, newStatus, whoami):
 
     # Is caller authorized to do what he wants to do?
     if whoami == PROC_DAEMON and newStatus not in _ST_DAEMON_VALID:
-        raise BatchException (\
+        raise BatchException (
           "The publishing daemon cannot set status = %s" % newStatus)
     if whoami == PROC_EXTERN and newStatus not in _ST_EXTERN_VALID:
-        raise BatchException (\
+        raise BatchException (
           "External programs cannot set status = %s" % newStatus)
     if whoami == PROC_BATCHJOB and newStatus not in _ST_JOB_VALID:
-        raise BatchException (\
+        raise BatchException (
           "Batch jobs cannot set status = %s" % newStatus)
 
     # Get the current status, raises exception if failed
@@ -128,12 +128,12 @@ def sendSignal (conn, jobId, newStatus, whoami):
     try:
         qry = """
           UPDATE batch_job
-             SET status = ?, status_dt = GETDATE()
-           WHERE id = ?"""
+             SET status = %s, status_dt = GETDATE()
+           WHERE id = %s"""
         conn.cursor().execute (qry, (newStatus, jobId))
 
-    except cdrdb.Error, info:
-        msg = "Unable to update job status" % info[1][0]
+    except Exception as e:
+        msg = "Unable to update job status: %s" % e
         cdr.logwrite (msg, LF)
         raise BatchException (msg)
 
@@ -194,64 +194,25 @@ def getJobStatus (idStr=None, name=None, ageStr=None, status=None):
         raise BatchException (msg)
 
     # Create query
-    qmarks = []
-    qry = "SELECT id, name, started, status, status_dt, progress " \
-          "  FROM batch_job WHERE ("
-
-    # Add where clauses
-    clauses = 0
-
-    # Job id, if it exists, is a singleton
+    fields = "id", "name", "started", "status", "status_dt", "progress"
+    query = cdrdb.Query("batch_job", *fields).order("started")
     if jobId:
-        qry += " id=?"
-        qmarks.append(jobId)
-
-    # Others may be combined
+        query.where(query.Condition("id", jobId))
     else:
         if jobName:
-            # User can enter a substring
-            qry += "name LIKE ?"
-            qmarks.append('%' + jobName + '%')
-            clauses = 1
+            query.where(query.Condition("name", u"%" + jobName + u"%", "LIKE"))
         if jobAge:
-            # Days to look backward
-            if clauses:
-                qry += " AND "
-            qry += "started >= DATEADD(DAY, -%d, GETDATE())" % jobAge
-            clauses = 1
+            query.where("started >= DATEADD(DAY, -%d, GETDATE())" % jobAge)
         if jobStatus:
-            if clauses:
-                qry += " AND "
-            if type(jobStatus) == type(""):
-                qry += "status=?"
-                qmarks.append(jobStatus)
+            if isinstance(jobStatus, basestring):
+                query.where(query.Condition("status", jobStatus))
             else:
-                qry += "status IN ("
-                count = 0
-                for stat in jobStatus:
-                    qry += '?'
-                    qmarks.append(stat)
-                    count += 1
-                    if (count < len(jobStatus)):
-                        qry += ','
-                qry += ')'
-    qry += ")\n"
-    qry += "ORDER BY started\n"
-
+                query.where(query.Condition("status", jobStatus, "IN"))
     try:
-        # Execute query
-        conn = cdrdb.connect ("CdrGuest")
-        cursor = conn.cursor()
-        cursor.execute (qry, qmarks)
-        rows = cursor.fetchall()
-        cursor.close()
-
         # Return may be empty tuple if no jobs match criteria
-        return rows
-
-    except cdrdb.Error, info:
-        raise BatchException ("Unable to get job status: %s = %s" % \
-                              (info[0], info[1][0]))
+        return query.execute().fetchall()
+    except Exception as e:
+        raise BatchException("Unable to get job status: %s" % e)
 
 #------------------------------------------------------------------
 # Get an HTML display of active jobs
@@ -330,26 +291,15 @@ def activeCount (jobName):
     """
 
     # Are there any jobs not in one of the active statuses?
-    qry = """
-        SELECT count(*) FROM batch_job
-         WHERE status IN ('%s', '%s', '%s')
-           AND started >= DATEADD(DAY, -1, GETDATE())
-           AND name LIKE ?""" % (ST_QUEUED, ST_INITIATING, ST_IN_PROCESS)
-
+    statuses = (ST_QUEUED, ST_INITIATING, ST_IN_PROCESS)
+    query = cdrdb.Query("batch_job", "COUNT(*)")
+    query.where(query.Condition("status", statuses, "IN"))
+    query.where(query.Condition("name", jobName, "LIKE"))
+    query.where("started >= DATEADD(DAY, -1, GETDATE())")
     try:
-        # Execute query
-        conn = cdrdb.connect ("CdrGuest")
-        cursor = conn.cursor()
-        cursor.execute (qry, jobName)
-        row = cursor.fetchone()
-        cursor.close()
-
-        # Must always get one row back with count in it
-        return row[0]
-
-    except cdrdb.Error, info:
-        raise BatchException ("Unable to get batch job activity info: %s = %s"\
-                               % (info[0], info[1][0]))
+        return query.execute().fetchone()[0]
+    except Exception as e:
+        raise BatchException("Unable to get batch job activity info: %s" % e)
 
 #------------------------------------------------------------------
 # Normalize input that may have come from a CGI form
@@ -414,6 +364,8 @@ class CdrBatch:
             Exception if database error, or passed job id not found.
         """
 
+        self.__jobName = None
+
         # Setting up the propper database source
         # --------------------------------------
         if cdr.h.org == 'OCE':
@@ -432,15 +384,15 @@ class CdrBatch:
         try:
             self.__conn   = cdrdb.connect(dataSource = host)
             self.__cursor = self.__conn.cursor()
-        except cdrdb.Error, info:
+        except Exception as e:
             # Job must not try to run itself
-            self.fail("Unable to connect to database: %s" % info[1][0])
+            self.fail("Unable to connect to database: %s" % e)
 
         # Everything autocommitted on this cursor
         try:
-            self.__conn.setAutoCommit()
-        except cdrdb.Error:
-            self.fail ("Setting connection autocommit %s" % info[1][0])
+            self.__conn.autocommit(True)
+        except Exception as e:
+            self.fail ("Setting connection autocommit %s" % e)
 
         # Gather parms if it's a new job
         if not self.__jobId:
@@ -521,23 +473,18 @@ class CdrBatch:
         a known job id.
         """
         # Get info from database
-        qry = """
-          SELECT name, command, process_id, started, status_dt,
-                 status, email, progress
-            FROM batch_job
-           WHERE id=%d""" % self.__jobId
+        fields = ("name", "command", "process_id", "started", "status_dt",
+                  "status", "email", "progress")
+        query = cdrdb.Query("batch_job", *fields)
+        query.where(query.Condition("id", self.__jobId))
         try:
-            self.__cursor.execute (qry)
-            rows = self.__cursor.fetchall()
+            rows = query.execute(self.__cursor).fetchall()
             if not rows:
-                self.fail ("loadJob could not find row for batch job id: %d"\
-                           % self.__jobId)
+                self.fail("batch job %d not found" % self.__jobId)
             if len(rows) > 1:
-                self.fail ("loadJob found %d batch_jobs with id: %d"\
-                           % self.__jobId)
-        except cdrdb.Error, info:
-            self.fail ("Database error loading job %d: %s" %\
-                       (self.__jobId, info[1][0]))
+                self.fail("found %d batch_jobs with id: %d" % self.__jobId)
+        except Exception as e:
+            self.fail("DB error loading job %d: %s" % (self.__jobId, e))
 
         # Load all data into instance
         row = rows[0]
@@ -546,14 +493,12 @@ class CdrBatch:
 
         # Get job parameters
         self.__args = {}
-        qry = "SELECT name, value FROM batch_job_parm WHERE job=%d" % \
-               self.__jobId
+        query = cdrdb.Query("batch_job_parm", "name", "value")
+        query.where(query.Condition("job", self.__jobId))
         try:
-            self.__cursor.execute (qry)
-            rows = self.__cursor.fetchall()
-        except cdrdb.Error, info:
-            self.fail ("Database error loading job %d parms: %s" %\
-                       (self.__jobId, info[1][0]))
+            rows = query.execute(self.__cursor).fetchall()
+        except Exception as e:
+            self.fail("error loading parms for job %d: %s" % (self.__jobId, e))
 
         # Load parameters into dictionary
         for row in rows:
@@ -674,11 +619,11 @@ class CdrBatch:
             self.__cursor.execute("""
                 INSERT INTO batch_job (name, command, started, status_dt,
                                        status, email)
-                     VALUES (?, ?, GETDATE(), GETDATE(), ?, ?)
+                     VALUES (%s, %s, GETDATE(), GETDATE(), %s, %s)
             """, (self.__jobName, self.__command, ST_QUEUED, self.__email))
 
-        except cdrdb.Error, info:
-            self.fail("Database error queueing job: %s" % info[1][0])
+        except Exception as e:
+            self.fail("Database error queueing job: %s" % e)
 
         # Get the job id
         try:
@@ -687,8 +632,8 @@ class CdrBatch:
             if not row:
                 self.fail("Unknown database error fetching job id")
             self.__jobId = int (row[0])
-        except cdrdb.Error, info:
-            self.fail("Database error queueing job: %s" % info[1][0])
+        except Exception as e:
+            self.fail("Database error queueing job: %s" % e)
 
         # If there are any arguments, save them for batch job to retrieve
         # Args are a dictionary containing pairs of:
@@ -707,12 +652,12 @@ class CdrBatch:
                     try:
                         self.__cursor.execute ("""
                           INSERT INTO batch_job_parm (job, name, value)
-                               VALUES (?, ?, ?)
+                               VALUES (%s, %s, %s)
                         """, (self.__jobId, key, val))
-                    except cdrdb.Error, info:
-                        self.fail (\
-                             "Database error setting parameter %s=%s: %s" %\
-                              (key, val, info[1][0]))
+                    except Exception as e:
+                        self.fail (
+                             "Database error setting parameter %s=%s: %s" %
+                                   (key, val, e))
 
 
     #------------------------------------------------------------------
@@ -741,7 +686,7 @@ class CdrBatch:
                 try:
                     self.setStatus (ST_ABORTED)
                     self.setProgressMsg (reason)
-                except BatchException, be:
+                except BatchException as be:
                     self.log ("Unable to update job status on failure: %s" % \
                               str(be), logfile)
 
@@ -749,8 +694,8 @@ class CdrBatch:
             if self.__conn:
                 try:
                     self.__cursor.close()
-                except cdrdb.Error, info:
-                    self.log ("Unable to close cursor" % info[1][0], logfile)
+                except Exception as e:
+                    self.log ("Unable to close cursor: %s" % e, logfile)
 
         # Log reason
         self.log (reason, logfile)
@@ -779,7 +724,7 @@ class CdrBatch:
             self.__status = statusRow[3]
             self.__lastDt = statusRow[4]
 
-        except BatchException, e:
+        except BatchException as e:
             self.fail ("Unable to get status: %s" % e)
 
         return (self.__status, self.__lastDt)
@@ -804,7 +749,7 @@ class CdrBatch:
         try:
             sendSignal (self.__conn, self.__jobId, newStatus, PROC_BATCHJOB)
             self.__status = newStatus
-        except BatchException, e:
+        except BatchException as e:
             self.fail ("Unable to set status: %s" % str(e))
 
 
@@ -824,10 +769,10 @@ class CdrBatch:
         try:
             self.__cursor.execute ("""
               UPDATE batch_job
-                 SET progress = ?, status_dt = GETDATE()
-               WHERE id = ?""", (newMsg, self.__jobId))
-        except cdrdb.Error, info:
-            self.fail ("Unable to update progress message: %s" % info[1][0])
+                 SET progress = %s, status_dt = GETDATE()
+               WHERE id = %s""", (newMsg, self.__jobId))
+        except Exception as e:
+            self.fail ("Unable to update progress message: %s" % e)
 
 
     #------------------------------------------------------------------
