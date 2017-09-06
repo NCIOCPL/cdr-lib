@@ -36,13 +36,13 @@ class CdrRepublisher:
         try:
             cr.republish(addNewLinkedDocuments = True,
                          docList = docs,
-                         email = '***REMOVED***')
+                         email = 'klem@kadiddlehopper.us')
         except Exception, e:
             cdr.logwrite('republish() failure: %s' % e)
             reportFailure(...)
         reportSuccess(...)
     """
-    
+
     class Doc:
 
         """
@@ -63,7 +63,7 @@ class CdrRepublisher:
                               Cancer.gov in both the live and preview
                               stages
         """
-        
+
         def __init__(self, docId, docVersion, isNew):
             self.docId      = docId
             self.docVersion = docVersion
@@ -94,14 +94,14 @@ class CdrRepublisher:
                                  the TCP/IP port to be used in communicating
                                  with the CDR Server; defaults to 2019
         """
-        
+
         self.__credentials = credentials
         self.__host        = host
         self.__port        = port
         self.__conn        = cdrdb.connect()
         self.__cursor      = self.__conn.cursor()
         self.__onCG        = self.__getDocsOnCG()
-    
+
     def republish(self, addNewLinkedDocuments,
                   docList = None, jobList = None, docType = None,
                   docTypeAll = False, failedOnly = True, email = '',
@@ -189,12 +189,12 @@ class CdrRepublisher:
                                         the default as determined by the
                                         cdr2gk module
                 gkPubTarget           - optional string containing the
-                                        GateKeeper target.  This is 
-                                        typically set to 'Preview' for 
+                                        GateKeeper target.  This is
+                                        typically set to 'Preview' for
                                         testing.  Valid values would be
                                         (Gatekeeper, Preview, Live).
                                         This value overrides the default
-                                        as determinded by the cdr2gk 
+                                        as determinded by the cdr2gk
                                         module.
 
             Returns:
@@ -204,7 +204,7 @@ class CdrRepublisher:
 
             An exception is raised in the event of a failure
             to create the new job.
-            
+
         """
 
         # Record the request.
@@ -280,7 +280,7 @@ class CdrRepublisher:
             # ... or just those already sent to Cancer.gov, as requested.
             else:
                 # If selecting summaries we need to prevent summary modules
-                # from being picked up for publishing.  These documents 
+                # from being picked up for publishing.  These documents
                 # should not exist in pub_proc_cg but might end up being
                 # pushed if accidentally published via a hot-fix.
                 # ---------------------------------------------------------
@@ -304,7 +304,7 @@ class CdrRepublisher:
         # Sanity check.
         if not self.__docs:
             raise Exception("republish(): no documents to publish")
-        
+
         # Record the number of documents collected directly.
         cdr.logwrite("republish(): %d documents collected" % len(self.__docs),
                      cdr.PUBLOG)
@@ -581,7 +581,7 @@ class CdrRepublisher:
                          "%.3f seconds" % (len(onCG), time.time() - start),
                          cdr.PUBLOG)
         return onCG
-                    
+
     #------------------------------------------------------------------
     # Update all of the rows in the pub_proc_cg table for documents
     # being published by this job, setting force_push to 'Y' (which

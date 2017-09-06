@@ -69,7 +69,7 @@ except cdrdb.Error, info:
 cdr.logwrite(threadMsg, LOG)
 
 # Publish this many docs of one doctype between reports
-LOG_MODULUS = 1000
+LOG_MODULUS = 1000 # 10
 
 # XXX For testing, wiring target to "GateKeeper" rather than "Live" or
 # XXX "Preview".
@@ -562,7 +562,7 @@ class Publish:
                         self.__publishDoc(doc, filters, destType, dest)
                         numDocs += 1
                         if numDocs % self.__logDocModulus == 0:
-                            msg = "%s: Filtered/validated %d docs. " % (
+                            msg = "%s: Filtered/validated %d docs (HF). " % (
                                                                  time.ctime(),
                                                                  numDocs)
                             self.__updateMessage(msg)
@@ -620,11 +620,32 @@ class Publish:
                             self.__addPubProcDocRows(specSubdirs[i])
                     i += 1
 
-            # End of the second loop through SubsetSpecification nodes.
-            msg = "%s: Finish filtering/validating all %d docs<BR>" % (
-                                                               time.ctime(),
-                                                               numDocs)
-            self.__updateMessage(msg)
+            # Display a list of documents published for this job
+            # --------------------------------------------------
+            sql = """\
+                SELECT count(*)
+                  FROM pub_proc_doc
+                 WHERE pub_proc = ?
+                            """
+            cursor.execute(sql, (self.__jobId ))
+            row = cursor.fetchone()
+            if not row:
+                venumDocs = 999
+            else:
+                venumDocs = row[0]
+
+            ### # End of the second loop through SubsetSpecification nodes.
+            ### msg = "%s: Finished filtering/validating all %d docs<BR>" % (
+            ###                                                    time.ctime(),
+            ###                                                    numDocs)
+            ### self.__updateMessage(msg)
+
+            if not self.__isCgPushJob():
+                # New Count VEVEVE
+                msg = "%s: Finished filtering/validating all %s docs<BR>" % (
+                                                     time.ctime(), venumDocs)
+                self.__updateMessage(msg)
+
             numFailures = self.__getFailures()
             if numFailures > 0:
                 #   href="%s/PubStatus.py?id=%d&type=FilterFailure">Check
@@ -933,8 +954,7 @@ class Publish:
             rowsAffected = cursor.rowcount
             self.__updateMessage(
                 "%s: Updated first_pub for %d documents.<BR>" % (
-		                                                time.ctime(),
-								rowsAffected))
+		                                    time.ctime(), rowsAffected))
         except cdrdb.Error, info:
             self.__updateMessage("Failure updating first_pub for job %d: %s" \
                 % (self.__jobId, info[1][0]))

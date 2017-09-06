@@ -14,6 +14,10 @@ import urllib
 import json
 import pkg_resources
 import hashlib
+from email.mime.text import MIMEText
+from email.header import Header
+from email.utils import parseaddr, formataddr
+import smtplib
 
 class Settings:
     def __init__(self, db=None):
@@ -470,48 +474,128 @@ def getTier():
 # Module constants
 #-----------------------------------------------------------
 DEBUG_LOG        = 1
-OPERATOR         = ['***REMOVED***']
 HTML_BASE        = "/PDQUpdate"
 CGI_BASE         = HTML_BASE + "/cgi-bin"
 IS_PROD_HOST     = isProductionHost()
 PROD_HOST        = 'pdqupdate.cancer.gov'
 DEV_HOST         = 'verdi.nci.nih.gov'
 WEB_HOST         = IS_PROD_HOST and PROD_HOST or DEV_HOST
-SMTP_RELAY       = "MAILFWD.NIH.GOV"
+
+class EmailMessage:
+    """
+    Encapsulates the processing for assembling and sending rfc-822 messages.
+
+    Includes full Unicode support. Possible future enhancement would add
+    an add_part() method, which would wrap the existing MIMEText object
+    inside a MIMEMultipart object and append another part to the message.
+    """
+
+    SMTP_RELAY = "MAILFWD.NIH.GOV"
+    HEADER_CHARSET = "ISO-8859-1"
+
+    def __init__(self, sender, recips, subject, body, subtype="plain"):
+        """
+        Assemble the pieces for the message.
+
+        Don't plug in the headers to the message object yet, in case we
+        implement the enhancement for multi-part mime messages at some
+        point.
+        """
+
+        self.sender = self.format_address(sender)
+        self.recips = [self.format_address(recip) for recip in recips]
+        self.subject = Header(self.unicode(subject), self.HEADER_CHARSET)
+        self.message = self.encode_body(body, subtype)
+
+    def send(self):
+        """
+        Plug in the headers and send the message through the NIH mail server.
+
+        Returns the ascii-serialized message.
+        """
+
+        self.message["From"] = self.sender
+        self.message["To"] = ", ".join(self.recips)
+        self.message["Subject"] = self.subject
+        message = self.message.as_string()
+        server = smtplib.SMTP(self.SMTP_RELAY)
+        server.sendmail(self.sender, self.recips, message)
+        server.quit()
+        return message
+
+    @classmethod
+    def encode_body(cls, body, subtype):
+        """Wrap string in message object (plain or html text).
+        """
+
+        body = cls.unicode(body)
+        for charset in 'US-ASCII', 'ISO-8859-1', 'UTF-8':
+            try:
+                return MIMEText(body.encode(charset), subtype, charset)
+            except UnicodeError:
+                pass
+        raise Exception("unable to encode message body")
+
+    @classmethod
+    def unicode(cls, string):
+        """If the passed string isn't already unicode, make it so.
+        """
+
+        if isinstance(string, unicode):
+            return string
+        for encoding in ("utf-8", "iso-8859-1", "ascii"):
+            try:
+                return string.decode(encoding)
+            except UnicodeDecodeError:
+                pass
+        return string.decode("ascii", "replace")
+
+    @classmethod
+    def format_address(cls, address):
+        """Make an address SMTP-ready.
+
+        Handles addresses with display portion containing non-ASCII
+        characters. Will fail, however if the mailbox portion is not
+        completely ASCII (that violates the standard -- or at least
+        it used to). May need to relax that restriction in the future
+        if support for RFC 6532 becomes more widespread.
+        See https://tools.ietf.org/html/rfc6532.
+        """
+
+        name, addr = parseaddr(cls.unicode(address))
+        name = str(Header(unicode(name), cls.HEADER_CHARSET))
+        addr = addr.encode("ascii")
+        return formataddr((name, addr))
+
+    @staticmethod
+    def test():
+        """Standalone test method.
+        """
+
+        import argparse
+        parser = argparse.ArgumentParser()
+        sender = u"NCI PDQ\u00ae Operator <NCIPDQOperator@mail.nih.gov>"
+        subject = u"Come and get it! \u2665"
+        body = u"<p>Your PDQ&reg; data are ready!</p>"
+        parser.add_argument("--sender", default=sender)
+        parser.add_argument("--recips", nargs="+")
+        parser.add_argument("--subject", default=subject)
+        parser.add_argument("--body", default=body)
+        parser.add_argument("--type", default="html")
+        o = parser.parse_args()
+        message = EmailMessage(o.sender, o.recips, o.subject, o.body, o.type)
+        message.send()
 
 #----------------------------------------------------------------------
 # Send email to a list of recipients.
 #----------------------------------------------------------------------
-def sendMail(sender, recips, subject = "", body = "", html = 0):
+def sendMail(sender, recips, subject="", body="", html=False):
     if not recips:
         raise Exception("sendMail: no recipients specified")
-    if type(recips) != type([]) and type(recips) != type(()):
-        raise Exception("sendMail: recipients must be a "
-                         "list of email addresses")
-    recipList = recips[0]
-    for recip in recips[1:]:
-        recipList += (",\n  %s" % recip)
-
-    # Headers
-    message = """\
-From: %s
-To: %s
-Subject: %s
-""" % (sender, recipList, subject)
-
-    # Set content type for html
-    if html:
-        message += "Content-type: text/html; charset=utf-8\n"
-
-    # Separator line + body
-    message += "\n%s" % body
-
-    # Send it
-    import smtplib
-    server = smtplib.SMTP(SMTP_RELAY)
-    server.sendmail(sender, recips, message)
-    server.quit()
-    return message
+    if not isinstance(recips, (list, tuple)):
+        raise Exception("sendMail: recips must be sequence of email addresses")
+    subtype = html and "html" or "plain"
+    return EmailMessage(sender, recips, subject, body, subtype).send()
 
 #----------------------------------------------------------------------
 # Write to a debug log.

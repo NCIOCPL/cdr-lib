@@ -3971,8 +3971,8 @@ def valParmEmail(val, **opts):
         See _valParmHelper for the rest.
 
     Return:
-        Email portion of the string, e.g., for '"Alan Meyer" <***REMOVED***>'
-        returns '***REMOVED***'.  Test for "not False"
+        Email portion of the string, e.g., for '"Joe Blow" <joe@mail.us>'
+        returns 'joe@mail.us'.  Test for "not False"
         Note: email address may still be wrong and even absurdly wrong.
 
         False = Failed format checking

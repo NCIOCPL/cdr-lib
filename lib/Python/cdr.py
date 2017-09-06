@@ -5850,3 +5850,14 @@ def ordinal(n):
 
 def make_timestamp():
     return datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+
+def getpw(name):
+    try:
+        name = name.lower()
+        for line in open(WORK_DRIVE + ":/etc/cdrpw"):
+            n, p = line.strip().split(":", 1)
+            if n == name:
+                return p
+    except:
+        pass
+    return None
