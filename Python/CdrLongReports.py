@@ -17,6 +17,7 @@
 # JIRA::OCECDR-4183 - support searching Spanish summaries
 # JIRA::OCECDR-4216 and JIRA::OCECDR-4219 - URL check mods
 # Extensive reorganization and cleanup January 2017
+# JIRA::OCECDR-4284 - Fix Glossary Term and Variant Search report
 #----------------------------------------------------------------------
 
 # Standard library modules
@@ -1501,7 +1502,8 @@ class GlossaryTermSearch(BatchReport):
         Glossary term and all phrases used for it.
         """
 
-        NAME_PATH = "/GlossaryTermName/TranslatedName/TermNameString"
+        ENGLISH_NAME_PATH = "/GlossaryTermName/TermName/TermNameString"
+        SPANISH_NAME_PATH = "/GlossaryTermName/TranslatedName/TermNameString"
 
         def __init__(self, cursor, id):
             """
@@ -1509,7 +1511,7 @@ class GlossaryTermSearch(BatchReport):
             """
 
             query = cdrdb.Query("query_term", "value")
-            query.where("path = '%s'" % self.NAME_PATH)
+            query.where("path = '%s'" % self.ENGLISH_NAME_PATH)
             query.where(query.Condition("doc_id", id))
             rows = query.execute(cursor).fetchall()
             if not rows:
@@ -1517,7 +1519,7 @@ class GlossaryTermSearch(BatchReport):
             self.id = id
             self.name = rows[0][0]
             query = cdrdb.Query("query_term", "value")
-            query.where("path = ''")
+            query.where("path = '%s'" % self.SPANISH_NAME_PATH)
             query.where(query.Condition("doc_id", id))
             rows = query.execute(cursor).fetchall()
             self.spanish_names = [row[0] for row in rows]
