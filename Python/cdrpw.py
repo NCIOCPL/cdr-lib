@@ -24,10 +24,10 @@ passwords = {}
 # file /etc/cdrdbpw, but only once, and that's deferred until we
 # know we need it.
 #----------------------------------------------------------------------
-def password(env, tier, db, account=None):
+def password(env, tier, db, account=None, drive_prefix=""):
     if not passwords:
         try:
-            fp = open("/etc/cdrdbpw")
+            fp = open(drive_prefix + "/etc/cdrdbpw")
         except:
             raise Exception("Unable to load database passwords")
         for line in fp:

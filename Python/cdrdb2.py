@@ -2,6 +2,7 @@
 # Rewrite of cdrdb.py to avoid dependencies and odd behavior of ADO/DB.
 #----------------------------------------------------------------------
 import pymssql
+import string
 import time
 import os
 
@@ -18,37 +19,28 @@ CBIIT_HOSTING = True
 
 DEFAULT_TIMEOUT = 120
 
+# Find out where the CDR files are.
+def _getWorkingDrive():
+    for drive in string.ascii_uppercase[2:]:
+        try:
+            os.stat(drive + ":/cdr/lib/python")
+            return drive
+        except:
+            pass
+    raise Exception("unable to find CDR working files")
+WORK_DRIVE = _getWorkingDrive()
+DRIVE_PREFIX = "%s:" % WORK_DRIVE
+
 # Accounting for alternate tiers later, see def connect()
-h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier())
-if h.org == 'OCE':
-    CDR_DB_SERVER = 'localhost'
-    CBIIT_HOSTING = False
-else:
-    CDR_DB_SERVER = h.host['DBWIN'][0]
+h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(DRIVE_PREFIX),
+                    filename=WORK_DRIVE+':/etc/cdrapphosts.rc')
+
+CDR_DB_SERVER = h.host['DBWIN'][0]
 
 # Look in the environment for override of default location of CDR database.
 _cdr_db_server = os.environ.get('CDR_DB_SERVER')
 if _cdr_db_server:
     CDR_DB_SERVER = _cdr_db_server
-
-# Logging support.  Set LOGFILE to log file pathname to enable logging.
-LOGFILE = os.environ.get('CDR_DB_LOGFILE') or None
-def debugLog(sql = None, params = None, what = "SQL Query"):
-    if LOGFILE:
-        import datetime
-        now = datetime.datetime.now()
-        now = "%d-%02d-%-2d %02d:%02d:%02d.%03d" % (now.year, now.month,
-                                                    now.day, now.hour,
-                                                    now.minute, now.second,
-                                                    now.microsecond / 1000)
-        try:
-            fp = open(LOGFILE, 'a')
-            fp.write("%s: %s\n" % (now, what))
-            if sql:
-                fp.write("%s\nParameters:\n%s\n" % (sql, params))
-            fp.close()
-        except:
-            pass
 
 #----------------------------------------------------------------------
 # Connect to the CDR using known login account.
@@ -76,24 +68,22 @@ def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr',
             dataSource = hostInfo.qname
             tier = hostInfo.tier
 
-    if CBIIT_HOSTING:
-        ports = {
-            "PROD": 55733,
-            "STAGE": 55459,
-            "QA": 53100,
-            "DEV": 52400
-        }
-        port = ports.get(tier, 52400)
-        if user.upper() == "CDR":
-            user = "cdrsqlaccount"
-    else:
-        port = 32408
-    password = cdrpw.password(h.org, tier, db, user)
+    ports = {
+        "PROD": 55733,
+        "STAGE": 55459,
+        "QA": 53100,
+        "DEV": 52400
+    }
+    port = ports.get(tier, 52400)
+    if user.upper() == "CDR":
+        user = "cdrsqlaccount"
+    password = cdrpw.password(h.org, tier, db, user, DRIVE_PREFIX)
     if timeout is None:
         timeout = DEFAULT_TIMEOUT
-    return pymssql.connect(server=dataSource, port=port, user=user,
-                           password=password, database=db, timeout=timeout,
-                           as_dict=as_dict)
+    args = dict(server=dataSource, port=port, user=user,
+                password=password, database=db, timeout=timeout,
+                as_dict=as_dict)
+    return pymssql.connect(**args)
 
 class Query:
 
@@ -280,7 +270,7 @@ class Query:
         self._cursor = cursor
         return self
 
-    def execute(self, cursor=None, timeout=None, as_dict=None):
+    def execute(self, cursor=None, timeout=None, as_dict=None, tier=None):
         """
         Assemble and execute the SQL query, returning the cursor object
 
@@ -296,7 +286,8 @@ class Query:
                 timeout = self._timeout
             if as_dict is None:
                 as_dict = self._as_dict
-            conn = connect("CdrGuest", timeout=timeout, as_dict=as_dict)
+            tier = CDR_DB_SERVER if tier is None else tier
+            conn = connect("CdrGuest", tier, timeout=timeout, as_dict=as_dict)
             cursor = conn.cursor()
         sql = str(self)
         cursor.execute(sql, tuple(self._parms))

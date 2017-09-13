@@ -118,7 +118,7 @@ class Settings:
         }, indent=indent)
 
 
-def can_do(session, action, doctype=""):
+def can_do(session, action, doctype="", tier=None):
     """
     Authorization check used on CDR Linux servers. Ask the Windows
     server for this tier to make the determination.
@@ -134,7 +134,7 @@ def can_do(session, action, doctype=""):
     """
 
     org = getEnvironment()
-    tier = getTier()
+    tier = tier or getTier()
     app_host = AppHost(org, tier)
     url = app_host.makeCdrCgiUrl(tier, "check-auth.py")
     parms = urllib.urlencode({
@@ -440,20 +440,12 @@ def isProductionHost():
 def getEnvironment():
     """
     Returns the name of the organization running the infrastructure
-    on this server.  Currently either 'OCE' or 'CBIIT'
-
-    Caches the file lookup in an AppHost class variable.
+    on this server.  Currently this is always 'CBIIT'
     """
-    if not AppHost.org:
-        try:
-            fp = file('/etc/cdrenv.rc')
-            rc = fp.read()
-            AppHost.org = rc.upper().strip()
-        except:
-            AppHost.org = 'OCE'
-    return AppHost.org
 
-def getTier():
+    return "CBIIT"
+
+def getTier(drive_prefix=""):
     """
     Returns the tier, 'DEV', 'QA', 'PROD', maybe others, of the current
     server.
@@ -462,7 +454,7 @@ def getTier():
     """
     if not AppHost.tier:
         try:
-            fp = file('/etc/cdrtier.rc')
+            fp = file(drive_prefix + '/etc/cdrtier.rc')
             rc = fp.read()
             AppHost.tier = rc.upper().strip()
         except:
@@ -627,11 +619,12 @@ def wrapFieldsInMap(fields):
 #----------------------------------------------------------------------
 # Connect to the emailers database.
 #----------------------------------------------------------------------
-def getConnection(db='emailers'):
+def getConnection(db='emailers', drive_prefix=""):
     env = getEnvironment()
     tier = getTier()
     pw = cdrpw.password(env, tier, db)
-    appHost = AppHost(env, tier, filename="/etc/cdrapphosts.rc")
+    host_file = drive_prefix + "/etc/cdrapphosts.rc"
+    appHost = AppHost(env, tier, filename=host_file)
     port = 3631
     if db == "glossifier":
         host = appHost.host["GLOSSIFIERDB"][0]

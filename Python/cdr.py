@@ -16,6 +16,7 @@
 # JIRA::OCECDR-3845 - Encrypt traffic from external clients
 # JIRA::OCECDR-3849 - Integration with NIH Active Directory (AD)
 # Fixed security flaws in code to fetch user name from session.
+# JIRA::OCECDR-4295 - Restore ability to run commands from other hosts
 #
 #----------------------------------------------------------------------
 
@@ -26,10 +27,10 @@ import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
 import os, smtplib, time, atexit, cdrdb, tempfile, traceback, difflib
 import xml.sax.saxutils, datetime, subprocess, cdrutil
 import math
-import urllib
 import lxml.etree as etree
 import logging
 import cdrdb2
+import requests
 
 #----------------------------------------------------------------------
 # Find out the drive on which the CDR working files are stored.
@@ -76,8 +77,9 @@ def _getHostNames():
 # The file cdrapphosts knows about the different server names in the
 # CBIIT and OCE environments based on the tier
 # ---------------------------------------------------------------------
-h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(),
-                   filename = '/etc/cdrapphosts.rc')
+h = cdrutil.AppHost(cdrutil.getEnvironment(),
+                    cdrutil.getTier(WORK_DRIVE + ":"),
+                    filename=WORK_DRIVE + ':/etc/cdrapphosts.rc')
 
 #----------------------------------------------------------------------
 # Give caller variant forms of the host name.  See also getHostName()
@@ -91,18 +93,11 @@ def _getCbiitNames(ssl=True):
         fully qualified host name
         fully qualified name, prefixed by "http[s]://"
     """
-    # Use "http" or "https" protocol
-    if ssl: s = 's'
-    else:   s = ''
 
-    if h.org == 'OCE':
-        host = '%s' % h.host['APP'][0]
-        fqdn = '%s.%s' % (h.host['APP'][0], h.host['APP'][1])
-    else:
-        host = '%s' % h.host['APPC'][0]
-        fqdn = '%s.%s' % (h.host['APPC'][0], h.host['APPC'][1])
-
-    url  = 'http%s://%s' % (s, fqdn)
+    protocol = "https" if ssl else "http"
+    host = "%s" % h.host["APPC"][0]
+    fqdn = "%s.%s" % h.host["APPC"]
+    url = "http%s://%s" % (protocol, fqdn)
 
     return (host, fqdn, url)
 
@@ -412,15 +407,18 @@ def setGlobalSendCommandsTimeout(newTimeout):
 # CBIIT now requires that connections to the CDR Server from other
 # hosts be encrypted. See https://tracker.nci.nih.gov/browse/OCECDR-3845.
 #----------------------------------------------------------------------
-def tunnelCommands(cmds, timeout):
-    url = "%s/cgi-bin/cdr/https-tunnel.ashx" % CBIIT_NAMES[2]
+def tunnelCommands(cmds, timeout, tier=None):
+    prefix = CBIIT_NAMES[2]
+    if tier is not None:
+        prefix = "https://%s" % h.getTierHostNames(tier.upper(), "APPC").qname
+    url = "%s/cgi-bin/cdr/https-tunnel.ashx" % prefix
     limit = time.time() + timeout
     attempts = 0
     while time.time() < limit:
         try:
             attempts += 1
-            conn = urllib.urlopen(url, cmds)
-            return conn.read()
+            response = requests.post(url, cmds)
+            return response.content
         except Exception, e:
             logwrite("tunnelCommands (attempt %d): %s" % (attempts, e))
             now = time.time()
@@ -436,6 +434,8 @@ def tunnelCommands(cmds, timeout):
 
 #----------------------------------------------------------------------
 # Send a set of commands to the CDR Server and return its response.
+# The `host` parameter is actually the name of a tier. We can't change
+# its name in case a caller used the old parameter name.
 #----------------------------------------------------------------------
 def sendCommands(cmds, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=None):
 
@@ -447,22 +447,9 @@ def sendCommands(cmds, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=None):
         timeout = SENDCMDS_TIMEOUT
 
     # Approach mandated by CBIIT for outside connections to the CDR server.
-    if DEFAULT_HOST != "localhost":
-        return tunnelCommands(cmds, timeout)
-
-    if host != DEFAULT_HOST:
-        # Resolve logical host name to actual network name
-        # We're looking for the host's name for "APP" usage
-        # That should be the only usage connecting on a CdrServer port
-        passedHost = host
-        hostprops  = h.getTierHostNames(passedHost, 'APP')
-        if hostprops:
-            # Fully qualified name, e.g. "abc.foobar.nih.gov"
-            host = hostprops.qname
-
-        # If that failed try whatever was passed.  But we're probaby doomed
-        if not host:
-            host = passedHost
+    if DEFAULT_HOST != "localhost" or host != DEFAULT_HOST:
+        tier = host if host != DEFAULT_HOST else None
+        return tunnelCommands(cmds, timeout, tier)
 
     # Connect to the CDR Server.
     connAttempts     = 0
@@ -475,7 +462,7 @@ def sendCommands(cmds, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=None):
         try:
             connAttempts += 1
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect((host, port))
+            sock.connect(("localhost", port))
         except:
             # Find out what network connections are active
             # This produces a huge output, so only do it if there is a failure
@@ -489,9 +476,9 @@ def sendCommands(cmds, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=None):
                 #  what the application is)
                 logwrite("""\
 sendCommands: netstat output from connection failure in sendCommands
-host=%s port=%d current netstat=
+host=localhost port=%d current netstat=
 %s
-""" % (host, port, netStatus))
+""" % (port, netStatus))
             logSendFailure("Connecting", connAttempts, sendRecvAttempts,
                             startTime, timeout)
 
@@ -578,11 +565,15 @@ host=%s port=%d current netstat=
 #                   CdrLogoff
 #
 #----------------------------------------------------------------------
-def wrapCommand(command, credentials):
+def wrapCommand(command, credentials, host=DEFAULT_HOST):
 
     # Do we already have a session ID?
     if isinstance(credentials, tuple):
-        sessionId = None
+        if DEFAULT_HOST != "localhost" or host != DEFAULT_HOST:
+            tier = host if host != DEFAULT_HOST else None
+            sessionId = windowsLogin(credentials[0], credentials[1], tier)
+        else:
+            sessionId = None
     elif isinstance(credentials, unicode):
         sessionId = credentials.encode("ascii")
     else:
@@ -599,7 +590,7 @@ def wrapCommand(command, credentials):
             commandSet.append(createLoginCommand(*credentials))
         cdr_command = etree.SubElement(commandSet, "CdrCommand")
         cdr_command.append(command)
-        if not sessionId:
+        if isinstance(credentials, tuple):
             logoff = etree.SubElement(commandSet, "CdrCommand")
             logoff.append(etree.Element("CdrLogoff"))
         return etree.tostring(commandSet)
@@ -615,7 +606,7 @@ def wrapCommand(command, credentials):
     commandSet.append("<CdrCommand>")
     commandSet.append(command)
     commandSet.append("</CdrCommand>")
-    if not sessionId:
+    if isinstance(credentials, tuple):
         commandSet.append("<CdrCommand><CdrLogoff/></CdrCommand>")
     commandSet.append("</CdrCommandSet>")
     return "".join(commandSet)
@@ -891,9 +882,11 @@ def createLoginCommand(user, password):
 # Log in using Windows authentication verified through a connection
 # to IIS.
 #----------------------------------------------------------------------
-def windowsLogin(user, password):
-    import requests
-    url = "%s/cgi-bin/secure/login.py" % CBIIT_NAMES[2]
+def windowsLogin(user, password, tier=None):
+    prefix = CBIIT_NAMES[2]
+    if tier is not None:
+        prefix = "https://%s" % h.getTierHostNames(tier.upper(), "APPC").qname
+    url = "%s/cgi-bin/secure/login.py" % prefix
     requests.packages.urllib3.disable_warnings()
     auth = requests.auth.HTTPDigestAuth(user, password)
     response = requests.get(url, auth=auth, verify=False)
@@ -903,12 +896,13 @@ def windowsLogin(user, password):
 # Log in to the CDR Server.  Returns session ID.
 # If passWord is None, userId is an NIH domain account name.
 #----------------------------------------------------------------------
-def login(userId, passWord, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def login(userId, passWord, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # If we're not running directly on the CDR, we must log in using
     # Windows authentication.
-    if DEFAULT_HOST != "localhost":
-        return windowsLogin(userId, passWord)
+    if DEFAULT_HOST != "localhost" or host != DEFAULT_HOST:
+        tier is host if host != DEFAULT_HOST else None
+        return windowsLogin(userId, passWord, tier)
 
     # Send the login request to the server.
     command = createLoginCommand(userId, passWord)
@@ -992,7 +986,7 @@ def member_of_group(session, group):
 #----------------------------------------------------------------------
 def dupSession(oldSession, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
-    cmds = wrapCommand("<CdrDupSession/>", oldSession)
+    cmds = wrapCommand("<CdrDupSession/>", oldSession, host)
     resp = sendCommands(cmds, host, port)
 
     # Session data must always be ordinary ascii
@@ -1047,8 +1041,7 @@ def getEmail(mySession):
 #   True (1) = Is authorized
 #   False (0) = Is not authorized
 #----------------------------------------------------------------------
-def canDo (session, action, docType="",
-           host=DEFAULT_HOST, port=DEFAULT_PORT):
+def canDo(session, action, docType="", host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = wrapCommand ("""
@@ -1056,7 +1049,7 @@ def canDo (session, action, docType="",
    <Action>%s</Action>
    <DocType>%s</DocType>
  </CdrCanDo>\n
-""" % (action, docType), session)
+""" % (action, docType), session, host)
 
     # Submit it
     resp = sendCommands (cmd, host, port);
@@ -1077,14 +1070,14 @@ def canDo (session, action, docType="",
 # These are pass throughs of the response from the CdrLastVersions command.
 # Single error string returned if errors.
 #----------------------------------------------------------------------
-def lastVersions (session, docId, host=DEFAULT_HOST, port=DEFAULT_PORT):
+def lastVersions(session, docId, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = wrapCommand ("""
  <CdrLastVersions>
    <DocId>%s</DocId>
  </CdrLastVersions>
-""" % normalize(docId), session)
+""" % normalize(docId), session, host)
 
     # Submit it
     resp = sendCommands (cmd, host, port)
@@ -1104,7 +1097,7 @@ def lastVersions (session, docId, host=DEFAULT_HOST, port=DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Find the date that a current working document was created or modified.
 #----------------------------------------------------------------------
-def getCWDDate (docId, conn=None):
+def getCWDDate(docId, conn=None):
     """
     Find the latest date/time in the audit trail for a document.
     This is the date on the current working document.
@@ -1147,7 +1140,7 @@ def getCWDDate (docId, conn=None):
 #----------------------------------------------------------------------
 # Search the query term table for values
 #----------------------------------------------------------------------
-def getQueryTermValueForId (path, docId, conn = None):
+def getQueryTermValueForId(path, docId, conn=None):
     """
     Search for values pertaining to a particular path and id, or just
     for a particular path.
@@ -1436,7 +1429,7 @@ class Doc:
 #----------------------------------------------------------------------
 # Wrap an XML document in CdrDoc wrappers.
 #----------------------------------------------------------------------
-def makeCdrDoc(xml, docType, docId=None, ctrl={}):
+def makeCdrDoc(xml, docType, docId=None, ctrl=None):
     """
     Make XML suitable for sending to server functions expecting
     a CdrDoc wrapper.
@@ -1450,6 +1443,10 @@ def makeCdrDoc(xml, docType, docId=None, ctrl={}):
     Return:
         New XML string with passed xml as CDATA section, coded in utf-8.
     """
+
+    # Use the caller's control values if present.
+    ctrl = ctrl if ctrl is not None else {}
+
     # Check and set encoding
     if type(xml) == type(u""):
         xml = xml.encode("utf-8")
@@ -1657,12 +1654,12 @@ def _addDocBlob(doc, blob=None, blobFileName=None):
 #
 # See also the comment on repDoc below regarding the 'reason' argument.
 #----------------------------------------------------------------------
-def addDoc(credentials, file = None, doc = None, comment = '',
-           checkIn = 'N', val = 'N', reason = '', ver = 'N',
-           verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
-           activeStatus = None, blob = None, blobFile = None,
-           host = DEFAULT_HOST, port = DEFAULT_PORT,
-           errorLocators = 'N'):
+def addDoc(credentials, file=None, doc=None, comment='',
+           checkIn='N', val='N', reason='', ver='N',
+           verPublishable='Y', setLinks='Y', showWarnings=0,
+           activeStatus=None, blob=None, blobFile=None,
+           host=DEFAULT_HOST, port=DEFAULT_PORT,
+           errorLocators='N'):
     """
     Add a document to the repository.
 
@@ -1731,7 +1728,7 @@ def addDoc(credentials, file = None, doc = None, comment = '',
                                                        doLinks, reason, doc)
 
     # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
     # Extract the document ID (and messages if requested).
     docId = extract("<DocId.*>(CDR\d+)</DocId>", resp)
@@ -1757,20 +1754,20 @@ def addDoc(credentials, file = None, doc = None, comment = '',
 # of the doc argument.
 # [That's done for you now if you supply a 'comment' argument.]
 #----------------------------------------------------------------------
-def repDoc(credentials, file = None, doc = None, comment = '',
-           checkIn = 'N', val = 'N', reason = '', ver = 'N',
-           verPublishable = 'Y', setLinks = 'Y', showWarnings = 0,
-           activeStatus = None, blob = None, blobFile = None, delBlob=0,
-           delAllBlobVersions = 0, host = DEFAULT_HOST, port = DEFAULT_PORT,
-           errorLocators = 'N'):
+def repDoc(credentials, file=None, doc=None, comment='',
+           checkIn='N', val='N', reason='', ver='N',
+           verPublishable='Y', setLinks='Y', showWarnings=0,
+           activeStatus=None, blob=None, blobFile=None, delBlob=False,
+           delAllBlobVersions=False, host=DEFAULT_HOST, port=DEFAULT_PORT,
+           errorLocators='N'):
 
     """
     Replace an existing document.
 
     Pass:
         See addDoc for details.  New parameters are:
-        delBlob         - 1 = delete the blob.  If it has not been versioned
-                           it will disappear from the database.
+        delBlob         - True = delete the blob.  If it has not been versioned
+                          it will disappear from the database.
                           Passing an empty blob will have the same effect,
                            i.e., blob='', not blob=None, which has no effect
                            on blobs.
@@ -1818,7 +1815,7 @@ def repDoc(credentials, file = None, doc = None, comment = '',
     cmd     = "<CdrRepDoc>%s%s%s%s%s%s%s</CdrRepDoc>" % (checkIn, val, ver,
                                           delBlobVers, doLinks, reason, doc)
     # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
     # Extract the document ID (and messages if requested).
     docId = extract("<DocId.*>(CDR\d+)</DocId>", resp)
@@ -1836,9 +1833,9 @@ def repDoc(credentials, file = None, doc = None, comment = '',
 #----------------------------------------------------------------------
 # Retrieve a specified document from the CDR Server.
 #----------------------------------------------------------------------
-def getDoc(credentials, docId, checkout = 'N', version = "Current",
+def getDoc(credentials, docId, checkout='N', version="Current",
            xml='Y', blob='N',
-           host = DEFAULT_HOST, port = DEFAULT_PORT, getObject = 0):
+           host=DEFAULT_HOST, port=DEFAULT_PORT, getObject=False):
 
     # Create the command.
     did  = normalize(docId)
@@ -1849,7 +1846,7 @@ def getDoc(credentials, docId, checkout = 'N', version = "Current",
            (what, did, lck, ver)
 
     # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
     # Extract the document.
     doc = extract("(<CdrDoc[>\s].*</CdrDoc>)", resp)
@@ -1997,7 +1994,7 @@ def checkOutDoc(credentials, docId, force='N', comment='',
 <CdrCheckOut ForceCheckOut='%s'>
  <DocumentId>%s</DocumentId>
  <Comment>%s</Comment>
-</CdrCheckOut>""" % (force, docId, comment), credentials)
+</CdrCheckOut>""" % (force, docId, comment), credentials, host)
 
     response = sendCommands(cmd, host, port)
     errs     = getErrors(response, False)
@@ -2014,8 +2011,8 @@ def checkOutDoc(credentials, docId, force='N', comment='',
 #----------------------------------------------------------------------
 # Mark a CDR document as deleted.
 #----------------------------------------------------------------------
-def delDoc(credentials, docId, val = 'N', reason = '',
-           host = DEFAULT_HOST, port = DEFAULT_PORT):
+def delDoc(credentials, docId, val='N', reason='',
+           host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command.
     docId   = "<DocId>%s</DocId>" % docId
@@ -2024,7 +2021,7 @@ def delDoc(credentials, docId, val = 'N', reason = '',
     cmd     = "<CdrDelDoc>%s%s%s</CdrDelDoc>" % (docId, val, reason)
 
     # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
     # Check for failure.
     errors = getErrors(resp, errorsExpected=False, asSequence=True,
@@ -2038,10 +2035,10 @@ def delDoc(credentials, docId, val = 'N', reason = '',
 #----------------------------------------------------------------------
 # Validate a CDR document.
 #----------------------------------------------------------------------
-def valDoc(credentials, docType, docId = None, doc = None,
-           valLinks = 'Y', valSchema = 'Y', validateOnly = 'Y',
-           host = DEFAULT_HOST, port = DEFAULT_PORT,
-           errorLocators = 'N'):
+def valDoc(credentials, docType, docId=None, doc=None,
+           valLinks='Y', valSchema='Y', validateOnly='Y',
+           host=DEFAULT_HOST, port=DEFAULT_PORT,
+           errorLocators='N'):
     """
     Validate a document, either in the database or passed to here.
 
@@ -2098,7 +2095,7 @@ def valDoc(credentials, docType, docId = None, doc = None,
                                                        doc))
 
     # Submit the commands.
-    return sendCommands(wrapCommand(cmd, credentials), host, port)
+    return sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
 #----------------------------------------------------------------------
 # Validate new and old docs
@@ -2167,7 +2164,7 @@ def updateTitle(credentials, docId, host=DEFAULT_HOST, port=DEFAULT_PORT):
   <DocId>%s</DocId>
  </CdrUpdateTitle>
 """ % docIdStr
-    cmd = wrapCommand(cmd, credentials)
+    cmd = wrapCommand(cmd, credentials, host)
 
     # Interact with the host
     resp = sendCommands(cmd, host, port)
@@ -2228,10 +2225,10 @@ def deDupErrs(errXml):
 # Set the inline parameter to 1 if you want the second argument to
 # be recognized as the filter XML document string in memory.
 #----------------------------------------------------------------------
-def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
-              host = DEFAULT_HOST, port = DEFAULT_PORT, parm = [],
-              no_output = 'N', docVer = None, docDate = None,
-              filterVer = '', filterDate = None):
+def filterDoc(credentials, filter, docId=None, doc=None, inline=False,
+              host=DEFAULT_HOST, port=DEFAULT_PORT, parm=None,
+              no_output='N', docVer=None, docDate=None,
+              filterVer='', filterDate=None):
     """
     Pass:
         credentials = Result of login.
@@ -2312,6 +2309,7 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
         filterElem = ("<Filter href='%s'/>" % filt)
 
     parmElem = ""
+    parm = parm if parm is not None else []
     if type(parm) is type([]) or type(parm) is type(()):
         for l in parm:
             parmElem += "<Parm><Name>" + l[0] \
@@ -2336,7 +2334,7 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
         cmd = cmd.encode("utf-8")
 
     # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
     # Extract the filtered document.
     return extract_multiple(r"<Document[>\s][^<]*<!\[CDATA\[(.*)\]\]>\s*"
@@ -2347,7 +2345,7 @@ def filterDoc(credentials, filter, docId = None, doc = None, inline=0,
 #----------------------------------------------------------------------
 # Request the output for a CDR report.
 #----------------------------------------------------------------------
-def report(credentials, name, parms, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def report(credentials, name, parms, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command.
     cmd = "<CdrReport><ReportName>%s</ReportName>" % name
@@ -2361,7 +2359,7 @@ def report(credentials, name, parms, host = DEFAULT_HOST, port = DEFAULT_PORT):
         cmd = cmd + "</ReportParams>"
 
     # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd + "</CdrReport>", credentials),
+    resp = sendCommands(wrapCommand(cmd + "</CdrReport>", credentials, host),
                         host, port)
 
     # Extract the report.
@@ -2384,14 +2382,14 @@ class QueryResult:
 # document in the search result, and the second of which is an <Errors>
 # element.  Exactly one of these two member of the tuple will be None.
 #----------------------------------------------------------------------
-def search(credentials, query, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def search(credentials, query, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command.
     cmd = ("<CdrSearch><Query>//CdrDoc[%s]/CdrCtl/DocId</Query></CdrSearch>"
             % query)
 
     # Submit the search.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
     # Check for problems.
     err = checkErr(resp)
@@ -2563,7 +2561,7 @@ def getDoctype(credentials, doctype, host=DEFAULT_HOST, port=DEFAULT_PORT):
     cmd = etree.Element("CdrGetDocType", Type=doctype, GetEnumValues="Y")
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
     # Check for problems.
     errors = getErrors(resp, False, True)
@@ -2610,7 +2608,7 @@ def addDoctype(credentials, info, host=DEFAULT_HOST, port=DEFAULT_PORT):
         etree.SubElement(cmd, "Comment").text = info.comment
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     error = checkErr(resp)
     if error: return dtinfo(error = error)
     return getDoctype(credentials, info.type, host, port)
@@ -2637,7 +2635,7 @@ def modDoctype(credentials, info, host=DEFAULT_HOST, port=DEFAULT_PORT):
         etree.SubElement(cmd, "Comment").text = info.comment
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     error = checkErr(resp)
     if error: return dtinfo(error = error)
     return getDoctype(credentials, info.type, host, port)
@@ -2658,7 +2656,7 @@ class TermSet:
 #----------------------------------------------------------------------
 # Retrieve a list of valid values defined in a schema for a doctype
 #----------------------------------------------------------------------
-def getVVList(credentials, docType, vvName, sorted=0, putFirst=None,
+def getVVList(credentials, docType, vvName, sorted=False, putFirst=None,
               host=DEFAULT_HOST, port=DEFAULT_PORT):
     """
     Creates a list of valid values from a schema.
@@ -2725,8 +2723,8 @@ def getVVList(credentials, docType, vvName, sorted=0, putFirst=None,
 #----------------------------------------------------------------------
 # Gets context information for term's position in terminology tree.
 #----------------------------------------------------------------------
-def getTree(credentials, docId, depth = 1,
-            host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getTree(credentials, docId, depth=1,
+            host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = """\
@@ -2734,7 +2732,7 @@ def getTree(credentials, docId, depth = 1,
 """ % (normalize(docId), depth)
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return TermSet(error = err)
 
@@ -2767,13 +2765,13 @@ def getTree(credentials, docId, depth = 1,
 #----------------------------------------------------------------------
 # Gets the list of CDR actions which can be authorized.
 #----------------------------------------------------------------------
-def getActions(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getActions(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrListActions/>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -2787,13 +2785,13 @@ def getActions(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Gets the list of CDR users.
 #----------------------------------------------------------------------
-def getUsers(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getUsers(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrListUsrs/>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -2805,13 +2803,13 @@ def getUsers(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Gets the list of CDR authorization groups.
 #----------------------------------------------------------------------
-def getGroups(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getGroups(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrListGrps/>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -2823,13 +2821,13 @@ def getGroups(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Deletes a CDR group.
 #----------------------------------------------------------------------
-def delGroup(credentials, grp, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def delGroup(credentials, grp, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrDelGrp><GrpName>%s</GrpName></CdrDelGrp>" % grp
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -2839,13 +2837,13 @@ def delGroup(credentials, grp, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Gets the list of CDR document types.
 #----------------------------------------------------------------------
-def getDoctypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getDoctypes(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrListDocTypes/>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -2901,7 +2899,8 @@ def getControlValue(group, name):
 # Update the ctl table.
 #----------------------------------------------------------------------
 def updateCtl(credentials, action,
-              grp=None, name=None, val=None, comment=None):
+              grp=None, name=None, val=None, comment=None,
+              host=DEFAULT_HOST, port=DEFAULT_PORT):
     """
     Update the ctl table.  See CdrCtl.h/.cpp in the server for what this does.
 
@@ -2950,8 +2949,8 @@ def updateCtl(credentials, action,
     cmd += " </Ctl>\n</CdrSetCtl>\n"
 
     # Wrap it with credentials and send it
-    cmd  = wrapCommand(cmd, credentials)
-    resp = sendCommands(cmd)
+    cmd  = wrapCommand(cmd, credentials, host)
+    resp = sendCommands(cmd, host, port)
 
     # Did server report error?
     errs = getErrors(resp, 0)
@@ -2971,13 +2970,13 @@ class CssFile:
 #----------------------------------------------------------------------
 # Gets the CSS files used by the client.
 #----------------------------------------------------------------------
-def getCssFiles(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getCssFiles(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command.
     cmd = "<CdrGetCssFiles/>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3004,13 +3003,13 @@ def getCssFiles(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Gets the list of CDR schema documents.
 #----------------------------------------------------------------------
-def getSchemaDocs(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getSchemaDocs(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrListSchemaDocs/>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3108,13 +3107,13 @@ class Group:
 #----------------------------------------------------------------------
 # Retrieves information about a CDR group.
 #----------------------------------------------------------------------
-def getGroup(credentials, gName, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getGroup(credentials, gName, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrGetGrp><GrpName>%s</GrpName></CdrGetGrp>" % gName
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3141,8 +3140,7 @@ def getGroup(credentials, gName, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Stores information about a CDR group.
 #----------------------------------------------------------------------
-def putGroup(credentials, gName, group, host = DEFAULT_HOST,
-                                        port = DEFAULT_PORT):
+def putGroup(credentials, gName, group, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     if gName:
@@ -3179,7 +3177,7 @@ def putGroup(credentials, gName, group, host = DEFAULT_HOST,
     else:     cmd += "</CdrAddGrp>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3213,7 +3211,7 @@ class User:
 #----------------------------------------------------------------------
 # Retrieves information about a CDR user.
 #----------------------------------------------------------------------
-def getUser(credentials, uName, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getUser(credentials, uName, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = etree.Element("CdrGetUsr")
@@ -3221,7 +3219,7 @@ def getUser(credentials, uName, host = DEFAULT_HOST, port = DEFAULT_PORT):
     cmd  = etree.tostring(cmd)
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3262,8 +3260,7 @@ def getUser(credentials, uName, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #   string      - Error message if operation failed.
 #   None        - Operation succeeded.
 #----------------------------------------------------------------------
-def putUser(credentials, uName, user, host = DEFAULT_HOST,
-                                      port = DEFAULT_PORT):
+def putUser(credentials, uName, user, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     if uName:
@@ -3291,7 +3288,7 @@ def putUser(credentials, uName, user, host = DEFAULT_HOST,
         etree.SubElement(cmd, "GrpName").text = group
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3301,14 +3298,14 @@ def putUser(credentials, uName, user, host = DEFAULT_HOST,
 #----------------------------------------------------------------------
 # Deletes a CDR user.
 #----------------------------------------------------------------------
-def delUser(credentials, usr, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def delUser(credentials, usr, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = etree.Element("CdrDelUsr")
     etree.SubElement(cmd, "UserName").text = usr
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3319,7 +3316,7 @@ def delUser(credentials, usr, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # Holds information about a single CDR action.
 #----------------------------------------------------------------------
 class Action:
-    def __init__(self, name, doctypeSpecific, comment  = None):
+    def __init__(self, name, doctypeSpecific, comment=None):
         self.name            = name
         self.doctypeSpecific = doctypeSpecific
         self.comment         = comment
@@ -3327,13 +3324,13 @@ class Action:
 #----------------------------------------------------------------------
 # Retrieves information about a CDR action.
 #----------------------------------------------------------------------
-def getAction(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getAction(credentials, name, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrGetAction><Name>%s</Name></CdrGetAction>" % name
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3349,8 +3346,7 @@ def getAction(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Stores information for a CDR action.
 #----------------------------------------------------------------------
-def putAction(credentials, name, action, host = DEFAULT_HOST,
-                                         port = DEFAULT_PORT):
+def putAction(credentials, name, action, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     if name:
@@ -3372,7 +3368,7 @@ def putAction(credentials, name, action, host = DEFAULT_HOST,
     else:    cmd += "</CdrAddAction>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3382,13 +3378,13 @@ def putAction(credentials, name, action, host = DEFAULT_HOST,
 #----------------------------------------------------------------------
 # Deletes a CDR action.
 #----------------------------------------------------------------------
-def delAction(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def delAction(credentials, name, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrDelAction><Name>%s</Name></CdrDelAction>" % name
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3429,13 +3425,13 @@ class LinkProp:
 #----------------------------------------------------------------------
 # Retrieves list of CDR link type names.
 #----------------------------------------------------------------------
-def getLinkTypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getLinkTypes(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrListLinkTypes/>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3447,13 +3443,13 @@ def getLinkTypes(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Retrieves information from the CDR for a link type.
 #----------------------------------------------------------------------
-def getLinkType(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getLinkType(credentials, name, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrGetLinkType><Name>%s</Name></CdrGetLinkType>" % name
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3495,7 +3491,7 @@ def getLinkType(credentials, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # Stores information for a CDR link type.
 #----------------------------------------------------------------------
 def putLinkType(credentials, name, linkType, linkAct,
-                host = DEFAULT_HOST, port = DEFAULT_PORT):
+                host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     if linkAct == "modlink":
@@ -3535,7 +3531,7 @@ def putLinkType(credentials, name, linkType, linkAct,
         cmd += "</CdrModLinkType>"
     else:
         cmd += "</CdrAddLinkType>"
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3545,13 +3541,13 @@ def putLinkType(credentials, name, linkType, linkAct,
 #----------------------------------------------------------------------
 # Retrieves list of CDR link properties.
 #----------------------------------------------------------------------
-def getLinkProps(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getLinkProps(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrListLinkProps/>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -3573,13 +3569,13 @@ def getLinkProps(credentials, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Returns a list of available query term rules.
 #----------------------------------------------------------------------
-def listQueryTermRules(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def listQueryTermRules(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrListQueryTermRules/>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    resp = sendCommands(wrapCommand(cmd, session, host), host, port)
 
     # Check for problems.
     err = checkErr(resp)
@@ -3591,13 +3587,13 @@ def listQueryTermRules(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Returns a list of CDR query term definitions.
 #----------------------------------------------------------------------
-def listQueryTermDefs(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def listQueryTermDefs(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrListQueryTermDefs/>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    resp = sendCommands(wrapCommand(cmd, session, host), host, port)
 
     # Extract the definitions.
     defExpr      = re.compile("<Definition>(.*?)</Definition>", re.DOTALL)
@@ -3619,8 +3615,8 @@ def listQueryTermDefs(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Adds a new query term definition.
 #----------------------------------------------------------------------
-def addQueryTermDef(session, path, rule = None, host = DEFAULT_HOST,
-                                                port = DEFAULT_PORT):
+def addQueryTermDef(session, path, rule=None,
+                    host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrAddQueryTermDef><Path>%s</Path>" % path
@@ -3628,14 +3624,14 @@ def addQueryTermDef(session, path, rule = None, host = DEFAULT_HOST,
     cmd += "</CdrAddQueryTermDef>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    resp = sendCommands(wrapCommand(cmd, session, host), host, port)
     return checkErr(resp)
 
 #----------------------------------------------------------------------
 # Deletes an existing query term definition.
 #----------------------------------------------------------------------
-def delQueryTermDef(session, path, rule = None, host = DEFAULT_HOST,
-                                                port = DEFAULT_PORT):
+def delQueryTermDef(session, path, rule=None, host=DEFAULT_HOST,
+                    port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrDelQueryTermDef><Path>%s</Path>" % path
@@ -3643,7 +3639,7 @@ def delQueryTermDef(session, path, rule = None, host = DEFAULT_HOST,
     cmd += "</CdrDelQueryTermDef>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    resp = sendCommands(wrapCommand(cmd, session, host), host, port)
     return checkErr(resp)
 
 #----------------------------------------------------------------------
@@ -3663,12 +3659,12 @@ def exceptionInfo():
 # Gets the email addresses for members of a group. Use cdrdb2 so
 # we can work in a multi-threaded environment.
 #----------------------------------------------------------------------
-def getEmailList(groupName, host = 'localhost'):
+def getEmailList(groupName, tier=None):
     query = cdrdb2.Query("usr u", "u.email")
     query.join("grp_usr gu", "gu.usr = u.id")
     query.join("grp g", "g.id = gu.grp")
     query.where(query.Condition("g.name", groupName))
-    return [row[0] for row in query.execute().fetchall()]
+    return [row[0] for row in query.execute(tier=tier).fetchall()]
 
 #----------------------------------------------------------------------
 # Object for a mime attachment.
@@ -3728,7 +3724,7 @@ class EmailAttachment:
 # now I'm using this for a selected set of applications to test
 # it.
 #----------------------------------------------------------------------
-def sendMailMime(sender, recips, subject, body, bodyType = 'plain',
+def sendMailMime(sender, recips, subject, body, bodyType='plain',
                  attachments=None):
     """
     Send an email message via SMTP to a list of recipients.  This
@@ -3815,7 +3811,7 @@ def sendMailMime(sender, recips, subject, body, bodyType = 'plain',
 #----------------------------------------------------------------------
 # Send email to a list of recipients.
 #----------------------------------------------------------------------
-def sendMail(sender, recips, subject = "", body = "", html = 0, mime = False,
+def sendMail(sender, recips, subject="", body="", html=False, mime=False,
              attachments=None):
     if mime or attachments:
         return sendMailMime(sender, recips, subject, body,
@@ -3856,8 +3852,8 @@ Subject: %s
 #----------------------------------------------------------------------
 # Check in a CDR document.
 #----------------------------------------------------------------------
-def unlock(credentials, docId, abandon = 'Y', force = 'Y', reason = '',
-           host = DEFAULT_HOST, port = DEFAULT_PORT):
+def unlock(credentials, docId, abandon='Y', force='Y', reason='',
+           host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Normalize doc id
     docId = exNormalize(docId)[0]
@@ -3869,7 +3865,7 @@ def unlock(credentials, docId, abandon = 'Y', force = 'Y', reason = '',
     cmd     = "<CdrCheckIn %s>%s%s</CdrCheckIn>" % (attrs, docId, reason)
 
     # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
     # Find any error messages.
     err = checkErr(resp)
@@ -3879,8 +3875,8 @@ def unlock(credentials, docId, abandon = 'Y', force = 'Y', reason = '',
 #----------------------------------------------------------------------
 # Get the most recent versions for a document.
 #----------------------------------------------------------------------
-def listVersions(credentials, docId, nVersions = -1,
-                 host = DEFAULT_HOST, port = DEFAULT_PORT):
+def listVersions(credentials, docId, nVersions=-1,
+                 host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command.
     cmd = "<CdrListVersions><DocId>%s</DocId>" \
@@ -3888,7 +3884,7 @@ def listVersions(credentials, docId, nVersions = -1,
           normalize(docId), nVersions)
 
     # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
     # Check for failure.
     if resp.find("<Errors") != -1:
@@ -3914,14 +3910,14 @@ def listVersions(credentials, docId, nVersions = -1,
 #----------------------------------------------------------------------
 # Reindex the specified document.
 #----------------------------------------------------------------------
-def reindex(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def reindex(credentials, docId, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command.
     docId = normalize(docId)
     cmd = "<CdrReindexDoc><DocId>%s</DocId></CdrReindexDoc>" % docId
 
     # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
     # Check for errors.
     if resp.find("<Errors") != -1:
@@ -3931,9 +3927,9 @@ def reindex(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Create a new publishing job.
 #----------------------------------------------------------------------
-def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
-           email = '', noOutput = 'N', allowNonPub = 'N', docTime = None,
-           host = DEFAULT_HOST, port = DEFAULT_PORT, allowInActive = 'N'):
+def publish(credentials, pubSystem, pubSubset, parms=None, docList=None,
+           email='', noOutput='N', allowNonPub='N', docTime=None,
+           host=DEFAULT_HOST, port=DEFAULT_PORT, allowInActive='N'):
 
     # Create the command.
     pubSystem   = pubSystem and ("<PubSystem>%s</PubSystem>" % pubSystem) or ""
@@ -3980,7 +3976,7 @@ def publish(credentials, pubSystem, pubSubset, parms = None, docList = None,
                  PUBLOG)
 
     # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
     # And log response
     logwrite('cdr.publish: received response:\n"%s"\n' % resp, PUBLOG)
@@ -4012,7 +4008,7 @@ class PubStatus:
         self.docList   = docList
         self.errors    = errors
 
-def pubStatus(self, jobId, getDocInfo = 0):
+def pubStatus(self, jobId, getDocInfo=False):
     return "XXX this is a stub"
 
 #----------------------------------------------------------------------
@@ -4057,7 +4053,7 @@ def cacheInit(credentials, cacheOn, cacheType,
     cmd = "<CdrCacheing " + cmdAttr + "='" + cacheType + "'/>"
 
     # Send it
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
     # If error occurred, raise exception
     err = checkErr(resp)
@@ -4069,7 +4065,7 @@ def cacheInit(credentials, cacheOn, cacheType,
 #----------------------------------------------------------------------
 # Write messages to a logfile.
 #----------------------------------------------------------------------
-def logwrite(msgs, logfile = DEFAULT_LOGFILE, tback=False, stackTrace=False):
+def logwrite(msgs, logfile=DEFAULT_LOGFILE, tback=False, stackTrace=False):
     """
     Append one or messages to a log file - closing the file when done.
     Can also record traceback information.
@@ -4197,7 +4193,7 @@ class Log:
 
         # Find the tier once and format it
         if logTier:
-            self.__logTier = cdrutil.getTier() + ':'
+            self.__logTier = cdrutil.getTier(WORK_DRIVE + ":") + ':'
         else:
             self.__logTier = False
 
@@ -4208,7 +4204,8 @@ class Log:
         # If there's a banner, write it with stamps
         if banner:
             self.writeRaw("\n%s\nTIER: %s  DATETIME: %s\n" %
-                          (banner, cdrutil.getTier(), time.ctime()))
+                          (banner, cdrutil.getTier(WORK_DRIVE + ":"),
+                           time.ctime()))
 
     def write(self, msgs, level=DEFAULT_LOGLVL, tback=False,
               stdout=False, stderr=False):
@@ -4347,13 +4344,13 @@ def tabularize (rows, tblAttrs=None):
 #----------------------------------------------------------------------
 # Log out from the CDR.
 #----------------------------------------------------------------------
-def logout(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def logout(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
 
     # Create the command
     cmd = "<CdrLogoff/>"
 
     # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    resp = sendCommands(wrapCommand(cmd, session, host), host, port)
     err = checkErr(resp)
     if err: return err
 
@@ -4364,7 +4361,7 @@ def logout(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # Object for results of an external command.
 #----------------------------------------------------------------------
 class CommandResult:
-    def __init__(self, code, output, error = None):
+    def __init__(self, code, output, error=None):
         self.code   = code
         self.output = output
         self.error  = error
@@ -4384,7 +4381,7 @@ class CommandResult:
 # Note:  The return code is now 0 for a process without error and the
 #        stdout and stderr output is split into output and error.
 #----------------------------------------------------------------------
-def runCommand(command, joinErr2Out = True, returnNoneOnSuccess = True):
+def runCommand(command, joinErr2Out=True, returnNoneOnSuccess=True):
     """
     Run a shell command
 
@@ -4418,10 +4415,10 @@ def runCommand(command, joinErr2Out = True, returnNoneOnSuccess = True):
     # -----------------------------------------------
     if joinErr2Out:
         try:
-            commandStream = subprocess.Popen(command, shell = True,
-                                             stdin  = subprocess.PIPE,
-                                             stdout = subprocess.PIPE,
-                                             stderr = subprocess.STDOUT)
+            commandStream = subprocess.Popen(command, shell=True,
+                                             stdin =subprocess.PIPE,
+                                             stdout=subprocess.PIPE,
+                                             stderr=subprocess.STDOUT)
             output, error = commandStream.communicate()
             code          = commandStream.returncode
             error         = '*** Warning: stderr piped to stdout'
@@ -4435,10 +4432,10 @@ def runCommand(command, joinErr2Out = True, returnNoneOnSuccess = True):
             logwrite("failure running command: %s\n%s" % (command, str(info)))
     else:
         try:
-            commandStream = subprocess.Popen(command, shell = True,
-                                             stdin  = subprocess.PIPE,
-                                             stdout = subprocess.PIPE,
-                                             stderr = subprocess.PIPE)
+            commandStream = subprocess.Popen(command, shell=True,
+                                             stdin =subprocess.PIPE,
+                                             stdout=subprocess.PIPE,
+                                             stderr=subprocess.PIPE)
             output, error = commandStream.communicate()
             code = commandStream.returncode
 
@@ -4456,7 +4453,7 @@ def runCommand(command, joinErr2Out = True, returnNoneOnSuccess = True):
 #----------------------------------------------------------------------
 # Create a temporary working area.
 #----------------------------------------------------------------------
-def makeTempDir(basename = "tmp", chdir = 1):
+def makeTempDir(basename="tmp", chdir=True):
     """
     Create a temporary directory.
 
@@ -4570,9 +4567,9 @@ def extractResponseNode(caller, responseString):
 #----------------------------------------------------------------------
 # Get the list of filters in the CDR.
 #----------------------------------------------------------------------
-def getFilters(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getFilters(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
     cmd          = "<CdrGetFilters/>"
-    response     = sendCommands(wrapCommand(cmd, session), host, port)
+    response     = sendCommands(wrapCommand(cmd, session, host), host, port)
     responseElem = extractResponseNode('getFilters', response)
     filters      = []
     elems        = responseElem.specificElement.getElementsByTagName('Filter')
@@ -4585,9 +4582,9 @@ def getFilters(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Get the list of filter sets in the CDR.
 #----------------------------------------------------------------------
-def getFilterSets(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getFilterSets(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
     cmd      = "<CdrGetFilterSets/>"
-    response = sendCommands(wrapCommand(cmd, session), host, port)
+    response = sendCommands(wrapCommand(cmd, session, host), host, port)
     response = extractResponseNode('getFilterSets', response)
     sets     = []
     elems    = response.specificElement.getElementsByTagName('FilterSet')
@@ -4602,7 +4599,7 @@ def getFilterSets(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # All string members should be of type unicode
 #----------------------------------------------------------------------
 class FilterSet:
-    def __init__(self, name, desc, notes = None, members = None):
+    def __init__(self, name, desc, notes=None, members=None):
         self.name     = toUnicode(name)
         self.desc     = toUnicode(desc)
         self.notes    = toUnicode(notes)
@@ -4690,9 +4687,10 @@ def packFilterSet(filterSet):
 #       at this point the string should be passed to the wrapCommand()
 #       as is but wrapComment() expects the string serialized.
 #----------------------------------------------------------------------
-def addFilterSet(session, filterSet, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def addFilterSet(session, filterSet, host=DEFAULT_HOST, port=DEFAULT_PORT):
     cmd  = u"<CdrAddFilterSet>%s</CdrAddFilterSet>" % packFilterSet(filterSet)
-    resp = sendCommands(wrapCommand(cmd.encode('utf-8'), session), host, port)
+    cmd  = wrapCommand(cmd.encode('utf-8'), session, host)
+    resp = sendCommands(cmd, host, port)
     node = extractResponseNode('addFilterSet', resp)
     return node.specificElement.getAttribute('TotalFilters')
 
@@ -4700,9 +4698,10 @@ def addFilterSet(session, filterSet, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # Replace an existing CDR filter set.
 # Note:  Please see note for addFilterSet().
 #----------------------------------------------------------------------
-def repFilterSet(session, filterSet, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def repFilterSet(session, filterSet, host=DEFAULT_HOST, port=DEFAULT_PORT):
     cmd  = u"<CdrRepFilterSet>%s</CdrRepFilterSet>" % packFilterSet(filterSet)
-    resp = sendCommands(wrapCommand(cmd.encode('utf-8'), session), host, port)
+    cmd  = wrapCommand(cmd.encode('utf-8'), session, host)
+    resp = sendCommands(cmd, host, port)
     node = extractResponseNode('repFilterSet', resp)
     return node.specificElement.getAttribute('TotalFilters')
 
@@ -4714,11 +4713,11 @@ def repFilterSet(session, filterSet, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # a filter, the id will be a string containing the CDR document ID in
 # the form 'CDR0000099999'.
 #----------------------------------------------------------------------
-def getFilterSet(session, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def getFilterSet(session, name, host=DEFAULT_HOST, port=DEFAULT_PORT):
     cmd          = u"<CdrGetFilterSet><FilterSetName>%s" \
                    u"</FilterSetName></CdrGetFilterSet>" % \
                                                     cgi.escape(toUnicode(name))
-    response     = sendCommands(wrapCommand(cmd.encode('utf-8'), session),
+    response     = sendCommands(wrapCommand(cmd.encode('utf-8'), session, host),
                                                                     host, port)
     responseNode = extractResponseNode('getFilterSet', response)
     name         = None
@@ -4762,8 +4761,8 @@ def getFilterSet(session, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
 # corrupt the cache used for future calls.
 #----------------------------------------------------------------------
 _expandedFilterSetCache = {}
-def expandFilterSet(session, name, level = 0,
-                    host = DEFAULT_HOST, port = DEFAULT_PORT):
+def expandFilterSet(session, name, level=0,
+                    host=DEFAULT_HOST, port=DEFAULT_PORT):
     global _expandedFilterSetCache
     if level > 100:
         raise Exception('expandFilterSet', 'infinite nesting of sets')
@@ -4787,7 +4786,7 @@ def expandFilterSet(session, name, level = 0,
 # out by the expandFilterSet() function above, indexed by the filter
 # set names.
 #----------------------------------------------------------------------
-def expandFilterSets(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def expandFilterSets(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
     sets = {}
     for fSet in getFilterSets(session):
         sets[fSet.name] = expandFilterSet(session, fSet.name, host = host,
@@ -4797,19 +4796,20 @@ def expandFilterSets(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
 #----------------------------------------------------------------------
 # Delete an existing CDR filter set.
 #----------------------------------------------------------------------
-def delFilterSet(session, name, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def delFilterSet(session, name, host=DEFAULT_HOST, port=DEFAULT_PORT):
     #import cdrcgi
     #cdrcgi.bailnew(type(name))
     cmd  = u"<CdrDelFilterSet><FilterSetName>%s" \
            u"</FilterSetName></CdrDelFilterSet>" % cgi.escape(name)
-    resp = sendCommands(wrapCommand(cmd.encode('utf-8'), session), host, port)
+    resp = sendCommands(wrapCommand(cmd.encode('utf-8'), session, host),
+                        host, port)
     extractResponseNode('delFilterSet', resp)
 
 #----------------------------------------------------------------------
 # Mark tracking documents generated by failed mailer jobs as deleted.
 #----------------------------------------------------------------------
-def mailerCleanup(session, host = DEFAULT_HOST, port = DEFAULT_PORT):
-    resp = sendCommands(wrapCommand("<CdrMailerCleanup/>", session),
+def mailerCleanup(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
+    resp = sendCommands(wrapCommand("<CdrMailerCleanup/>", session, host),
                         host, port)
     dom = xml.dom.minidom.parseString(resp)
     docs = []
@@ -4977,7 +4977,7 @@ def addExternalMapping(credentials, usage, value, docId = None,
             "<Mappable>" + mappable + "</Mappable>" +
                     docId +
            "</CdrAddExternalMapping>")
-    resp = sendCommands(wrapCommand(cmd, credentials), host, port)
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
     # This is how we should have been handling failures all along. :-<}
     errors = getErrors(resp, errorsExpected = False, asSequence = True)
@@ -4988,12 +4988,12 @@ def addExternalMapping(credentials, usage, value, docId = None,
 # Change the active_status column for a document.
 #----------------------------------------------------------------------
 def setDocStatus(credentials, docId, newStatus,
-                 host = DEFAULT_HOST, port = DEFAULT_PORT, comment = None):
+                 host=DEFAULT_HOST, port=DEFAULT_PORT, comment=None):
     docIdStr = u"<DocId>%s</DocId>" % normalize(docId)
     stat = u"<NewStatus>%s</NewStatus>" % newStatus
     cmt  = comment and (u"<Comment>%s</Comment>" % comment) or u""
     cmd  = u"<CdrSetDocStatus>%s%s%s</CdrSetDocStatus>" % (docIdStr, stat, cmt)
-    resp = sendCommands(wrapCommand(cmd.encode('utf-8'), credentials),
+    resp = sendCommands(wrapCommand(cmd.encode('utf-8'), credentials, host),
                         host, port)
     errs = getErrors(resp, errorsExpected = False, asSequence = True)
     if errs:
@@ -5002,9 +5002,11 @@ def setDocStatus(credentials, docId, newStatus,
 #----------------------------------------------------------------------
 # Retrieve the active status for a document.
 #----------------------------------------------------------------------
-def getDocStatus(credentials, docId, host = DEFAULT_HOST):
-    ### conn = cdrdb.connect('CdrGuest', dataSource = host)
-    conn = cdrdb.connect('CdrGuest')
+def getDocStatus(credentials, docId, tier=None):
+    if tier:
+        conn = cdrdb.connect('CdrGuest', tier)
+    else:
+        conn = cdrdb.connect('CdrGuest')
     cursor = conn.cursor()
     idTuple = exNormalize(docId)
     docId = idTuple[1]
@@ -5017,18 +5019,20 @@ def getDocStatus(credentials, docId, host = DEFAULT_HOST):
 #----------------------------------------------------------------------
 # Convenience wrapper for unblocking a document.
 #----------------------------------------------------------------------
-def unblockDoc(credentials, docId, host = DEFAULT_HOST, port = DEFAULT_PORT,
-               comment = None):
+def unblockDoc(credentials, docId, host=DEFAULT_HOST, port=DEFAULT_PORT,
+               comment=None):
     setDocStatus(credentials, docId, "A", host, port, comment)
 
 #----------------------------------------------------------------------
 # Determine the last date a versioned blob changed.
 #----------------------------------------------------------------------
-def getVersionedBlobChangeDate(credentials, docId, version, conn = None,
-                               host = DEFAULT_HOST):
+def getVersionedBlobChangeDate(credentials, docId, version, conn=None,
+                               tier=None):
     if not conn:
-        ### conn = cdrdb.connect('CdrGuest', dataSource = host)
-        conn = cdrdb.connect('CdrGuest')
+        if tier:
+            conn = cdrdb.connect("CdrGuest", tier)
+        else:
+            conn = cdrdb.connect("CdrGuest")
     cursor = conn.cursor()
     cursor.execute("""\
         SELECT blob_id
@@ -5073,27 +5077,17 @@ def emailerHost():
 #       bastion host but not from the CDR Server (C-Mahler)
 #----------------------------------------------------------------------
 def emailerCgi(cname=True):
-    if cdrutil.getEnvironment() == 'OCE':
-        return "http://%s%s" % (emailerHost(), EMAILER_CGI)
+    if cname:
+        return "https://%s.%s/cgi-bin" % h.host['EMAILERSC']
     else:
-        if cname:
-            return "https://%s.%s/cgi-bin" % (h.host['EMAILERSC'][0],
-                                              h.host['EMAILERSC'][1])
-        else:
-            return "https://%s.%s/cgi-bin" % (h.host['EMAILERS'][0],
-                                              h.host['EMAILERS'][1])
+        return "https://%s.%s/cgi-bin" % h.host['EMAILERS']
 
 #----------------------------------------------------------------------
 # Standardize the email subject prefix used to
 #    Host-Tier: SubjectLine
 #----------------------------------------------------------------------
 def emailSubject(text='No Subject'):
-    if h.org == 'OCE':
-        subject   = u"%s: %s" % (PUB_NAME.capitalize(), text)
-    else:
-        subject   = u"%s-%s: %s" %(h.org, h.tier, text)
-
-    return subject
+    return u"%s-%s: %s" % (h.org, h.tier, text)
 
 #----------------------------------------------------------------------
 # Create a file to use as an interprocess lockfile.
@@ -5212,7 +5206,7 @@ def importEtree():
 # second argument is False, in which case the 9-member tuple
 # for the new date is returned.
 #----------------------------------------------------------------------
-def calculateDateByOffset(offset, referenceDate = None):
+def calculateDateByOffset(offset, referenceDate=None):
     """
     Find a date a specified number of days in the future (or in the
     past, if a negative offset is passed).  We do this often enough
@@ -5252,7 +5246,7 @@ def calculateDateByOffset(offset, referenceDate = None):
 # Gets a list of all board names.
 # This is frequently used to create reports by board.
 #----------------------------------------------------------------------
-def getBoardNames(boardType = 'all', display = 'full', host = 'localhost'):
+def getBoardNames(boardType='all', display='full', tier=None):
     """
     Get the list of all board names (i.e. organizations with an
     organization type of 'PDQ Editorial Board' or 'PDQ Advisory Board').
@@ -5279,8 +5273,10 @@ def getBoardNames(boardType = 'all', display = 'full', host = 'localhost'):
 
     # Get the board names and cdr-ids from the database
     # -------------------------------------------------
-    ### conn = cdrdb.connect(dataSource = host)
-    conn = cdrdb.connect()
+    if tier:
+        conn = cdrdb.connect("CdrGuest", tier)
+    else:
+        conn = cdrdb.connect("CdrGuest")
     cursor = conn.cursor()
     cursor.execute("""\
      SELECT d.id,
@@ -5482,11 +5478,11 @@ def getSummaryIds(language='all', audience='all', boards=[], status='A',
 #----------------------------------------------------------------------
 # Record an event which happened in a CDR client session.
 #----------------------------------------------------------------------
-def logClientEvent(session, desc, host = DEFAULT_HOST, port = DEFAULT_PORT):
+def logClientEvent(session, desc, host=DEFAULT_HOST, port=DEFAULT_PORT):
     cmd = (u"<CdrLogClientEvent>"
            u"<EventDescription>%s</EventDescription>"
            u"</CdrLogClientEvent>" % cgi.escape(desc))
-    resp = sendCommands(wrapCommand(cmd, session), host, port)
+    resp = sendCommands(wrapCommand(cmd, session, host), host, port)
     errors = getErrors(resp, errorsExpected = False, asSequence = True)
     if errors:
         raise Exception(errors)
@@ -5528,7 +5524,7 @@ class ProtocolStatusHistory:
         the status, or with just one argument for a node in the
         parsed tree for the XML document.
         """
-        def __init__(self, status, startDate = None):
+        def __init__(self, status, startDate=None):
             self.endDate = None
             if isinstance(status, basestring):
                 self.name = status
@@ -5861,3 +5857,19 @@ def getpw(name):
     except:
         pass
     return None
+
+if __name__ == "__main__":
+    import argparse
+    import getpass
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--user", "-u", required=True)
+    opts = parser.parse_args()
+    tiers = "DEV", "QA", "STAGE", "PROD"
+    query = "CdrCtl/Title begins 'study of%'"
+    password = getpass.getpass()
+    credentials = (opts.user, password)
+    for tier in tiers:
+        users = getUsers(credentials, tier)
+        hits = search(credentials, query, tier)
+        args = tier, len(users), len(hits)
+        print("%5s has %d CDR users and %d 'Study of ...' documents" % args)

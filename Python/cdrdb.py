@@ -135,6 +135,7 @@
 """
 
 import win32com.client
+import string
 import time, os
 import pywintypes
 
@@ -152,13 +153,23 @@ import cdrpw
 # Default
 CBIIT_HOSTING = True
 
+# Find out where the CDR files are.
+def _getWorkingDrive():
+    for drive in string.ascii_uppercase[2:]:
+        try:
+            os.stat(drive + ":/cdr/lib/python")
+            return drive
+        except:
+            pass
+    raise Exception("unable to find CDR working files")
+WORK_DRIVE = _getWorkingDrive()
+DRIVE_PREFIX = "%s:" % WORK_DRIVE
+
 # Accounting for alternate tiers later, see def connect()
-h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier())
-if h.org == 'OCE':
-    CDR_DB_SERVER = 'localhost'
-    CBIIT_HOSTING = False
-else:
-    CDR_DB_SERVER = h.host['DBWIN'][0]
+h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(DRIVE_PREFIX),
+                    filename=WORK_DRIVE+':/etc/cdrapphosts.rc')
+
+CDR_DB_SERVER = h.host['DBWIN'][0]
 
 # Look in the environment for override of default location of CDR database.
 _cdr_db_server = os.environ.get('CDR_DB_SERVER')
@@ -757,28 +768,27 @@ def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr'):
     """
 
     global CBIIT_HOSTING
+    global h
+    tier = h.tier
     if dataSource != CDR_DB_SERVER:
         # Default server name established above
         # If it's anything else, establish the network name here
-        global h
         hostInfo = h.getTierHostNames(dataSource, 'DBWIN')
         if hostInfo:
-            dataSource = hostInfo.qname()
+            dataSource = hostInfo.qname
+            tier = hostInfo.tier
 
     adoConn = win32com.client.Dispatch("ADODB.Connection")
-    if CBIIT_HOSTING:
-        port = 52400
-        if h.tier == "PROD":
-            port = 55733
-        elif h.tier == "STAGE":
-            port = 55459
-        elif h.tier == "QA":
-            port = 53100
-        if user.upper() == "CDR":
-            user = "cdrsqlaccount"
-    else:
-        port = 32408
-    password = cdrpw.password(h.org, h.tier, db, user)
+    ports = {
+        "PROD": 55733,
+        "STAGE": 55459,
+        "QA": 53100,
+        "DEV": 52400
+    }
+    port = ports.get(tier, 52400)
+    if user.upper() == "CDR":
+        user = "cdrsqlaccount"
+    password = cdrpw.password(h.org, tier, db, user, DRIVE_PREFIX)
     try:
         connString = ("Provider=SQLOLEDB;"
                       "Data Source=%s,%d;"
