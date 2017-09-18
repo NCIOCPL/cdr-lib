@@ -97,7 +97,7 @@ def _getCbiitNames(ssl=True):
     protocol = "https" if ssl else "http"
     host = "%s" % h.host["APPC"][0]
     fqdn = "%s.%s" % h.host["APPC"]
-    url = "http%s://%s" % (protocol, fqdn)
+    url = "%s://%s" % (protocol, fqdn)
 
     return (host, fqdn, url)
 
