@@ -3,3 +3,6 @@
 
 *.py     text eol=lf
 *.txt    text eol=lf
+
+.gitignore     export-ignore
+.gitattributes export-ignore
