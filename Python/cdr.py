@@ -5799,6 +5799,7 @@ class Logging:
         level      optional verbosity for logging, defaults to info
         propagate  if True, the base handler also writes our entries
         multiplex  if True, add new handler even there already is one
+        console    if True, add stream handler to write to stderr
         """
 
         logger = logging.getLogger(name)
@@ -5811,6 +5812,10 @@ class Logging:
             formatter = cls.Formatter(opts.get("format", cls.FORMAT))
             handler.setFormatter(formatter)
             logger.addHandler(handler)
+            if opts.get("console"):
+                stream_handler = logging.StreamHandler()
+                stream_handler.setFormatter(formatter)
+                logger.addHandler(stream_handler)
         return logger
 
 def get_text(node, default=None):
