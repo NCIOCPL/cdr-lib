@@ -901,7 +901,7 @@ def login(userId, passWord, host=DEFAULT_HOST, port=DEFAULT_PORT):
     # If we're not running directly on the CDR, we must log in using
     # Windows authentication.
     if DEFAULT_HOST != "localhost" or host != DEFAULT_HOST:
-        tier is host if host != DEFAULT_HOST else None
+        tier = host if host != DEFAULT_HOST else None
         return windowsLogin(userId, passWord, tier)
 
     # Send the login request to the server.
