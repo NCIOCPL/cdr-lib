@@ -610,18 +610,6 @@ class Query:
             for condition in conditions:
                 Query._add_sequence_or_value(condition, self.conditions)
 
-    @staticmethod
-    def report(test_number, query, outcome):
-        print("Test %2d...%s" % (test_number, outcome and "passed" or "failed"))
-        with open("Query.tests", "a") as fp:
-            banner = (" Test %d " % test_number).center(70, "=")
-            fp.write("%s\n" % banner)
-            fp.write("%s\n" % query)
-            if query._parms:
-                fp.write("%s\n" % ("-" * 70))
-                for p in query._parms:
-                    fp.write("%s\n" % repr(p))
-
 class QueryTests(unittest.TestCase):
     """
     Run tests to check the health of the Query class.
