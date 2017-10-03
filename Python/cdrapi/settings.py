@@ -2,6 +2,8 @@
 Collect tier-specific CDR settings.
 """
 
+import datetime
+import logging
 import os
 
 class Tier:
@@ -10,6 +12,7 @@ class Tier:
 
     Class values:
       Pattern strings for the paths to files where the values are stored.
+      LOG_FORMAT - pattern for entries in our log files
 
     Attributes:
       drive - letter where the CDR is installed (D on the CDR servers)
@@ -28,6 +31,7 @@ class Tier:
     PASSWORDS = "{}:/etc/cdrpw"
     DBPW = "{}:/etc/cdrdbpw"
     PORTS = "{}:/etc/cdrdbports"
+    LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 
     def __init__(self, tier=None):
         """
@@ -89,11 +93,16 @@ class Tier:
 
         Return:
           name if passed; otherwise the contents of the /etc/cdrtier.rc file
+          (falling back on the DEV tier if that file does not exist)
         """
 
         if name:
             return name.upper()
-        return open(self.TIER.format(self.drive)).read().strip()
+        try:
+            with open(self.TIER.format(self.drive)) as fp:
+                return fp.read().strip()
+        except:
+            return "DEV"
 
     def load_passwords(self):
         """
@@ -106,17 +115,19 @@ class Tier:
         """
 
         passwords = {}
-        for line in open(self.PASSWORDS.format(self.drive)):
-            name, password = line.strip().split(":", 1)
-            passwords[name.lower()] = password
+        with open(self.PASSWORDS.format(self.drive)) as fp:
+            for line in fp:
+                name, password = line.strip().split(":", 1)
+                passwords[name.lower()] = password
         prefix = "CBIIT:" + self.name
-        for line in open(self.DBPW.format(self.drive)):
-            line = line.strip()
-            if line.startswith(prefix):
-                fields = line.split(":", 4)
-                if len(fields) == 5:
-                    hosting, tier, database, user, password = fields
-                    passwords[(database.lower(), user.lower())] = password
+        with open(self.DBPW.format(self.drive)) as fp:
+            for line in fp:
+                line = line.strip()
+                if line.startswith(prefix):
+                    fields = line.split(":", 4)
+                    if len(fields) == 5:
+                        hosting, tier, database, user, password = fields
+                        passwords[(database.lower(), user.lower())] = password
         return passwords
 
     def load_hosts(self):
@@ -130,13 +141,14 @@ class Tier:
 
         hosts = {}
         prefix = "CBIIT:" + self.name
-        for line in open(self.APPHOSTS.format(self.drive)):
-            line = line.strip()
-            if line.startswith(prefix):
-                fields = line.split(":", 4)
-                if len(fields) == 5:
-                    hosting, tier, role, local, domain = fields
-                    hosts[role.upper()] = ".".join((local, domain))
+        with open(self.APPHOSTS.format(self.drive)) as fp:
+            for line in fp:
+                line = line.strip()
+                if line.startswith(prefix):
+                    fields = line.split(":", 4)
+                    if len(fields) == 5:
+                        hosting, tier, role, local, domain = fields
+                        hosts[role.upper()] = ".".join((local, domain))
         return hosts
 
     def load_ports(self):
@@ -149,14 +161,60 @@ class Tier:
 
         ports = {}
         prefix = self.name + ":"
-        for line in open(self.PORTS.format(self.drive)):
-            line = line.strip()
-            if line.startswith(prefix):
-                fields = line.split(":", 2)
-                if len(fields) == 3:
-                    tier, database, port = fields
-                    ports[database.lower()] = int(port)
+        with open(self.PORTS.format(self.drive)) as fp:
+            for line in fp:
+                line = line.strip()
+                if line.startswith(prefix):
+                    fields = line.split(":", 2)
+                    if len(fields) == 3:
+                        tier, database, port = fields
+                        ports[database.lower()] = int(port)
         return ports
+
+    def get_logger(self, name, **opts):
+        """
+        Create an object for recording what we do in a disk file
+
+        Pass:
+          name - required name for the logger
+          path - optional path for the log file (default self.logdir/name.log)
+          format - optional override for the default log format pattern
+          level - optional verboxity for logging (default INFO)
+          propagate - if True, the base handler also writes our entries
+          multiplex - if True, add new handler even if there already is one
+          console - if True, add stram handler to write to stderr
+
+        Return:
+          logging object
+
+        Raise:
+          Exception if the logger has no handlers. This can only happen
+          if the caller explicitly passes `path` as None or an empty
+          string and does not set the `console` option to True.
+        """
+
+        logger = logging.getLogger(name)
+        logger.setLevel((opts.get("level") or "INFO").upper())
+        logger.propagate = True if opts.get("propagate") else False
+        if not logger.handlers or opts.get("multiplex"):
+            formatter = self.Formatter(opts.get("format") or self.LOG_FORMAT)
+            if "path" not in opts or opts.get("path"):
+                path = opts.get("path")
+                if not path:
+                    path = "{}/{}.log".format(self.get_logdir(), name)
+                handler = logging.FileHandler(path)
+                handler.setFormatter(formatter)
+                logger.addHandler(handler)
+            if opts.get("console"):
+                stream_handler = logging.StreamHandler()
+                stream_handler.setFormatter(formatter)
+                logger.addHandler(stream_handler)
+        if not logger.handlers:
+            raise Exception("logger has no handlers")
+        return logger
+
+    def get_logdir(self):
+        return self.drive + ":/cdr/Log"
 
     @classmethod
     def find_cdr(cls):
@@ -174,3 +232,15 @@ class Tier:
             if os.path.exists(cls.APPHOSTS.format(letter)):
                 return letter
         raise Exception("CDR host file not found")
+
+    class Formatter(logging.Formatter):
+        """
+        Make our own logging formatter to get the time stamps right.
+        """
+
+        DATEFORMAT = "%Y-%m-%d %H:%M:%S.%f"
+
+        converter = datetime.datetime.fromtimestamp
+        def formatTime(self, record, datefmt=None):
+            ct = self.converter(record.created)
+            return ct.strftime(datefmt or self.DATEFORMAT)
