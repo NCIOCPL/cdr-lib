@@ -3,8 +3,38 @@ DB-SIG compliant module for CDR database access.
 """
 
 import logging
+import unittest
 import adodbapi
 from cdrapi import settings
+
+def connect(**opts):
+    """
+    Connect to the CDR database using known login account.
+
+    Pass:
+      user - string for database account name (default Query.CDRSQLACCOUNT)
+      tier - PROD|STAGE|QA|DEV (default value in /etc/cdrtier.rc)
+      database - initial db for the connection (default Query.DB)
+      timeout - time to wait before giving up (default Query.DEFAULT_TIMEOUT)
+    """
+
+    tier = settings.Tier(tier=opts.get("tier"))
+    user = opts.get("user", Query.CDRSQLACCOUNT)
+    if user == "cdr":
+        user = Query.CDRSQLACCOUNT
+    password = tier.password(user, Query.DB)
+    if not password:
+        raise Exception("user {!r} unknown on {!r}".format(user, tier.name))
+    parms = {
+        "Provider": "SQLOLEDB",
+        "Data Source": "{},{}".format(tier.sql_server(), tier.port(Query.DB)),
+        "Initial Catalog": opts.get("database", Query.DB),
+        "User ID": user,
+        "Password": password,
+        "Timeout": opts.get("timeout", Query.DEFAULT_TIMEOUT)
+    }
+    connection_string = ";".join(["{}={}".format(*p) for p in parms.items()])
+    return adodbapi.connect(connection_string)
 
 class Query:
 
@@ -62,6 +92,7 @@ class Query:
         self._unique = False
         self._str = None
         self._outer = False
+        self._logger = None
 
     def timeout(self, value):
         """
@@ -270,18 +301,15 @@ class Query:
         return self
 
     def log(self, **parms):
-        logger = logging.getLogger("cdr")
-        if not logger.hasHandlers():
-            logging.basicConfig()
-        saved_level = logger.level
-        logger.setLevel("DEBUG")
+        if self._logger is None:
+            tier = settings.Tier()
+            self._logger = tier.get_logger("db", level="DEBUG")
         label = parms.get("label", "QUERY")
         output = "%s:\n%s" % (label, self)
         if self._parms:
             parms = ["PARAMETERS:"] + [repr(p) for p in self._parms]
             output += "\n" + "\n\t".join(parms)
-        logger.debug(output)
-        logger.setLevel(saved_level)
+        self._logger.debug(output)
 
     def __str__(self):
         """
@@ -594,96 +622,94 @@ class Query:
                 for p in query._parms:
                     fp.write("%s\n" % repr(p))
 
+class QueryTests(unittest.TestCase):
+    """
+    Run tests to check the health of the Query class.
+    """
+
+    # Convenience aliases
+    Q = Query
+    C = Query.Condition
+
     @staticmethod
-    def test():
+    def V(rows):
+        """Extract values from rows"""
+        return [tuple([c for c in r]) for r in rows]
+
+    @staticmethod
+    def D(rows, cursor):
+        """Get values as a dictionary"""
+        keys=[d[0] for d in cursor.description]
+        return [dict([(k, row[k]) for k in keys]) for row in rows]
+
+    def setUp(self):
         """
-        Run tests to check the health of the Query class.
+        Create some test tables.
         """
 
-        # Convenience aliases
-        Q = Query
-        C = Query.Condition
-        R = Query.report
+        self.c = connect(user="CdrGuest").cursor()
+        self.c.execute("CREATE TABLE #t1 (i INT, n VARCHAR(32))")
+        self.c.execute("CREATE TABLE #t2 (i INT, n VARCHAR(32))")
+        self.c.execute("INSERT INTO #t1 VALUES(42, 'Alan')")
+        self.c.execute("INSERT INTO #t1 VALUES(43, 'Bob')")
+        self.c.execute("INSERT INTO #t1 VALUES(44, 'Volker')")
+        self.c.execute("INSERT INTO #t1 VALUES(45, 'Elmer')")
+        self.c.execute("INSERT INTO #t2 VALUES(42, 'biology')")
+        self.c.execute("INSERT INTO #t2 VALUES(42, 'aviation')")
+        self.c.execute("INSERT INTO #t2 VALUES(42, 'history')")
+        self.c.execute("INSERT INTO #t2 VALUES(43, 'music')")
+        self.c.execute("INSERT INTO #t2 VALUES(43, 'cycling')")
+        self.c.execute("INSERT INTO #t2 VALUES(44, 'physics')")
+        self.c.execute("INSERT INTO #t2 VALUES(44, 'volleyball')")
+        self.c.execute("INSERT INTO #t2 VALUES(44, 'tennis')")
 
-        # Extract values from rows.
-        def V(rows): return [tuple([c for c in r]) for r in rows]
-
-        # Get values as a dictionary.
-        def D(rows, cursor):
-            keys=[d[0] for d in cursor.description]
-            return [dict([(k, row[k]) for k in keys]) for row in rows]
-
-        # Create some test tables.
-        c = connect(user="CdrGuest").cursor()
-        c.execute("CREATE TABLE #t1 (i INT, n VARCHAR(32))")
-        c.execute("CREATE TABLE #t2 (i INT, n VARCHAR(32))")
-        c.execute("INSERT INTO #t1 VALUES(42, 'Alan')")
-        c.execute("INSERT INTO #t1 VALUES(43, 'Bob')")
-        c.execute("INSERT INTO #t1 VALUES(44, 'Volker')")
-        c.execute("INSERT INTO #t1 VALUES(45, 'Elmer')")
-        c.execute("INSERT INTO #t2 VALUES(42, 'biology')")
-        c.execute("INSERT INTO #t2 VALUES(42, 'aviation')")
-        c.execute("INSERT INTO #t2 VALUES(42, 'history')")
-        c.execute("INSERT INTO #t2 VALUES(43, 'music')")
-        c.execute("INSERT INTO #t2 VALUES(43, 'cycling')")
-        c.execute("INSERT INTO #t2 VALUES(44, 'physics')")
-        c.execute("INSERT INTO #t2 VALUES(44, 'volleyball')")
-        c.execute("INSERT INTO #t2 VALUES(44, 'tennis')")
-
-        # Test 1: ORDER BY with TOP.
-        q = Q("#t1", "i").limit(1).order("1 DESC")
-        r = V(q.execute(c, timeout=10).fetchall())
-        R(1, q, r == [(45,)])
-
-        # Test 2: JOIN with COUNT.
-        q = Q("#t1", "COUNT(DISTINCT #t1.i)").join("#t2", "#t2.i = #t1.i")
-        r = V(q.execute(c).fetchall())
-        R(2, q, r == [(3,)])
-
-        # Test 3: GROUP BY and HAVING.
-        q = Q("#t2", "i", "COUNT(*)").group("i").having("COUNT(*) > 2")
-        r = set([row[0] for row in q.execute(c).fetchall()])
-        R(3, q, r == set([42, 44]))
-
-        # Test 4: LEFT OUTER JOIN with IS NULL.
-        q = Q("#t1 a", "a.i", "b.n").outer("#t2 b", "b.i = a.i")
-        r = V(q.where("b.n IS NULL").execute(c).fetchall())
-        R(4, q, r == [(45, None,)])
-
-        # Test 5: NESTED ORs and ANDs.
-        q = Q("#t1 a", "a.n").join("#t2 b", "b.i = a.i").unique()
-        q.where(Q.Or("a.n LIKE 'E%'", ("a.i < 44", "b.n LIKE '%o%'")))
+    def test_01_order_by_with_top(self):
+        q = self.Q("#t1", "i").limit(1).order("1 DESC")
+        r = self.V(q.execute(self.c, timeout=10).fetchall())
+        self.assertTrue(r == [(45,)])
+    def test_02_join_with_count(self):
+        q = self.Q("#t1", "COUNT(DISTINCT #t1.i)").join("#t2", "#t2.i = #t1.i")
+        r = self.V(q.execute(self.c).fetchall())
+        self.assertTrue(r == [(3,)])
+    def test_03_group_by_and_having(self):
+        q = self.Q("#t2", "i", "COUNT(*)").group("i").having("COUNT(*) > 2")
+        r = set([row[0] for row in q.execute(self.c).fetchall()])
+        self.assertTrue(r == set([42, 44]))
+    def test_04_left_outer_join_with_is_null(self):
+        q = self.Q("#t1 a", "a.i", "b.n").outer("#t2 b", "b.i = a.i")
+        r = self.V(q.where("b.n IS NULL").execute(self.c).fetchall())
+        self.assertTrue(r == [(45, None,)])
+    def test_05_nested_ors_and_ands(self):
+        q = self.Q("#t1 a", "a.n").join("#t2 b", "b.i = a.i").unique()
+        q.where(self.Q.Or("a.n LIKE 'E%'", ("a.i < 44", "b.n LIKE '%o%'")))
         q.where("a.n <> 'Volker'")
-        r = V(q.execute(c).fetchall())
-        R(5, q, r == [('Alan',)])
-
-        # Test 6: Condition object with placeholders.
+        r = self.V(q.execute(self.c).fetchall())
+        self.assertTrue(r == [('Alan',)])
+    def test_06_condition_object_with_placeholders(self):
         v = ('biology', 'physics')
-        q = Q("#t1 a", "a.n").join("#t2 b", "b.i = a.i").unique().order(1)
-        q.where(C("b.n", v, "IN"))
+        q = self.Q("#t1 a", "a.n").join("#t2 b", "b.i = a.i").unique().order(1)
+        q.where(self.C("b.n", v, "IN"))
         q.timeout(5)
-        r = [row[0] for row in q.execute(c).fetchall()]
-        R(6, q, r == ['Alan', 'Volker'])
+        r = [row[0] for row in q.execute(self.c).fetchall()]
+        self.assertTrue(r == ['Alan', 'Volker'])
 
-        # Test 7: UNION.
-        q = Q("#t1", "n").where("i > 44")
-        q.union(Q("#t1", "n").where("i < 43"))
-        r = [r[0] for r in q.order(1).execute(c).fetchall()]
-        R(7, q, r == ["Alan", "Elmer"])
+    def test_07_union(self):
+        q = self.Q("#t1", "n").where("i > 44")
+        q.union(self.Q("#t1", "n").where("i < 43"))
+        r = [r[0] for r in q.order(1).execute(self.c).fetchall()]
+        self.assertTrue(r == ["Alan", "Elmer"])
 
-        # Test 8: INTO.
-        Q("#t1", "*").into("#t3").execute(c)
-        q = Q("#t3", "n").order(1)
-        r = [r[0] for r in q.execute(c).fetchall()]
-        R(8, q, r == ["Alan", "Bob", "Elmer", "Volker"])
-
-        # Test 9: nested query.
-        q = Q("#t1", "n")
-        q.where(C("i", Q("#t2", "i").unique(), "NOT IN"))
-        r = V(q.execute(c).fetchall())
-        R(9, q, r == [("Elmer",)])
-
-        # Test 10: dictionary results.
+    def test_08_into(self):
+        self.Q("#t1", "*").into("#t3").execute(self.c)
+        q = self.Q("#t3", "n").order(1)
+        r = [r[0] for r in q.execute(self.c).fetchall()]
+        self.assertTrue(r == ["Alan", "Bob", "Elmer", "Volker"])
+    def test_09_nested_query(self):
+        q = self.Q("#t1", "n")
+        q.where(self.C("i", self.Q("#t2", "i").unique(), "NOT IN"))
+        r = self.V(q.execute(self.c).fetchall())
+        self.assertTrue(r == [("Elmer",)])
+    def test_10_dictionary_results(self):
         c = connect(user="CdrGuest").cursor()
         c.execute("CREATE TABLE #t1 (i INT, n VARCHAR(32))")
         c.execute("CREATE TABLE #t2 (i INT, n VARCHAR(32))")
@@ -699,36 +725,10 @@ class Query:
         c.execute("INSERT INTO #t2 VALUES(44, 'physics')")
         c.execute("INSERT INTO #t2 VALUES(44, 'volleyball')")
         c.execute("INSERT INTO #t2 VALUES(44, 'tennis')")
-        q = Q("#t1", "n")
-        q.where(C("i", Q("#t2", "i").unique(), "NOT IN"))
-        r = D(q.execute(c).fetchall(), c)
-        R(10, q, r == [{"n": "Elmer"}])
+        q = self.Q("#t1", "n")
+        q.where(self.C("i", self.Q("#t2", "i").unique(), "NOT IN"))
+        r = self.D(q.execute(c).fetchall(), c)
+        self.assertTrue(r == [{"n": "Elmer"}])
 
-def connect(**opts):
-    """
-    Connect to the CDR database using known login account.
-
-    Pass:
-      user - string for database account name (default Query.CDRSQLACCOUNT)
-      tier - PROD|STAGE|QA|DEV (default value in /etc/cdrtier.rc)
-      database - initial db for the connection (default Query.DB)
-      timeout - time to wait before giving up (default Query.DEFAULT_TIMEOUT)
-    """
-
-    tier = settings.Tier(tier=opts.get("tier"))
-    user = opts.get("user", Query.CDRSQLACCOUNT)
-    if user == "cdr":
-        user = Query.CDRSQLACCOUNT
-    password = tier.password(user, Query.DB)
-    if not password:
-        raise Exception("user {!r} unknown on {!r}".format(user, tier.name))
-    parms = {
-        "Provider": "SQLOLEDB",
-        "Data Source": "{},{}".format(tier.sql_server(), tier.port(Query.DB)),
-        "Initial Catalog": opts.get("database", Query.DB),
-        "User ID": user,
-        "Password": password,
-        "Timeout": opts.get("timeout", Query.DEFAULT_TIMEOUT)
-    }
-    connection_string = ";".join(["{}={}".format(*p) for p in parms.items()])
-    return adodbapi.connect(connection_string)
+if __name__ == "__main__":
+    unittest.main()
