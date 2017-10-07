@@ -1,178 +1,1001 @@
-#----------------------------------------------------------------------
-#
-# Module of common CDR routines.
-#
-# Usage:
-#   import cdr
-#
-# BZIssue::1664
-# BZIssue::2231
-# BZIssue::4123
-# BZIssue::4207
-# BZIssue::5120 - Fixed exNormalize() to allow trailing spaces
-# BZIssue::5178 - Shorter URLS Needed For Successful Conversion of
-#                 QC Reports into Word
-# BZIssue::5296 - Check for errors in delDoc()
-# JIRA::OCECDR-3845 - Encrypt traffic from external clients
-# JIRA::OCECDR-3849 - Integration with NIH Active Directory (AD)
-# Fixed security flaws in code to fetch user name from session.
-# JIRA::OCECDR-4295 - Restore ability to run commands from other hosts
-#
-#----------------------------------------------------------------------
+#!/usr/bin/env python3
+"""
+CDR Python client wrapper
 
-#----------------------------------------------------------------------
-# Import required packages.
-#----------------------------------------------------------------------
-import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
-import os, smtplib, time, atexit, cdrdb, tempfile, traceback, difflib
-import xml.sax.saxutils, datetime, subprocess, cdrutil
-import math
-import lxml.etree as etree
+This module provides the legacy CDR functions, reimplemented to run
+the new Python implementation of the functionality originally provided
+by the C++ CDR Server. When that is not possible (that is, the client
+is running on a different host, without direct access to the CDR
+database) the commands are tunneled through an HTTPS web service, which
+in turn invokes the new Python implementation of the functionality.
+
+This module is now compatible with Python 3 and Python 2.
+"""
+
+import datetime
 import logging
-import cdrdb2
+import random
+import dateutil.parser
 import requests
+from lxml import etree
+import cdrapi.db
+from cdrapi.settings import Tier
+from cdrapi.users import Session
 
-#----------------------------------------------------------------------
-# Find out the drive on which the CDR working files are stored.
-# Start checking with C and work our way up to Z.
-#----------------------------------------------------------------------
-def _getWorkingDrive():
-    for drive in string.ascii_uppercase[2:]:
-        try:
-            os.stat(drive + ":/cdr/lib/python")
-            return drive
-        except:
-            pass
-    raise Exception("unable to find CDR working files")
-WORK_DRIVE = _getWorkingDrive()
 
-#----------------------------------------------------------------------
-# Give caller variant forms of the host name.  See also getHostName()
-# version below, which uses cached result of call to this function.
-# As a side effect, we record whether we're running on CBIIT hosting.
-#----------------------------------------------------------------------
-def _getHostNames():
-    """
-    Return the server host name as a tuple of:
-        naked host name
-        fully qualified host name
-        fully qualified name, prefixed by "http[s]://"
-    """
-    global CBIIT_HOSTING
-    try:
-        # This method works IFF we're on CBIIT hosting.
-        fp = open(WORK_DRIVE + ":/cdr/etc/hostname")
-        fqdn = fp.read().strip()
-        fp.close()
-        CBIIT_HOSTING = True
-        return (fqdn.split(".")[0], fqdn, "https://%s" % fqdn)
-    except:
-        # This method works on CTB/OCE hosts.
-        CBIIT_HOSTING = False
-        localhost = socket.gethostname().split(".")[0]
-        return (localhost, "%s.nci.nih.gov" % localhost,
-                "http://%s.nci.nih.gov" % localhost)
-
-# ---------------------------------------------------------------------
-# The file cdrapphosts knows about the different server names in the
-# CBIIT and OCE environments based on the tier
-# ---------------------------------------------------------------------
-h = cdrutil.AppHost(cdrutil.getEnvironment(),
-                    cdrutil.getTier(WORK_DRIVE + ":"),
-                    filename=WORK_DRIVE + ':/etc/cdrapphosts.rc')
-
-#----------------------------------------------------------------------
-# Give caller variant forms of the host name.  See also getHostName()
-# version below, which uses cached result of call to this function.
-# The url is set so that links will work from the bastion host.
-#----------------------------------------------------------------------
-def _getCbiitNames(ssl=True):
-    """
-    Return the server host name as a tuple of:
-        naked host name
-        fully qualified host name
-        fully qualified name, prefixed by "http[s]://"
-    """
-
-    protocol = "https" if ssl else "http"
-    host = "%s" % h.host["APPC"][0]
-    fqdn = "%s.%s" % h.host["APPC"]
-    url = "%s://%s" % (protocol, fqdn)
-
-    return (host, fqdn, url)
-
-#----------------------------------------------------------------------
-# Set some package constants
-#----------------------------------------------------------------------
-HOST_NAMES       = _getHostNames()
-CBIIT_NAMES      = _getCbiitNames()
-OPERATOR         = 'NCIPDQoperator@mail.nih.gov'
-DOMAIN_NAME      = ".".join(HOST_NAMES[1].split(".")[1:])
-PROD_DB_NAME     = h.getTierHostNames('PROD', 'DBWIN').name
-DEV_DB_NAME      = h.getTierHostNames('DEV', 'DBWIN').name
-CBIIT_CDR_PROD   = h.getTierHostNames('PROD', 'APP').name
-CBIIT_CDR_DEV    = h.getTierHostNames('DEV', 'APP').name
-PROD_HOST        = CBIIT_CDR_PROD
-DEV_HOST         = CBIIT_CDR_DEV
-PUB_NAME         = HOST_NAMES[0]
-EMAILER_PROD     = 'pdqupdate.cancer.gov'  # usage for OCE only
-EMAILER_DEV      = 'verdi.nci.nih.gov'     # usage for OCE only
-GPMAILER         = h.getHostNames('EMAILERS').qname
-GPMAILERDB       = h.getHostNames('DBNIX').qname
-EMAILER_CGI      = '/PDQUpdate/cgi-bin'    # usage for OCE only
-CVSROOT          = "verdi.nci.nih.gov:/usr/local/cvsroot"
-SVNBASE          = 'https://imbncipf01.nci.nih.gov/svn/CDR/trunk'
-DEFAULT_HOST     = 'localhost'
-DEFAULT_PORT     = 2019
-BATCHPUB_PORT    = 2020
-URDATE           = '2002-06-22'
-PYTHON           = WORK_DRIVE + ":\\python\\python.exe"
-PERL             = WORK_DRIVE + ":\\bin\\Perl.exe"
-BASEDIR          = WORK_DRIVE + ":/cdr"
-SMTP_RELAY       = "MAILFWD.NIH.GOV"
-DEFAULT_LOGDIR   = BASEDIR + "/Log"
-DEFAULT_LOGLVL   = 5
-DEFAULT_LOGFILE  = DEFAULT_LOGDIR + "/debug.log"
-PUBLOG           = DEFAULT_LOGDIR + "/publish.log"
-MANIFEST_NAME    = 'CdrManifest.xml'
-CLIENT_FILES_DIR = BASEDIR + '/ClientFiles'
-MANIFEST_PATH    = "%s/%s" % (CLIENT_FILES_DIR, MANIFEST_NAME)
-
-# Default controls for sendCommands()
-SENDCMDS_TIMEOUT = 300
-SENDCMDS_SLEEP   = 3
-
-# Default DTD.  Can get overwritten using Subset parameter
-PDQDTDPATH       = WORK_DRIVE + ":\\cdr\\licensee"
-DEFAULT_DTD      = PDQDTDPATH + '\\pdqCG.dtd'
-NAMESPACE        = "cips.nci.nih.gov/cdr"
-
-#----------------------------------------------------------------------
-# If we're not actually running on the CDR server machine, then
-# "localhost" won't work.
-#----------------------------------------------------------------------
+# ======================================================================
+# Make sure we can run on both Python 2 and Python 3
+# ======================================================================
 try:
-    os.stat("d:/cdr/bin/CdrService.exe")
+    basestring
 except:
-    DEFAULT_HOST = CBIIT_NAMES[1]
+    basestring = str
+
+
+# ======================================================================
+# Manage CDR login sessions
+# ======================================================================
+def login(username, password="", **opts):
+
+    """
+    Create a CDR login session
+
+    Pass:
+      username - name of CDR use account
+      password - password for the account (can be empty when logging in
+                 from localhost)
+      comment - optional comment to be stored with the session info
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      string identifier for new session if tunneling; otherwise Session object
+    """
+    tier = opts.get("tier") or opts.get("host") or None
+    credentials = username, password
+    comment = opts.get("comment")
+    return _Control.get_session(credentials, tier=tier, comment=comment)
+
+
+def dupSession(session, **opts):
+    """
+    Duplicate a CDR login session
+
+    Useful when a task which needs to be queued for later processing
+    will possibly be run after the requesting user has closed the
+    original session from which the request was made.
+
+    Pass:
+      session - string identifier for the existing session
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      string identifier for the new session
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(session, tier)
+    if isinstance(session, Session):
+        return session.duplicate()
+    else:
+        command = etree.Element("CdrDupSession")
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrDupSessionResp":
+                return get_text(response.node.find("NewSessionId"))
+            raise Exception(";".join(response.errors) or "missing response")
+        raise Exception("missing response")
+
+
+def logout(session, **opts):
+    """
+    Close a CDR login session
+
+    Pass:
+      session - string identifier for session
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(session, tier)
+    if isinstance(session, Session):
+        session.logout()
+    else:
+        _Control.send_command(session, etree.Element("CdrLogoff"), tier)
+
+
+# ======================================================================
+# Manage CDR groups/actions/permissions
+# ======================================================================
+
+def canDo(session, action, doctype="", **opts):
+    """
+    Determine whether a session is authorized to do something
+
+    Pass:
+      session - name of session whose permissions are being checked
+      action - what the session wants to do
+      doctype - optional name of doctype involved
+
+    Return:
+      True if allowed, otherwise False
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(session, tier)
+    if isinstance(session, Session):
+        return session.can_do(action, doctype)
+    else:
+        command = etree.Element("CdrCanDo")
+        etree.SubElement(command, "Action").text = action
+        if doctype:
+            etree.SubElement(command, "DocType").text = doctype
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrCanDoResp":
+                return response.node.text == "Y"
+            raise Exception(";".join(response.errors) or "missing response")
+        raise Exception("missing response")
+
+
+def getActions(credentials, **opts):
+    """
+    Get the list of CDR actions which can be authorized
+
+    Pass:
+      credentials - name of existing session or login credentials
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      dictionary of authorizable actions, indexed by action name, with
+      the value of a flag ("Y" or "N") indicating whether the action
+      must be authorized on a per-doctype basis
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    actions = {}
+    if isinstance(session, Session):
+        for action in session.list_actions():
+            actions[action.name] = action.doctype_specific
+        return actions
+    command = etree.Element("CdrListActions")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrListActionsResp":
+            for action in response.node.findall("Action"):
+                name = get_text(action.find("Name"))
+                flag = get_text(action.find("NeedDoctype"))
+                actions[name] = flag
+            return actions
+        raise Exception(";".join(response.errors) or "missing response")
+    raise Exception("missing response")
+
+
+def getAction(credentials, name, **opts):
+    """
+    Retrieve information about a CDR action
+
+    Pass:
+      credentials - name of existing session or login credentials
+      name - name of the action
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      `Action` object, with `name`, `doctype_specific`, and `comment`
+      attributes
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return session.get_action(name)
+    command = etree.Element("CdrGetAction")
+    etree.SubElement(command, "Name").text = name
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrGetActionResp":
+            name = get_text(response.node.find("Name"))
+            flag = get_text(response.node.find("DoctypeSpecific"))
+            comment = get_text(response.node.find("Comment"))
+            return Action(name, flag, comment)
+        raise Exception(";".join(response.errors) or "missing response")
+    raise Exception("missing response")
+
+
+def putAction(credentials, name, action, **opts):
+    """
+    Store information for a CDR action
+
+    Pass:
+      credentials - name of existing session or login credentials
+      name - name of action to update, or None if creating new action
+      action - Session.Action object containing information to store
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        if name:
+            if not action.id:
+                action.id = getAction(session, name).id
+            action.modify(session)
+        else:
+            action.add(session)
+    else:
+        if name:
+            command_name = "CdrRepAction"
+            new_name = action.name
+        else:
+            command_name = "CdrAddAction"
+            name = action.name
+            new_name = None
+        command = etree.Element(command_name)
+        fp = open("d:/tmp/putAction.log", "a")
+        fp.write("command_name is {}\n".format(command_name))
+        etree.SubElement(command, "Name").text = name
+        if new_name and new_name != name:
+            etree.SubElement(command, "NewName").text = new_name
+        flag = action.doctype_specific
+        etree.SubElement(command, "DoctypeSpecific").text = flag
+        if action.comment is not None:
+            etree.SubElement(command, "Comment").text = action.comment
+        for response in _Control.send_command(session, command, tier):
+            fp.write("tag nams is {}\n".format(response.node.tag))
+            if response.node.tag == command_name + "Resp":
+                fp.close()
+                return
+            fp.close()
+            raise Exception(";".join(response.errors) or "missing response")
+        raise Exception("missing response")
+
+
+def delAction(credentials, name, **opts):
+    """
+    Delete a CDR action
+
+    Pass:
+      credentials - name of existing session or login credentials
+      name - name of action to delete
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        session.get_action(name).delete(session)
+    else:
+        command = etree.Element("CdrDelAction")
+        etree.SubElement(command, "Name").text = name
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrDelActionResp":
+                return
+            raise Exception(";".join(response.errors) or "missing response")
+        raise Exception("missing response")
+
+
+def getGroups(credentials, **opts):
+    """
+    Get the list of CDR authorization groups
+
+    Pass:
+      credentials - name of existing session or login credentials
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sorted sequence of CDR group name strings
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return session.list_groups()
+    command = etree.Element("CdrListGrps")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrListGrpsResp":
+            groups = [g.text for g in response.node.findall("GrpName")]
+            return sorted(groups)
+        raise Exception(";".join(response.errors) or "missing response")
+    raise Exception("missing response")
+
+
+def getGroup(credentials, name, **opts):
+    """
+    Retrieve information about a CDR authorization group
+
+    Pass:
+      credentials - name of existing session or login credentials
+      name - required string for name of group to retrieve
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      Session.Group object
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return session.get_group(name)
+    command = etree.Element("CdrGetGrp")
+    etree.SubElement(command, "GrpName").text = name
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrGetGrpResp":
+            group = Session.Group()
+            for child in response.node.findall("*"):
+                if child.tag == "GrpName":
+                    group.name = child.text
+                elif child.tag == "GrpId":
+                    group.id = int(child.text)
+                elif child.tag == "Comment":
+                    group.comment = child.text
+                elif child.tag == "UserName":
+                    group.users.append(child.text)
+                elif child.tag == "Auth":
+                    action = get_text(child.find("Action"))
+                    doctype = get_text(child.find("DocType"))
+                    if action not in group.actions:
+                        group.actions[action] = []
+                    group.actions[action].append(doctype or "")
+            return group
+        raise Exception(";".join(response.errors) or "missing response")
+    raise Exception("missing response")
+
+
+def putGroup(credentials, name, group, **opts):
+    """
+    Store information about a CDR permissions group
+
+    Pass:
+      credentials - name of existing session or login credentials
+      name - name of group to update, or None if creating new group
+      group - Session.Group object containing information to store
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        if name:
+            if not group.id:
+                group.id = getGroup(session, name).id
+            group.modify(session)
+        else:
+            group.add(session)
+    else:
+        if name:
+            command_name = "CdrModGrp"
+            new_name = group.name
+        else:
+            command_name = "CdrAddGrp"
+            name = group.name
+            new_name = None
+        command = etree.Element(command_name)
+        etree.SubElement(command, "GrpName").text = name
+        if new_name and new_name != name:
+            etree.SubElement(command, "NewGrpName").text = new_name
+        if group.comment:
+            etree.SubElement(command, "Comment").text = group.comment
+        for user in group.users:
+            etree.SubElement(command, "UserName").text = user
+        for action in sorted(group.actions):
+            doctypes = group.actions[action] or [""]
+            for doctype in doctypes:
+                auth = etree.SubElement(command, "Auth")
+                etree.SubElement(auth, "Action").text = action
+                etree.SubElement(auth, "DocType").text = doctype or ""
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == command_name + "Resp":
+                return
+            raise Exception(";".join(response.errors) or "missing response")
+        raise Exception("missing response")
+
+
+def delGroup(credentials, name, **opts):
+    """
+    Delete a CDR permission group
+
+    Pass:
+      credentials - name of existing session or login credentials
+      name - name of group to delete
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        session.get_group(name).delete(session)
+    else:
+        command = etree.Element("CdrDelGrp")
+        etree.SubElement(command, "GrpName").text = name
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrDelGrpResp":
+                return
+            raise Exception(";".join(response.errors) or "missing response")
+        raise Exception("missing response")
+
 
 #----------------------------------------------------------------------
-# Module data used by publishing.py and cdrpub.py.
+# Object containing components of a CdrDoc element.
+#
+# NOTE: If the strings passed in for the constructor are encoded as
+#       anything other than latin-1, you MUST provide the name of
+#       the encoding used as the value of the `encoding' parameter!
 #----------------------------------------------------------------------
+class Doc:
+    def __init__(self, x, type = None, ctrl = None, blob = None, id = None,
+                 encoding = 'latin-1'):
+        """
+        An object encapsulating all the elements of a CDR document.
+
+        Parameters:
+            x           XML as utf-8 or Unicode string.
+            type        Document type.
+                         If passed, all other components of the Doc must
+                          also be passed.
+                         If none, then a CdrDoc must be passed with all
+                          other components derived from the document string.
+            ctrl        If type passed, dictionary of CdrDocCtl elements:
+                         key = element name/tag
+                         value = element text content
+            blob        If type passed, blob, as a string of bytes will be
+                          encoded as base64.  Should not be encoded already.
+                         Else if CdrDocBlob is in the document string as a
+                          base64 encoded string, it will be extracted as
+                          the blob.
+                         Else no blob.
+            id          If type passed, document id, else derived from CdrDoc.
+            encoding    Character encoding.  Must be accurate.  All
+                         XML strings will be internally converted to utf-8.
+        """
+        # Two flavors for the constructor: one for passing in all the pieces:
+        if type:
+            self.id       = id
+            self.ctrl     = ctrl or {}
+            self.type     = type
+            self.xml      = x
+            self.blob     = blob
+            self.encoding = encoding
+        # ... and the other for passing in a CdrDoc element to be parsed.
+        else:
+            if encoding.lower() != 'utf-8':
+                if isinstance(x, unicode):
+                    x = x.encode('utf-8')
+                else:
+                    x = unicode(x, encoding).encode('utf-8')
+            root          = etree.fromstring(x)
+            self.encoding = encoding
+            self.ctrl     = {}
+            self.xml      = ''
+            self.blob     = None
+            self.id       = root.get("Id", "").encode("ascii") or None
+            self.type     = root.get("Type", "").encode("ascii") or None
+            for node in root:
+                if node.tag == "CdrDocCtl":
+                    self.parseCtl(node)
+                elif node.tag == "CdrDocXml":
+                    self.xml = get_text(node, "").encode(encoding)
+                elif node.tag == "CdrDocBlob":
+                    self.extractBlob(node)
+
+    def parseCtl(self, node):
+        """
+        Parse a CdrDocCtl node to extract all its elements into the ctrl
+        dictionary.
+
+        Pass:
+            ElementTree node for CdrDocCtl.
+        """
+
+        for child in node:
+            self.ctrl[child.tag] = get_text(child, "").encode(self.encoding)
+
+    def extractBlob(self, node):
+        """
+        Extract a base64 encoded blob from the XML string.
+
+        Pass:
+            DOM node for CdrDocBlob.
+        """
+
+        self.blob = base64.decodestring(get_text(node))
+
+    def __str__(self):
+        """
+        Serialize the object into a single CdrDoc XML string.
+
+        Return:
+            utf-8 encoded XML string.
+        """
+        alreadyUtf8 = self.encoding.lower() == "utf-8"
+        rep = "<CdrDoc Type='%s'" % self.type
+        if self.id: rep += " Id='%s'" % self.id
+        rep += "><CdrDocCtl>"
+        for key in self.ctrl:
+            value = self.ctrl[key]
+            if not alreadyUtf8:
+                value = unicode(value, self.encoding).encode('utf-8')
+            rep += "<%s>%s</%s>" % (key, cgi.escape(value), key)
+        rep += "</CdrDocCtl>\n"
+        xml = self.xml
+        if xml:
+            if not alreadyUtf8:
+                xml = unicode(self.xml, self.encoding).encode('utf-8')
+            rep += "<CdrDocXml><![CDATA[%s]]></CdrDocXml>" % xml
+        if self.blob != None:
+            rep += makeDocBlob(self.blob, wrapper="CdrDocBlob")
+        rep += "</CdrDoc>"
+        return rep
+
+    # Construct name for publishing the document.  Zero padding is
+    # different for media documents, based on Alan's Multimedia Publishing
+    # Analysis document.
+    def getPublicationFilename(self):
+        if not self.id:
+            raise Exception('missing document ID')
+        if not self.type:
+            raise Exception('missing document type')
+        docId = exNormalize(self.id)[1]
+        if self.type != 'Media':
+            return "CDR%d.xml" % docId
+        dom = xml.dom.minidom.parseString(self.xml)
+        for node in dom.documentElement.childNodes:
+            if node.nodeName == "PhysicalMedia":
+                for child in node.childNodes:
+                    if child.nodeName == "ImageData":
+                        for grandchild in child.childNodes:
+                            if grandchild.nodeName == "ImageEncoding":
+                                encoding = getTextContent(grandchild)
+                                if encoding == 'JPEG':
+                                    return "CDR%010d.jpg" % docId
+                                elif encoding == 'GIF':
+                                    return "CDR%010d.gif" % docId
+                    elif child.nodeName == "SoundData":
+                        for grandchild in child.childNodes:
+                            if grandchild.nodeName == "SoundEncoding":
+                                encoding = getTextContent(grandchild)
+                                if encoding == 'MP3':
+                                    return "CDR%010d.mp3" % docId
+        raise Exception("Media type not yet supported")
+
+#----------------------------------------------------------------------
+# Wrap an XML document in CdrDoc wrappers.
+#----------------------------------------------------------------------
+def makeCdrDoc(xml, docType, docId=None, ctrl=None):
+    """
+    Make XML suitable for sending to server functions expecting
+    a CdrDoc wrapper.
+
+    Pass:
+        xml     - Serialized XML for document - unicode or utf-8.
+        docType - Document type string.
+        docId   - CDR doc ID, or None.
+        ctrl    - optional dictionary of control elements
+
+    Return:
+        New XML string with passed xml as CDATA section, coded in utf-8.
+    """
+
+    # Use the caller's control values if present.
+    ctrl = ctrl if ctrl is not None else {}
+
+    # Check and set encoding
+    if type(xml) == type(u""):
+        xml = xml.encode("utf-8")
+
+    # Create ID portion of header, if there is an id
+    idHeader = ""
+    if docId:
+        idHeader = " Id='%s'" % exNormalize(docId)[0]
+
+    # Construct the entire document
+    docCtrl = "<CdrDocCtl>"
+    if ctrl:
+        for key, value in ctrl.iteritems():
+            if type(value) is unicode:
+                value = value.encode('utf-8')
+            else:
+                value = str(value)
+            docCtrl += "<%s>%s</%s>" % (key, cgi.escape(value), key)
+    docCtrl += "</CdrDocCtl>"
+    newXml = """<CdrDoc Type='%s'%s>
+%s
+<CdrDocXml><![CDATA[%s]]></CdrDocXml>
+</CdrDoc>""" % (docType, idHeader, docCtrl, xml)
+
+    return newXml
+
+def getDoc(credentials, docId, *args, **opts):
+    checkout='N', version="Current",
+           xml='Y', blob='N',
+           host=DEFAULT_HOST, port=DEFAULT_PORT, getObject=False):
+    """
+    Retrieve the requested version of a document from the CDR server
+
+    Required ositional arguments:
+      credentials - name of existing session or login credentials
+      docId - CDR ID string or integer
+
+    Optional positional arguments (also available as keyword options)
+      checkout - lock the document if "Y" - default "N"
+      version - default "Current"
+
+    Keyword options
+      xml - retrieve the XML for the document if "Y" (the default)
+      blob - retrieve the blob for the document if "Y" (default "N")
+      getObject - return a `cdr.Doc` object if True (default is to
+                  retrieve a serialized string version of the doc object)
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+    """
+
+    checkout = args[0] if len(args) > 0 else opts.get("checkout", "N")
+    version = args[1] if len(args) > 1 else opts.get("version", "Current")
+    getObject = opts.get("getObject")
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        doc = docs.Doc(session, version=version)
+        if checkout:
+            doc.lock()
+        return doc if docObject
+        session.get_group(name).delete(session)
+    else:
+        command = etree.Element("GetCdrDoc")
+        command.set("includeXml", xml or "Y")
+        command.set("includeBlob", blob or "N")
+        etree.SubElement(command, "GrpName").text = name
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrDelGrpResp":
+                return
+            raise Exception(";".join(response.errors) or "missing response")
+        raise Exception("missing response")
+    # Create the command.
+    did  = normalize(docId)
+    lck  = "<Lock>%s</Lock>" % (checkout)
+    ver  = "<DocVersion>%s</DocVersion>" % (version)
+    what = "includeXml='%s' includeBlob='%s'" % (xml, blob)
+    cmd  = "<CdrGetDoc %s><DocId>%s</DocId>%s%s</CdrGetDoc>" % \
+           (what, did, lck, ver)
+
+    # Submit the commands.
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
+
+    # Extract the document.
+    doc = extract("(<CdrDoc[>\s].*</CdrDoc>)", resp)
+    if doc.startswith("<Errors") or not getObject: return doc
+    return Doc(doc, encoding = 'utf-8')
+
+
+class _Control:
+    """
+    Wrap internals supporting the legacy CDR Python client interface.
+    """
+
+    MIN_ID = 0x10000000000000000000000000000000
+    MAX_ID = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+    TIER = Tier()
+    try:
+        CONN = cdrapi.db.connect(timeout=2)
+    except Exception as e:
+        print(e)
+        CONN = None
+
+    @classmethod
+    def tunneling(cls, tier=None):
+        return tier or not cls.CONN
+
+    @classmethod
+    def get_session(cls, credentials, tier=None, comment=None):
+        """
+        Return string or object representing CDR login session
+
+        Pass:
+          credentials - session name string or tuple of username, password
+          tier - optional name of hosting tier (e.g., 'DEV')
+          comment - optional comment to be stored with the session info
+
+        Return:
+          `Session` object if we're invoking the cdrapi methods directly
+          otherwise (we're tunneling our CDR commands through an HTTPS
+          proxy) the session name string
+        """
+
+        if isinstance(credentials, Session):
+            return credentials
+        if cls.tunneling(tier):
+            if isinstance(credentials, basestring):
+                return credentials
+            else:
+                username, password = credentials
+                return cls.windows_login(username, password, tier)
+        if not isinstance(credentials, basestring):
+            user, password = credentials
+            opts = dict(comment=comment, tier=tier)
+            return Session.create_session(user, **opts)
+        return Session(credentials, tier)
+
+    @classmethod
+    def windows_login(cls, username, password, tier=None):
+        """
+        Use the Windows authentication service to check login credentials
+
+        Pass:
+          username - string name for the CDR user account
+          password - password string for the user's NIH domain account
+          tier - optional string identifying which CDR server we want
+                 to log into (e.g., 'QA')
+
+        Return:
+          unique (for this tier) session name string
+        """
+
+        tier = cdrapi.settings.Tier(tier) if tier else cls.TIER
+        url = "https://{}/cgi-bin/secure/login.py".format(tier.hosts["APPC"])
+        auth = requests.auth.HTTPDigestAuth(username, password)
+        response = requests.get(url, auth=auth)
+        if not response.ok:
+            raise Exception(response.reason)
+        return response.text.strip()
+
+    class ResponseSet:
+        def __init__(self, node):
+            self.time = dateutil.parser.parse(node.get("Time"))
+            self.responses = [self.Response(r) for r in node.findall("*")]
+
+        class Response:
+            def __init__(self, node):
+                if node.tag != "CdrResponse":
+                    raise Exception("expected CdrResponse got " + node.tag)
+                self.command_id = node.get("CmdId")
+                self.node = node.find("*")
+                self.errors = [err.text for err in node.findall("Errors/Err")]
+
+    @classmethod
+    def wrap_command(cls, node, command_id=None):
+        if not command_id:
+            command_id = "{:X}".format(random.randint(cls.MIN_ID, cls.MAX_ID))
+        wrapper = etree.Element("CdrCommand", CmdId=command_id)
+        wrapper.append(node)
+        return wrapper
+
+    @classmethod
+    def wrap_commands(cls, session, *commands):
+        wrapper = etree.Element("CdrCommandSet")
+        session_node = etree.SubElement(wrapper, "SessionId")
+        session_node.text = session
+        for command_node in commands:
+            wrapper.append(command_node)
+        return wrapper
+
+    @classmethod
+    def send_commands(cls, commands, tier=None):
+        tier = cdrapi.settings.Tier(tier) if tier else cls.TIER
+        url = "https://" + tier.hosts["API"]
+        request = etree.tostring(commands, encoding="utf-8")
+        response = requests.post(url, request)
+        if not response.ok:
+            raise Exception(response.reason)
+        root = etree.fromstring(response.content)
+        for error in root.findall("Errors/Err"):
+            raise Exception(error.text)
+        return cls.ResponseSet(root)
+
+    @classmethod
+    def send_command(cls, session, command, tier=None):
+        commands = cls.wrap_commands(session, cls.wrap_command(command))
+        return cls.send_commands(commands, tier).responses
+
+
+def isDevHost():
+    """
+    Tell the caller if we are on the development host
+    """
+    return _Control.TIER.name == "DEV"
+
+
+def isProdHost():
+    """
+    Tell the caller if we are on the production host
+    """
+
+    return _Control.TIER.name == "PROD"
+
+
+def getHostName():
+    """
+    Give caller variant forms of the host name (cached tuple)
+
+    Return the server host name as a tuple of:
+        naked host name
+        fully qualified host name
+        fully qualified name, prefixed by "https://"
+    """
+    return HOST_NAMES
+
+
+def ordinal(n):
+    """
+    Convert number to ordinal string.
+    """
+
+    n = int(n)
+    endings = {1: "st", 2: "nd", 3: "rd"}
+    ending = "th" if 4 < n % 100 <= 20 else endings.get(n % 10, "th")
+    return "{0}{1}".format(n, ending)
+
+
+def make_timestamp():
+    """
+    Create a string which will make a name unique (enough)
+    """
+
+    return datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+
+
+def getpw(name):
+    """
+    Get the password for a local CDR machine account
+    """
+
+    try:
+        name = name.lower()
+        with open(WORK_DRIVE + ":/etc/cdrpw") as fp:
+            for line in fp:
+                n, p = line.strip().split(":", 1)
+                if n == name:
+                    return p
+    except:
+        pass
+    return None
+
+
+class Logging:
+    """
+    The CDR has too many ways to do logging already. In spite of this,
+    I'm adding yet another logging class, this one based on the standard
+    library's logging module. The immediate impetus for doing this is the
+    fact that we have to use that module in the new CDR Scheduler. The
+    Logger class below is only used as a namespace wrapper, with a factory
+    method for instantiating logger objects.
+    """
+
+    FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
+    LEVELS = {
+        "info": logging.INFO,
+        "debug": logging.DEBUG,
+        "warn": logging.WARN,
+        "warning": logging.WARNING,
+        "critical": logging.CRITICAL,
+        "error": logging.ERROR
+    }
+
+    class Formatter(logging.Formatter):
+        """Make our own logging formatter to get the time stamps right."""
+
+        converter = datetime.datetime.fromtimestamp
+
+        def formatTime(self, record, datefmt=None):
+            ct = self.converter(record.created)
+            if datefmt:
+                s = ct.strftime(datefmt)
+            else:
+                t = ct.strftime("%Y-%m-%d %H:%M:%S")
+                s = "%s.%03d" % (t, record.msecs)
+            return s
+
+    @classmethod
+    def get_logger(cls, name, **opts):
+        """
+        Factory method for instantiating a logging object.
+
+        name       required name for the logger
+        path       optional path for the log file
+        format     optional override for the default log format pattern
+        level      optional verbosity for logging, defaults to info
+        propagate  if True, the base handler also writes our entries
+        multiplex  if True, add new handler even there already is one
+        console    if True, add stream handler to write to stderr
+        """
+
+        logger = logging.getLogger(name)
+        level = opts.get("level", "info")
+        logger.setLevel(cls.LEVELS.get(level, logging.INFO))
+        logger.propagate = opts.get("propagate", False)
+        if not logger.handlers or opts.get("multiplex"):
+            path = opts.get("path", "%s/%s.log" % (DEFAULT_LOGDIR, name))
+            handler = logging.FileHandler(path)
+            formatter = cls.Formatter(opts.get("format", cls.FORMAT))
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            if opts.get("console"):
+                stream_handler = logging.StreamHandler()
+                stream_handler.setFormatter(formatter)
+                logger.addHandler(stream_handler)
+        return logger
+
+
+def get_text(node, default=None):
+    """
+    Assemble the concatenated text nodes for an element of the document.
+
+    Note that the call to node.itertext() must include the wildcard
+    string argument to specify that we want to avoid recursing into
+    nodes which are not elements. Otherwise we will get the content
+    of processing instructions, and how ugly would that be?!?
+
+    Pass:
+        node - element node from an XML document parsed by the lxml package
+        default - what to return if the node is None
+
+    Return:
+        default if node is None; otherwise concatenated string node descendants
+    """
+
+    if node is None:
+        return default
+    return u"".join(node.itertext("*"))
+
+
+# ======================================================================
+# Legacy global names
+# ======================================================================
+CBIIT_HOSTING = True
+WORK_DRIVE = _Control.TIER.drive
+GPMAILER = _Control.TIER.hosts["EMAILERS"]
+GPMAILERDB = _Control.TIER.hosts["DBNIX"]
+APPC = _Control.TIER.hosts["APPC"]
+FQDN = open(WORK_DRIVE + ":/cdr/etc/hostname").read().strip()
+HOST_NAMES = FQDN.split(".")[0], FQDN, "https://" + FQDN
+CBIIT_NAMES = APPC.split(".")[0], APPC, "https://" + APPC
+OPERATOR = "NCIPDQoperator@mail.nih.gov"
+DOMAIN_NAME = FQDN.split(".", 1)[1]
+PUB_NAME = HOST_NAMES[0]
+DEFAULT_HOST = "localhost"
+DEFAULT_PORT = 2019
+BATCHPUB_PORT = 2020
+URDATE = "2002-06-22"
+PYTHON = WORK_DRIVE + ":\\python\\python.exe"
+BASEDIR = WORK_DRIVE + ":/cdr"
+SMTP_RELAY = "MAILFWD.NIH.GOV"
+DEFAULT_LOGDIR = BASEDIR + "/Log"
+DEFAULT_LOGLVL = 5
+DEFAULT_LOGFILE = DEFAULT_LOGDIR + "/debug.log"
+PUBLOG = DEFAULT_LOGDIR + "/publish.log"
+MANIFEST_NAME = "CdrManifest.xml"
+CLIENT_FILES_DIR = BASEDIR + "/ClientFiles"
+MANIFEST_PATH = "{}/{}".format(CLIENT_FILES_DIR, MANIFEST_NAME)
+SENDCMDS_TIMEOUT = 300
+SENDCMDS_SLEEP = 3
+PDQDTDPATH = WORK_DRIVE + ":\\cdr\\licensee"
+DEFAULT_DTD = PDQDTDPATH + "\\pdqCG.dtd"
+NAMESPACE = "cips.nci.nih.gov/cdr"
+Group = Session.Group
+Action = Session.Action
+
+# ======================================================================
+# Module data used by publishing.py and cdrpub.py.
+# ======================================================================
 PUBTYPES = {
-    'Full Load'       : 'Send all documents to Cancer.gov',
-    'Export'          : 'Send specified documents to Cancer.gov',
-    'Reload'          : 'Re-send specified documents that failed loading',
-    'Remove'          : 'Delete documents from Cancer.gov',
-    'Hotfix (Remove)' : 'Delete individual documents from Cancer.gov',
-    'Hotfix (Export)' : 'Send individual documents to Cancer.gov'
+    'Full Load': 'Send all documents to Cancer.gov',
+    'Export': 'Send specified documents to Cancer.gov',
+    'Reload': 'Re-send specified documents that failed loading',
+    'Remove': 'Delete documents from Cancer.gov',
+    'Hotfix (Remove)': 'Delete individual documents from Cancer.gov',
+    'Hotfix (Export)': 'Send individual documents to Cancer.gov'
 }
 
 
-#----------------------------------------------------------------------
+# ======================================================================
 # Map for finding the filters for a given document type to run
 # QC reports.
-#----------------------------------------------------------------------
+# ======================================================================
 FILTERS = {
     'Citation':
         ["set:QC Citation Set"],
@@ -214,9 +1037,9 @@ FILTERS = {
         ["set:QC Summary Set"],
     'Summary:rsqd':               # Redline/Strikeout - Quick and Dirty
         ["set:QC QD Summary Set"],
-    #'Summary:but':               # Bold/Underline
+    # 'Summary:but':               # Bold/Underline
     #    ["set:QC Summary Set (Bold/Underline) Test"],
-    #'Summary:rst':               # Redline/Strikeout
+    # 'Summary:rst':               # Redline/Strikeout
     #    ["set:QC Summary Set Test"],
     'Summary:nm':                 # No markup
         ["set:QC Summary Set"],
@@ -236,6 +1059,42 @@ FILTERS = {
         ["set:QC Term Set"]
 }
 
+
+'''
+REPLACE/REWRITE ALL OF THIS
+#----------------------------------------------------------------------
+# Import required packages.
+#----------------------------------------------------------------------
+import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
+import os, smtplib, time, atexit, cdrdb, tempfile, traceback, difflib
+import xml.sax.saxutils, datetime, subprocess, cdrutil
+import math
+import lxml.etree as etree
+import logging
+import cdrdb2
+import requests
+
+# ---------------------------------------------------------------------
+# The file cdrapphosts knows about the different server names in the
+# CBIIT and OCE environments based on the tier
+# ---------------------------------------------------------------------
+h = cdrutil.AppHost(cdrutil.getEnvironment(),
+                    cdrutil.getTier(WORK_DRIVE + ":"),
+                    filename=WORK_DRIVE + ':/etc/cdrapphosts.rc')
+
+
+#----------------------------------------------------------------------
+# Set some package constants
+#----------------------------------------------------------------------
+
+#----------------------------------------------------------------------
+# If we're not actually running on the CDR server machine, then
+# "localhost" won't work.
+#----------------------------------------------------------------------
+try:
+    os.stat("d:/cdr/bin/CdrService.exe")
+except:
+    DEFAULT_HOST = CBIIT_NAMES[1]
 
 #----------------------------------------------------------------------
 # Use this class (or a derived class) when raising an exception in
@@ -971,32 +1830,6 @@ def member_of_group(session, group):
         return False
 
 #----------------------------------------------------------------------
-# Duplicate a session, retrieving the name of a new session on behalf of
-# the same user as an existing session.
-#
-# Used when a batch job, e.g., a global change, must be run for a user
-# after he has logged off his interactive session.
-#
-# Pass:
-#   oldSession - string representing a logged in session to be duplicated.
-#                Do not pass a userId + password.
-#
-# Returns:
-#   String representing a new logged in session.
-#----------------------------------------------------------------------
-def dupSession(oldSession, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    cmds = wrapCommand("<CdrDupSession/>", oldSession, host)
-    resp = sendCommands(cmds, host, port)
-
-    # Session data must always be ordinary ascii
-    if type(resp) == type(u""):
-        resp = oldSession.encode('ascii')
-
-    # Extract the session ID.
-    return extract("<newSessionId[^>]*>(.+)</newSessionId>", resp)
-
-#----------------------------------------------------------------------
 # Select the email address for the user.
 # Pass:
 #   mySession  - session for user doing the lookup
@@ -1034,30 +1867,6 @@ def getEmail(mySession):
     except cdrdb.Error, info:
         return "Error selecting email for session: %s - %s" % \
                 (mySession, info[1][0])
-
-#----------------------------------------------------------------------
-# Determine whether a session is authorized to do something
-# Returns:
-#   True (1) = Is authorized
-#   False (0) = Is not authorized
-#----------------------------------------------------------------------
-def canDo(session, action, docType="", host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = wrapCommand ("""
- <CdrCanDo>
-   <Action>%s</Action>
-   <DocType>%s</DocType>
- </CdrCanDo>\n
-""" % (action, docType), session, host)
-
-    # Submit it
-    resp = sendCommands (cmd, host, port);
-
-    # Expected results are simple enough that we don't need DOM parse
-    if resp.find ("<CdrCanDoResp>Y</CdrCanDoResp>") >= 0:
-        return 1
-    return 0
 
 #----------------------------------------------------------------------
 # Find information about the last versions of a document.
@@ -1284,196 +2093,6 @@ def makeDocBlob(blob=None, inFile=None, outFile=None, wrapper=None, attrs=""):
     return encodedBlob
 
 #----------------------------------------------------------------------
-# Object containing components of a CdrDoc element.
-#
-# NOTE: If the strings passed in for the constructor are encoded as
-#       anything other than latin-1, you MUST provide the name of
-#       the encoding used as the value of the `encoding' parameter!
-#----------------------------------------------------------------------
-class Doc:
-    def __init__(self, x, type = None, ctrl = None, blob = None, id = None,
-                 encoding = 'latin-1'):
-        """
-        An object encapsulating all the elements of a CDR document.
-
-        Parameters:
-            x           XML as utf-8 or Unicode string.
-            type        Document type.
-                         If passed, all other components of the Doc must
-                          also be passed.
-                         If none, then a CdrDoc must be passed with all
-                          other components derived from the document string.
-            ctrl        If type passed, dictionary of CdrDocCtl elements:
-                         key = element name/tag
-                         value = element text content
-            blob        If type passed, blob, as a string of bytes will be
-                          encoded as base64.  Should not be encoded already.
-                         Else if CdrDocBlob is in the document string as a
-                          base64 encoded string, it will be extracted as
-                          the blob.
-                         Else no blob.
-            id          If type passed, document id, else derived from CdrDoc.
-            encoding    Character encoding.  Must be accurate.  All
-                         XML strings will be internally converted to utf-8.
-        """
-        # Two flavors for the constructor: one for passing in all the pieces:
-        if type:
-            self.id       = id
-            self.ctrl     = ctrl or {}
-            self.type     = type
-            self.xml      = x
-            self.blob     = blob
-            self.encoding = encoding
-        # ... and the other for passing in a CdrDoc element to be parsed.
-        else:
-            if encoding.lower() != 'utf-8':
-                if isinstance(x, unicode):
-                    x = x.encode('utf-8')
-                else:
-                    x = unicode(x, encoding).encode('utf-8')
-            root          = etree.fromstring(x)
-            self.encoding = encoding
-            self.ctrl     = {}
-            self.xml      = ''
-            self.blob     = None
-            self.id       = root.get("Id", "").encode("ascii") or None
-            self.type     = root.get("Type", "").encode("ascii") or None
-            for node in root:
-                if node.tag == "CdrDocCtl":
-                    self.parseCtl(node)
-                elif node.tag == "CdrDocXml":
-                    self.xml = get_text(node, "").encode(encoding)
-                elif node.tag == "CdrDocBlob":
-                    self.extractBlob(node)
-
-    def parseCtl(self, node):
-        """
-        Parse a CdrDocCtl node to extract all its elements into the ctrl
-        dictionary.
-
-        Pass:
-            ElementTree node for CdrDocCtl.
-        """
-
-        for child in node:
-            self.ctrl[child.tag] = get_text(child, "").encode(self.encoding)
-
-    def extractBlob(self, node):
-        """
-        Extract a base64 encoded blob from the XML string.
-
-        Pass:
-            DOM node for CdrDocBlob.
-        """
-
-        self.blob = base64.decodestring(get_text(node))
-
-    def __str__(self):
-        """
-        Serialize the object into a single CdrDoc XML string.
-
-        Return:
-            utf-8 encoded XML string.
-        """
-        alreadyUtf8 = self.encoding.lower() == "utf-8"
-        rep = "<CdrDoc Type='%s'" % self.type
-        if self.id: rep += " Id='%s'" % self.id
-        rep += "><CdrDocCtl>"
-        for key in self.ctrl:
-            value = self.ctrl[key]
-            if not alreadyUtf8:
-                value = unicode(value, self.encoding).encode('utf-8')
-            rep += "<%s>%s</%s>" % (key, cgi.escape(value), key)
-        rep += "</CdrDocCtl>\n"
-        xml = self.xml
-        if xml:
-            if not alreadyUtf8:
-                xml = unicode(self.xml, self.encoding).encode('utf-8')
-            rep += "<CdrDocXml><![CDATA[%s]]></CdrDocXml>" % xml
-        if self.blob != None:
-            rep += makeDocBlob(self.blob, wrapper="CdrDocBlob")
-        rep += "</CdrDoc>"
-        return rep
-
-    # Construct name for publishing the document.  Zero padding is
-    # different for media documents, based on Alan's Multimedia Publishing
-    # Analysis document.
-    def getPublicationFilename(self):
-        if not self.id:
-            raise Exception('missing document ID')
-        if not self.type:
-            raise Exception('missing document type')
-        docId = exNormalize(self.id)[1]
-        if self.type != 'Media':
-            return "CDR%d.xml" % docId
-        dom = xml.dom.minidom.parseString(self.xml)
-        for node in dom.documentElement.childNodes:
-            if node.nodeName == "PhysicalMedia":
-                for child in node.childNodes:
-                    if child.nodeName == "ImageData":
-                        for grandchild in child.childNodes:
-                            if grandchild.nodeName == "ImageEncoding":
-                                encoding = getTextContent(grandchild)
-                                if encoding == 'JPEG':
-                                    return "CDR%010d.jpg" % docId
-                                elif encoding == 'GIF':
-                                    return "CDR%010d.gif" % docId
-                    elif child.nodeName == "SoundData":
-                        for grandchild in child.childNodes:
-                            if grandchild.nodeName == "SoundEncoding":
-                                encoding = getTextContent(grandchild)
-                                if encoding == 'MP3':
-                                    return "CDR%010d.mp3" % docId
-        raise Exception("Media type not yet supported")
-
-#----------------------------------------------------------------------
-# Wrap an XML document in CdrDoc wrappers.
-#----------------------------------------------------------------------
-def makeCdrDoc(xml, docType, docId=None, ctrl=None):
-    """
-    Make XML suitable for sending to server functions expecting
-    a CdrDoc wrapper.
-
-    Pass:
-        xml     - Serialized XML for document - unicode or utf-8.
-        docType - Document type string.
-        docId   - CDR doc ID, or None.
-        ctrl    - optional dictionary of control elements
-
-    Return:
-        New XML string with passed xml as CDATA section, coded in utf-8.
-    """
-
-    # Use the caller's control values if present.
-    ctrl = ctrl if ctrl is not None else {}
-
-    # Check and set encoding
-    if type(xml) == type(u""):
-        xml = xml.encode("utf-8")
-
-    # Create ID portion of header, if there is an id
-    idHeader = ""
-    if docId:
-        idHeader = " Id='%s'" % exNormalize(docId)[0]
-
-    # Construct the entire document
-    docCtrl = "<CdrDocCtl>"
-    if ctrl:
-        for key, value in ctrl.iteritems():
-            if type(value) is unicode:
-                value = value.encode('utf-8')
-            else:
-                value = str(value)
-            docCtrl += "<%s>%s</%s>" % (key, cgi.escape(value), key)
-    docCtrl += "</CdrDocCtl>"
-    newXml = """<CdrDoc Type='%s'%s>
-%s
-<CdrDocXml><![CDATA[%s]]></CdrDocXml>
-</CdrDoc>""" % (docType, idHeader, docCtrl, xml)
-
-    return newXml
-
-#----------------------------------------------------------------------
 # Internal subroutine to add or replace DocComment element in CdrDocCtl.
 #----------------------------------------------------------------------
 def _addRepDocComment(doc, comment):
@@ -1565,7 +2184,8 @@ def _addRepDocActiveStatus(doc, newStatus):
         parts = insRes.group ('first', 'last')
     if not insRes or len (parts) != 2:
         # Should never happen unless there's a bug
-        raise Exception("addRepDocActiveStatus: No CdrDocCtl in doc:\n%s" % doc)
+        raise Exception("addRepDocActiveStatus: No CdrDocCtl in doc:\n%s" %
+                        doc)
 
     # Comment must be compatible with CdrDoc utf-8
     if type(newStatus) == type(u""):
@@ -1829,30 +2449,6 @@ def repDoc(credentials, file=None, doc=None, comment='',
         return (docId, errors)
     else:
         return docId
-
-#----------------------------------------------------------------------
-# Retrieve a specified document from the CDR Server.
-#----------------------------------------------------------------------
-def getDoc(credentials, docId, checkout='N', version="Current",
-           xml='Y', blob='N',
-           host=DEFAULT_HOST, port=DEFAULT_PORT, getObject=False):
-
-    # Create the command.
-    did  = normalize(docId)
-    lck  = "<Lock>%s</Lock>" % (checkout)
-    ver  = "<DocVersion>%s</DocVersion>" % (version)
-    what = "includeXml='%s' includeBlob='%s'" % (xml, blob)
-    cmd  = "<CdrGetDoc %s><DocId>%s</DocId>%s%s</CdrGetDoc>" % \
-           (what, did, lck, ver)
-
-    # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # Extract the document.
-    doc = extract("(<CdrDoc[>\s].*</CdrDoc>)", resp)
-    if doc.startswith("<Errors") or not getObject: return doc
-    return Doc(doc, encoding = 'utf-8')
-
 
 #----------------------------------------------------------------------
 # Determine if a document is checked out without retrieving it
@@ -2763,26 +3359,6 @@ def getTree(credentials, docId, depth=1,
     return result
 
 #----------------------------------------------------------------------
-# Gets the list of CDR actions which can be authorized.
-#----------------------------------------------------------------------
-def getActions(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrListActions/>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # Parse the response.
-    actions = {}
-    for a in re.findall("<Action>\s*<Name>(.*?)</Name>\s*"
-                        "<NeedDoctype>(.*?)</NeedDoctype>\s*</Action>", resp):
-        actions[a[0]] = a[1]
-    return actions
-
-#----------------------------------------------------------------------
 # Gets the list of CDR users.
 #----------------------------------------------------------------------
 def getUsers(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
@@ -2799,40 +3375,6 @@ def getUsers(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
     users = re.findall("<UserName>(.*?)</UserName>", resp)
     users.sort()
     return users
-
-#----------------------------------------------------------------------
-# Gets the list of CDR authorization groups.
-#----------------------------------------------------------------------
-def getGroups(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrListGrps/>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # Parse the response.
-    groups = re.findall("<GrpName>(.*?)</GrpName>", resp)
-    groups.sort()
-    return groups
-
-#----------------------------------------------------------------------
-# Deletes a CDR group.
-#----------------------------------------------------------------------
-def delGroup(credentials, grp, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrDelGrp><GrpName>%s</GrpName></CdrDelGrp>" % grp
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # No errors to report.
-    return None
 
 #----------------------------------------------------------------------
 # Gets the list of CDR document types.
@@ -3095,96 +3637,6 @@ def getSchemaEnumVals(schemaTitle, typeName, sorted=False):
     return valList
 
 #----------------------------------------------------------------------
-# Holds information about a single CDR group.
-#----------------------------------------------------------------------
-class Group:
-    def __init__(self, name, actions = None, users = None, comment = None):
-        self.name    = name
-        self.actions = actions or {}
-        self.users   = users or []
-        self.comment = comment
-
-#----------------------------------------------------------------------
-# Retrieves information about a CDR group.
-#----------------------------------------------------------------------
-def getGroup(credentials, gName, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrGetGrp><GrpName>%s</GrpName></CdrGetGrp>" % gName
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # Parse the response.
-    name     = re.findall("<GrpName>(.*?)</GrpName>", resp)[0]
-    group    = Group(name)
-    authExpr = re.compile("<Auth>(.*?)</Auth>", re.DOTALL)
-    cmtExpr  = re.compile("<Comment>(.*?)</Comment>", re.DOTALL)
-    comment  = cmtExpr.findall(resp)
-    for user in re.findall("<UserName>(.*?)</UserName>", resp):
-        group.users.append(user)
-    group.users.sort()
-    for auth in authExpr.findall(resp):
-        action  = re.findall("<Action>(.*?)</Action>", auth)
-        docType = re.findall("<DocType>(.*?)</DocType>", auth)
-        #group.actions.append((action[0], docType and docType[0] or None))
-        action  = action[0]
-        docType = docType and docType[0] or None
-        if not group.actions.has_key(action): group.actions[action] = []
-        group.actions[action].append(docType)
-    if comment: group.comment = comment[0]
-    return group
-
-#----------------------------------------------------------------------
-# Stores information about a CDR group.
-#----------------------------------------------------------------------
-def putGroup(credentials, gName, group, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    if gName:
-        cmd = "<CdrModGrp><GrpName>%s</GrpName>" % gName
-        if group.name and gName != group.name:
-            cmd += "<NewGrpName>%s</NewGrpName>" % group.name
-    else:
-        cmd = "<CdrAddGrp><GrpName>%s</GrpName>" % group.name
-
-    # Add the comment, if any.
-    if group.comment is not None:
-        cmd += "<Comment>%s</Comment>" % group.comment
-
-    # Add the users.
-    if group.users:
-        for user in group.users:
-            cmd += "<UserName>%s</UserName>" % user
-
-    # Add the actions.
-    if group.actions:
-        actions = group.actions.keys()
-        actions.sort()
-        for action in actions:
-            doctypes = group.actions[action]
-            if not doctypes or doctypes == [None]:
-                cmd += "<Auth><Action>%s</Action></Auth>" % action
-            else:
-                for doctype in doctypes:
-                    cmd += "<Auth><Action>%s</Action>"\
-                           "<DocType>%s</DocType></Auth>" % (action, doctype)
-
-    # Finish the command.
-    if gName: cmd += "</CdrModGrp>"
-    else:     cmd += "</CdrAddGrp>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # No errors to report.
-    return None
-
-#----------------------------------------------------------------------
 # Holds information about a single CDR user.
 #----------------------------------------------------------------------
 class User:
@@ -3303,85 +3755,6 @@ def delUser(credentials, usr, host=DEFAULT_HOST, port=DEFAULT_PORT):
     # Create the command
     cmd = etree.Element("CdrDelUsr")
     etree.SubElement(cmd, "UserName").text = usr
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # No errors to report.
-    return None
-
-#----------------------------------------------------------------------
-# Holds information about a single CDR action.
-#----------------------------------------------------------------------
-class Action:
-    def __init__(self, name, doctypeSpecific, comment=None):
-        self.name            = name
-        self.doctypeSpecific = doctypeSpecific
-        self.comment         = comment
-
-#----------------------------------------------------------------------
-# Retrieves information about a CDR action.
-#----------------------------------------------------------------------
-def getAction(credentials, name, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrGetAction><Name>%s</Name></CdrGetAction>" % name
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # Parse the response.
-    name     = re.findall("<Name>(.*)</Name>", resp)[0]
-    flag     = re.findall("<DoctypeSpecific>(.*)</DoctypeSpecific>", resp)[0]
-    cmtExpr  = re.compile("<Comment>(.*)</Comment>", re.DOTALL)
-    comment  = cmtExpr.findall(resp)
-    action   = Action(name, flag)
-    if comment:  action.comment  = comment[0]
-    return action
-
-#----------------------------------------------------------------------
-# Stores information for a CDR action.
-#----------------------------------------------------------------------
-def putAction(credentials, name, action, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    if name:
-        cmd = "<CdrRepAction><Name>%s</Name>" % name
-        if action.name and name != action.name:
-            cmd += "<NewName>%s</NewName>" % action.name
-    else:
-        cmd = "<CdrAddAction><Name>%s</Name>" % action.name
-
-    # Add the action's doctype-specific flag.
-    cmd += "<DoctypeSpecific>%s</DoctypeSpecific>" % action.doctypeSpecific
-
-    # Add the comment, if present.
-    if action.comment is not None:
-        cmd += "<Comment>%s</Comment>" % action.comment
-
-    # Finish the command.
-    if name: cmd += "</CdrRepAction>"
-    else:    cmd += "</CdrAddAction>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # No errors to report.
-    return None
-
-#----------------------------------------------------------------------
-# Deletes a CDR action.
-#----------------------------------------------------------------------
-def delAction(credentials, name, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrDelAction><Name>%s</Name></CdrDelAction>" % name
 
     # Submit the request.
     resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
@@ -4552,8 +4925,8 @@ def extractResponseNode(caller, responseString):
         responseElem = cdrResponseElems[0]
     elif len(cdrResponseElems) == 3:
         responseElem = cdrResponseElems[2]
-        raise Exception(caller, 'Found %d CdrResponse elements; '
-                                'expected one or three' % len(cdrResponseElems))
+        raise Exception(caller, 'Found %d CdrResponse elements; expected '
+                                'one or three' % len(cdrResponseElems))
     if responseElem.getAttribute('Status') == 'success':
         return CdrResponseNode(responseElem, when)
     errElems = cdrResponseElems[0].getElementsByTagName('Err')
@@ -4717,8 +5090,9 @@ def getFilterSet(session, name, host=DEFAULT_HOST, port=DEFAULT_PORT):
     cmd          = u"<CdrGetFilterSet><FilterSetName>%s" \
                    u"</FilterSetName></CdrGetFilterSet>" % \
                                                     cgi.escape(toUnicode(name))
-    response     = sendCommands(wrapCommand(cmd.encode('utf-8'), session, host),
-                                                                    host, port)
+    response     = sendCommands(wrapCommand(cmd.encode('utf-8'),
+                                session, host),
+                                host, port)
     responseNode = extractResponseNode('getFilterSet', response)
     name         = None
     desc         = None
@@ -4737,7 +5111,8 @@ def getFilterSet(session, name, host=DEFAULT_HOST, port=DEFAULT_PORT):
                 member = IdAndName(node.getAttribute('DocId'), textContent)
                 members.append(member)
             elif node.nodeName == 'FilterSet':
-                member = IdAndName(int(node.getAttribute('SetId')), textContent)
+                member = IdAndName(int(node.getAttribute('SetId')),
+                                   textContent)
                 members.append(member)
     return FilterSet(name, desc, notes, members)
 
@@ -4935,31 +5310,6 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, chgOnly=True, useCDATA=False):
     return diffText
 
 #----------------------------------------------------------------------
-# Tell the caller if we are on the development host.
-#----------------------------------------------------------------------
-def isDevHost():
-    return HOST_NAMES[0].upper() == DEV_HOST.upper()
-
-#----------------------------------------------------------------------
-# Tell the caller if we are on the development host.
-#----------------------------------------------------------------------
-def isProdHost():
-    return cdrutil.isProductionHost()
-    # return HOST_NAMES[1].upper() == PROD_HOST.upper()
-
-#----------------------------------------------------------------------
-# Give caller variant forms of the host name (cached tuple).
-#----------------------------------------------------------------------
-def getHostName():
-    """
-    Return the server host name as a tuple of:
-        naked host name
-        fully qualified host name
-        fully qualified name, prefixed by "https://"
-    """
-    return HOST_NAMES
-
-#----------------------------------------------------------------------
 # Add a row to the external_map table.
 #----------------------------------------------------------------------
 def addExternalMapping(credentials, usage, value, docId = None,
@@ -5063,13 +5413,6 @@ def getVersionedBlobChangeDate(credentials, docId, version, conn=None,
             break
         lastVersion, lastDate = prevVersion, prevDate
     return lastDate
-
-#----------------------------------------------------------------------
-# Returns the DNS name for the emailer host corresponding to the
-# current CDR server.
-#----------------------------------------------------------------------
-def emailerHost():
-    return isProdHost() and EMAILER_PROD or EMAILER_DEV
 
 #----------------------------------------------------------------------
 # Returns the base URL for the current emailer CGI directory.
@@ -5492,196 +5835,6 @@ def logClientEvent(session, desc, host=DEFAULT_HOST, port=DEFAULT_PORT):
     return int(match.group(1))
 
 #----------------------------------------------------------------------
-# Support for finding trials having certain statuses at any point in
-# time for a specified time period.  Used more frequently than you
-# might think!
-#----------------------------------------------------------------------
-class ProtocolStatusHistory:
-    """
-    Represents laboriously assembled evolution of an InScopeProtocol's
-    overall status.
-    """
-
-    # When Lakshmi says "active trials" she (almost) always means
-    # "trials with overall status of 'Active' or 'Approved-not yet active'".
-    activeStatuses = set(['Active', 'Approved-not yet active'])
-
-    # When not all of the lead organizations for a trial have the
-    # same protocol status at a given moment in time, this is the
-    # order in which the protocol's overall status is selected from
-    # those present in the set of lead org protocol statuses.
-    # I'm aware that this is an incomplete list of protocol status
-    # values; when we asked the users what we should do if none
-    # of these values is found, we never got past the "that can't
-    # happen" response.
-    statusPrecedence = ('Active', 'Temporarily closed', 'Closed',
-                        'Approved-not yet active')
-
-    class Status:
-        """
-        Protocol status for a given range of dates.  Can be invoked
-        with strings for a status value and the effective date for
-        the status, or with just one argument for a node in the
-        parsed tree for the XML document.
-        """
-        def __init__(self, status, startDate=None):
-            self.endDate = None
-            if isinstance(status, basestring):
-                self.name = status
-                self.startDate = startDate
-            else:
-                self.name = self.startDate = None
-                for child in status:
-                    if child.tag == 'StatusName':
-                        self.name = child.text
-                    elif child.tag == 'StatusDate':
-                        self.startDate = child.text
-
-    class LeadOrg:
-        """
-        Lead organization for a protocol, with all its status history.
-        Note that we don't need the status sequence sorted, nor do we
-        need to have the end dates filled in.  We'll do that for the
-        sequence we create for the overall statuses of the protocol
-        itself.
-        """
-        statusTags = set(['PreviousOrgStatus', 'CurrentOrgStatus'])
-        def __init__(self, node):
-            self.statuses = []
-            for child in node.findall('LeadOrgProtocolStatuses'):
-                for grandchild in child:
-                    if grandchild.tag in self.statusTags:
-                        status = ProtocolStatusHistory.Status(grandchild)
-                        if status.name and status.startDate:
-                            self.statuses.append(status)
-
-    def __init__(self, doc):
-        """
-        This is a moderately tricky piece of code.  We're trying to assemble
-        the information we need in order to answer the question "What was
-        the status of this protocol at any given point in time?"  In order
-        to do this we must first assemble the sequence of status values
-        each lead organization had for the protocol every time the
-        organization changed that value.  Then we assemble all of the
-        unique dates on which any of the organizations changed its
-        status value for the protocol.  Then we need to determine, for
-        each of those dates, what the status value was for each of
-        the lead organizations.  We do this be creating an array of
-        status value strings, one string for each lead organization
-        found in the protocol document.  We initialize each string
-        in the array to an empty string, and the string for a given
-        lead organization will remain empty until the first date on
-        which a value was found associated with that organization.
-        Then for each date we apply the logic for determining what
-        the overall status value for the protocol is based on the
-        combinations of values held by the lead organizations at that
-        point in time.  See the getProtocolStatus() method for a
-        description of this logic.
-
-        The constructor accepts either a parsed XML tree object
-        (as created by the lxml.etree package) or a Unicode or
-        utf-8 string serialization of the CDR InScopeProtocol
-        document.
-        """
-
-        #-------------------------------------------------------------------
-        # Parse the document if that hasn't already been done.
-        #-------------------------------------------------------------------
-        if isinstance(doc, basestring):
-            import lxml.etree as etree
-            if type(doc) is str:
-                tree = etree.XML(doc)
-            else:
-                tree = etree.XML(doc.encode('utf-8'))
-        else:
-            tree = doc
-
-        #-------------------------------------------------------------------
-        # Assemble a sequence of the lead organization histories for the
-        # trial.
-        #-------------------------------------------------------------------
-        leadOrgs = []
-        for node in tree.findall('ProtocolAdminInfo/ProtocolLeadOrg'):
-            leadOrgs.append(ProtocolStatusHistory.LeadOrg(node))
-
-        #-------------------------------------------------------------------
-        # Create a dictionary of the unique dates on which one or more
-        # lead organizations changed its status for the protocol.  The
-        # keys for the dictionary are the strings for these dates.  The
-        # values are lists of tuples with the index position of the lead
-        # org in the leadOrgs array and the status the lead org assigned
-        # to the protocol on the date for this list of tuples.
-        #-------------------------------------------------------------------
-        statusesByDate = {}
-        for i, leadOrg in enumerate(leadOrgs):
-            for orgStatus in leadOrg.statuses:
-                val = (i, orgStatus.name)
-                statusesByDate.setdefault(orgStatus.startDate, []).append(val)
-        startDates = statusesByDate.keys()
-        startDates.sort()
-
-        #-------------------------------------------------------------------
-        # Create an array of status values, one for each lead organization.
-        # We will simulate a walk through time, updating the the values
-        # in this array at each point in time when one or more lead org
-        # changed its status for the protocol, and then determining what
-        # the overall status was at that point in time for the protocol.
-        # As we go along, the start date for each node in the array except
-        # the first is used as the end date for the previous node in the
-        # array.
-        #-------------------------------------------------------------------
-        orgStatuses = [''] * len(leadOrgs)
-        self.statuses = []
-        for startDate in startDates:
-            for i, orgStatus in statusesByDate[startDate]:
-                orgStatuses[i] = orgStatus
-            protStatus = ProtocolStatusHistory.getProtocolStatus(orgStatuses)
-            if self.statuses:
-                self.statuses[-1].endDate = startDate
-            self.statuses.append(self.Status(protStatus, startDate))
-
-        #-------------------------------------------------------------------
-        # Fill in the endDate member of the protocol's last Status object.
-        #-------------------------------------------------------------------
-        if self.statuses:
-            self.statuses[-1].endDate = time.strftime("%Y-%m-%d")
-
-    def hadStatus(self, statusSet, startDate, endDate = '9999-12-31'):
-        """
-        Answers the question "Did this protocol ever have any of the
-        specified statuses at any time between a specified range of
-        dates?"
-        """
-        for status in self.statuses:
-            if status.endDate >= startDate:
-                if status.startDate <= endDate:
-                    if status.name in statusSet:
-                        return True
-        return False
-
-    def wasActive(self, startDate, endDate = '9999-12-31'):
-        return self.hadStatus(self.activeStatuses, startDate, endDate)
-
-    @staticmethod
-    def getProtocolStatus(statuses):
-        """
-        If all of the lead organizations have the same status value for
-        a protocol on a given date, then that value is used as the overall
-        status for the protocol.  Otherwise a prioritized list of values
-        is tested in order, and the first value in that list which is
-        present for any of the lead organizations is used as the value
-        for the protocol's overall status.  If none of the values in the
-        prioritized list is found, then an empty string is returned.
-        """
-        statusSet = set([s.upper() for s in statuses])
-        if len(statusSet) == 1:
-            return statuses[0]
-        for value in ProtocolStatusHistory.statusPrecedence:
-            if value.upper() in statusSet:
-                return value
-        return ""
-
-#----------------------------------------------------------------------
 # Transform URLs for DEV and QA
 #----------------------------------------------------------------------
 class MutateCGUrl:
@@ -5759,122 +5912,5 @@ def extract_board_name(doc_title):
         board_name = board_name.replace("Cancer ", "").strip()
     return board_name
 
-#----------------------------------------------------------------------
-# The CDR has too many ways to do logging already. In spite of this,
-# I'm adding yet another logging class, this one based on the standard
-# library's logging module. The immediate impetus for doing this is the
-# fact that we have to use that module in the new CDR Scheduler. The
-# Logger class below is only used as a namespace wrapper, with a factory
-# method for instantiating logger objects.
-#----------------------------------------------------------------------
-class Logging:
-    FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
-    LEVELS = {
-        "info": logging.INFO,
-        "debug": logging.DEBUG,
-        "warn": logging.WARN,
-        "warning": logging.WARNING,
-        "critical": logging.CRITICAL,
-        "error": logging.ERROR
-    }
-    class Formatter(logging.Formatter):
-        """Make our own logging formatter to get the time stamps right."""
-        converter = datetime.datetime.fromtimestamp
-        def formatTime(self, record, datefmt=None):
-            ct = self.converter(record.created)
-            if datefmt:
-                s = ct.strftime(datefmt)
-            else:
-                t = ct.strftime("%Y-%m-%d %H:%M:%S")
-                s = "%s.%03d" % (t, record.msecs)
-            return s
-    @classmethod
-    def get_logger(cls, name, **opts):
-        """
-        Factory method for instantiating a logging object.
 
-        name       required name for the logger
-        path       optional path for the log file
-        format     optional override for the default log format pattern
-        level      optional verbosity for logging, defaults to info
-        propagate  if True, the base handler also writes our entries
-        multiplex  if True, add new handler even there already is one
-        console    if True, add stream handler to write to stderr
-        """
-
-        logger = logging.getLogger(name)
-        level = opts.get("level", "info")
-        logger.setLevel(cls.LEVELS.get(level, logging.INFO))
-        logger.propagate = opts.get("propagate", False)
-        if not logger.handlers or opts.get("multiplex"):
-            path = opts.get("path", "%s/%s.log" % (DEFAULT_LOGDIR, name))
-            handler = logging.FileHandler(path)
-            formatter = cls.Formatter(opts.get("format", cls.FORMAT))
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-            if opts.get("console"):
-                stream_handler = logging.StreamHandler()
-                stream_handler.setFormatter(formatter)
-                logger.addHandler(stream_handler)
-        return logger
-
-def get_text(node, default=None):
-    """
-    Assemble the concatenated text nodes for an element of the document.
-
-    Note that the call to node.itertext() must include the wildcard
-    string argument to specify that we want to avoid recursing into
-    nodes which are not elements. Otherwise we will get the content
-    of processing instructions, and how ugly would that be?!?
-
-    Pass:
-        node - element node from an XML document parsed by the lxml package
-        default - what to return if the node is None
-
-    Return:
-        default if node is None; otherwise concatenated string node descendants
-    """
-
-    if node is None:
-        return default
-    return u"".join(node.itertext("*"))
-
-def ordinal(n):
-    """
-    Convert number to ordinal string.
-    """
-
-    n = int(n)
-    endings = { 1: "st", 2: "nd", 3: "rd" }
-    ending = "th" if 4 < n % 100 <= 20 else endings.get(n %10, "th")
-    return "{0}{1}".format(n, ending)
-
-def make_timestamp():
-    return datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-
-def getpw(name):
-    try:
-        name = name.lower()
-        for line in open(WORK_DRIVE + ":/etc/cdrpw"):
-            n, p = line.strip().split(":", 1)
-            if n == name:
-                return p
-    except:
-        pass
-    return None
-
-if __name__ == "__main__":
-    import argparse
-    import getpass
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--user", "-u", required=True)
-    opts = parser.parse_args()
-    tiers = "DEV", "QA", "STAGE", "PROD"
-    query = "CdrCtl/Title begins 'study of%'"
-    password = getpass.getpass()
-    credentials = (opts.user, password)
-    for tier in tiers:
-        users = getUsers(credentials, tier)
-        hits = search(credentials, query, tier)
-        args = tier, len(users), len(hits)
-        print("%5s has %d CDR users and %d 'Study of ...' documents" % args)
+'''

@@ -7,18 +7,28 @@ import unittest
 import adodbapi
 from cdrapi import settings
 
+
+# Python 2/3 compatability
+try:
+    basestring
+except:
+    basestring = str
+
+
 def connect(**opts):
     """
     Connect to the CDR database using known login account.
 
     Pass:
       user - string for database account name (default Query.CDRSQLACCOUNT)
-      tier - PROD|STAGE|QA|DEV (default value in /etc/cdrtier.rc)
+      tier - tier name string (e.g., 'PROD') or Tier object
       database - initial db for the connection (default Query.DB)
       timeout - time to wait before giving up (default Query.DEFAULT_TIMEOUT)
     """
 
-    tier = settings.Tier(tier=opts.get("tier"))
+    tier = opts.get("tier") or settings.Tier()
+    if isinstance(tier, basestring):
+        tier = settings.Tier(tier)
     user = opts.get("user", Query.CDRSQLACCOUNT)
     if user == "cdr":
         user = Query.CDRSQLACCOUNT
