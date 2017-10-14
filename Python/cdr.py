@@ -29,7 +29,7 @@ from cdrapi.users import Session
 try:
     basestring
 except:
-    basestring = str
+    basestring = unicode = str
 
 
 # ======================================================================
@@ -513,25 +513,21 @@ class Doc:
         Return:
             utf-8 encoded XML string.
         """
-        alreadyUtf8 = self.encoding.lower() == "utf-8"
-        rep = "<CdrDoc Type='%s'" % self.type
-        if self.id: rep += " Id='%s'" % self.id
-        rep += "><CdrDocCtl>"
-        for key in self.ctrl:
-            value = self.ctrl[key]
-            if not alreadyUtf8:
-                value = unicode(value, self.encoding).encode('utf-8')
-            rep += "<%s>%s</%s>" % (key, cgi.escape(value), key)
-        rep += "</CdrDocCtl>\n"
-        xml = self.xml
-        if xml:
-            if not alreadyUtf8:
-                xml = unicode(self.xml, self.encoding).encode('utf-8')
-            rep += "<CdrDocXml><![CDATA[%s]]></CdrDocXml>" % xml
-        if self.blob != None:
-            rep += makeDocBlob(self.blob, wrapper="CdrDocBlob")
-        rep += "</CdrDoc>"
-        return rep
+
+        doc = etree.Element("CdrDoc", Type=self.type)
+        if self.id:
+            doc.set("Id", normalize(self.id))
+        control_wrapper = etree.SubElement(doc, "CdrDocCtl")
+        if self.ctrl:
+            for key in self.ctrl:
+                value = self.ctrl[key].decode(self.encoding)
+                etree.SubElement(control_wrapper, key).text = value
+        xml = self.xml.decode("utf-8")
+        etree.SubElement(doc, "CdrDocXml").text = etree.CDATA(xml)
+        if self.blob is not None:
+            blob = base64.encodestring(self.blob).decode("ascii")
+            etree.SubElement(doc, "CdrDocBlob", encoding="base64").text = blob
+        return etree.tostring(doc, encoding="utf-8")
 
     # Construct name for publishing the document.  Zero padding is
     # different for media documents, based on Alan's Multimedia Publishing
@@ -544,29 +540,20 @@ class Doc:
         docId = exNormalize(self.id)[1]
         if self.type != 'Media':
             return "CDR%d.xml" % docId
-        dom = xml.dom.minidom.parseString(self.xml)
-        for node in dom.documentElement.childNodes:
-            if node.nodeName == "PhysicalMedia":
-                for child in node.childNodes:
-                    if child.nodeName == "ImageData":
-                        for grandchild in child.childNodes:
-                            if grandchild.nodeName == "ImageEncoding":
-                                encoding = getTextContent(grandchild)
-                                if encoding == 'JPEG':
-                                    return "CDR%010d.jpg" % docId
-                                elif encoding == 'GIF':
-                                    return "CDR%010d.gif" % docId
-                    elif child.nodeName == "SoundData":
-                        for grandchild in child.childNodes:
-                            if grandchild.nodeName == "SoundEncoding":
-                                encoding = getTextContent(grandchild)
-                                if encoding == 'MP3':
-                                    return "CDR%010d.mp3" % docId
+        for node in etree.fromstring(self.xml).findall("PhysicalMedia"):
+            for child in node.findall("ImageData/ImageEncoding"):
+                encoding = get_text(child)
+                if encoding == 'JPEG':
+                    return "CDR%010d.jpg" % docId
+                elif encoding == 'GIF':
+                    return "CDR%010d.gif" % docId
+            for child in node.findall("SoundData/SoundEncoding"):
+                encoding = get_text(child)
+                if encoding == 'MP3':
+xs                    return "CDR%010d.mp3" % docId
         raise Exception("Media type not yet supported")
 
-#----------------------------------------------------------------------
-# Wrap an XML document in CdrDoc wrappers.
-#----------------------------------------------------------------------
+
 def makeCdrDoc(xml, docType, docId=None, ctrl=None):
     """
     Make XML suitable for sending to server functions expecting
@@ -582,43 +569,25 @@ def makeCdrDoc(xml, docType, docId=None, ctrl=None):
         New XML string with passed xml as CDATA section, coded in utf-8.
     """
 
-    # Use the caller's control values if present.
-    ctrl = ctrl if ctrl is not None else {}
-
-    # Check and set encoding
-    if type(xml) == type(u""):
-        xml = xml.encode("utf-8")
-
-    # Create ID portion of header, if there is an id
-    idHeader = ""
+    doc = etree.Element("CdrDoc", Type=docType)
     if docId:
-        idHeader = " Id='%s'" % exNormalize(docId)[0]
-
-    # Construct the entire document
-    docCtrl = "<CdrDocCtl>"
-    if ctrl:
-        for key, value in ctrl.iteritems():
-            if type(value) is unicode:
-                value = value.encode('utf-8')
-            else:
-                value = str(value)
-            docCtrl += "<%s>%s</%s>" % (key, cgi.escape(value), key)
-    docCtrl += "</CdrDocCtl>"
-    newXml = """<CdrDoc Type='%s'%s>
-%s
-<CdrDocXml><![CDATA[%s]]></CdrDocXml>
-</CdrDoc>""" % (docType, idHeader, docCtrl, xml)
-
-    return newXml
+        doc.set("Id", normalize(docId))
+    control_wrapper = etree.SubElement(doc, "CdrDocCtl")
+    for name in (ctrl or {}):
+        value = ctrl[name] or ""
+        if not isinstance(value, unicode):
+            value = value.decode("utf-8")
+        etree.SubElement(control_wrapper, name).text = value
+    if not isinstance(xml, unicode):
+        xml = xml.decode("utf-8")
+    etree.SubElement(doc, "CdrDocXml").text = etree.CDATA(xml)
+    return etree.tostring(doc, encoding="utf-8")
 
 def getDoc(credentials, docId, *args, **opts):
-    checkout='N', version="Current",
-           xml='Y', blob='N',
-           host=DEFAULT_HOST, port=DEFAULT_PORT, getObject=False):
     """
     Retrieve the requested version of a document from the CDR server
 
-    Required ositional arguments:
+    Required positional arguments:
       credentials - name of existing session or login credentials
       docId - CDR ID string or integer
 
@@ -637,41 +606,35 @@ def getDoc(credentials, docId, *args, **opts):
 
     checkout = args[0] if len(args) > 0 else opts.get("checkout", "N")
     version = args[1] if len(args) > 1 else opts.get("version", "Current")
-    getObject = opts.get("getObject")
+    include_xml = opts.get("xml", "Y") == "Y"
+    include_blob = opts.get("blob", "N") == "Y"
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        doc = docs.Doc(session, version=version)
-        if checkout:
+        doc = docs.Doc(session, id=docId, version=version)
+        if checkout == "Y":
             doc.lock()
-        return doc if docObject
-        session.get_group(name).delete(session)
+        doc = doc.legacy_doc(get_xml=include_xml, get_blob=include_blob)
     else:
+        doc = None
         command = etree.Element("GetCdrDoc")
-        command.set("includeXml", xml or "Y")
-        command.set("includeBlob", blob or "N")
-        etree.SubElement(command, "GrpName").text = name
+        command.set("includeXml", "Y" if include_xml else "N")
+        command.set("includeBlob", "Y" if include_blob else "N")
+        etree.SubElement(command, "DocId").text = normalize(docId)
+        etree.SubElement(command, "Lock").text = checkout
+        etree.SubElement(command, "DocVersion").text = str(version)
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrDelGrpResp":
-                return
-            raise Exception(";".join(response.errors) or "missing response")
-        raise Exception("missing response")
-    # Create the command.
-    did  = normalize(docId)
-    lck  = "<Lock>%s</Lock>" % (checkout)
-    ver  = "<DocVersion>%s</DocVersion>" % (version)
-    what = "includeXml='%s' includeBlob='%s'" % (xml, blob)
-    cmd  = "<CdrGetDoc %s><DocId>%s</DocId>%s%s</CdrGetDoc>" % \
-           (what, did, lck, ver)
-
-    # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # Extract the document.
-    doc = extract("(<CdrDoc[>\s].*</CdrDoc>)", resp)
-    if doc.startswith("<Errors") or not getObject: return doc
-    return Doc(doc, encoding = 'utf-8')
-
+            if response.node.tag == "CdrGetCdrDocResp":
+                doc = response.node.find("CdrDoc")
+            else:
+                error = ";".join(response.errors) or "missing response"
+                raise Exception(error)
+        if doc is None:
+            raise Exception("missing response")
+    doc_string = etree.tostring(doc, encoding="utf-8")
+    if opts.get("getObject"):
+        return Doc(doc_string, encoding="utf-8")
+    return doc_string
 
 class _Control:
     """
