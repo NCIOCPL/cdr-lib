@@ -147,6 +147,24 @@ import cdrutil
 # Provides lookup of database passwords from centralized file.
 import cdrpw
 
+# CBIIT's original assertion that the DB ports would be stable flopped.
+def load_ports():
+    ports = {}
+    for letter in "DCEFGHIJKL":
+        path = letter + ":/etc/cdrdbports"
+        try:
+            for line in open(path):
+                tokens = line.strip().split(":")
+                if len(tokens) == 3:
+                    tier, db, port = tokens
+                    if db.lower() == "cdr":
+                        ports[tier] = int(port)
+            return ports
+        except:
+            pass
+    raise Exception("database port configuration file not found")
+PORTS = load_ports()
+
 # Setting up the propper database source
 # --------------------------------------
 # Default
@@ -766,18 +784,9 @@ def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr'):
             dataSource = hostInfo.qname()
 
     adoConn = win32com.client.Dispatch("ADODB.Connection")
-    if CBIIT_HOSTING:
-        port = 52400
-        if h.tier == "PROD":
-            port = 55733
-        elif h.tier == "STAGE":
-            port = 55459
-        elif h.tier == "QA":
-            port = 53100
-        if user.upper() == "CDR":
-            user = "cdrsqlaccount"
-    else:
-        port = 32408
+    port = PORTS.get(h.tier, 52300)
+    if user.upper() == "CDR":
+        user = "cdrsqlaccount"
     password = cdrpw.password(h.org, h.tier, db, user)
     try:
         connString = ("Provider=SQLOLEDB;"

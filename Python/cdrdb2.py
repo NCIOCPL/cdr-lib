@@ -18,6 +18,23 @@ CBIIT_HOSTING = True
 
 DEFAULT_TIMEOUT = 120
 
+def load_ports():
+    ports = {}
+    for letter in "DCEFGHIJKL":
+        path = letter + ":/etc/cdrdbports"
+        try:
+            for line in open(path):
+                tokens = line.strip().split(":")
+                if len(tokens) == 3:
+                    tier, db, port = tokens
+                    if db.lower() == "cdr":
+                        ports[tier] = int(port)
+            return ports
+        except:
+            pass
+    raise Exception("database port configuration file not found")
+PORTS = load_ports()
+
 # Accounting for alternate tiers later, see def connect()
 h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier())
 if h.org == 'OCE':
@@ -75,19 +92,9 @@ def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr',
         if hostInfo:
             dataSource = hostInfo.qname
             tier = hostInfo.tier
-
-    if CBIIT_HOSTING:
-        ports = {
-            "PROD": 55733,
-            "STAGE": 55459,
-            "QA": 53100,
-            "DEV": 52400
-        }
-        port = ports.get(tier, 52400)
-        if user.upper() == "CDR":
-            user = "cdrsqlaccount"
-    else:
-        port = 32408
+    port = PORTS.get(tier, 52300)
+    if user.upper() == "CDR":
+        user = "cdrsqlaccount"
     password = cdrpw.password(h.org, tier, db, user)
     if timeout is None:
         timeout = DEFAULT_TIMEOUT
