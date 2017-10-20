@@ -17,7 +17,8 @@ class Tests(unittest.TestCase):
     def tearDown(self):
         cdr.logout(self.session, tier=self.TIER)
 
-class SessionTests(Tests):
+"""
+class _01SessionTests(Tests):
     def test_01_login(self):
         opts = dict(comment="unit testing", tier=self.TIER)
         SessionTests.session2 = Session.create_session(self.USERNAME, **opts)
@@ -36,7 +37,7 @@ class SessionTests(Tests):
         self.assertNotEqual(session, self.session)
         self.assertIsNone(cdr.logout(session, tier=self.TIER))
 
-class UserPermissionTests(Tests):
+class _02UserPermissionTests(Tests):
     def delete_action(self, name, **opts):
         disable = "ALTER TABLE {} NOCHECK CONSTRAINT ALL"
         enable = "ALTER TABLE {} WITH CHECK CHECK CONSTRAINT ALL"
@@ -97,7 +98,7 @@ class UserPermissionTests(Tests):
         self.assertEqual(actions["ADD DOCUMENT"], "Y")
         self.assertEqual(actions["LIST USERS"], "N")
 
-class GroupTests(Tests):
+class _03GroupTests(Tests):
     NAME = "Test Group"
     NEWNAME = "Test Group (MOD)"
     USERS = ["tester"]
@@ -134,6 +135,15 @@ class GroupTests(Tests):
     def test_05_del_group(self):
         opts = dict(tier=self.TIER)
         self.assertIsNone(cdr.delGroup(self.session, self.NEWNAME, **opts))
+"""
 
+class _00DocTests(Tests):
+    def test_01_get_doc(self):
+        doc = cdr.getDoc(self.session, 5000, getObject=True)
+        self.assertEqual(doc.type, "Person")
+    def test_02_filter(self):
+        result = cdr.filterDoc(self.session, ["set:QC Summary Set"], 62902)
+        print(result)
+        self.assertTrue(b"small intestine cancer" in result[0])
 if __name__ == "__main__":
     unittest.main()
