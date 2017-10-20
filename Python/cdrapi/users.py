@@ -3,6 +3,7 @@ Control for who can use the CDR and what they can do
 """
 
 import random
+import threading
 import time
 from cdrapi import db
 from cdrapi.settings import Tier
@@ -27,6 +28,7 @@ class Session:
       id - primary key for the session's row in the the session table
       user_id - primary key in the usr table for this session's user
       user_name - account name for this user
+      cache - session-specific cache of filtering objects
     """
 
     def __init__(self, name, tier=None):
@@ -71,8 +73,10 @@ class Session:
             raise Exception("Invalid or expired session: {!r}".format(name))
         self.active = True
         self.id, self.user_id, self.user_name = row
+        self.cache = self.Cache()
         update = "UPDATE session SET last_act = GETDATE() WHERE id = ?"
         self.cursor.execute(update, (self.id,))
+        self.conn.commit()
 
     def log(self, what):
         """
@@ -561,3 +565,19 @@ class Session:
                     insert = "INSERT INTO grp_action(grp, action, doc_type)"
                     insert += " VALUES(?, ?, ?)"
                     cursor.execute(insert, (self.id, action_id, doctype_id))
+
+    class Cache:
+        def __init__(self):
+            self.terms = {}
+            self.filters = {}
+            self.filter_sets = {}
+            self.term_lock = threading.Lock()
+            self.filter_lock = threading.Lock()
+            self.filter_set_lock = threading.Lock()
+        def clear(self):
+            with self.term_lock:
+                self.terms = {}
+            with self.filter_lock:
+                self.filters = {}
+            with self.filter_set_lock:
+                self.filter_sets = {}
