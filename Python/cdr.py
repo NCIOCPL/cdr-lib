@@ -21,7 +21,7 @@ from lxml import etree
 import cdrapi.db
 from cdrapi.settings import Tier
 from cdrapi.users import Session
-
+from cdrapi import docs
 
 # ======================================================================
 # Make sure we can run on both Python 2 and Python 3
@@ -474,8 +474,8 @@ class Doc:
             self.ctrl     = {}
             self.xml      = ''
             self.blob     = None
-            self.id       = root.get("Id", "").encode("ascii") or None
-            self.type     = root.get("Type", "").encode("ascii") or None
+            self.id       = root.get("Id")
+            self.type     = root.get("Type")
             for node in root:
                 if node.tag == "CdrDocCtl":
                     self.parseCtl(node)
@@ -550,7 +550,7 @@ class Doc:
             for child in node.findall("SoundData/SoundEncoding"):
                 encoding = get_text(child)
                 if encoding == 'MP3':
-xs                    return "CDR%010d.mp3" % docId
+                    return "CDR%010d.mp3" % docId
         raise Exception("Media type not yet supported")
 
 
@@ -600,6 +600,8 @@ def getDoc(credentials, docId, *args, **opts):
       blob - retrieve the blob for the document if "Y" (default "N")
       getObject - return a `cdr.Doc` object if True (default is to
                   retrieve a serialized string version of the doc object)
+                  note that this legacy object is not the same as the
+                  new `docs.Doc` class objects
       tier - optional; one of DEV, QA, STAGE, PROD
       host - deprecated alias for tier
     """
@@ -624,7 +626,7 @@ def getDoc(credentials, docId, *args, **opts):
         etree.SubElement(command, "Lock").text = checkout
         etree.SubElement(command, "DocVersion").text = str(version)
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrGetCdrDocResp":
+            if response.node.tag == "CdrGetDocResp":
                 doc = response.node.find("CdrDoc")
             else:
                 error = ";".join(response.errors) or "missing response"
@@ -635,6 +637,148 @@ def getDoc(credentials, docId, *args, **opts):
     if opts.get("getObject"):
         return Doc(doc_string, encoding="utf-8")
     return doc_string
+
+def filterDoc(credentials, filter, docId=None, **opts):
+    """
+    Apply one or more filters to an XML document
+
+    Positional arguments:
+      credentials - result of login.
+      filter - one of:
+               * filter XML string (if 'inline' option is True)
+               * CDR ID for filter document
+               * sequence, mixing any of the following
+                     * filter title string prefixed by 'name:'
+                     * filter set name string prefixed by 'set:'
+                     * CDR ID for filter documenet
+      docId - optional CDR ID for document to be filtered
+
+    Optional keyword arguments:
+      doc - XML string for document to be filter (if docId is not supplied)
+      inline - if True, filter argument is XML string for XSL/T filter document
+      parms - optional sequence of name/value pairs to be used as filter
+              parameters (used by all of the filters; there is no way to
+              pass different parameters for individual filters in the job)
+              (deprecated legacy alias `parm` is also supported for this
+              option)
+      no_output - if "Y, retrieve messages but no filtered document
+      ver - version number of document to be filtered, or 'last' or 'lastp'
+            (docVer is accepted as a legacy alias for this option)
+      date - used in combination with `docVer` to specify last version (or
+             last publishable version) created before this date/time);
+             docDate is supported as a deprecated legacy alias for this option
+      filter_ver - which versions of the filters to use ('last' or 'last'
+                   or a version number); a specific version number only
+                   makes sense in the case of a request involving only one
+                   filter, and is probably a mistake in most cases
+                   (filterVer is supported as a deprecated legacy alias
+                   for this option)
+      filter_date - similar to date; if `date` is specified and `filter_date`
+                    is not specified, `date` is used to restrict filter
+                    version selection; filterDate is legacy alias
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+        tuple of document, messages if successful, else error string
+    """
+
+    xml = opts.get("doc")
+    ver = opts.get("ver") or opts.get("docVer")
+    date = opts.get("date") or opts.get("docDate")
+    tier = opts.get("tier") or opts.get("host") or None
+    filter_ver = opts.get("filter_ver") or opts.get("filterVer")
+    filter_date = opts.get("filter_date") or opts.get("filterDate") or date
+    no_output = opts.get("no_output", "N") == "Y"
+    output = not no_output
+    parms = opts.get("parms") or opts.get("parm")
+    parms = dict(parms) if parms else {}
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        doc = docs.Doc(session, id=docId, version=ver, before=date, xml=xml)
+        options = dict(
+            parms=parms,
+            output=output,
+            version=filter_ver,
+            date=filter_date
+        )
+        if opts.get("inline"):
+            opts["filter"] = filter
+            filters = []
+        else:
+            filters = filter
+            if not isinstance(filters, (tuple, list)):
+                filters = [filters]
+        result = doc.filter(*filters, **options)
+        if result.messages:
+            messages = etree.Element("Messages")
+            for message in result.messages:
+                etree.SubElement(messages, "message").text = message
+            messages = etree.tostring(messages, encoding="utf-8")
+        else:
+            messages = ""
+        if output:
+            return bytes(result.doc), messages
+        else:
+            return messages
+    command = etree.Element("CdrFilter")
+    if no_output:
+        command.set("Output", "N")
+    if filter_ver:
+        command.set("FilterVersion", str(filter_ver))
+    if filter_date:
+        command.set("FilterCutoff", str(filter_date))
+    if opts.get("inline"):
+        if not isinstance(unicode, filter):
+            filter = filter.decode("utf-8")
+        etree.SubElement(command, "Filter").text = etree.CDATA(filter)
+    else:
+        if not isinstance(filter, (tuple, list)):
+            filter = [filter]
+        for f in filter:
+            f = str(f)
+            if f.startswith("set:"):
+                name = f.split(":", 1)[1]
+                node = etree.SubElement(command, "FilterSet", Name=name)
+            elif f.startswith("name:"):
+                name = f.split(":", 1)[1]
+                node = etree.SubElement(command, "Filter", Name=name)
+            else:
+                href = normalize(f)
+                node = etree.SubElement(command, "Filter", href=href)
+    node = etree.SubElement(command, "Document")
+    if docId:
+        node.set("href", normalize(docId))
+        node.set("version", str(ver))
+        if date:
+            node.set("maxDate", str(date))
+    elif xml:
+        if not isinstance(unicode, xml):
+            xml = xml.decode("utf-8")
+        node.text = etree.CDATA(xml)
+    else:
+        raise Exception("nothing to filter")
+
+    for name in parms:
+        parm = etree.SubElement(command, "Parm")
+        etree.SubElement(parm, "Name").text = str(name)
+        etree.SubElement(parm, "Value").text = str(parms[name] or "")
+
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrFilterResp":
+            document = get_text(response.node.find("Document"))
+            messages = response.node.find("Messages")
+            if messages is not None:
+                messages = etree.tostring(messages, encoding="utf-8")
+            else:
+                messages = ""
+            if output:
+                return document.encode("utf-8"), messages
+            else:
+                return messages
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
 
 class _Control:
     """
@@ -2777,129 +2921,6 @@ def deDupErrs(errXml):
         result.append(errString)
 
     return result
-
-#----------------------------------------------------------------------
-# Retrieve a specified document from the CDR Server using a filter.
-# Returns list of [filtered_document, messages] or error_string.
-# Set the inline parameter to 1 if you want the second argument to
-# be recognized as the filter XML document string in memory.
-#----------------------------------------------------------------------
-def filterDoc(credentials, filter, docId=None, doc=None, inline=False,
-              host=DEFAULT_HOST, port=DEFAULT_PORT, parm=None,
-              no_output='N', docVer=None, docDate=None,
-              filterVer='', filterDate=None):
-    """
-    Pass:
-        credentials = Result of login.
-        filter      = Filter text or name: or set:, see inline.
-        host/port   = Standard stuff.
-        parm        = Optional array of filter parameters, but there's
-                      no way to pass separate parms for each filter in a set.
-        no_output   = Retrieves messages but no filtered document.
-        docVer      = Version number or 'last' or 'lastp'.
-        docDate     = If last or lastp, must be before this date-time.
-        filterVer   = Like docVer.
-        filterDate  = Like docDate.  If docDate but not filterDate, set
-                      filterDate = docDate.
-    Return:
-        2 element list of document + messages.
-        Else single string of error messages.
-    """
-
-    # Create the command.
-    if docId:
-        verQual = ''
-        if docVer:
-            # User specified a version number or "last" or "lastp"
-            if type(docVer) == type(9): verQual = " version='%d'" % docVer
-            else: verQual = " version='%s'" % docVer
-        if docDate:
-            # User specified a max date limit for last or lastp
-            # Ignored in server if version != one of those
-            verQual += " maxDate='%s'" % docDate
-        docElem = "<Document href='%s'%s/>" % (normalize(docId), verQual)
-    elif doc:
-        docElem = "<Document><![CDATA[%s]]></Document>" % doc
-    else: return "<Errors><Err>Document not specified.</Err></Errors>"
-
-    # Create filter date qualifier
-    # If date not specified, use document date
-    verQual = ''
-    if filterDate:
-        verQual = " maxDate='%s'" % filterDate
-    elif docDate:
-        verQual = " maxDate='%s'" % docDate
-
-    # The filter is given to us as a string containing the XML directly.
-    if inline:
-        filterElem = "<Filter><![CDATA[%s]]></Filter>" % filter
-
-    # We have a list of filters given by ID or name.
-    elif type(filter) is type([]):
-        filterElem = ""
-        for l in filter:
-            filt = ""
-            isSet = 0
-            if l != "":
-                if l.startswith("name:"):
-                    filt = l[5:]
-                    ref="Name"
-                elif l.startswith("set:"):
-                    filt = l[4:]
-                    isSet = 1
-                else:
-                    filt = normalize(l)
-                    ref="href"
-            if filt != "":
-                if isSet:
-                    filterElem += '<FilterSet Name="%s" Version="%s"%s/>' % \
-                        (cgi.escape(filt, 1), filterVer, verQual)
-                else:
-                    v = filterVer and (" version='%s'%s" % \
-                                      (filterVer, verQual)) or ""
-                    filterElem += ("<Filter %s='%s'%s/>" %
-                                   (ref,
-                                    filt,
-                                    v))
-
-    # We have a single filter identified by ID.
-    else:
-        filt = normalize(filter)
-        filterElem = ("<Filter href='%s'/>" % filt)
-
-    parmElem = ""
-    parm = parm if parm is not None else []
-    if type(parm) is type([]) or type(parm) is type(()):
-        for l in parm:
-            parmElem += "<Parm><Name>" + l[0] \
-                      + "</Name><Value>" + xml.sax.saxutils.escape(l[1]) \
-                      + "</Value></Parm>"
-    if parmElem:
-        # Even parms can have non-ASCII in them and may need encoding
-        if type(parmElem) == type(u""):
-            parmElem = parmElem.encode ("utf-8")
-        parmElem = "<Parms>%s</Parms>" % parmElem
-
-    output = ""
-    if no_output == "Y":
-        output = ' Output="N"'
-
-    cmd = "<CdrFilter%s>%s%s%s</CdrFilter>" % (output, filterElem,
-                                               docElem, parmElem)
-
-    # Everything must be utf-8.  Checking here will fix any unicode
-    #  encoding originating in filter, doc, or parms
-    if type(cmd) == type(u""):
-        cmd = cmd.encode("utf-8")
-
-    # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # Extract the filtered document.
-    return extract_multiple(r"<Document[>\s][^<]*<!\[CDATA\[(.*)\]\]>\s*"
-                              r"</Document>"
-                              r"\s*((?:<Messages>.*</Messages>)?)",
-                            resp)
 
 #----------------------------------------------------------------------
 # Request the output for a CDR report.
