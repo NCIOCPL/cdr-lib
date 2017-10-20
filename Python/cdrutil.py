@@ -453,12 +453,17 @@ def getTier(drive_prefix=""):
     Caches the file lookup in an AppHost class variable.
     """
     if not AppHost.tier:
-        try:
-            fp = file(drive_prefix + '/etc/cdrtier.rc')
-            rc = fp.read()
-            AppHost.tier = rc.upper().strip()
-        except:
-            AppHost.tier = 'DEV'
+         drives = "DCEFGHIJKLMNOPQRSTUVWXYZ"
+         drive_prefixes = [drive_prefix] + [drive + ":" for drive in drives]
+         for drive_prefix in drive_prefixes:
+             try:
+                 with open(drive_prefix + "/etc/cdrtier.rc") as fp:
+                     AppHost.tier = fp.read().upper().strip()
+                     break
+             except:
+                 pass
+         if not AppHost.tier:
+             raise Exception("unable to find /etc/cdrtier.rc")
     return AppHost.tier
 
 
