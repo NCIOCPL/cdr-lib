@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 CDR Python client wrapper
 
@@ -15,6 +14,7 @@ This module is now compatible with Python 3 and Python 2.
 import datetime
 import logging
 import random
+import re
 import dateutil.parser
 import requests
 from lxml import etree
@@ -28,8 +28,10 @@ from cdrapi import docs
 # ======================================================================
 try:
     basestring
+    is_python3 = False
 except:
     basestring = unicode = str
+    is_python3 = True
 
 
 # ======================================================================
@@ -277,6 +279,46 @@ def delAction(credentials, name, **opts):
         raise Exception("missing response")
 
 
+def getDoctypes(credentials, **opts):
+    """
+    Get the list of active CDR document types
+
+    Pass:
+      credentials - name of existing session or login credentials
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return
+      sequence of active document type names, sorted alphabetically
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return docs.Doctype.list_doc_types(session)
+    command = etree.Element("CdrListDocTypes")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrListDocTypesResp":
+            print(etree.tostring(response.node, pretty_print=True))
+            return [get_text(t) for t in response.node.findall("DocType")]
+        else:
+            raise Exception(";".join(response.errors) or "missing response")
+    raise Exception("missing response")
+
+    # Create the command
+    cmd = "<CdrListDocTypes/>"
+
+    # Submit the request.
+    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
+    err = checkErr(resp)
+    if err: return err
+
+    # Parse the response.
+    types = re.findall("<DocType>(.*?)</DocType>", resp)
+    if 'Filter' not in types: types.append('Filter')
+    types.sort()
+    return types
+
 def getGroups(credentials, **opts):
     """
     Get the list of CDR authorization groups
@@ -421,18 +463,19 @@ def delGroup(credentials, name, **opts):
         raise Exception("missing response")
 
 
-#----------------------------------------------------------------------
-# Object containing components of a CdrDoc element.
-#
-# NOTE: If the strings passed in for the constructor are encoded as
-#       anything other than latin-1, you MUST provide the name of
-#       the encoding used as the value of the `encoding' parameter!
-#----------------------------------------------------------------------
 class Doc:
+    """
+    Object containing components of a CdrDoc element.
+    """
+
     def __init__(self, x, type = None, ctrl = None, blob = None, id = None,
                  encoding = 'latin-1'):
         """
         An object encapsulating all the elements of a CDR document.
+
+        NOTE: If the strings passed in for the constructor are encoded as
+              anything other than latin-1, you MUST provide the name of
+              the encoding used as the value of the `encoding' parameter!
 
         Parameters:
             x           XML as utf-8 or Unicode string.
@@ -527,7 +570,13 @@ class Doc:
         if self.blob is not None:
             blob = base64.encodestring(self.blob).decode("ascii")
             etree.SubElement(doc, "CdrDocBlob", encoding="base64").text = blob
-        return etree.tostring(doc, encoding="utf-8")
+        cdr_doc_xml = etree.tostring(doc, encoding="utf-8")
+        #return cdr_doc_xml
+        if is_python3:
+            #print("converting")
+            return cdr_doc_xml.decode("utf-8")
+        #print("Not converting")
+        return cdr_doc_xml
 
     # Construct name for publishing the document.  Zero padding is
     # different for media documents, based on Alan's Multimedia Publishing
@@ -583,6 +632,218 @@ def makeCdrDoc(xml, docType, docId=None, ctrl=None):
     etree.SubElement(doc, "CdrDocXml").text = etree.CDATA(xml)
     return etree.tostring(doc, encoding="utf-8")
 
+def _put_doc(name, **opts):
+    """
+    Create and submit the XML command node for adding or replacing a CDR doc
+
+    Factored tunneling code used by `addDoc()` and `modDoc()`.
+
+    Pass:
+      command_name - string for the name of the top node for the command
+      opts - see documentation for `addDoc()` and `repDoc()`
+
+    Return:
+      see documentation for `addDoc()`
+    """
+
+    # Start the command for the tunneling API.
+    command = etree.Element(command_name)
+
+    # Indicate whether we should keep the document locked or check it in.
+    check_in = opts.get("checkin") == "Y" or opts.get("checkIn") == "Y"
+    etree.SubElement(command, "CheckIn").text = "Y" if check_in else "N"
+
+    # Should a new version be created?
+    version = etree.SubElement(command, "Version")
+    version.text = opts.get("ver", "N")
+    version.set("Publishable", opts.get("publishable", "N"))
+
+    # Indicate whether the document should be validated before saving it.
+    locators = opts.get("locators") == "Y" or opts.get("errorLocators") == "Y"
+    val = etree.SubElement(command, "Validate")
+    val.text = opts.get("val", "N")
+    val.set("ErrorLocators", "Y" if locators else "N")
+
+    # Should we set modify the link_net table even if not validating?
+    set_links = opts.get("set_links") != "N" and opts.get("setLinks") != "N"
+    etree.SubElement("SetLinks").text = "Y" if set_links else "N"
+
+    # Specify the value to be saved in audit_trail.comment.
+    reason = opts.get("reason") or opts.get("comment") or ""
+    if not isinstance(reason, unicode):
+        reason = reason.decode("utf-8")
+    etree.SubElement(command, "Reason").text = reason
+
+    # Get the CdrDoc node.
+    filename = opts.get("doc_filename") or opts.get("file")
+    try:
+        if filename:
+            cdr_doc = etree.parse(filename).getroot()
+        else:
+            doc = opts.get("doc")
+            if isinstance(doc, unicode):
+                doc = doc.encode("utf-8")
+            cdr_doc = etree.fromstring(doc)
+    except:
+        error = cls.wrap_error("Unable to parse document")
+        if show_warnings:
+            return None, error
+        return error
+
+    # Plug in the BLOB if appropriate, replacing what's there.
+    filename = opts.get("blob_filename") or opts.get("blobFile")
+    if filename:
+        try:
+            with open(filename, "rb") as fp:
+                blob = fp.read()
+        except:
+            error = cls.wrap_error("unable to read BLOB file")
+            if show_warnings:
+                return None, error
+            return error
+    else:
+        blob = opts.get("blob")
+        if blob is None:
+            if opts.get("del_blob") or opts.get("delBlob"):
+                blob = b""
+    if opts.get("del_blobs") or opts.get("delAllBlobVersions"):
+        blob = None
+        etree.SubElement(command, "DelAllBlobVersions").text = "Y"
+    if blob is not None:
+        encoded_blob = base64.encodestring(blob)
+        node = cdr_doc.find("CdrDocBlob")
+        if node is not None:
+            node.text = encoded_blob
+        else:
+            etree.SubElement(cdr_doc, "CdrDocBlob").text = encoded_blob
+
+    # Plug in a new comment if appropriate.
+    comment = opts.get("comment")
+    if not isinstance(comment, unicode):
+        comment = comment.decode("utf-8")
+    if comment:
+        doc_control = cdr_doc.find("CdrDocCtl")
+        node = doc_control.find("DocComment")
+        if node is not None:
+            node.text = comment
+        else:
+            etree.SubElement(doc_control, "DocComment").text = comment
+
+    # Block (or unblock) the document if requested.
+    status = opts.get("active_status") or opts.get("activeStatus")
+    if status:
+        doc_control = cdr_doc.find("CdrDocCtl")
+        node = doc_control.find("DocActiveStatus")
+        if node is not None:
+            node.text = status
+        else:
+            etree.SubElement(doc_control, "DocActiveStatus").text = status
+
+    #Plug the CdrDoc node into the command.
+    command.append(cdr_doc)
+
+    # Submit the command and extract the return values from the response.
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == command_name + "Resp":
+            doc_id = get_text(response.node.find("DocId"))
+            errors = response.node.find("Errors")
+            if errors is not None:
+                errors = etree.tostring(errors, encoding="utf-8")
+            if opts.get("show_warnings") or opts.get("showWarnings"):
+                return doc_id, errors
+            return doc_id or errors
+        else:
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+    raise Exception("missing response")
+    return command
+
+def addDoc(credentials, **opts):
+    """
+    Add a document to the repository
+
+    Required positional argument:
+      credentials - name of existing session or login credentials
+
+    Keyword arguments of which exactly one must be specified:
+      doc - CdrDoc XML (unicode or utf-8)
+      doc_filename - optional name of file containing CdrDoc XML (utf-8)
+
+    Optional keyword arguments:
+      active_status - 'I' to block or 'A' to unblock doc; otherwise no change
+      blob - bytes string for blob, if any; otherwise None
+      blob_filename - alternative way to get blob - from file of bytes
+      check_in - if 'Y' unlock the document after saving it
+      comment - for document.command and doc_version.comment columns
+      locators - if 'Y' add eref attributes to Err elements returned
+      publishable - if 'Y' make the version publishable
+      reason - for audit_trail.comment (if no reason given, use comment)
+      set_links - if 'N' suppress updating of the linking tables
+      show_warnings  - if True return tuple of cdr_id, warnings
+      tier - optional; one of DEV, QA, STAGE, PROD
+      val - if 'Y' validate document
+      ver - if 'Y' create a new version
+
+    Deprecated aliases for keyword arguments:
+      activeStatus - deprecated alias for active_status
+      blobFile - deprecated alias for blob_filename
+      checkIn - deprecated alias for check_in
+      errorLocators - deprecated alias for locators
+      file - deprecated alias for doc_filename
+      host - deprecated alias for tier
+      setLinks - deprecated alias for set_links
+      showWarnings - deprecated alias for show_warnings
+
+    Return:
+      If show_warnings is True, the caller will be given a tuple
+      containing the document ID string as the first value, and a
+      possibly empty string containing an "Errors" element (for
+      example, for validation errors).  Otherwise (the default
+      behavior), a single value is returned containing a document ID
+      in the form "CDRNNNNNNNNNN" or the string for an Errors element.
+      We're using this parameter (and its default) in order to
+      preserve compatibility with code which expects a simple return
+      value.
+    """
+
+    # Handle the command locally if possible.
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return _Control.save_doc(session, **opts)
+
+    # Create and submit the command for the tunneling API.
+    return _put_doc("CdrAddDoc", **opts)
+
+def repDoc(credentials, **opts):
+    """
+    Replace an existing document.
+
+    See addDoc() above for argument and return information.
+
+    Additional optional keyword arguments:
+        del_blob - if True, remove the association with the blob for this
+                   document; if it has not been version, it will be removed
+                   from the database; passing a zero-byte blob has the same
+                   effect
+        del_blobs - if True delete all blobs associated with this document
+                    or any of its versions; only for Media PDQ Board meeting
+                    recordings
+
+    Deprecated legacy aliases for these arguments are delBlob and
+    delAllBlobVersions.
+    """
+
+    # Handle the command locally if possible.
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return _Control.save_doc(session, **opts)
+
+    # Create and submit the command for the tunneling API.
+    return _put_doc("CdrRepDoc", **opts)
+
+
 def getDoc(credentials, docId, *args, **opts):
     """
     Retrieve the requested version of a document from the CDR server
@@ -615,7 +876,7 @@ def getDoc(credentials, docId, *args, **opts):
     if isinstance(session, Session):
         doc = docs.Doc(session, id=docId, version=version)
         if checkout == "Y":
-            doc.lock()
+            doc.check_out()
         doc = doc.legacy_doc(get_xml=include_xml, get_blob=include_blob)
     else:
         doc = None
@@ -643,7 +904,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
     Apply one or more filters to an XML document
 
     Positional arguments:
-      credentials - result of login.
+      credentials - result of login
       filter - one of:
                * filter XML string (if 'inline' option is True)
                * CDR ID for filter document
@@ -718,7 +979,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
         else:
             messages = ""
         if output:
-            return bytes(result.doc), messages
+            return unicode(result.result_tree).encode("utf-8"), messages
         else:
             return messages
     command = etree.Element("CdrFilter")
@@ -780,11 +1041,124 @@ def filterDoc(credentials, filter, docId=None, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+def valDoc(credentials, doctype, **opts):
+    """
+    Validate a document, either in the database or passed to here.
+
+    Positional arguments:
+      credentials - result of login
+      doctype - string for type of document to be validated
+
+    Keyword arguments
+      doc_id - unique ID of document to be fetched from database and validated
+      docId - legacy alias for `doc_id` (deprecated)
+      doc - string for document XML, possibly with CdrDoc wrapper
+      link_validation - Boolean; set to False to suppress link validation
+      valLinks - legacy equivalent of `validate_links` (character flag Y/N)
+                 if "N" link validation is suppressed (deprecated)
+      schema_validation - Boolean; set to False to suppress schema validation
+      valSchema - legacy equivalent of `schema_validation`; if set to "N"
+                  schema validation is suppressed (deprecated)
+      validate_only - set to False to also update the database with the
+                      newly determined validation status; ignored if
+                      document ID is not specified
+      validateOnly - deprecated legacy equivalent for `validate_only` (Y|N);
+                     if set to "N" the database will be updated with the
+                     new status; ignored if `doc` is passed instead of
+                     the document's ID
+      locators - Boolean, defaulting to False; set to True in order to have
+                 the document echoed back with error location information
+                 if errors are found
+      errorLocators - deprecated legacy equivalent for `locators`; if set
+                      to "Y" behaves the same as locators=True
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      the serialized CdrValidateDocResp element; this is an aberration
+      from the usual pattern for the command-wrapper functions in this
+      module, which usually extract the useful information from the
+      response document; apparently the caller is expected to do that
+      herself (for example, using cdr.getErrors() or cdr.deDupErrs());
+      if we're invoking the command across the network instead of
+      locally we actually return the entire serialized CdrResponseSet
+      from the server (it's ok that the behavior is different because
+      all of the callers dig down looking for the Err elements regardless
+      of how deeply they're buried)
+    """
+
+    # Make sure we have a CdrDoc node or a document ID
+    doc_id = opts.get("doc_id") or opts.get("docId")
+    doc = opts.get("doc")
+    if not doc_id and not doc:
+        raise Exception("valDoc(): no doc or doc_id specified")
+    if doc_id and doc:
+        raise Exception("valDoc(): both doc and doc_id specified")
+    if doc:
+        if isinstance(doc, unicode):
+            doc = doc.encode("utf-8")
+        root = etree.fromstring(doc)
+        if root.tag != "CdrDoc":
+            xml = doc.decode("utf-8")
+            doc = etree.SubElement("CdrDoc")
+            etree.SubElement(child, "CdrDocXml").text = etree.CDATA(xml)
+        else:
+            doc = root
+
+    # Extract what we need from the options.
+    val_types = ["links", "schema"]
+    if opts.get("schema_validation") is False or opts.get("valSchema") == "N":
+        val_types.remove("schema")
+    if opts.get("link_validation") is False or opts.get("valLinks") == "N":
+        val_types.remove("links")
+    if not val_types:
+        raise Exception("valDoc(): no validation types specified")
+    locators = opts.get("locators") or opts.get("errorLocators") == "Y"
+    store = False
+    if opts.get("validate_only") is False or opts.get("validateOnly") == "N":
+        store = True
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+
+    # Handle the command locally if appropriate.
+    if isinstance(session, Session):
+        validation_opts = dict(type=val_types, locators=locators, store=store)
+        if doc_id:
+            doc = docs.Doc(session, id=doc_id)
+        else:
+            xml = get_text(doc.find("CdrDocXml"))
+            level = doc.get("RevisionFilterLevel")
+            if level:
+                validation_opts["revision_filter_level"] = level
+            doc = docs.Doc(session, xml=xml, doctype=doctype)
+        doc.validate(**validation_opts)
+        response = doc.legacy_validation_response(locators)
+        return etree.tostring(response, encoding="utf-8")
+
+    # Otherwise tunnel through the network.
+    else:
+        val_types = " ".join([t.capitalize() for t in val_types])
+        command = etree.Element("CdrValidateDoc")
+        command.set("DocType", doctype)
+        command.set("ValidationTypes", val_types)
+        command.set("ErrorLocators", "Y" if locators else "N")
+        if doc_id:
+            child = etree.SubElement("DocId")
+            child.text = normalize(doc_id)
+            child.set("ValidateOnly", "N" if store else "Y")
+        elif xml:
+            child = etree.SubElement("CdrDoc")
+            etree.SubElement(child, "CdrDocXml").text = xml.decode("utf-8")
+        response = _Control.send_command(session, command, tier)
+        return etree.tostring(response, encoding="utf-8")
+
+
 class _Control:
     """
     Wrap internals supporting the legacy CDR Python client interface.
     """
 
+    PARSER = etree.XMLParser(strip_cdata=False)
     MIN_ID = 0x10000000000000000000000000000000
     MAX_ID = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
     TIER = Tier()
@@ -853,6 +1227,7 @@ class _Control:
 
     class ResponseSet:
         def __init__(self, node):
+            self.node = node
             self.time = dateutil.parser.parse(node.get("Time"))
             self.responses = [self.Response(r) for r in node.findall("*")]
 
@@ -889,7 +1264,7 @@ class _Control:
         response = requests.post(url, request)
         if not response.ok:
             raise Exception(response.reason)
-        root = etree.fromstring(response.content)
+        root = etree.fromstring(response.content, parser=cls.PARSER)
         for error in root.findall("Errors/Err"):
             raise Exception(error.text)
         return cls.ResponseSet(root)
@@ -898,6 +1273,101 @@ class _Control:
     def send_command(cls, session, command, tier=None):
         commands = cls.wrap_commands(session, cls.wrap_command(command))
         return cls.send_commands(commands, tier).responses
+
+    @classmethod
+    def wrap_error(cls, message, serialize=True):
+        wrapper = etree.Element("Errors")
+        etree.SubElement(wrapper, "Err").text = str(message)
+        if serialize:
+            return etree.tostring(wrapper, encoding="utf-8")
+        return wrapper
+
+    @classmethod
+    def save_doc(cls, session, **opts):
+        show_warnings = False
+        for name in ("show_warnings", "showWarnings"):
+            if opts.get(name):
+                show_warnings = True
+        filename = opts.get("doc_filename") or opts.get("file")
+        try:
+            if filename:
+                root = etree.parse(filename).getroot()
+            else:
+                doc = opts.get("doc")
+                if isinstance(doc, unicode):
+                    doc = doc.encode("utf-8")
+                root = etree.fromstring(doc)
+        except:
+            error = cls.wrap_error("Unable to parse document")
+            if show_warnings:
+                return None, error
+            return error
+        filename = opts.get("blob_filename") or opts.get("blobFile")
+        if filename:
+            try:
+                with open(filename, "rb") as fp:
+                    blob = fp.read()
+            except:
+                error = cls.wrap_error("unable to read BLOB file")
+                if show_warnings:
+                    return None, error
+                return error
+        else:
+            blob = opts.get("blob")
+            if blob is None:
+                if opts.get("del_blob") or opts.get("delBlob"):
+                    blob = b""
+        doc_opts = {
+            "id": root.get("Id"),
+            "doctype": root.get("Type"),
+            "xml": get_text(root.find("CdrDocXml")),
+            "blob": blob
+        }
+        doc = docs.Doc(session, **doc_opts)
+        comment = opts.get("comment")
+        reason = opts.get("reason")
+        if not isinstance(comment, unicode):
+            comment = comment.decode("utf-8")
+        if not isinstance(reason, unicode):
+            reason = reason.decode("utf-8")
+        save_opts = {
+            "version": opts.get("ver") == "Y",
+            "publishable": opts.get("pub") == "Y",
+            "val_types": ("schema", "links") if opts.get("val") else (),
+            "set_links": True,
+            "locators": False,
+            "del_blobs": False,
+            "unlock": False,
+            "comment": opts.get("comment"),
+            "reason": opts.get("reason"),
+            "title": get_text(root.find("CdrDocCtl/DocTitle"))
+        }
+        if opts.get("set_links") == "N" or opts.get("setLinks") == "N":
+            save_opts["set_links"] = False
+        if opts.get("locators") == "Y" or opts.get("errorLocators") == "Y":
+            save_opts["locators"] = True
+        if opts.get("check_in") == "Y" or opts.get("checkIn") == "Y":
+            save_opts["unlock"] = True
+        for name in ("active_status", "activeStatus"):
+            if name in opts:
+                save_opts["active_status"] = opts[name]
+                break
+        for name in ("del_blobs", "delAllBlobVersions"):
+            if opts.get(name):
+                save_opts["del_blobs"] = True
+        try:
+            doc.save(**save_opts)
+        except Exception as e:
+            if show_warnings:
+                return (None, cls.wrap_error(e))
+            return cls.wrap_error(e)
+        if show_warnings:
+            if doc.errors_node is not None:
+                return doc.cdr_id, etree.tostring(doc.errors_node)
+            else:
+                return doc.cdr_id, ""
+        else:
+            return doc.cdr_id
 
 
 def isDevHost():
@@ -1048,6 +1518,73 @@ def get_text(node, default=None):
     if node is None:
         return default
     return u"".join(node.itertext("*"))
+
+#----------------------------------------------------------------------
+# Normalize a document id to form 'CDRnnnnnnnnnn'.
+#----------------------------------------------------------------------
+def normalize(id):
+    if id is None: return None
+    if type(id) == type(9):
+        idNum = id
+    else:
+        digits = re.sub('[^\d]', '', id)
+        idNum  = int(digits)
+    return "CDR%010d" % idNum
+
+#----------------------------------------------------------------------
+# Extended normalization of ids
+#----------------------------------------------------------------------
+def exNormalize(id):
+    """
+    An extended form of normalize.
+    Pass:
+        An id in any of the following forms:
+            12345
+            'CDR0000012345'
+            'CDR12345'
+            'CDR0000012345#F1'
+            '12345#F1'
+            etc.
+    Return:
+        Tuple of:
+            Full id string
+            id as an integer
+            Fragment as a string, or None if no fragment
+        e.g.,
+            'CDR0000012345#F1'
+            12345
+            'F1'
+    Raise:
+        Exception if not a CDR ID.
+    """
+
+    if type(id) == type(9):
+        # Passed a number
+        idNum = id
+        frag  = None
+
+    else:
+        # Parse the string
+        pat = re.compile (
+            r"(^\s*?([Cc][Dd][Rr]0*)?)(?P<num>(\d+))\s*(\#(?P<frag>(.*)))?$")
+        result = pat.search (id)
+
+        if not result:
+            raise Exception("Invalid CDR ID string: " + id)
+
+        idNum = int (result.group ('num'))
+        frag  = result.group ('frag')
+
+    # Sanity check on number
+    if idNum < 1 or idNum > 9999999999:
+        raise Exception("Invalid CDR ID number: " + str(idNum))
+
+    # Construct full id
+    fullId = "CDR%010d" % idNum
+    if frag:
+        fullId += '#' + frag
+
+    return (fullId, idNum, frag)
 
 
 # ======================================================================
@@ -1260,75 +1797,6 @@ def getPubPort():
 
     # If we got here, we've tried all possibilities
     raise Exception("No CdrServer found for publishing")
-
-#----------------------------------------------------------------------
-# Normalize a document id to form 'CDRnnnnnnnnnn'.
-#----------------------------------------------------------------------
-def normalize(id):
-    if id is None: return None
-    if type(id) == type(9):
-        idNum = id
-    else:
-        digits = re.sub('[^\d]', '', id)
-        idNum  = int(digits)
-    return "CDR%010d" % idNum
-
-#----------------------------------------------------------------------
-# Extended normalization of ids
-#----------------------------------------------------------------------
-def exNormalize(id):
-    """
-    An extended form of normalize.
-    Pass:
-        An id in any of the following forms:
-            12345
-            'CDR0000012345'
-            'CDR12345'
-            'CDR0000012345#F1'
-            '12345#F1'
-            etc.
-    Return:
-        Tuple of:
-            Full id string
-            id as an integer
-            Fragment as a string, or None if no fragment
-        e.g.,
-            'CDR0000012345#F1'
-            12345
-            'F1'
-    Raise:
-        Exception if not a CDR ID.
-    """
-
-    if type(id) == type(9):
-        # Passed a number
-        idNum = id
-        frag  = None
-
-    else:
-        # Parse the string
-        pat = re.compile (
-            r"(^\s*?([Cc][Dd][Rr]0*)?)(?P<num>(\d+))\s*(\#(?P<frag>(.*)))?$")
-        #   r"(^([Cc][Dd][Rr]0*)?)(?P<num>(\d+))(\#(?P<frag>(.*)))?$")
-        # pat = re.compile (r"(?P<num>(\d+))\#?(?P<frag>(.*))")
-        result = pat.search (id)
-
-        if not result:
-            raise Exception("Invalid CDR ID string: " + id)
-
-        idNum = int (result.group ('num'))
-        frag  = result.group ('frag')
-
-    # Sanity check on number
-    if idNum < 1 or idNum > 9999999999:
-        raise Exception("Invalid CDR ID number: " + str(idNum))
-
-    # Construct full id
-    fullId = "CDR%010d" % idNum
-    if frag:
-        fullId += '#' + frag
-
-    return (fullId, idNum, frag)
 
 #----------------------------------------------------------------------
 # Log an error from sendCommands
@@ -2369,195 +2837,6 @@ def _addDocBlob(doc, blob=None, blobFileName=None):
     return newDoc
 
 #----------------------------------------------------------------------
-# Add a new document to the CDR Server.
-# If showWarnings is set to non-zero value, the caller will be given
-# a tuple containing the document ID string as the first value, and
-# a possibly empty string containing an "Errors" element (for example,
-# for validation errors).  Otherwise (the default behavior), a single
-# value is returned containing a document ID in the form "CDRNNNNNNNNNN"
-# or the string for an Errors element.  We're using this parameter
-# (and its default) in order to preserve compatibility with code which
-# expects a simple return value.
-#
-# See also the comment on repDoc below regarding the 'reason' argument.
-#----------------------------------------------------------------------
-def addDoc(credentials, file=None, doc=None, comment='',
-           checkIn='N', val='N', reason='', ver='N',
-           verPublishable='Y', setLinks='Y', showWarnings=0,
-           activeStatus=None, blob=None, blobFile=None,
-           host=DEFAULT_HOST, port=DEFAULT_PORT,
-           errorLocators='N'):
-    """
-    Add a document to the repository.
-
-    Pass:
-        credentials   - From cdr.login.
-        file          - Optional name of file containing CdrDoc format data.
-        doc           - Optional CdrDoc string, unicode or utf-8.
-                         Must pass file or doc.
-        comment       - For the comment field in the document table and
-                         the doc_version table.
-        checkin       - 'Y' = checkin (i.e., unlock) the record.
-        val           - 'Y' = validate document.
-        reason        - For audit trail.  If no reason given, uses comment.
-        ver           - 'Y' = create a new version.
-        verPublishable- 'Y' = make new version publishable.  Only if ver='Y'.
-        setLinks      - 'Y' = update linking tables.
-        showWarnings  - 'Y' = retrieve any warnings, e.g., from filters.
-        activeStatus  - 'I', 'A', 'D', to change document active_status.
-                         If None, no change.
-        blob          - Unencoded byte string for blob, if any.
-                         Will be converted to base64 for transmission, so
-                         don't convert before passing it to addDoc.
-        blobFile      - Alternative way to get blob - from file of bytes.
-        host          - Computer.
-        port          - CdrServer listening port.
-        errorLocators - 'Y' if information needed for finding the errors
-                        in the document is requested; otherwise 'N' (the
-                        default)
-
-    Return:
-        CDR ID of newly stored document, in full "CDR0000nnnnnn" format.
-        Else errors.
-    """
-
-    # Load the document if necessary.
-    if file: doc = open(file, "r").read()
-    if not doc:
-        if file: return "<Errors><Err>%s not found</Err></Errors>" % file
-        else:    return "<Errors><Err>Document missing.</Err></Errors>"
-
-    # Ensure that unicode appears as utf-8
-    if type(doc)==type(u""):     doc     = doc.encode('utf-8')
-    if type(comment)==type(u""): comment = comment.encode('utf-8')
-    if type(reason)==type(u""):  reason  = reason.encode('utf-8')
-
-    # If comment passed, filter doc to add DocComment to CdrDocCtl
-    # Raises exception if fails
-    if len(comment) > 0:
-        doc = _addRepDocComment (doc, comment)
-
-    # Change the active_status if requested; raises exception on failure.
-    if activeStatus:
-        doc = _addRepDocActiveStatus(doc, activeStatus)
-
-    # Add the blob, if any
-    doc = _addDocBlob(doc, blob, blobFile)
-
-    # Create the command.
-    checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
-    elocs   = errorLocators
-    val     = "<Validate ErrorLocators='%s'>%s</Validate>" % (elocs, val)
-    reason  = "<Reason>%s</Reason>" % (reason)
-    doLinks = "<SetLinks>%s</SetLinks>" % setLinks
-    ver     = "<Version Publishable='%s'>%s</Version>" % (verPublishable, ver)
-    cmd     = "<CdrAddDoc>%s%s%s%s%s%s</CdrAddDoc>" % (checkIn, val, ver,
-                                                       doLinks, reason, doc)
-
-    # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # Extract the document ID (and messages if requested).
-    docId = extract("<DocId.*>(CDR\d+)</DocId>", resp)
-    if not docId.startswith("CDR"):
-        if showWarnings:
-            return (None, docId)
-        else:
-            return docId
-    if showWarnings:
-        errors = getErrors(resp, errorsExpected = False)
-        return (docId, errors)
-    else:
-        return docId
-
-#----------------------------------------------------------------------
-# Replace an existing document in the CDR Server.
-# See documentation of addDoc above for explanation of showWarnings
-# argument.
-# Note that the 'reason' argument is used to set a value in the
-# audit table.  If you want to have the comment column in the
-# document and doc_version tables populated, you must supply a
-# DocComment child of the CdrDocCtl element inside the CdrDoc
-# of the doc argument.
-# [That's done for you now if you supply a 'comment' argument.]
-#----------------------------------------------------------------------
-def repDoc(credentials, file=None, doc=None, comment='',
-           checkIn='N', val='N', reason='', ver='N',
-           verPublishable='Y', setLinks='Y', showWarnings=0,
-           activeStatus=None, blob=None, blobFile=None, delBlob=False,
-           delAllBlobVersions=False, host=DEFAULT_HOST, port=DEFAULT_PORT,
-           errorLocators='N'):
-
-    """
-    Replace an existing document.
-
-    Pass:
-        See addDoc for details.  New parameters are:
-        delBlob         - True = delete the blob.  If it has not been versioned
-                          it will disappear from the database.
-                          Passing an empty blob will have the same effect,
-                           i.e., blob='', not blob=None, which has no effect
-                           on blobs.
-        delAllBlobVersions - True (or 1) = Delete all blobs associated with
-                           this doc or any of its versions.  Only for Media
-                           PDQ Board meeting recordings.
-    """
-
-    # Load the document if necessary.
-    if file: doc = open(file, "r").read()
-    if not doc:
-        if file: return "<Errors><Err>%s not found</Err></Errors>" % file
-        else:    return "<Errors><Err>Document missing.</Err></Errors>"
-
-    # Ensure that unicode appears as utf-8
-    if type(doc)==type(u""):     doc     = doc.encode('utf-8')
-    if type(comment)==type(u""): comment = comment.encode('utf-8')
-    if type(reason)==type(u""):  reason  = reason.encode('utf-8')
-
-    # If comment passed, filter doc to add DocComment to CdrDocCtl
-    # Raises exception if fails
-    if len(comment) > 0:
-        doc = _addRepDocComment (doc, comment)
-
-    # Change the active_status if requested; raises exception on failure.
-    if activeStatus:
-        doc = _addRepDocActiveStatus(doc, activeStatus)
-
-    # Blob management
-    if delBlob:
-        blob = ''
-    doc = _addDocBlob(doc, blob, blobFile)
-    if delAllBlobVersions:
-        delBlobVers = '<DelAllBlobVersions>Y</DelAllBlobVersions>'
-    else:
-        delBlobVers = ''
-
-    # Create the command.
-    checkIn = "<CheckIn>%s</CheckIn>" % (checkIn)
-    elocs   = errorLocators
-    val     = "<Validate ErrorLocators='%s'>%s</Validate>" % (elocs, val)
-    reason  = "<Reason>%s</Reason>" % (reason)
-    doLinks = "<SetLinks>%s</SetLinks>" % setLinks
-    ver     = "<Version Publishable='%s'>%s</Version>" % (verPublishable, ver)
-    cmd     = "<CdrRepDoc>%s%s%s%s%s%s%s</CdrRepDoc>" % (checkIn, val, ver,
-                                          delBlobVers, doLinks, reason, doc)
-    # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # Extract the document ID (and messages if requested).
-    docId = extract("<DocId.*>(CDR\d+)</DocId>", resp)
-    if not docId.startswith("CDR"):
-        if showWarnings:
-            return (None, docId)
-        else:
-            return docId
-    if showWarnings:
-        errors = getErrors(resp, errorsExpected = False)
-        return (docId, errors)
-    else:
-        return docId
-
-#----------------------------------------------------------------------
 # Determine if a document is checked out without retrieving it
 #----------------------------------------------------------------------
 class lockedDoc(object):
@@ -2734,71 +3013,6 @@ def delDoc(credentials, docId, val='N', reason='',
 
     # Extract the document ID.
     return extract("<DocId.*>(CDR\d+)</DocId>", resp)
-
-#----------------------------------------------------------------------
-# Validate a CDR document.
-#----------------------------------------------------------------------
-def valDoc(credentials, docType, docId=None, doc=None,
-           valLinks='Y', valSchema='Y', validateOnly='Y',
-           host=DEFAULT_HOST, port=DEFAULT_PORT,
-           errorLocators='N'):
-    """
-    Validate a document, either in the database or passed to here.
-
-    Pass:
-        credentials - Login.
-        docType     - of the doc to be validated.
-        docId       - CDR ID if validating in the database.
-        doc         - Document string.
-                      Either of two forms okay:
-                        Actual XML document with no CdrDoc wrapper.
-                        XML as CDATA section in CdrDoc wrapper.
-                      Must pass either doc or docId.
-                      If docId passed, doc is ignored.
-        valLinks    - validate links.
-        valSchema   - validate against schema.
-        validateOnly- False = update the val_status column in the document
-                        table.
-                      Only usable if docId passed.
-                      Default is to leave val_status alone.
-        host/port   - The usual.
-        errorLocators - 'Y' if information needed for finding the errors
-                      in the document is requested; otherwise 'N' (the
-                      default)
-
-    Return:
-        Results of server validation - may be list of error messages.
-    """
-    # Need to find out if this is a doc inside CDATA or not
-    if doc:
-        pat = re.compile(r"<CdrDoc.*<!\[CDATA\[", re.DOTALL)
-        if not pat.search(doc):
-            # It's naked XML.  Wrap it in a CdrDoc.
-            doc = makeCdrDoc(doc, docType)
-
-    # Create the command.
-    if docId:
-        doc = "<DocId ValidateOnly='%s'>%s</DocId>" % (validateOnly,
-                                                       normalize(docId))
-    if not doc:
-        raise Exception("valDoc: no doc or docId specified")
-    if valLinks == 'Y' and valSchema == 'Y':
-        valTypes = "Links Schema"
-    elif valLinks == 'Y':
-        valTypes = "Links"
-    elif valSchema == 'Y':
-        valTypes = "Schema"
-    else:
-        raise Exception("valDoc: no validation method specified")
-    cmd = ("<CdrValidateDoc DocType='%s' "
-           "ValidationTypes='%s' "
-           "ErrorLocators='%s'>%s</CdrValidateDoc>" % (docType,
-                                                       valTypes,
-                                                       errorLocators,
-                                                       doc))
-
-    # Submit the commands.
-    return sendCommands(wrapCommand(cmd, credentials, host), host, port)
 
 #----------------------------------------------------------------------
 # Validate new and old docs

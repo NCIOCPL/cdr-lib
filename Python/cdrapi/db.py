@@ -2,6 +2,7 @@
 DB-SIG compliant module for CDR database access.
 """
 
+import datetime
 import logging
 import unittest
 import adodbapi
@@ -14,6 +15,27 @@ try:
 except:
     basestring = str
 
+class TimeConverter(adodbapi.apibase.pythonDateTimeConverter):
+
+    def DateObjectToIsoFormatString(self, obj):
+        """
+        Workaround for bug in adodbapi
+
+        The package blows up when it gets a datetime object with sub-second
+        precision. We side-step that bug by converting to a string with
+        only three digits of that precision.
+        """
+
+        base_class = adodbapi.apibase.pythonDateTimeConverter
+        s = super(base_class, self).DateObjectToIsoFormatString(obj)
+        if "." not in s:
+            return s
+        dt, us = s.split(".", 1)
+        return dt + str(round(float("." + us), 3))[1:5]
+
+
+#adodbapi.apibase.typeMap[datetime.datetime] = adodbapi.apibase.adc.adBSTR
+#adodbapi.adodbapi.dateconverter = TimeConverter()
 
 def connect(**opts):
     """
@@ -44,7 +66,7 @@ def connect(**opts):
         "Timeout": opts.get("timeout", Query.DEFAULT_TIMEOUT)
     }
     connection_string = ";".join(["{}={}".format(*p) for p in parms.items()])
-    return adodbapi.connect(connection_string)
+    return adodbapi.connect(connection_string, timeout=parms["Timeout"])
 
 class Query:
 
@@ -543,6 +565,25 @@ class Query:
         for condition in join.conditions:
             self._serialize_condition(query, keyword, condition)
             keyword = "AND"
+
+    @staticmethod
+    def fix_datetime(value):
+        """
+        Workaround for adodbapi bug, which chokes on datetime parameters
+
+        Chops off the last three microsecond digits.
+
+        Under Python 2.7, adodbapi throws an exception when a datetime
+        argument is passed which has non-zero microseconds. Under Python
+        3.6, adodbapi has a different bug, which discards the sub-second
+        precision altogether. :-(
+
+        See https://sourceforge.net/p/adodbapi/bugs/17/
+        """
+
+        if not isinstance(value, datetime.datetime) or not value.microsecond:
+            return value
+        return value.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
     @staticmethod
     def indent(block, n=4):

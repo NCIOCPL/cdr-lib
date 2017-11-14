@@ -17,17 +17,18 @@ class Tests(unittest.TestCase):
     def tearDown(self):
         cdr.logout(self.session, tier=self.TIER)
 
-"""
+""" """
 class _01SessionTests(Tests):
     def test_01_login(self):
         opts = dict(comment="unit testing", tier=self.TIER)
-        SessionTests.session2 = Session.create_session(self.USERNAME, **opts)
-        self.assertEqual(len(SessionTests.session2.name), 32)
-        self.assertTrue(SessionTests.session2.active)
+        session = Session.create_session(self.USERNAME, **opts)
+        _01SessionTests.session2 = session
+        self.assertEqual(len(_01SessionTests.session2.name), 32)
+        self.assertTrue(_01SessionTests.session2.active)
     def test_02_logout(self):
-        self.assertTrue(SessionTests.session2.active)
-        self.assertIsNone(cdr.logout(SessionTests.session2, tier=self.TIER))
-        self.assertFalse(SessionTests.session2.active)
+        self.assertTrue(_01SessionTests.session2.active)
+        self.assertIsNone(cdr.logout(_01SessionTests.session2, tier=self.TIER))
+        self.assertFalse(_01SessionTests.session2.active)
     def test_03_dup_session(self):
         session = cdr.dupSession(self.session, tier=self.TIER)
         if isinstance(session, Session):
@@ -135,15 +136,69 @@ class _03GroupTests(Tests):
     def test_05_del_group(self):
         opts = dict(tier=self.TIER)
         self.assertIsNone(cdr.delGroup(self.session, self.NEWNAME, **opts))
-"""
+""" """
 
-class _00DocTests(Tests):
-    def test_01_get_doc(self):
+class _04DoctypeTests(Tests):
+    def test_01_list_doctypes(self):
+        types = cdr.getDoctypes(self.session)
+        self.assertIn("Summary", types)
+class _05DocTests(Tests):
+    def __make_doc(self, doc_filename, doc_id=None):
+        directory = os.path.dirname(os.path.realpath(__file__))
+        with open("{}/{}".format(directory, doc_filename), "rb") as fp:
+            xml = fp.read()
+        ctrl = {"DocTitle": "test doc"}
+        return cdr.makeCdrDoc(xml, "xxtest", doc_id, ctrl)
+    def __get_opts(self, doc):
+        return {
+            "doc": doc,
+            "comment": "sauve qui peut",
+            "reason": "pourquoi pas?",
+            "val": "Y",
+            "ver": "Y",
+            "show_warnings": True
+        }
+    def test_01_add_doc(self):
+        doc = self.__make_doc("001.xml")
+        response = cdr.addDoc(self.session, **self.__get_opts(doc))
+        #print(response)
+        doc_id, errors = response
+        self.assertTrue(b"not accepted by the pattern" in errors)
+        self.assertTrue(doc_id.startswith("CDR"))
+        CDRTestData.doc_id = doc_id
+    def test_02_get_doc(self):
         doc = cdr.getDoc(self.session, 5000, getObject=True)
         self.assertEqual(doc.type, "Person")
-    def test_02_filter(self):
+        doc = cdr.getDoc(self.session, CDRTestData.doc_id, getObject=True)
+        CDRTestData.doc = doc
+        self.assertEqual(doc.type, "xxtest")
+    def test_03_rep_doc(self):
+        doc = CDRTestData.doc
+        directory = os.path.dirname(os.path.realpath(__file__))
+        with open("{}/{}".format(directory, "002.xml"), "rb") as fp:
+            doc.xml = fp.read()
+        opts = self.__get_opts(str(doc))
+        opts["publishable"] = "Y"
+        response = cdr.repDoc(self.session, **opts)
+        #print(response)
+        doc_id, errors = response
+        self.assertEqual(doc_id, CDRTestData.doc_id)
+        self.assertTrue(not errors)
+    def test_04_filter(self):
         result = cdr.filterDoc(self.session, ["set:QC Summary Set"], 62902)
-        print(result)
         self.assertTrue(b"small intestine cancer" in result[0])
+    def test_05_val_doc(self):
+        opts = dict(doc_id=5000, locators=True)
+        result = cdr.valDoc(self.session, "Person", **opts).decode("utf-8")
+        expected = (
+            "Element 'ProfessionalSuffix': This element is not expected.",
+            "eref="
+        )
+        for e in expected:
+            self.assertIn(e, result)
+
+class CDRTestData:
+    doc_id = None
+
 if __name__ == "__main__":
     unittest.main()
