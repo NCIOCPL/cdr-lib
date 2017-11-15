@@ -288,8 +288,7 @@ def getStudyCategories (varName, defaultVal=None):
         String of HTML for inclusion in the input form.
     """
     # Get valid names - they're the same for all protocol doc types
-    vals = cdr.getVVList('guest', docType='InScopeProtocol',
-                         vvName='StudyCategoryName')
+    vals = cdr.getVVList("guest", "InScopeProtocol", "StudyCategoryName")
 
     # Create html hard wired for the form
     html = "<select name=%s>\n" % varName
@@ -939,9 +938,7 @@ class GlblChg:
             putFirst = ""
 
         # Get the valid value list from the schema
-        vals = cdr.getVVList (('CdrGuest', 'never.0n-$undaY'),
-                            docType=docType, vvName=vvType,
-                            putFirst=putFirst)
+        vals = cdr.getVVList("guest", docType, vvType, first=putFirst)
 
         if type(vals)==type("") or type(vals)==type(u""):
             cdr.logwrite ("Error getting valid values: %s" % vals, LF)
