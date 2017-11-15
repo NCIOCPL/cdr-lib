@@ -288,9 +288,8 @@ def getStudyCategories (varName, defaultVal=None):
         String of HTML for inclusion in the input form.
     """
     # Get valid names - they're the same for all protocol doc types
-    vals = cdr.getVVList (('CdrGuest', 'never.0n-$undaY'),
-                        docType='InScopeProtocol',
-                        vvName='StudyCategoryName')
+    vals = cdr.getVVList('guest', docType='InScopeProtocol',
+                         vvName='StudyCategoryName')
 
     # Create html hard wired for the form
     html = "<select name=%s>\n" % varName
