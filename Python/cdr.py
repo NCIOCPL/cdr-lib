@@ -279,46 +279,6 @@ def delAction(credentials, name, **opts):
         raise Exception("missing response")
 
 
-def getDoctypes(credentials, **opts):
-    """
-    Get the list of active CDR document types
-
-    Pass:
-      credentials - name of existing session or login credentials
-      tier - optional; one of DEV, QA, STAGE, PROD
-      host - deprecated alias for tier
-
-    Return
-      sequence of active document type names, sorted alphabetically
-    """
-
-    tier = opts.get("tier") or opts.get("host") or None
-    session = _Control.get_session(credentials, tier)
-    if isinstance(session, Session):
-        return docs.Doctype.list_doc_types(session)
-    command = etree.Element("CdrListDocTypes")
-    for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrListDocTypesResp":
-            print(etree.tostring(response.node, pretty_print=True))
-            return [get_text(t) for t in response.node.findall("DocType")]
-        else:
-            raise Exception(";".join(response.errors) or "missing response")
-    raise Exception("missing response")
-
-    # Create the command
-    cmd = "<CdrListDocTypes/>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # Parse the response.
-    types = re.findall("<DocType>(.*?)</DocType>", resp)
-    if 'Filter' not in types: types.append('Filter')
-    types.sort()
-    return types
-
 def getGroups(credentials, **opts):
     """
     Get the list of CDR authorization groups
@@ -462,6 +422,379 @@ def delGroup(credentials, name, **opts):
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
 
+
+# ======================================================================
+# Manage CDR document types
+# ======================================================================
+
+#----------------------------------------------------------------------
+# Class to contain CDR document type information.
+#----------------------------------------------------------------------
+class dtinfo:
+    def __init__(self, **opts):
+        names = ("type", "format", "versioning", "created", "schema_mod",
+                 "dtd", "schema", "vvLists", "comment", "error", "active")
+        for name in names:
+            setattr(self, name, opts.get(name))
+        if "type" not in opts:
+            self.type = opts.get("name")
+
+    @property
+    def name(self):
+        return self.type
+
+    def getChildren(self, parent=None):
+        """
+        Get a list of top level children for a document type, or children
+        of a specific element.
+
+        Pass:
+            parent - Name of element for which children are desired.
+                     None = same as passing Document Type node.
+                     Multi-element paths (e.g. "X/Y/Z") not allowed (:<)
+
+        Return:
+            Sequence of element names, in the order that the schema allows
+            them to appear in the block.  The same name can appear more
+            than once if that is allowed in the schema.
+        """
+        if not self.dtd:
+            raise Exception("document type %s has no DTD" % self.type)
+        parent = parent or self.name
+        pattern = r"<!ELEMENT\s+{}\s+([^>]+)>".format(parent)
+        match = re.search(pattern, self.dtd)
+        if not match:
+            raise Exception("definition of element %s not found" % parent)
+        return [c for c in re.split(r"\W+", match.group(1))
+                if c and c != "CdrDocCtl"]
+
+    def __repr__(self):
+        if self.error: return self.error
+        return """\
+[CDR Document Type]
+            Name: {}
+          Format: {}
+      Versioning: {}
+         Created: {}
+          Active: {}
+ Schema Modified: {}
+          Schema:
+{}
+             DTD:
+{}
+         Comment:
+{}
+""".format(self.type or "",
+           self.format or "",
+           self.versioning or "",
+           self.created or "",
+           self.active or "",
+           self.schema_mod or "",
+           self.schema or "",
+           self.dtd or "",
+           self.comment or "")
+
+def getDoctype(credentials, name, **opts):
+    """
+    Retrieve document type information from the CDR
+
+    Add active flag (OCECDR-4091).
+
+    Pass:
+      credentials - name of existing session or login credentials
+      name - string for document type's name
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return
+      `dtinfo` object
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        doctype = docs.Doctype(session, name=name)
+        values = doctype.vv_lists
+        vv_lists = [(name, values[name]) for name in sorted(values)]
+        args = dict(
+            name=doctype.name,
+            format=doctype.format,
+            versioning=doctype.versioning,
+            created=doctype.created,
+            schema_mod=doctype.schema_mod,
+            dtd=doctype.dtd,
+            schema=doctype.schema,
+            vvLists=vv_lists,
+            comment=doctype.comment,
+            active=doctype.active
+        )
+        return dtinfo(**args)
+    command = etree.Element("CdrGetDocType", Type=name, GetEnumValues="Y")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrGetDocTypeResp":
+            args = dict(
+                name=response.node.get("Type"),
+                format=response.node.get("Format"),
+                versioning=response.node.get("Versioning"),
+                created=response.node.get("Created"),
+                schema_mode=response.node.get("SchemaMod"),
+                active=response.node.get("Active"),
+                vvLists=[]
+            )
+            for child in response.node:
+                if child.tag == "Comment":
+                    args["comment"] = get_text(child)
+                elif child.tag == "DocDtd":
+                    args["dtd"] = get_text(child)
+                elif child.tag == "DocSchema":
+                    args["schema"] = get_text(child)
+                elif child.tag == "EnumSet":
+                    values = [v.text for v in child.findall("ValidValue")]
+                    args["vvLists"].append((child.get("Node"), values))
+            return dtinfo(**args)
+        else:
+            raise Exception(";".join(response.errors) or "missing response")
+    raise Exception("missing response")
+
+#----------------------------------------------------------------------
+# Create a new document type for the CDR.
+#----------------------------------------------------------------------
+def addDoctype(credentials, info, **opts):
+    """
+    Create a new document type for the CDR
+
+    Required positional arguments:
+      credentials - name of existing session or login credentials
+      info - reference to `dtinfo` object for new document type
+
+    Optional keyword arguments
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return
+      `dtinfo` object
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        opts = dict(
+            name=info.name,
+            schema=info.schema,
+            format=info.format,
+            versioning=info.versioning,
+            comment=info.comment
+        )
+        doctype = docs.Doctype(session, **opts)
+        doctype.save()
+        return getDoctype(credentials, info.name, tier=tier)
+
+    # Create the command
+    command = etree.Element("CdrAddDocType")
+    command.set("Type", info.type)
+    if info.format:
+        command.set("Format", info.format)
+    if info.versioning:
+        command.set("Versioning", info.versioning)
+    if info.active:
+        command.set("Active", info.active)
+    etree.SubElement(command, "DocSchema").text = info.schema
+    if info.comment is not None:
+        etree.SubElement(command, "Comment").text = info.comment
+
+    # Submit the request.
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrAddDocTypeResp":
+            return getDoctype(credentials, info.name, tier=tier)
+        else:
+            print(response.node.tag)
+            raise Exception(";".join(response.errors) or "missing response")
+    raise Exception("missing response")
+
+def modDoctype(credentials, info, **opts):
+    """
+    Modify existing document type information in the CDR
+
+    Required positional arguments:
+      credentials - name of existing session or login credentials
+      info - reference to `dtinfo` object for new document type
+
+    Optional keyword arguments
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return
+      `dtinfo` object
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        opts = dict(
+            name=info.name,
+            schema=info.schema,
+            format=info.format,
+            versioning=info.versioning,
+            comment=info.comment,
+        )
+        if info.active:
+            opts["active"] = info.active
+        doctype = docs.Doctype(session, **opts)
+        doctype.save()
+        return getDoctype(credentials, info.name, tier=tier)
+
+    # Create the command
+    command = etree.Element("CdrModDocType")
+    command.set("Type", info.type)
+    command.set("Format", info.format)
+    command.set("Versioning", info.versioning)
+    if info.active:
+        command.set("Active", info.active)
+    etree.SubElement(command, "DocSchema").text = info.schema
+    etree.SubElement(command, "Comment").text = info.comment or ""
+
+    # Submit the request.
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrModDocTypeResp":
+            return getDoctype(credentials, info.name, tier=tier)
+        else:
+            raise Exception(";".join(response.errors) or "missing response")
+    raise Exception("missing response")
+
+def delDoctype(credentials, name, **opts):
+    """
+    Delete document type from the CDR
+
+    Of marginal use, since deleting a document type for which documents
+    have been created is prevented. Adding this wrapper function so
+    we can include the command in the unit test suite.
+
+    Required positional arguments:
+      credentials - name of existing session or login credentials
+      name - string for document type's name
+
+    Optional keyword arguments
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        doctype = docs.Doctype(session, name=name)
+        doctype.delete()
+    else:
+        command = etree.Element("CdrDelDocType", Type=name)
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrDelDocTypeResp":
+                return
+            raise Exception(";".join(response.errors) or "missing response")
+        raise Exception("missing response")
+
+def getVVList(credentials, doctype, element, **opts):
+    """
+    Retrieve a list of valid values defined in a schema for a doctype
+
+    Required positional arguments:
+      credentials - name of existing session or login credentials
+      doctype - string name of the document type
+      element - string name of the element for which values are requested
+
+    Optional keyword arguments:
+      sorted - if True, sort list alphabetically
+      first - value(s) to move to the top of the sequence
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sequence of string values
+    """
+
+    # Get a `dtinfo` object for the document type
+    doctype = getDoctype(credentials, doctype, **opts)
+
+    # Find the value list for the specified element.
+    values = None
+    for name, vals in doctype.vvLists:
+        if name == element:
+            values = vals
+            break
+    if values is None:
+        message = "No valid values for {!r} in doctype {!r}"
+        raise Exception(message.format(doctype.name, element))
+
+    # Put the values in alphabetical order if requested.
+    if opts.get("sorted"):
+        values.sort()
+
+    # Customize the list order by moving some values to the front if requested.
+    first = opts.get("first")
+    if first:
+        if not isinstance(first, (tuple, list, set)):
+            first = [first]
+        custom = list(first)
+        first = set(first)
+        for value in values:
+            if value not in first:
+                custom.append(value)
+
+    # Give the caller the sequence of values
+    return values
+
+def getDoctypes(credentials, **opts):
+    """
+    Get the list of active CDR document types
+
+    Pass:
+      credentials - name of existing session or login credentials
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return
+      sequence of active document type names, sorted alphabetically
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return docs.Doctype.list_doc_types(session)
+    command = etree.Element("CdrListDocTypes")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrListDocTypesResp":
+            return [get_text(t) for t in response.node.findall("DocType")]
+        else:
+            raise Exception(";".join(response.errors) or "missing response")
+    raise Exception("missing response")
+
+def getSchemaDocs(credentials, **opts):
+    """
+    Get the list of CDR schema documents.
+
+    Pass:
+      credentials - name of existing session or login credentials
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return
+      sequence of schema document titles, sorted alphabetically
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return docs.Doctype.list_schema_docs(session)
+    command = etree.Element("CdrListSchemaDocs")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrListSchemaDocsResp":
+            return [get_text(t) for t in response.node.findall("DocTitle")]
+        else:
+            raise Exception(";".join(response.errors) or "missing response")
+    raise Exception("missing response")
+
+
+# ======================================================================
+# Manage CDR documents
+# ======================================================================
 
 class Doc:
     """
@@ -632,13 +965,14 @@ def makeCdrDoc(xml, docType, docId=None, ctrl=None):
     etree.SubElement(doc, "CdrDocXml").text = etree.CDATA(xml)
     return etree.tostring(doc, encoding="utf-8")
 
-def _put_doc(name, **opts):
+def _put_doc(session, command_name, **opts):
     """
     Create and submit the XML command node for adding or replacing a CDR doc
 
     Factored tunneling code used by `addDoc()` and `modDoc()`.
 
     Pass:
+      session - string for the user's current login session
       command_name - string for the name of the top node for the command
       opts - see documentation for `addDoc()` and `repDoc()`
 
@@ -666,7 +1000,7 @@ def _put_doc(name, **opts):
 
     # Should we set modify the link_net table even if not validating?
     set_links = opts.get("set_links") != "N" and opts.get("setLinks") != "N"
-    etree.SubElement("SetLinks").text = "Y" if set_links else "N"
+    etree.SubElement(command, "SetLinks").text = "Y" if set_links else "N"
 
     # Specify the value to be saved in audit_trail.comment.
     reason = opts.get("reason") or opts.get("comment") or ""
@@ -674,7 +1008,7 @@ def _put_doc(name, **opts):
         reason = reason.decode("utf-8")
     etree.SubElement(command, "Reason").text = reason
 
-    # Get the CdrDoc node.
+    # Get or create the CdrDoc node.
     filename = opts.get("doc_filename") or opts.get("file")
     try:
         if filename:
@@ -719,9 +1053,9 @@ def _put_doc(name, **opts):
 
     # Plug in a new comment if appropriate.
     comment = opts.get("comment")
-    if not isinstance(comment, unicode):
-        comment = comment.decode("utf-8")
     if comment:
+        if not isinstance(comment, unicode):
+            comment = comment.decode("utf-8")
         doc_control = cdr_doc.find("CdrDocCtl")
         node = doc_control.find("DocComment")
         if node is not None:
@@ -743,6 +1077,7 @@ def _put_doc(name, **opts):
     command.append(cdr_doc)
 
     # Submit the command and extract the return values from the response.
+    tier = opts.get("tier") or opts.get("host") or None
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == command_name + "Resp":
             doc_id = get_text(response.node.find("DocId"))
@@ -813,7 +1148,11 @@ def addDoc(credentials, **opts):
         return _Control.save_doc(session, **opts)
 
     # Create and submit the command for the tunneling API.
-    return _put_doc("CdrAddDoc", **opts)
+    try:
+        return _put_doc(session, "CdrAddDoc", **opts)
+    except:
+        LOGGER.exception("CdrAddDoc")
+        raise
 
 def repDoc(credentials, **opts):
     """
@@ -841,7 +1180,11 @@ def repDoc(credentials, **opts):
         return _Control.save_doc(session, **opts)
 
     # Create and submit the command for the tunneling API.
-    return _put_doc("CdrRepDoc", **opts)
+    try:
+        return _put_doc(session, "CdrRepDoc", **opts)
+    except:
+        LOGGER.exception("CdrAddDoc")
+        raise
 
 
 def getDoc(credentials, docId, *args, **opts):
@@ -880,7 +1223,7 @@ def getDoc(credentials, docId, *args, **opts):
         doc = doc.legacy_doc(get_xml=include_xml, get_blob=include_blob)
     else:
         doc = None
-        command = etree.Element("GetCdrDoc")
+        command = etree.Element("CdrGetDoc")
         command.set("includeXml", "Y" if include_xml else "N")
         command.set("includeBlob", "Y" if include_blob else "N")
         etree.SubElement(command, "DocId").text = normalize(docId)
@@ -898,6 +1241,49 @@ def getDoc(credentials, docId, *args, **opts):
     if opts.get("getObject"):
         return Doc(doc_string, encoding="utf-8")
     return doc_string
+
+def delDoc(credentials, docId, **opts):
+    """
+    Mark a CDR document as deleted
+
+    Required positional arguments:
+      credentials - name of existing session or login credentials
+      docId - CDR ID string or integer
+
+    Keyword options
+      validate - if True, don't delete if any docs link to this one
+      reason - string explaining why document was deleted
+      val - legacy alternative to `validate` ("N" -> False "Y" -> True)
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+    """
+
+    validate = opts.get("validate") or opts.get("val") == "Y"
+    reason = opts.get("reason")
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        doc = docs.Doc(session, id=docId)
+        opts = dict(reason=reason, validate=validate)
+        doc.delete(**opts)
+        if doc.errors:
+            return etree.tostring(doc.errors_node, encoding="utf-8")
+        return doc.cdr_id
+    cdr_id = normalize(docId)
+    command = etree.Element("CdrDelDoc")
+    etree.SubElement(command, "DocId").text = cdr_id
+    etree.SubElement(command, "Validate").text = "Y" if validate else "N"
+    if reason:
+        etree.SubElement(command, "Reason").text = reason
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrDelDocResp":
+            if response.errors:
+                return response.errors
+            return cdr_id
+        else:
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+    raise Exception("missing response")
 
 def filterDoc(credentials, filter, docId=None, **opts):
     """
@@ -1143,14 +1529,84 @@ def valDoc(credentials, doctype, **opts):
         command.set("ValidationTypes", val_types)
         command.set("ErrorLocators", "Y" if locators else "N")
         if doc_id:
-            child = etree.SubElement("DocId")
+            child = etree.SubElement(command, "DocId")
             child.text = normalize(doc_id)
             child.set("ValidateOnly", "N" if store else "Y")
         elif xml:
-            child = etree.SubElement("CdrDoc")
+            child = etree.SubElement(command, "CdrDoc")
             etree.SubElement(child, "CdrDocXml").text = xml.decode("utf-8")
-        response = _Control.send_command(session, command, tier)
-        return etree.tostring(response, encoding="utf-8")
+
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrValidateDocResp":
+                return etree.tostring(response.node, encoding="utf-8")
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
+
+
+class Logging:
+    """
+    The CDR has too many ways to do logging already. In spite of this,
+    I'm adding yet another logging class, this one based on the standard
+    library's logging module. The immediate impetus for doing this is the
+    fact that we have to use that module in the new CDR Scheduler. The
+    Logger class below is only used as a namespace wrapper, with a factory
+    method for instantiating logger objects.
+    """
+
+    FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
+    LEVELS = {
+        "info": logging.INFO,
+        "debug": logging.DEBUG,
+        "warn": logging.WARN,
+        "warning": logging.WARNING,
+        "critical": logging.CRITICAL,
+        "error": logging.ERROR
+    }
+
+    class Formatter(logging.Formatter):
+        """Make our own logging formatter to get the time stamps right."""
+
+        converter = datetime.datetime.fromtimestamp
+
+        def formatTime(self, record, datefmt=None):
+            ct = self.converter(record.created)
+            if datefmt:
+                s = ct.strftime(datefmt)
+            else:
+                t = ct.strftime("%Y-%m-%d %H:%M:%S")
+                s = "%s.%03d" % (t, record.msecs)
+            return s
+
+    @classmethod
+    def get_logger(cls, name, **opts):
+        """
+        Factory method for instantiating a logging object.
+
+        name       required name for the logger
+        path       optional path for the log file
+        format     optional override for the default log format pattern
+        level      optional verbosity for logging, defaults to info
+        propagate  if True, the base handler also writes our entries
+        multiplex  if True, add new handler even there already is one
+        console    if True, add stream handler to write to stderr
+        """
+
+        logger = logging.getLogger(name)
+        level = opts.get("level", "info")
+        logger.setLevel(cls.LEVELS.get(level, logging.INFO))
+        logger.propagate = opts.get("propagate", False)
+        if not logger.handlers or opts.get("multiplex"):
+            path = opts.get("path", "%s/%s.log" % (DEFAULT_LOGDIR, name))
+            handler = logging.FileHandler(path)
+            formatter = cls.Formatter(opts.get("format", cls.FORMAT))
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            if opts.get("console"):
+                stream_handler = logging.StreamHandler()
+                stream_handler.setFormatter(formatter)
+                logger.addHandler(stream_handler)
+        return logger
 
 
 class _Control:
@@ -1162,6 +1618,7 @@ class _Control:
     MIN_ID = 0x10000000000000000000000000000000
     MAX_ID = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
     TIER = Tier()
+
     try:
         CONN = cdrapi.db.connect(timeout=2)
     except Exception as e:
@@ -1326,9 +1783,9 @@ class _Control:
         doc = docs.Doc(session, **doc_opts)
         comment = opts.get("comment")
         reason = opts.get("reason")
-        if not isinstance(comment, unicode):
+        if comment and not isinstance(comment, unicode):
             comment = comment.decode("utf-8")
-        if not isinstance(reason, unicode):
+        if reason and not isinstance(reason, unicode):
             reason = reason.decode("utf-8")
         save_opts = {
             "version": opts.get("ver") == "Y",
@@ -1431,71 +1888,6 @@ def getpw(name):
     except:
         pass
     return None
-
-
-class Logging:
-    """
-    The CDR has too many ways to do logging already. In spite of this,
-    I'm adding yet another logging class, this one based on the standard
-    library's logging module. The immediate impetus for doing this is the
-    fact that we have to use that module in the new CDR Scheduler. The
-    Logger class below is only used as a namespace wrapper, with a factory
-    method for instantiating logger objects.
-    """
-
-    FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
-    LEVELS = {
-        "info": logging.INFO,
-        "debug": logging.DEBUG,
-        "warn": logging.WARN,
-        "warning": logging.WARNING,
-        "critical": logging.CRITICAL,
-        "error": logging.ERROR
-    }
-
-    class Formatter(logging.Formatter):
-        """Make our own logging formatter to get the time stamps right."""
-
-        converter = datetime.datetime.fromtimestamp
-
-        def formatTime(self, record, datefmt=None):
-            ct = self.converter(record.created)
-            if datefmt:
-                s = ct.strftime(datefmt)
-            else:
-                t = ct.strftime("%Y-%m-%d %H:%M:%S")
-                s = "%s.%03d" % (t, record.msecs)
-            return s
-
-    @classmethod
-    def get_logger(cls, name, **opts):
-        """
-        Factory method for instantiating a logging object.
-
-        name       required name for the logger
-        path       optional path for the log file
-        format     optional override for the default log format pattern
-        level      optional verbosity for logging, defaults to info
-        propagate  if True, the base handler also writes our entries
-        multiplex  if True, add new handler even there already is one
-        console    if True, add stream handler to write to stderr
-        """
-
-        logger = logging.getLogger(name)
-        level = opts.get("level", "info")
-        logger.setLevel(cls.LEVELS.get(level, logging.INFO))
-        logger.propagate = opts.get("propagate", False)
-        if not logger.handlers or opts.get("multiplex"):
-            path = opts.get("path", "%s/%s.log" % (DEFAULT_LOGDIR, name))
-            handler = logging.FileHandler(path)
-            formatter = cls.Formatter(opts.get("format", cls.FORMAT))
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-            if opts.get("console"):
-                stream_handler = logging.StreamHandler()
-                stream_handler.setFormatter(formatter)
-                logger.addHandler(stream_handler)
-        return logger
 
 
 def get_text(node, default=None):
@@ -1620,6 +2012,7 @@ SENDCMDS_SLEEP = 3
 PDQDTDPATH = WORK_DRIVE + ":\\cdr\\licensee"
 DEFAULT_DTD = PDQDTDPATH + "\\pdqCG.dtd"
 NAMESPACE = "cips.nci.nih.gov/cdr"
+LOGGER = Logging.get_logger("cdr-client", level="debug", console=True)
 Group = Session.Group
 Action = Session.Action
 
@@ -3267,174 +3660,6 @@ SELECT d.title, t.name, d.active_status,
     return docData
 
 
-#----------------------------------------------------------------------
-# Class to contain CDR document type information.
-#----------------------------------------------------------------------
-class dtinfo:
-    def __init__(self,
-                 type       = None,
-                 format     = None,
-                 versioning = None,
-                 created    = None,
-                 schema_mod = None,
-                 dtd        = None,
-                 schema     = None,
-                 vvLists    = None,
-                 comment    = None,
-                 error      = None,
-                 active     = None):
-        self.type           = type
-        self.format         = format
-        self.versioning     = versioning
-        self.created        = created
-        self.schema_mod     = schema_mod
-        self.dtd            = dtd
-        self.schema         = schema
-        self.vvLists        = vvLists
-        self.comment        = comment
-        self.error          = error
-        self.active         = active
-
-    def getChildren(self, parent=None):
-        """
-        Get a list of top level children for a document type, or children
-        of a specific element.
-
-        Pass:
-            parent - Name of element for which children are desired.
-                     None = same as passing Document Type node.
-                     Multi-element paths (e.g. "X/Y/Z") not allowed (:<)
-
-        Return:
-            Sequence of element names, in the order that the schema allows
-            them to appear in the block.  The same name can appear more
-            than once if that is allowed in the schema.
-        """
-        if not self.dtd:
-            raise Exception("document type %s has no DTD" % self.type)
-        parent = parent or self.type
-        pattern = r"<!ELEMENT\s+%s\s+([^>]+)>" % (parent)
-        match = re.search(pattern, self.dtd)
-        if not match:
-            raise Exception("definition of element %s not found" % parent)
-        return [c for c in re.split(r"\W+", match.group(1))
-                if c and c != "CdrDocCtl"]
-    def __repr__(self):
-        if self.error: return self.error
-        return """\
-[CDR Document Type]
-            Name: %s
-          Format: %s
-      Versioning: %s
-         Created: %s
-          Active: %s
- Schema Modified: %s
-          Schema:
-%s
-             DTD:
-%s
-         Comment:
-%s
-""" % (self.type or '',
-       self.format or '',
-       self.versioning or '',
-       self.created or '',
-       self.active or '',
-       self.schema_mod or '',
-       self.schema or '',
-       self.dtd or '',
-       self.comment or '')
-
-#----------------------------------------------------------------------
-# Retrieve document type information from the CDR.
-# Add active flag (OCECDR-4091).
-#----------------------------------------------------------------------
-def getDoctype(credentials, doctype, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = etree.Element("CdrGetDocType", Type=doctype, GetEnumValues="Y")
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # Check for problems.
-    errors = getErrors(resp, False, True)
-    if errors: return dtinfo(error=errors)
-
-    # Extract the information from the response.
-    dtd = schema = comment = ""
-    vv_lists = []
-    root = etree.fromstring(resp)
-    for node in root.findall("CdrResponse/CdrGetDocTypeResp"):
-        dtype = node.get("Type", "")
-        dformat = node.get("Format", "")
-        versioning = node.get("Versioning", "")
-        created = node.get("Created", "")
-        schema_mod = node.get("SchemaMod", "")
-        active = node.get("Active", "")
-        for child in node:
-            if child.tag == "Comment":
-                comment = child.text or ""
-            if child.tag == "DocDtd":
-                dtd = child.text or ""
-            if child.tag == "DocSchema":
-                schema = child.text or ""
-            if child.tag == "EnumSet":
-                values = [vv.text for vv in child.findall("ValidValue")]
-                vv_lists.append((child.get("Node"), values))
-
-    # Return a dtinfo instance.
-    return dtinfo(dtype, dformat, versioning, created, schema_mod, dtd,
-                  schema, vv_lists, comment, active=active)
-
-#----------------------------------------------------------------------
-# Create a new document type for the CDR.
-#----------------------------------------------------------------------
-def addDoctype(credentials, info, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = etree.Element("CdrAddDocType")
-    cmd.set("Type", info.type)
-    cmd.set("Format", info.format)
-    cmd.set("Versioning", info.versioning)
-    etree.SubElement(cmd, "DocSchema").text = info.schema
-    if info.comment:
-        etree.SubElement(cmd, "Comment").text = info.comment
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    error = checkErr(resp)
-    if error: return dtinfo(error = error)
-    return getDoctype(credentials, info.type, host, port)
-
-#----------------------------------------------------------------------
-# Modify existing document type information in the CDR.
-# Optionally modify the active status of the document type (OCECDR-4091).
-#----------------------------------------------------------------------
-def modDoctype(credentials, info, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = etree.Element("CdrModDocType")
-    cmd.set("Type", info.type)
-    cmd.set("Format", info.format)
-    cmd.set("Versioning", info.versioning)
-    active = getattr(info, "active")
-
-    # OCECDR-4091: do it this way for backward compatibility in case
-    # some code is creating an info class by hand. :-0
-    if active:
-        cmd.set("Active", active)
-    etree.SubElement(cmd, "DocSchema").text = info.schema
-    if info.comment:
-        etree.SubElement(cmd, "Comment").text = info.comment
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    error = checkErr(resp)
-    if error: return dtinfo(error = error)
-    return getDoctype(credentials, info.type, host, port)
-
-
 class Term:
     def __init__(self, id, name):
         self.id       = id
@@ -3446,73 +3671,6 @@ class TermSet:
     def __init__(self, error = None):
         self.terms = {}
         self.error = error
-
-#----------------------------------------------------------------------
-# Retrieve a list of valid values defined in a schema for a doctype
-#----------------------------------------------------------------------
-def getVVList(credentials, docType, vvName, sorted=False, putFirst=None,
-              host=DEFAULT_HOST, port=DEFAULT_PORT):
-    """
-    Creates a list of valid values from a schema.
-
-    Pass:
-        credentials - Standard stuff.
-        doctype     - String name of the document type.
-        vvName      - Name of XML element for which valid vals are desired.
-        sorted      - True=sort the list alphabetically, else leave alone.
-        putFirst    - Optional of value(s) to move to the top of the
-                      list.  Used to get some particular ordering, move
-                      a default value to the top, etc.
-                      Can accept list, single value, or None.
-        host/port   - Standard stuff.
-
-    Raises:
-        Standard error if anything goes wrong.
-    """
-    # Get all info about this doctype
-    # It would be more efficient to get less, but is more robust
-    #   to use our standard getDoctype function for this.
-    dt = getDoctype (credentials, docType, host, port)
-    if type(dt)==type("") or type(dt)==type(u""):
-        raise ('Error getting doctype "%s" for valid values in "%s": %s' % \
-               (docType, vvName, dt))
-
-    # Extract the valid value list from the doctype info
-    vals = []
-    for vvList in dt.vvLists:
-        if vvList[0] == vvName:
-            vals = vvList[1]
-            break
-
-    # Should never happen
-    if vals == []:
-        raise ('No valid value list for "%s" in doctype %s' % \
-               (vvName, docType))
-
-    # If sorting
-    if sorted:
-        vals.sort()
-
-    # If user wants to put some special value(s) first
-    if putFirst:
-        # If scalar passed, convert it to a list
-        putVals = []
-        if type(putFirst) in (type(()), type([])):
-            putVals = putFirst
-        else:
-            putVals = [putFirst]
-
-        # Insert values at head and delete them from further on
-        pos = 0
-        for putVal in putVals:
-            vals.insert (pos, putVal)
-            pos += 1
-            for i in range(pos, len(vals)):
-                if vals[i] == putVal:
-                    del vals[i]
-                    break
-
-    return vals
 
 #----------------------------------------------------------------------
 # Gets context information for term's position in terminology tree.

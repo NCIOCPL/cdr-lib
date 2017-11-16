@@ -5,6 +5,7 @@ Manage CDR documents
 import copy
 import datetime
 import re
+import sys
 import threading
 import time
 import dateutil.parser
@@ -14,9 +15,9 @@ from cdrapi.db import Query
 from cdrapi.settings import Tier
 
 
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # Try to make the module compatible with Python 2 and 3.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 try:
     basestring
 except:
@@ -148,9 +149,9 @@ class Doc(object):
         self.__opts = opts
         self._errors = []
 
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # PROPERTIES START HERE.
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     @property
     def active_status(self):
@@ -603,6 +604,7 @@ class Doc(object):
             try:
                 self._root = etree.fromstring(self.xml.encode("utf-8"))
             except:
+                self.session.logger.exception("can't parse %r", self.xml)
                 self._root = None
         return self._root
 
@@ -657,6 +659,7 @@ class Doc(object):
         Integer for specific version of None for all_doc_versions row
         """
 
+        #self.session.logger.info("@version: __opts = %s", self.__opts)
         # Pull out the version-related options passed into the constructor.
         version = self.__opts.get("version")
         cutoff = self.__opts.get("before")
@@ -690,7 +693,7 @@ class Doc(object):
                     raise Exception("invalid version {!r}".format(version))
 
                 # Current is an alias for non-versioned copy.
-                if version == "current":
+                if version in ("current", "none"):
                     self._version = None
 
                 # We have properties for last (published) versions.
@@ -719,6 +722,7 @@ class Doc(object):
                         self._version = int(version)
                     except:
                         error = "invalid version spec {}".format(version)
+                        self.session.logger.exception(error)
                         raise Exception(error)
 
         # Return the cached version value.
@@ -765,9 +769,9 @@ class Doc(object):
             self._xml = self._xml.decode("utf-8")
         self._root = self._denormalized_xml = self._resolved = None
 
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # PUBLIC METHODS START HERE.
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     def add_error(self, message, location=None, **opts):
         """
@@ -824,6 +828,65 @@ class Doc(object):
         self.__check_out(**opts)
         self.session.conn.commit()
 
+    def delete(self, **opts):
+        """
+        Mark the document as deleted
+
+        We don't actually remove the document or any of its versions
+        from the repository. We just set the `active_status` column
+        to 'D' so it drops out of the `document` view.
+
+        Optional keyword arguments:
+          validate - if True, make sure nothing links to the document
+          reason - string to be recorded in the audit trail
+        """
+
+        # Start with a clean slate.
+        self._errors = []
+
+        # Use a default reason if none supplied.
+        reason = opts.get("reason", "Document deleted. No reason recorded.")
+
+        # Make sure the user can delete documents of this type.
+        if not self.session.can_do("DELETE DOCUMENT", self.doctype.name):
+            message = "User not authorized to delete {} documents"
+            raise Exception(message.format(self.doctype.name))
+
+        # Make sure the document isn't published.
+        query = Query("pub_proc_cg", "id")
+        query.where(query.Condition("id", self.id))
+        row = query.execute(self.session.cursor).fetchone()
+        if row:
+            message = "Cannot delete published doc {}".format(self.cdr_id)
+            raise Exception(message)
+
+        # Make sure it's not in the external mapping table.
+        query = Query("external_map", "COUNT(*) AS n")
+        query.where(query.Condition("doc_id", self.id))
+        if query.execute(self.session.cursor).fetchone().n > 0:
+            message = "Cannot delete {} which is in the external mapping table"
+            raise Exception(message.format(self.cdr_id))
+
+        # Make sure someone else doesn't have it locked.
+        lock = self.lock
+        if lock:
+            if lock.locker.id != self.session.user_id:
+                message = "Document {} is checked out by another user"
+                raise Exception(message.format(self.cdr_id))
+            self.check_in(abandon=True, comment=reason)
+
+        # Deal with links to this document.
+        if self.__delete_incoming_links(**opts):
+
+            # We got the green light to proceed with the deletion.
+            for table in "query_term", "query_term_pub":
+                delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
+                self.session.cursor.execute(delete, (self.id,))
+            update = "UPDATE document SET active_status = 'D' WHERE id = ?"
+            self.session.cursor.execute(update, (self.id,))
+            self.__audit_action("Doc.delete", "DELETE DOCUMENT", reason)
+            self.session.conn.commit()
+
     def filter(self, *filters, **opts):
         """
         Apply one or more filters to the XML for the document
@@ -863,6 +926,7 @@ class Doc(object):
         doc = opts.get("doc")
         if doc is None:
             doc = self.root
+        assert doc is not None, "no document to filter"
         messages = []
         parser = self.Parser()
         Resolver.local.docs.append(self)
@@ -872,7 +936,11 @@ class Doc(object):
             else:
                 filters = self.__assemble_filters(*filters, **opts)
             for f in filters:
-                result = self.__apply_filter(f.xml, doc, parser, **parms)
+                try:
+                    result = self.__apply_filter(f.xml, doc, parser, **parms)
+                except:
+                    self.session.logger.exception("__apply_filter(): xml=%r\ndoc=%r\nparser=%s\nparms=%s", f.xml, doc, parser, parms)
+                    raise
                 doc = result.result_tree
                 for entry in result.error_log:
                     messages.append(entry.message)
@@ -1120,6 +1188,7 @@ class Doc(object):
         """
 
         # Hand off the work to the private validation method.
+        self._errors = []
         try:
             self.__validate(**opts)
 
@@ -1134,9 +1203,9 @@ class Doc(object):
                 self.session.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # PRIVATE METHODS START HERE.
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     def __apply_filter(self, filter_xml, doc, parser=None, **parms):
         """
@@ -1289,7 +1358,7 @@ class Doc(object):
 
         # See if the document is locked by another account.
         lock_broken = False
-        if lock.locker_id != self.user_id:
+        if lock.locker.id != self.session.user_id:
             if opts.get("force"):
                 if not self.session.can_do("FORCE CHECKOUT", doctype):
                     raise Exception(str(lock))
@@ -1308,11 +1377,11 @@ class Doc(object):
         # Clear out all the locks for the document.
         update = "UPDATE checkout SET dt_in = ?, version = ?"
         when = datetime.datetime.now().replace(microsecond=0)
-        values = version, when, self.id
+        values = when, version, self.id
         comment = opts.get("comment")
         if comment is not None:
             update += ", comment = ?"
-            values = version, when, comment or None, self.id
+            values = when, version, comment or None, self.id
         update += " WHERE id = ? AND dt_in IS NULL"
         self.session.cursor.execute(update, values)
 
@@ -1491,9 +1560,6 @@ class Doc(object):
         links = []
         unique_links = set()
 
-        # Advance preparation for error messages.
-        opts = {"type": self.LINK}
-
         # Walk through all of the element nodes in the document.
         for node in doc.iter("*"):
             link = Link(self, node)
@@ -1506,7 +1572,7 @@ class Doc(object):
                     unique_links.add(link.key)
                 if link.nlink_attrs > 1:
                     message = "Can only have one link from a single element"
-                    self.add_error(message, link.eid, **opts)
+                    self.add_error(message, link.eid, type=self.LINK)
 
             # Also populate the `frag_ids` property.
             if link.id:
@@ -1695,6 +1761,49 @@ class Doc(object):
 
         # Wipe the cached information about the BLOB.
         self._blob = self._blob_id = None
+
+    def __delete_incoming_links(self, **opts):
+        """
+        Remove links to this document in preparation for marking it deleted
+
+        Optional keyword argument:
+          validate - if True, just record the links as problems
+
+        Return:
+          True if no inbound links are found, or `validate` is `False`
+          (in either of these cases, marking of the document as deleted
+          can proceed)
+        """
+
+        # Find the links to this document; ignore links to self.
+        query = Query("link_net", "source_doc", "target_frag")
+        query.where(query.Condition("target_doc", self.id))
+        query.where(query.Condition("source_doc", self.id, "<>"))
+        rows = query.execute(self.session.cursor).fetchall()
+
+        # If no inbound links, the document can be marked as deleted.
+        if not rows:
+            return True
+
+        # Record the inbound links as errors.
+        for doc_id, frag_id in rows:
+            doc = Doc(id=doc_id)
+            args = doc.cdr_id, doc.title
+            message = "Document {} ({}) links to this document".format(*args)
+            if frag_id:
+                message += " Fragment({})".format(frag_id)
+            self.add_error(message, type=self.LINK)
+
+        # Tell the caller not to proceed with the deletion (links were found).
+        if opts.get("validate"):
+            return False
+
+        # Delete the links and tell the caller to proceed with the 'deletion'.
+        delete = "DELETE FROM {} WHERE source_doc = ?"
+        for table in ("link_net", "link_fragment"):
+            sql = delete.format(table)
+            self.session.cursor.execute(sql, (self.id,))
+        return True
 
     def __extract_rule_sets(self, schema, sets):
         """
@@ -2116,6 +2225,15 @@ class Doc(object):
             if title and title != fields["title"]:
                 update = "UPDATE document SET title = ? WHERE id = ?"
                 self.session.cursor.execute(update, (title, self.id))
+
+            # XXX TODO GET RID OF THIS CODE WHEN WE GO TO PRODUCTION!!!!
+            if self.doctype.name == "schema":
+                insert = "INSERT INTO good_schemas (id, xml) VALUES (?, ?)"
+                self.session.cursor.execute(insert, (self.id, self.xml))
+        elif self.doctype.name == "schema":
+            update = "UPDATE good_schemas SET xml = ? WHERE id = ?"
+            self.session.cursor.execute(update, (self.xml, self.id))
+            # XXX TODO END OF CODE BLOCK THAT NEEDS TO GO AWAY
 
         # If the document has a binary large object (BLOB), save it.
         if self.blob is not None:
@@ -2581,9 +2699,9 @@ class Doc(object):
             if store == "always" or store == "valid" and not self.errors:
                 self.__store_links(links)
 
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # STATIC AND CLASS METHODS START HERE.
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     @staticmethod
     def extract_id(arg):
@@ -2622,12 +2740,14 @@ class Doc(object):
         TODO: fix schemas in all_docs table and use them
         """
 
+        assert name, "can't get a schema without a name"
+        names = name, name.replace(".xsd", ".xml")
         assert name, "get_schema_xml(): no name for schema"
         query = Query("good_schemas s", "s.xml")
         query.join("document d", "d.id = s.id")
         query.join("doc_type t", "t.id = d.doc_type")
         query.where("t.name = 'schema'")
-        query.where(query.Condition("d.title", name.replace(".xsd", ".xml")))
+        query.where(query.Condition("d.title", names, "IN"))
         try:
             return query.execute(cursor).fetchone()[0]
         except:
@@ -2694,9 +2814,9 @@ class Doc(object):
         return "{{{}}}{}".format(ns, local)
 
 
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # NESTED CLASSES START HERE.
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
 
     class Action:
@@ -3249,75 +3369,247 @@ class Doctype:
     def __init__(self, session, **opts):
         self.__session = session
         self.__opts = opts
-
-    @property
-    def session(self):
-        return self.__session
-
-    @property
-    def id(self):
-        if not hasattr(self, "_id"):
-            self._id = self.__opts.get("id")
-            if not self._id:
-                self.__fetch_common_properties()
-        return self._id
-
-    @property
-    def name(self):
-        if not hasattr(self, "_name"):
-            self._name = self.__opts.get("name")
-            if not self._name:
-                self.__fetch_common_properties()
-        return self._name
-
-    @property
-    def schema_id(self):
-        if not hasattr(self, "_xml_schema"):
-            self._xml_schema = self.__opts.get("schema_id")
-            if not self._xml_schema:
-                self.__fetch_common_properties()
-        return self._xml_schema
-
-    @property
-    def schema_title(self):
-        if not hasattr(self, "_schema_title"):
-            query = Query("document", "title")
-            query.where(query.Condition("id", self.schema_id))
-            row = query.execute(self.session.cursor).fetchone()
-            self._schema_title = row.title if row else None
-        return self._schema_title
+        session.logger.info("Doctype(): opts=%s", opts)
 
     @property
     def active(self):
         if not hasattr(self, "_active"):
             self._active = self.__opts.get("active")
             if not self._active:
-                self.__fetch_common_properties()
+                if self.id:
+                    query = Query("doc_type", "active")
+                    query.where(query.Condition("id", self.id))
+                    row = query.execute(self.session.cursor).fetchone()
+                    self._active = row.active if row else "Y"
+                else:
+                    self._active = "Y"
+        assert self._active in "YN", "invalid doctype active value"
         return self._active
+
+    @active.setter
+    def active(self, value):
+        assert value in "YN", "invalid doctype active value"
+        self._active = value
+
+    @property
+    def comment(self):
+        if not hasattr(self, "_comment"):
+            if "comment" in self.__opts:
+                self._comment = self.__opts["comment"]
+            elif self.id:
+                query = Query("doc_type", "comment")
+                query.where(query.Condition("id", self.id))
+                row = query.execute(self.session.cursor).fetchone()
+                self._comment = row.comment if row else None
+            else:
+                self._comment = None
+            if self._comment:
+                self._comment = self._comment.strip()
+            else:
+                self._comment = None
+        return self._comment
+
+    @comment.setter
+    def comment(self, value):
+        self._comment = value
+
+    @property
+    def created(self):
+        if not hasattr(self, "_created"):
+            self.__fetch_dates()
+        return self._created
+
+    @property
+    def dtd(self):
+        if not hasattr(self, "_dtd_string"):
+            self._dtd = DTD(self.session, name=self.schema)
+            self._dtd_string = str(self._dtd)
+        return self._dtd_string
+
+    @property
+    def format(self):
+        if not hasattr(self, "_format"):
+            self._format = self.__opts.get("format")
+            if not self._format and self.id:
+                query = Query("format f", "f.name", "f.id")
+                query.join("doc_type t", "t.format = f.id")
+                query.where(query.Condition("t.id", self.id))
+                row = query.execute(self.session.cursor).fetchone()
+                if row:
+                    self._format, self._format_id = row
+                else:
+                    self._format = "xml"
+            else:
+                self._format = "xml"
+        return self._format
+
+    @format.setter
+    def format(self, value):
+        self._format = value
+        format_id = self.__format_id_from_name(value)
+        if format_id is None:
+            raise Exception("Unrecognized doctype format {!r}".format(value))
+        self._format_id = format_id
+
+    @property
+    def format_id(self):
+        if not hasattr(self, "_format_id"):
+            if self.format:
+                if not hasattr(self, "_format_id"):
+                    self._format_id = self.__format_id_from_name(self.format)
+        return self._format_id
+
+    @property
+    def id(self):
+        if not hasattr(self, "_id"):
+            self._id = self.__opts.get("id")
+            if not self._id:
+                if hasattr(self, "_name"):
+                    name = self._name
+                else:
+                    name = self.__opts.get("name")
+                if name:
+                    self.session.logger.info("@id: name=%s", name)
+                    query = Query("doc_type", "id")
+                    query.where(query.Condition("name", name))
+                    row = query.execute(self.session.cursor).fetchone()
+                    self._id = row.id if row else None
+                    self.session.logger.info("@id: query got %s", self._id)
+                else:
+                    self.session.logger.warning("@id: NO NAME!!!")
+        return self._id
+
+    @property
+    def name(self):
+        if not hasattr(self, "_name"):
+            self._name = self.__opts.get("name")
+            if not self._name and self.id:
+                query = Query("doc_type", "name")
+                query.where(query.Condition("id", self.id))
+                row = query.execute(self.session.cursor).fetchone()
+                self._name = row.name if row else None
+        return self._name
+
+    @name.setter
+    def name(self, value):
+        """
+        Modify the name of the document type
+
+        First make sure the `id` property has been set from the old name.
+
+        Pass:
+          value - new name for the document type
+        """
+
+        if self.id != "~~~some bogus value":
+            self._name = value
+
+    @property
+    def schema(self):
+        if not hasattr(self, "_schema"):
+            if "schema" in self.__opts:
+                self._schema = self.__opts["schema"]
+            elif self.id:
+                self._schema_id = self._schema = None
+                query = Query("document d", "d.id", "d.title")
+                query.join("doc_type t", "t.xml_schema = d.id")
+                query.where(query.Condition("t.id", self.id))
+                row = query.execute(self.session.cursor).fetchone()
+                if row:
+                    self._schema_id, self._schema = row
+            else:
+                self.session.logger.warning("@schema: no doctype id")
+                self._schema = None
+        return self._schema
+
+    @schema.setter
+    def schema(self, value):
+        self._schema = value
+        if value is None:
+            self._schema_id = None
+        else:
+            schema_id = Doc.id_from_title(value, self.session.cursor)
+            if not schema_id:
+                raise Exception("Schema {!r} not found".format(value))
+            self._schema_id = schema_id
+
+    @property
+    def schema_id(self):
+        if not hasattr(self, "_schema_id"):
+            if self.schema and not hasattr(self, "_schema_id"):
+                schema_id = Doc.id_from_title(self.schema, self.session.cursor)
+                if schema_id:
+                    self._schema_id = schema_id
+                else:
+                    message = "Schema {!r} not found".format(self.schema)
+                    raise Exception(message)
+        return self._schema_id
+
+    @property
+    def schema_mod(self):
+        if not hasattr(self, "_schema_date"):
+            self.__fetch_dates()
+        return self._schema_date
+
+    @property
+    def session(self):
+        return self.__session
 
     @property
     def versioning(self):
         if not hasattr(self, "_versioning"):
             self._versioning = self.__opts.get("versioning")
             if not self._versioning:
-                self.__fetch_common_properties()
+                if self.id:
+                    query = Query("doc_type", "versioning")
+                    query.where(query.Condition("id", self.id))
+                    row = query.execute(self.session.cursor).fetchone()
+                    self._versioning = row.versioning if row else "Y"
+                else:
+                    self._versioning = "Y"
+        assert self._versioning in "YN", "invalid doctype versioning value"
         return self._versioning
 
-    def __fetch_common_properties(self, **opts):
-        """
-        Fetch all values available directly from the `doc_type` table
-        """
+    @versioning.setter
+    def versioning(self, value):
+        assert value in "YN", "invalid doctype versioning value"
+        self._versioning = value
 
-        fields = "id", "name", "xml_schema", "active", "versioning"
-        query = Query("doc_type", *fields)
-        if self.name:
-            query.where(query.Condition("name", self.name))
-        else:
-            query.where(query.Condition("id", self.id))
-        row = query.execute(self.session.cursor).fetchone()
-        for i, name in enumerate(fields):
-            value = row[i] if row else None
-            setattr(self, "_" + name, value)
+    @property
+    def vv_lists(self):
+        if not hasattr(self, "_vv_lists"):
+            self._vv_lists = self._dtd.values if self.dtd else None
+        return self._vv_lists
+
+    @property
+    def linking_elements(self):
+        if not hasattr(self, "_linking_elements"):
+            if self.dtd:
+                self._linking_elements = self._dtd.linking_elements
+            else:
+                self._linking_elements = None
+        return self._linking_elements
+
+    def delete(self):
+        if not self.session.can_do("DELETE DOCTYPE"):
+            raise Exception("User not authorized to delete document types")
+        if not self.id:
+            raise Exception("Document type {!r} not found".format(self.name))
+        query = Query("all_docs", "COUNT(*) AS n")
+        query.where(query.Condition("doc_type", self.id))
+        if query.execute(self.session.cursor).fetchone().n:
+            message = "Cannot delete document type for which documents exist"
+            raise Exception(message)
+        tables = [
+            ("grp_action", "doc_type"),
+            ("link_xml", "doc_type"),
+            ("link_target", "target_doc_type"),
+            ("doc_type", "id")
+        ]
+        for table, column in tables:
+            sql = "DELETE FROM {} WHERE {} = ?".format(table, column)
+            self.session.cursor.execute(sql, (self.id,))
+        self.session.conn.commit()
 
     def elements_allowing_fragment_ids(self):
         """
@@ -3336,17 +3628,103 @@ class Doctype:
           set of element names for which cdr:id attributes are allowed
         """
 
-        if not self.schema_title:
+        if not self.schema:
             return set()
         schemas = set() # prevent infinite recursion
         elements = dict()
         types = dict()
-        self.__parse_schema(self.schema_title, elements, types, schemas)
+        self.__parse_schema(self.schema, elements, types, schemas)
         names = set()
         for name in elements:
             if types.get(elements[name]):
                 names.add(name)
         return names
+
+    def save(self, **opts):
+        self.session.logger.info("Doctype.save(%s)", opts)
+        now = datetime.datetime.now().replace(microsecond=0)
+        try:
+            fields = {
+                "name": opts.get("name", self.name),
+                "format": opts.get("format", self.format_id),
+                "versioning": opts.get("versioning", self.versioning),
+                "xml_schema": self.schema_id,
+                "comment": opts.get("comment", self.comment) or None,
+                "active": opts.get("active", self.active),
+                "schema_date": now
+            }
+            if fields["comment"]:
+                fields["comment"] = fields["comment"].strip()
+        except:
+            self.session.logger.exception("can't set fields")
+            raise
+        self.session.logger.info("fields=%s", fields)
+        if not self.id:
+            fields["created"] = now
+            names = sorted(fields)
+            values = tuple([fields[name] for name in names])
+            pattern = "INSERT INTO doc_type ({}) VALUES ({})"
+            placeholders = ["?"] * len(names)
+            sql = pattern.format(", ".join(names), ", ".join(placeholders))
+        else:
+            names = sorted(fields)
+            values = tuple([fields[name] for name in names] + [self.id])
+            assignments = ["{} = ?".format(name) for name in names]
+            pattern = "UPDATE doc_type SET {} WHERE id = ?"
+            sql = pattern.format(", ".join(assignments))
+        self.session.logger.info("sql=%s", sql)
+        self.session.logger.info("values=%s", values)
+        self.session.cursor.execute(sql, values)
+        self._schema_date = now
+        if not self.id:
+            self._created = now
+            self.session.cursor.execute("SELECT @@IDENTITY AS id")
+            self._id = self.session.cursor.fetchone().id
+        self.session.conn.commit()
+        self.session.logger.info("committed doctype %s", self.id)
+        return self.id
+
+    def __format_id_from_name(self, name):
+        query = Query("format", "id")
+        query.where(query.Condition("name", name))
+        row = query.execute(self.session.cursor).fetchone()
+        return row.id if row else None
+
+    def __fetch_dates(self):
+        self._created = self._schema_date = None
+        if self.id:
+            query = Query("doc_type", "created", "schema_date")
+            query.where(query.Condition("id", self.id))
+            row = query.execute(self.session.cursor).fetchone()
+            if row:
+                values = []
+                for value in row:
+                    if isinstance(value, datetime.datetime):
+                        value = value.replace(microsecond=0)
+                    values.append(value)
+                self._created, self._schema_date = values
+
+    def __fetch_common_properties(self, **opts):
+        """
+        Fetch all values available directly from the `doc_type` table
+        """
+
+        fields = ("id", "name", "xml_schema", "active", "versioning", "format",
+                  "created", "schema_date", "comment")
+        query = Query("doc_type", *fields)
+        if self.name:
+            query.where(query.Condition("name", self.name))
+        else:
+            query.where(query.Condition("id", self.id))
+        row = query.execute(self.session.cursor).fetchone()
+        for i, name in enumerate(fields):
+            value = row[i] if row else None
+            if name == "format":
+                self._format_id = value
+            elif name == "xml_schema":
+                self._schema_id = value
+            else:
+                setattr(self, "_" + name, value)
 
     def __parse_schema(self, title, elements, types, schemas):
         """
@@ -3367,6 +3745,7 @@ class Doctype:
                     recursion
         """
 
+        assert title, "can't parse a schema that has no title"
         if title in schemas:
             raise Exception("infinite schema inclusion")
         schemas.add(title)
@@ -3393,6 +3772,31 @@ class Doctype:
                 self.__parse_schema(location, elements, types, schemas)
 
     @staticmethod
+    def get_css_files(session):
+        """
+        Fetch the CSS from the repository
+
+        The current CSS is stored in version control, not the CDR, but
+        there's still a path in the DLL code which invokes this as a
+        fallback, so I'm not going to get rid of this (yet).
+
+        Pass:
+          session - reference to object representing user's login
+
+        Return:
+          dictionary of CSS files, indexed by their document names
+        """
+
+        query = Query("doc_blob b", "d.title", "b.data")
+        query.join("document d", "d.id = b.id")
+        query.join("doc_type t", "t.id = d.doc_id")
+        query.where("t.name = 'css'")
+        files = dict()
+        for title, data in query.execute(session.cursor).fetchall():
+            files[title] = data.decode("utf-8")
+        return files
+
+    @staticmethod
     def list_doc_types(session):
         """
         Assemble the list of active document types names
@@ -3410,6 +3814,23 @@ class Doctype:
         query.where("name <> ''")
         return [row.name for row in query.execute(session.cursor).fetchall()]
 
+    @staticmethod
+    def list_schema_docs(session):
+        """
+        Assemble the list of schema documents currently stored in the CDR
+
+        Pass:
+          session - reference to object representing user's login
+
+        Return:
+          sequence of document type names, sorted alphabetically
+        """
+
+        query = Query("document d", "d.title").order("d.title")
+        query.join("doc_type t", "t.id = d.doc_type")
+        query.where("t.name = 'schema'")
+        return [row.title for row in query.execute(session.cursor).fetchall()]
+
 
 class DTD:
     NAME_START_CATEGORIES = { "Ll", "Lu", "Lo", "Lt", "Nl" }
@@ -3421,34 +3842,37 @@ class DTD:
     ELEMENT_ONLY = "element-only"
     UNBOUNDED = "unbounded"
 
-    def __init__(self, session, **args):
+    def __init__(self, session, **opts):
         self.session = session
         self.types = dict()
         self.groups = dict()
         self.top = None
-        self.name = args.get("name")
+        self.name = opts.get("name")
         self.parse_schema(self.name)
 
     def parse_schema(self, name):
-        schema_xml = Doc.get_schema_xml(title, self.session.cursor)
+        assert name, "how can we parse something we can't find?"
+        schema_xml = Doc.get_schema_xml(name, self.session.cursor)
         root = etree.fromstring(schema_xml.encode("utf-8"))
-        if root.tag != self.SCHEMA:
+        if root.tag != Schema.SCHEMA:
             raise Exception("Top-level element must be schema")
         for node in root:
-            if node.tag == self.ELEMENT:
+            if node.tag == Schema.ELEMENT:
                 assert not self.top, "only one top-level element allowed"
                 self.top = self.Element(self, node)
-            elif node.tag == self.COMPLEX_TYPE:
+            elif node.tag == Schema.COMPLEX_TYPE:
                 self.ComplexType(self, node)
-            elif node.tag == self.SIMPLE_TYPE:
+            elif node.tag == Schema.SIMPLE_TYPE:
                 self.SimpleType(self, node)
-            elif node.tag == self.GROUP:
+            elif node.tag == Schema.GROUP:
                 self.Group(self, node)
-            elif node.tag == self.INCLUDE:
+            elif node.tag == Schema.INCLUDE:
                 self.parse_schema(node.get("schemaLocation"))
                 self.session.logger.debug("resume parsing %s", name)
         self.session.logger.debug("finished parsing %s", name)
     def __str__(self):
+        self.values = dict()
+        self.linking_elements = set()
         lines = ["<!-- Generated from %s -->" % self.name, ""]
         self.defined = set()
         self.top.define(lines)
@@ -3480,7 +3904,7 @@ class DTD:
             self.type_name = node.get("type")
             assert self.name, "element name required"
             assert self.type_name, "element type required"
-            debug = self.session.logger.debug
+            debug = dtd.session.logger.debug
             debug("Element %s of type %s", self.name, self.type_name)
         def lookup_type(self):
             element_type = self.dtd.types.get(self.type_name)
@@ -3517,8 +3941,11 @@ class DTD:
         def __init__(self, dtd, name):
             self.dtd = dtd
             self.name = name
+            self.values = []
             assert self.name, "type must have a name"
         def define(self, element):
+            if self.values:
+                self.dtd.values[element.name] = self.values
             definitions = [self.define_element(element)]
             attributes = self.define_attributes(element)
             if attributes:
@@ -3540,16 +3967,17 @@ class DTD:
             DTD.Type.__init__(self, dtd, node.get("name"))
             self.base = None
             self.nmtokens = []
-            self.session.logger.debug("SimpleType %s", self.name)
-            for restriction in node.findall(DTD.RESTRICTION):
+            dtd.session.logger.debug("SimpleType %s", self.name)
+            for restriction in node.findall(Schema.RESTRICTION):
                 self.base = restriction.get("base")
-                for enum in restriction.findall(DTD.ENUMERATION):
+                for enum in restriction.findall(Schema.ENUMERATION):
                     value = enum.get("value")
-                    if DTD.is_nmtoken(value):
-                        self.nmtokens.append(value)
-                    else:
-                        self.nmtokens = None
-                        break
+                    self.values.append(value)
+                    if self.nmtokens is not None:
+                        if DTD.is_nmtoken(value):
+                            self.nmtokens.append(value)
+                        else:
+                            self.nmtokens = None
             dtd.add_type(self)
         def dtd_type(self):
             if self.nmtokens:
@@ -3566,32 +3994,32 @@ class DTD:
         ERROR = "complex type may only contain one of %s" % CNAMES
         def __init__(self, dtd, node):
             DTD.Type.__init__(self, dtd, node.get("name"))
-            self.session.logger.debug("ComplexType %s", self.name)
+            dtd.session.logger.debug("ComplexType %s", self.name)
             self.attributes = dict()
             self.content = None
             self.model = DTD.EMPTY
             if node.get("mixed") == "true":
                 self.model = DTD.MIXED
             for child in node.findall("*"):
-                if child.tag == DTD.ATTRIBUTE:
+                if child.tag == Schema.ATTRIBUTE:
                     self.add_attribute(dtd, child)
                 elif self.content:
                     raise Exception("%s: %s" % (self.name, self.ERROR))
-                elif child.tag == DTD.SIMPLE_CONTENT:
+                elif child.tag == Schema.SIMPLE_CONTENT:
                     self.model = DTD.TEXT_ONLY
-                    extension = child.find(DTD.EXTENSION)
+                    extension = child.find(Schema.EXTENSION)
                     assert len(extension), "%s: missing extension" % self.name
-                    for child in extension.findall(DTD.ATTRIBUTE):
+                    for child in extension.findall(Schema.ATTRIBUTE):
                         self.add_attribute(dtd, child)
                     break
                 else:
                     if self.model == DTD.EMPTY:
                         self.model = DTD.ELEMENT_ONLY
-                    if child.tag == DTD.SEQUENCE:
+                    if child.tag == Schema.SEQUENCE:
                         self.content = DTD.Sequence(dtd, child)
-                    elif child.tag == DTD.CHOICE:
+                    elif child.tag == Schema.CHOICE:
                         self.content = DTD.Choice(dtd, child)
-                    elif child.tag == DTD.GROUP:
+                    elif child.tag == Schema.GROUP:
                         self.content = DTD.Group(dtd, child)
                     else:
                         raise Exception("%s: %s" % (self.name, self.ERROR))
@@ -3623,7 +4051,15 @@ class DTD:
                 return "<!ELEMENT %s %s>" % (element.name, content)
             raise Exception("%s: unrecognized content model" % self.name)
         def define_attributes(self, element):
-            attributes = [str(a) for a in self.attributes.values()]
+            attributes = []
+            for attribute in self.attributes.values():
+                if attribute.name == "cdr:ref":
+                    self.dtd.linking_elements.add(element.name)
+                attributes.append(str(attribute))
+                values = attribute.values()
+                if values:
+                    key = "{}@{}".format(element.name, attribute.name)
+                    self.dtd.values[key] = values
             if not self.dtd.defined and "readonly" not in self.attributes:
                 attributes.append("readonly CDATA #IMPLIED")
             if attributes or not self.dtd.defined:
@@ -3633,18 +4069,19 @@ class DTD:
                 attributes = " ".join(attributes)
                 return "<!ATTLIST %s %s>" % (element.name, attributes)
 
-    class ChoiceOrSequence:
+    class ChoiceOrSequence(CountedNode):
         def __init__(self, dtd, node):
             DTD.CountedNode.__init__(self, dtd, node)
+            self.dtd = dtd
             self.nodes = []
             for child in node:
-                if child.tag == DTD.ELEMENT:
+                if child.tag == Schema.ELEMENT:
                     self.nodes.append(DTD.Element(dtd, child))
-                if child.tag == DTD.CHOICE:
+                if child.tag == Schema.CHOICE:
                     self.nodes.append(DTD.Choice(dtd, child))
-                elif child.tag == DTD.SEQUENCE:
+                elif child.tag == Schema.SEQUENCE:
                     self.nodes.append(DTD.Sequence(dtd, child))
-                elif child.tag == DTD.GROUP:
+                elif child.tag == Schema.GROUP:
                     self.nodes.append(DTD.Group(dtd, child))
             assert self.nodes, "choice or sequence cannot be empty"
         def get_node(self, elements, serialize=False):
@@ -3658,28 +4095,29 @@ class DTD:
         separator = "|"
         def __init__(self, dtd, node):
             DTD.ChoiceOrSequence.__init__(self, dtd, node)
-            self.session.logger.debug("Choice with %d nodes", len(self.nodes))
+            dtd.session.logger.debug("Choice with %d nodes", len(self.nodes))
     class Sequence(ChoiceOrSequence):
         separator = ","
         def __init__(self, dtd, node):
             DTD.ChoiceOrSequence.__init__(self, dtd, node)
-            self.session.logger.debug("Sequence with %d nodes", len(self.nodes))
+            dtd.session.logger.debug("Sequence with %d nodes", len(self.nodes))
     class Group:
         def __init__(self, dtd, node):
             self.dtd = dtd
             self.ref = node.get("ref")
             if self.ref:
-                self.session.logger.debug("Reference to group %s", self.ref)
+                dtd.session.logger.debug("Reference to group %s", self.ref)
                 return
             self.name = node.get("name")
-            self.session.logger.debug("Group %s", self.name)
+            dtd.session.logger.debug("Group %s", self.name)
             if self.name in dtd.groups:
-                raise Exception("multiple definitions for group %s" % self.name)
+                message = "multiple definitions for group {}".format(self.name)
+                raise Exception(message)
             nodes = []
             for child in node:
-                if child.tag == DTD.CHOICE:
+                if child.tag == Schema.CHOICE:
                     nodes.append(DTD.Choice(dtd, node))
-                elif child.tag == DTD.SEQUENCE:
+                elif child.tag == Schema.SEQUENCE:
                     nodes.append(DTD.Sequence(dtd, node))
             assert len(nodes) == 1, "%s: %d nodes" % (self.name, len(nodes))
             self.node = nodes[0]
@@ -3694,7 +4132,7 @@ class DTD:
             self.dtd = dtd
             self.name = node.get("name")
             self.type_name = node.get("type")
-            debug = self.session.logger.debug
+            debug = dtd.session.logger.debug
             debug("Attribute %s of type %s", self.name, self.type_name)
             self.required = node.get("use") == "required"
             if self.name.startswith("cdr-"):
@@ -3711,6 +4149,11 @@ class DTD:
                 error = "unrecognized type %s for @%s" % vals
                 raise Exception(error)
             return simple_type.dtd_type()
+        def values(self):
+            if "xsd:" in self.type_name:
+                return None
+            simple_type = self.dtd.types.get(self.type_name)
+            return simple_type.values
     @classmethod
     def alternate_is_nmtoken(cls, string):
         for c in string:

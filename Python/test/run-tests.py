@@ -137,11 +137,6 @@ class _03GroupTests(Tests):
         opts = dict(tier=self.TIER)
         self.assertIsNone(cdr.delGroup(self.session, self.NEWNAME, **opts))
 """ """
-
-class _04DoctypeTests(Tests):
-    def test_01_list_doctypes(self):
-        types = cdr.getDoctypes(self.session)
-        self.assertIn("Summary", types)
 class _05DocTests(Tests):
     def __make_doc(self, doc_filename, doc_id=None):
         directory = os.path.dirname(os.path.realpath(__file__))
@@ -156,7 +151,8 @@ class _05DocTests(Tests):
             "reason": "pourquoi pas?",
             "val": "Y",
             "ver": "Y",
-            "show_warnings": True
+            "show_warnings": True,
+            "tier": self.TIER
         }
     def test_01_add_doc(self):
         doc = self.__make_doc("001.xml")
@@ -167,9 +163,10 @@ class _05DocTests(Tests):
         self.assertTrue(doc_id.startswith("CDR"))
         CDRTestData.doc_id = doc_id
     def test_02_get_doc(self):
-        doc = cdr.getDoc(self.session, 5000, getObject=True)
+        opts = dict(tier=self.TIER, getObject=True)
+        doc = cdr.getDoc(self.session, 5000, **opts)
         self.assertEqual(doc.type, "Person")
-        doc = cdr.getDoc(self.session, CDRTestData.doc_id, getObject=True)
+        doc = cdr.getDoc(self.session, CDRTestData.doc_id, **opts)
         CDRTestData.doc = doc
         self.assertEqual(doc.type, "xxtest")
     def test_03_rep_doc(self):
@@ -185,10 +182,11 @@ class _05DocTests(Tests):
         self.assertEqual(doc_id, CDRTestData.doc_id)
         self.assertTrue(not errors)
     def test_04_filter(self):
-        result = cdr.filterDoc(self.session, ["set:QC Summary Set"], 62902)
+        filt = ["set:QC Summary Set"]
+        result = cdr.filterDoc(self.session, filt, 62902, tier=self.TIER)
         self.assertTrue(b"small intestine cancer" in result[0])
     def test_05_val_doc(self):
-        opts = dict(doc_id=5000, locators=True)
+        opts = dict(doc_id=5000, locators=True, tier=self.TIER)
         result = cdr.valDoc(self.session, "Person", **opts).decode("utf-8")
         expected = (
             "Element 'ProfessionalSuffix': This element is not expected.",
@@ -196,7 +194,61 @@ class _05DocTests(Tests):
         )
         for e in expected:
             self.assertIn(e, result)
+""" """
 
+class _04DoctypeTests(Tests):
+    def test_01_add_doctype(self):
+        directory = os.path.dirname(os.path.realpath(__file__))
+        with open("{}/{}".format(directory, "dada.xsd"), "rb") as fp:
+            xsd = fp.read().decode("utf-8")
+        ctrl = {"DocTitle": "dada.xsd"}
+        doc = cdr.makeCdrDoc(xsd, "schema", None, ctrl)
+        response = cdr.addDoc(self.session, doc=doc, tier=self.TIER)
+        self.assertTrue(response.startswith("CDR"))
+        comment = "test of CdrAddDocType"
+        opts = {"type": "dada", "schema": "dada.xsd", "comment": comment}
+        info = cdr.dtinfo(**opts)
+        response = cdr.addDoctype(self.session, info, tier=self.TIER)
+        self.assertEqual(response.active, "Y")
+        self.assertEqual(response.format, "xml")
+        self.assertEqual(response.comment, comment)
+    def test_02_list_doctypes(self):
+        types = cdr.getDoctypes(self.session, tier=self.TIER)
+        self.assertIn("dada", types)
+    def test_03_mod_doctype(self):
+        info = cdr.getDoctype(self.session, "dada", tier=self.TIER)
+        info.comment = None
+        info.active = "N"
+        info = cdr.modDoctype(self.session, info, tier=self.TIER)
+        self.assertEqual(info.active, "N")
+        self.assertIsNone(info.comment)
+    def test_04_list_schema_docs(self):
+        titles = cdr.getSchemaDocs(self.session, tier=self.TIER)
+        self.assertIn("dada.xsd", titles)
+    def test_05_get_doctype(self):
+        doctype = cdr.getDoctype(self.session, "xxtest", tier=self.TIER)
+        self.assertIn("Generated from xxtest", doctype.dtd)
+        doctype = cdr.getDoctype(self.session, "Summary", tier=self.TIER)
+        self.assertIn("AvailableAsModule", doctype.dtd)
+        self.assertEqual(doctype.format, "xml")
+        self.assertEqual(doctype.versioning, "Y")
+        self.assertEqual(doctype.active, "Y")
+        vv_list = cdr.getVVList(self.session, "dada", "gimte", tier=self.TIER)
+        self.assertIn("Niedersachsen", vv_list)
+        self.assertIn(u"K\xf6ln", vv_list)
+    def test_06_del_doctype(self):
+        try:
+            cdr.delDoctype(self.session, "dada", tier=self.TIER)
+            types = cdr.getDoctypes(self.session, tier=self.TIER)
+            self.assertNotIn("dada", types)
+        finally:
+            query = db.Query("document d", "d.id")
+            query.join("doc_type t", "t.id = d.doc_type")
+            query.where(query.Condition("d.title", "dada.xsd"))
+            query.where(query.Condition("t.name", "schema"))
+            for row in query.execute().fetchall():
+                cdr.delDoc(self.session, row.id, tier=self.TIER)
+""" """
 class CDRTestData:
     doc_id = None
 
