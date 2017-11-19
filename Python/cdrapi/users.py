@@ -12,7 +12,8 @@ from cdrapi.settings import Tier
 try:
     basestring
 except:
-    basestring = unicode = str
+    basestring = str, bytes
+    unicode = str
 
 
 class Session:

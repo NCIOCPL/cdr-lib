@@ -11,6 +11,7 @@ in turn invokes the new Python implementation of the functionality.
 This module is now compatible with Python 3 and Python 2.
 """
 
+import base64
 import datetime
 import logging
 import random
@@ -29,8 +30,13 @@ from cdrapi import docs
 try:
     basestring
     is_python3 = False
+    base64encode = base64.encodestring
+    base64decode = base64.decodestring
 except:
-    basestring = unicode = str
+    base64encode = base64.encodebytes
+    base64decode = base64.decodebytes
+    basestring = (str, bytes)
+    unicode = str
     is_python3 = True
 
 
@@ -796,6 +802,7 @@ def getSchemaDocs(credentials, **opts):
 # Manage CDR documents
 # ======================================================================
 
+
 class Doc:
     """
     Object containing components of a CdrDoc element.
@@ -880,7 +887,7 @@ class Doc:
             DOM node for CdrDocBlob.
         """
 
-        self.blob = base64.decodestring(get_text(node))
+        self.blob = base64decode(get_text(node).encode("ascii"))
 
     def __str__(self):
         """
@@ -901,7 +908,7 @@ class Doc:
         xml = self.xml.decode("utf-8")
         etree.SubElement(doc, "CdrDocXml").text = etree.CDATA(xml)
         if self.blob is not None:
-            blob = base64.encodestring(self.blob).decode("ascii")
+            blob = base64encode(self.blob).decode("ascii")
             etree.SubElement(doc, "CdrDocBlob", encoding="base64").text = blob
         cdr_doc_xml = etree.tostring(doc, encoding="utf-8")
         #return cdr_doc_xml
@@ -957,12 +964,12 @@ def makeCdrDoc(xml, docType, docId=None, ctrl=None):
     control_wrapper = etree.SubElement(doc, "CdrDocCtl")
     for name in (ctrl or {}):
         value = ctrl[name] or ""
-        if not isinstance(value, unicode):
+        if isinstance(value, basestring) and not isinstance(value, unicode):
             value = value.decode("utf-8")
-        etree.SubElement(control_wrapper, name).text = value
-    if not isinstance(xml, unicode):
+        etree.SubElement(control_wrapper, name).text = unicode(value)
+    if isinstance(xml, basestring) and not isinstance(xml, unicode):
         xml = xml.decode("utf-8")
-    etree.SubElement(doc, "CdrDocXml").text = etree.CDATA(xml)
+    etree.SubElement(doc, "CdrDocXml").text = etree.CDATA(unicode(xml))
     return etree.tostring(doc, encoding="utf-8")
 
 def _put_doc(session, command_name, **opts):
@@ -990,7 +997,8 @@ def _put_doc(session, command_name, **opts):
     # Should a new version be created?
     version = etree.SubElement(command, "Version")
     version.text = opts.get("ver", "N")
-    version.set("Publishable", opts.get("publishable", "N"))
+    publishable = opts.get("publishable", opts.get("verPublishable", "N"))
+    version.set("Publishable", publishable)
 
     # Indicate whether the document should be validated before saving it.
     locators = opts.get("locators") == "Y" or opts.get("errorLocators") == "Y"
@@ -1004,9 +1012,9 @@ def _put_doc(session, command_name, **opts):
 
     # Specify the value to be saved in audit_trail.comment.
     reason = opts.get("reason") or opts.get("comment") or ""
-    if not isinstance(reason, unicode):
+    if isinstance(reason, basestring) and not isinstance(reason, unicode):
         reason = reason.decode("utf-8")
-    etree.SubElement(command, "Reason").text = reason
+    etree.SubElement(command, "Reason").text = unicode(reason)
 
     # Get or create the CdrDoc node.
     filename = opts.get("doc_filename") or opts.get("file")
@@ -1044,7 +1052,7 @@ def _put_doc(session, command_name, **opts):
         blob = None
         etree.SubElement(command, "DelAllBlobVersions").text = "Y"
     if blob is not None:
-        encoded_blob = base64.encodestring(blob)
+        encoded_blob = base64encode(blob).decode("ascii")
         node = cdr_doc.find("CdrDocBlob")
         if node is not None:
             node.text = encoded_blob
@@ -1128,6 +1136,7 @@ def addDoc(credentials, **opts):
       host - deprecated alias for tier
       setLinks - deprecated alias for set_links
       showWarnings - deprecated alias for show_warnings
+      verPublishable - deprecated alias for publishable
 
     Return:
       If show_warnings is True, the caller will be given a tuple
@@ -1483,13 +1492,18 @@ def valDoc(credentials, doctype, **opts):
     if doc:
         if isinstance(doc, unicode):
             doc = doc.encode("utf-8")
-        root = etree.fromstring(doc)
-        if root.tag != "CdrDoc":
+        xml = None
+        try:
+            root = etree.fromstring(doc)
+            if root.tag == "CdrDoc":
+                doc = root
+            else:
+                xml = doc.decode("utf-8")
+        except:
             xml = doc.decode("utf-8")
-            doc = etree.SubElement("CdrDoc")
-            etree.SubElement(child, "CdrDocXml").text = etree.CDATA(xml)
-        else:
-            doc = root
+        if xml is not None:
+            doc = etree.Element("CdrDoc")
+            etree.SubElement(doc, "CdrDocXml").text = etree.CDATA(xml)
 
     # Extract what we need from the options.
     val_types = ["links", "schema"]
@@ -1522,27 +1536,450 @@ def valDoc(credentials, doctype, **opts):
         return etree.tostring(response, encoding="utf-8")
 
     # Otherwise tunnel through the network.
+    val_types = " ".join([t.capitalize() for t in val_types])
+    command = etree.Element("CdrValidateDoc")
+    command.set("DocType", doctype)
+    command.set("ValidationTypes", val_types)
+    command.set("ErrorLocators", "Y" if locators else "N")
+    if doc_id:
+        child = etree.SubElement(command, "DocId")
+        child.text = normalize(doc_id)
+        child.set("ValidateOnly", "N" if store else "Y")
     else:
-        val_types = " ".join([t.capitalize() for t in val_types])
-        command = etree.Element("CdrValidateDoc")
-        command.set("DocType", doctype)
-        command.set("ValidationTypes", val_types)
-        command.set("ErrorLocators", "Y" if locators else "N")
-        if doc_id:
-            child = etree.SubElement(command, "DocId")
-            child.text = normalize(doc_id)
-            child.set("ValidateOnly", "N" if store else "Y")
-        elif xml:
-            child = etree.SubElement(command, "CdrDoc")
-            etree.SubElement(child, "CdrDocXml").text = xml.decode("utf-8")
+        command.append(doc)
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrValidateDocResp":
+            return etree.tostring(response.node, encoding="utf-8")
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
 
+def getCssFiles(credentials, **opts):
+    """
+    Get the CSS files used by the client
+
+    This command is obsolete, but it is still present as a fallback
+    in the DLL code, so I'm not removing it yet. The active CSS files
+    are now maintained in version control, not in the CDR repository.
+    The `data` member of the `CssFile` object is binary (reflecting
+    an obsolete proprietary XMetaL format?).
+
+    Optional keyword argument:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sequence of `CssFile` objects
+    """
+
+    # Type for members of return sequence.
+    class CssFile:
+        def __init__(self, name, data):
+            self.name = name
+            self.data = data
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        files = docs.Doctype.get_css_files(session)
+        return [CssFile(name, files[name]) for name in sorted(files)]
+    command = etree.Element("CdrGetCssFiles")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrGetCssFilesResp":
+            files = []
+            for node in response.node.findall("File"):
+                name = get_text(node.find("Name"))
+                data = get_text(node.find("Data"))
+                data = base64decode(data.encode("ascii"))
+                files.append(CssFile(name, data))
+            return files
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+def addExternalMapping(credentials, usage, value, **opts):
+    """
+    Add a row to the `external_map' table
+
+    Required positional arguments:
+      credentials - result of login
+      usage - string representing the context for the mapping
+              (for example, 'Spanish GlossaryTerm Phrases')
+      value - string for the value to be mapped to this document
+
+    Optional keyword arguments:
+      doc_id - None if we don't currently have a mapping for the value
+      bogus - if "Y" value does not really map to any document,
+              but is instead a known invalid value found in
+              (usually imported) data
+      mappable - if "N" the value is not an actual field value;
+                 often it's a comment explaining why no value
+                 which could be mapped to a CDR doc is available
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      integer primary key for newly inserted mapping table row
+    """
+
+    if isinstance(usage, basestring) and not isinstance(usage, unicode):
+        usage = usage.decode("utf-8")
+    if isinstance(value, basestring) and not isinstance(value, unicode):
+        value = value.decode("utf-8")
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        doc = docs.Doc(session, id=opts.get("doc_id"))
+        return doc.add_external_mapping(usage, value, **opts)
+    command = etree.Element("CdrAddExternalMapping")
+    etree.SubElement(command, "Usage").text = usage
+    etree.SubElement(command, "Value").text = value
+    etree.SubElement(command, "Bogus").text = opts.get("bogus", "N")
+    etree.SubElement(command, "Mappable").text = opts.get("mappable", "Y")
+    doc_id = opts.get("doc_id")
+    if doc_id:
+        etree.SubElement(command, "CdrId").text = normalize(doc_id)
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrAddExternalMappingResp":
+            return int(response.node.get("MappingId"))
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+
+# ======================================================================
+# Manage CDR filters
+# ======================================================================
+
+def getFilters(credentials, **opts):
+    """
+    Fetch the list of filter documents in the CDR
+
+    Required positional argument:
+      credentials - result of login
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sequence of `IdAndName` objects with the `id` attribute containing
+      the string for the normalized CDR ID for the filter document
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        filters = docs.FilterSet.get_filters(session)
+        return [IdAndName(doc.cdr_id, doc.title) for doc in filters]
+    command = etree.Element("CdrGetFilters")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrGetFiltersResp":
+            filters = []
+            for node in response.node.findall("Filter"):
+                doc_id = node.get("DocId")
+                name = get_text(node)
+                filters.append(IdAndName(doc_id, name))
+            return filters
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+def getFilterSets(credentials, **opts):
+    """
+    Fetch the list of filter sets in the CDR
+
+    Required positional argument:
+      credentials - result of login
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sequence of `IdAndName` objects
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return [IdAndName(*s) for s in docs.FilterSet.get_filter_sets(session)]
+    command = etree.Element("CdrGetFilterSets")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrGetFilterSetsResp":
+            sets = []
+            for node in response.node.findall("FilterSet"):
+                set_id = int(node.get("SetId"))
+                name = get_text(node)
+                sets.append(IdAndName(set_id, name))
+            return sets
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+
+class FilterSet:
+    """
+    Named set of CDR filter documents
+
+    The members attribute in the object will contain a list of `IdAndName`
+    objects with id and name attributes.  For a nested filter set, the
+    id will be the integer representing the primary key of the set; for
+    a filter, the id will be a string containing the CDR document ID in
+    the form 'CDR0000099999'.
+
+    Attributes:
+      name - unique string used to identify the set
+      desc - brief description of the set, used for UI
+      notes - more extensive optional notes on the use of the filter set
+      members - sequence of IdAndName objects representing filters and
+                nested filter sets
+      expanded - if True, nested filter sets have been recursively
+                 replaced by their own members, so the set members
+                 are all filter documents
+    """
+
+    def __init__(self, name, desc, notes=None, members=None, expanded=False):
+        self.name = toUnicode(name)
+        self.desc = toUnicode(desc)
+        self.notes = toUnicode(notes) or None
+        self.members = members or []
+        self.expanded = expanded
+
+    def save(self, credentials, new, **opts):
+        """
+        Store a CDR filter set
+
+        Required positional arguments:
+          credentials - result of login
+          new - if False, update an existing set; otherwise create a new one
+
+        Optional keyword arguments:
+          tier - optional; one of DEV, QA, STAGE, PROD
+          host - deprecated alias for tier
+
+        Return:
+          integer representing number of members of the set (filters or
+          nested filter sets)
+        """
+
+        # Perform the operation locally if we can.
+        tier = opts.get("tier") or opts.get("host") or None
+        session = _Control.get_session(credentials, tier)
+        if isinstance(session, Session):
+            members = []
+            for m in self.members:
+                if isinstance(m.id, basestring):
+                    member = docs.Doc(session, id=m.id, title=self.name)
+                else:
+                    member = docs.FilterSet(session, id=m.id, name=self.name)
+                members.append(member)
+            set_opts = dict(
+                name=self.name,
+                description=self.desc,
+                notes=self.notes,
+                members=members
+            )
+            filter_set = docs.FilterSet(session, **set_opts)
+            if new and filter_set.id:
+                message = "Filter set {!r} already exists".format(self.name)
+                raise Exception(message)
+            if not new and not filter_set.id:
+                raise Exception("Filter set {!r} not found".format(self.name))
+            return filter_set.save()
+
+        # Handle the request through the HTTPS tunnel.
+        name = "CdrAddFilterSet" if new else "CdrRepFilterSet"
+        command = etree.Element(name)
+        etree.SubElement(command, "FilterSetName").text = self.name
+        description = etree.SubElement(command, "FilterSetDescription")
+        description.text = self.desc
+        if self.notes is not None:
+            etree.SubElement(command, "FilterSetNotes").text = self.notes
+        for member in self.members:
+            if isinstance(member.id, basestring):
+                etree.SubElement(command, "Filter", DocId=member.id)
+            else:
+                etree.SubElement(command, "FilterSet", SetId=str(member.id))
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrValidateDocResp":
-                return etree.tostring(response.node, encoding="utf-8")
+            if response.node.tag == name + "Resp":
+                return int(response.node.get("TotalFilters"))
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
         raise Exception("missing response")
 
+    def __repr__(self):
+        """
+        Quick look at the filter set
+
+        Return:
+          string describing the set
+        """
+
+        lines = [u"name={}".format(self.name), u"desc={}".format(self.desc)]
+        if self.notes:
+            lines.append(u"notes={}".format(self.notes))
+        if self.expanded:
+            lines.append(u"Expanded list of filters:")
+        for member in self.members:
+            args = member.id, member.name
+            if self.expanded or isinstance(member.id, basestring):
+                args = u"filter", member.id, member.name
+            else:
+                args = u"filter set", member.id, member.name
+            lines.append(u"{} {} ({})".format(*args))
+        return u"\n".join(lines) + u"\n"
+
+def addFilterSet(credentials, filter_set, **opts):
+    """
+    Create a new CDR filter set
+
+    See documentation for `FilterSet.save()`
+    """
+
+    return filter_set.save(credentials, new=True, **opts)
+
+def repFilterSet(credentials, filter_set, **opts):
+    """
+    Replace an existing CDR filter set
+
+    See documentation for `FilterSet.save()`
+    """
+
+    return filter_set.save(credentials, new=False, **opts)
+
+def getFilterSet(credentials, name, **opts):
+    """
+    Get the attributes and members of a CDR filter set
+
+    Required positional arguments:
+      credentials - result of login
+      name - string for unique filter set name
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      `FilterSet` object with the `expanded` attribute set to `False`
+    """
+
+    members = []
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        filter_set = docs.FilterSet(session, name=name)
+        for member in filter_set.members:
+            if isinstance(member, docs.Doc):
+                members.append(IdAndName(member.cdr_id, member.title))
+            else:
+                members.append(IdAndName(member.id, member.name))
+        return FilterSet(filter_set.name, filter_set.description,
+                         filter_set.notes, members)
+    command = etree.Element("CdrGetFilterSet")
+    etree.SubElement(command, "FilterSetName").text = name
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrGetFilterSetResp":
+            name = description = notes = None
+            for node in response.node:
+                if node.tag == "FilterSetName":
+                    name = get_text(node)
+                elif node.tag == "FilterSetDescription":
+                    description = get_text(node)
+                elif node.tag == "FilterSetNotes":
+                    notes = get_text(node)
+                elif node.tag == "Filter":
+                    member = IdAndName(node.get("DocId"), get_text(node))
+                    members.append(member)
+                elif node.tag == "FilterSet":
+                    member = IdAndName(int(node.get("SetId")), get_text(node))
+                    members.append(member)
+            return FilterSet(name, description, notes, members)
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+#----------------------------------------------------------------------
+# Recursively rolls out the list of filters invoked by a named filter
+# set.  In contrast with getFilterSet, which returns a list of nested
+# filter sets and filters intermixed, all of the members of the list
+# returned by this function represent filters.  Since there is no need
+# to distinguish filters from nested sets by the artifice of
+# representing filter IDs as strings, the id member of each object
+# in this list is an integer.
+#
+# Takes the name of the filter set as input.  Returns a FilterSet
+# object, with the members attribute as described above.
+#
+# Note: since it is possible for bad data to trigger infinite
+# recursion, we throw an exception if the depth of nesting exceeds
+# a reasonable level.
+#
+# WARNING: treat the returned objects as read-only, otherwise you'll
+# corrupt the cache used for future calls.
+#----------------------------------------------------------------------
+_expandedFilterSetCache = {}
+def expandFilterSet(session, name, level=0, **opts):
+    global _expandedFilterSetCache
+    if level > 100:
+        raise Exception('expandFilterSet', 'infinite nesting of sets')
+    if _expandedFilterSetCache.has_key(name):
+        return _expandedFilterSetCache[name]
+    filterSet = getFilterSet(session, name, host, port)
+    newSetMembers = []
+    for member in filterSet.members:
+        if type(member.id) == type(9):
+            nestedSet = expandFilterSet(session, member.name, level + 1)
+            newSetMembers += nestedSet.members
+        else:
+            newSetMembers.append(member)
+    filterSet.members = newSetMembers
+    filterSet.expanded = 1
+    _expandedFilterSetCache[name] = filterSet
+    return filterSet
+
+#----------------------------------------------------------------------
+# Returns a dictionary containing all of the CDR filter sets, rolled
+# out by the expandFilterSet() function above, indexed by the filter
+# set names.
+#----------------------------------------------------------------------
+def expandFilterSets(session, **opts):
+    sets = {}
+    for fSet in getFilterSets(session):
+        sets[fSet.name] = expandFilterSet(session, fSet.name, host = host,
+                                          port = port)
+    return sets
+
+def delFilterSet(credentials, name, **opts):
+    """
+    Delete an existing CDR filter set
+
+    Required positional arguments:
+      credentials - result of login
+      name - string for unique filter set name
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        filter_set = docs.FilterSet(session, name=name)
+        filter_set.delete()
+        return
+    command = etree.Element("CdrDelFilterSet")
+    etree.SubElement(command, "FilterSetName").text = name
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrDelFilterSetResp":
+            return
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
 
 class Logging:
     """
@@ -1608,6 +2045,22 @@ class Logging:
                 logger.addHandler(stream_handler)
         return logger
 
+
+class IdAndName:
+    """
+    Object for ID and name
+
+    Example usages include documents (in which case the name is the title
+    of the document), or a filter set, or a user, or a group, etc.
+
+    Attributes:
+      id - integer or string uniquely identifying the object
+      name - string by which the object is known
+    """
+
+    def __init__(self, id, name):
+        self.id = id
+        self.name = name
 
 class _Control:
     """
@@ -1787,9 +2240,10 @@ class _Control:
             comment = comment.decode("utf-8")
         if reason and not isinstance(reason, unicode):
             reason = reason.decode("utf-8")
+        publishable = opts.get("publishable", opts.get("verPublishable", "N"))
         save_opts = {
             "version": opts.get("ver") == "Y",
-            "publishable": opts.get("pub") == "Y",
+            "publishable": publishable == "Y",
             "val_types": ("schema", "links") if opts.get("val") else (),
             "set_links": True,
             "locators": False,
@@ -1889,6 +2343,32 @@ def getpw(name):
         pass
     return None
 
+def toUnicode(value, default=u""):
+    """
+    Convert value to Unicode
+
+    Try different character encodings until one works.
+
+    Pass:
+      value - any value to be converted to Unicode
+      default - what to pass if value is None
+
+    Return:
+      Unicode for the value (`default` if None)
+    """
+
+    if value is None:
+        return default
+    if not isinstance(value, basestring):
+        return unicode(value)
+    if isinstance(value, unicode):
+        return value
+    for encoding in ("ascii", "utf-8", "iso-8859-1"):
+        try:
+            return value.decode(encoding)
+        except:
+            pass
+    raise Exception("unknown encoding for {!r}".format(value))
 
 def get_text(node, default=None):
     """
@@ -3858,47 +4338,6 @@ def updateCtl(credentials, action,
     return None
 
 #----------------------------------------------------------------------
-# Type used by getCssFiles() below.
-#----------------------------------------------------------------------
-class CssFile:
-    def __init__(self, name, data):
-        self.name = name
-        self.data = data
-
-#----------------------------------------------------------------------
-# Gets the CSS files used by the client.
-#----------------------------------------------------------------------
-def getCssFiles(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command.
-    cmd = "<CdrGetCssFiles/>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # Parse the response.
-    nameExpr = re.compile("<Name>(.*)</Name>", re.DOTALL)
-    dataExpr = re.compile("<Data>(.*)</Data>", re.DOTALL)
-    files = []
-    start = resp.find("<File>")
-    if start == -1:
-        return "Unable to find CSS files"
-    while start != -1:
-        end = resp.find("</File>", start)
-        if end == -1:
-            return "Missing end tag for CSS file"
-        subString = resp[start:end]
-        nameElem = nameExpr.search(subString)
-        dataElem = dataExpr.search(subString)
-        if not nameElem: return "Missing Name element"
-        if not dataElem: return "Missing Data element"
-        files.append(CssFile(nameElem.group(1), dataElem.group(1)))
-        start = resp.find("<File>", end)
-    return files
-
-#----------------------------------------------------------------------
 # Gets the list of CDR schema documents.
 #----------------------------------------------------------------------
 def getSchemaDocs(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
@@ -5217,16 +5656,6 @@ def makeTempDir(basename="tmp", chdir=True):
     return abspath
 
 #----------------------------------------------------------------------
-# Object for ID and name (for example, of a document, in which case
-# the name is the title of the document), or a filter set, or a user,
-# or a group, or ....
-#----------------------------------------------------------------------
-class IdAndName:
-    def __init__(self, id, name):
-        self.id = id
-        self.name = name
-
-#----------------------------------------------------------------------
 # Object representing a CdrResponseNode.
 #----------------------------------------------------------------------
 class CdrResponseNode:
@@ -5292,249 +5721,6 @@ def extractResponseNode(caller, responseString):
 
     # wrapException does not return, but add a return to silence pychecker
     return None
-
-#----------------------------------------------------------------------
-# Get the list of filters in the CDR.
-#----------------------------------------------------------------------
-def getFilters(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
-    cmd          = "<CdrGetFilters/>"
-    response     = sendCommands(wrapCommand(cmd, session, host), host, port)
-    responseElem = extractResponseNode('getFilters', response)
-    filters      = []
-    elems        = responseElem.specificElement.getElementsByTagName('Filter')
-    for elem in elems:
-        docId    = elem.getAttribute('DocId')
-        name     = getTextContent(elem)
-        filters.append(IdAndName(docId, name))
-    return filters
-
-#----------------------------------------------------------------------
-# Get the list of filter sets in the CDR.
-#----------------------------------------------------------------------
-def getFilterSets(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
-    cmd      = "<CdrGetFilterSets/>"
-    response = sendCommands(wrapCommand(cmd, session, host), host, port)
-    response = extractResponseNode('getFilterSets', response)
-    sets     = []
-    elems    = response.specificElement.getElementsByTagName('FilterSet')
-    for elem in elems:
-        setId    = int(elem.getAttribute('SetId'))
-        name     = getTextContent(elem)
-        sets.append(IdAndName(setId, name))
-    return sets
-
-#----------------------------------------------------------------------
-# Object for a named set of CDR filters.
-# All string members should be of type unicode
-#----------------------------------------------------------------------
-class FilterSet:
-    def __init__(self, name, desc, notes=None, members=None):
-        self.name     = toUnicode(name)
-        self.desc     = toUnicode(desc)
-        self.notes    = toUnicode(notes)
-        self.members  = members or []
-        self.expanded = 0
-    def __repr__(self):
-        rep = "name=%s\n" % self.name
-        rep += "desc=%s\n" % self.desc
-        if self.notes:
-            rep += "notes=%s\n" % self.notes
-        if self.expanded:
-            rep += "Expanded list of filters:\n"
-        for member in self.members:
-            if not self.expanded and type(member.id) == type(9):
-                rep += "filter set %d (%s)\n" % (member.id, member.name)
-            else:
-                rep += "filter %s (%s)\n" % (member.id, member.name)
-        return rep
-
-# ----------------------------------------------------------------------
-# Testing character encoding of unicode string
-# Return a unicode string.
-# ----------------------------------------------------------------------
-def toUnicode(s):
-    if type(s) is unicode:
-        return s
-    if type(s) is not str:
-        return unicode(s)
-    for e in ('ascii', 'utf-8', 'iso-8859-1'):
-        try:
-            return unicode(s, e)
-        except:
-            pass
-    raise Exception("unknown encoding for %s" % repr(s))
-
-
-#----------------------------------------------------------------------
-# Pack up XML elements for a CDR filter set (common code used by
-# addFilterSet() and repFilterSet()).
-#
-# Old version of packFilterSet.  It has been modified to properly
-# handle Unicode characters in the filter name, description or notes.
-#----------------------------------------------------------------------
-def packFilterSetOld(filterSet):
-    elems = "<FilterSetName>%s</FilterSetName>" % cgi.escape(filterSet.name)
-    elems += "<FilterSetDescription>%s</FilterSetDescription>" % \
-            cgi.escape(filterSet.desc)
-    if filterSet.notes is not None:
-        elems += ("<FilterSetNotes>%s</FilterSetNotes>" %
-                  cgi.escape(filterSet.notes))
-    for member in filterSet.members:
-        if type(member.id) == type(9):
-            elems += "<FilterSet SetId='%d'/>" % member.id
-        else:
-            elems += "<Filter DocId='%s'/>" % member.id
-    return elems
-
-#----------------------------------------------------------------------
-# Pack up XML elements for a CDR filter set (common code used by
-# addFilterSet() and repFilterSet()).
-# This function returns a Unicode string.
-#----------------------------------------------------------------------
-def packFilterSet(filterSet):
-    elems = [u"""\
-<FilterSetName>%s</FilterSetName>
-<FilterSetDescription>%s</FilterSetDescription>
-""" % (cgi.escape(toUnicode(filterSet.name)),
-       cgi.escape(toUnicode(filterSet.desc)))]
-
-    if filterSet.notes is not None:
-        elems.append(u"""\
-<FilterSetNotes>%s</FilterSetNotes>
-""" % cgi.escape(toUnicode(filterSet.notes)))
-    for member in filterSet.members:
-        if type(member.id) is type(9):
-            elems.append(u"<FilterSet SetId='%d'/>" % member.id)
-        else:
-            elems.append(u"<Filter DocId='%s'/>" % member.id)
-    packedSet = u"".join(elems)
-    return packedSet
-
-#----------------------------------------------------------------------
-# Create a new CDR filter set.
-# Note: The cmd string created is a Unicode string.  Unfortunately,
-#       at this point the string should be passed to the wrapCommand()
-#       as is but wrapComment() expects the string serialized.
-#----------------------------------------------------------------------
-def addFilterSet(session, filterSet, host=DEFAULT_HOST, port=DEFAULT_PORT):
-    cmd  = u"<CdrAddFilterSet>%s</CdrAddFilterSet>" % packFilterSet(filterSet)
-    cmd  = wrapCommand(cmd.encode('utf-8'), session, host)
-    resp = sendCommands(cmd, host, port)
-    node = extractResponseNode('addFilterSet', resp)
-    return node.specificElement.getAttribute('TotalFilters')
-
-#----------------------------------------------------------------------
-# Replace an existing CDR filter set.
-# Note:  Please see note for addFilterSet().
-#----------------------------------------------------------------------
-def repFilterSet(session, filterSet, host=DEFAULT_HOST, port=DEFAULT_PORT):
-    cmd  = u"<CdrRepFilterSet>%s</CdrRepFilterSet>" % packFilterSet(filterSet)
-    cmd  = wrapCommand(cmd.encode('utf-8'), session, host)
-    resp = sendCommands(cmd, host, port)
-    node = extractResponseNode('repFilterSet', resp)
-    return node.specificElement.getAttribute('TotalFilters')
-
-#----------------------------------------------------------------------
-# Get the attributes and members of a CDR filter set.
-# The members attribute in the returned object will contain a list of
-# objects with id and name attributes.  For a nested filter set, the
-# id will be the integer representing the primary key of the set; for
-# a filter, the id will be a string containing the CDR document ID in
-# the form 'CDR0000099999'.
-#----------------------------------------------------------------------
-def getFilterSet(session, name, host=DEFAULT_HOST, port=DEFAULT_PORT):
-    cmd          = u"<CdrGetFilterSet><FilterSetName>%s" \
-                   u"</FilterSetName></CdrGetFilterSet>" % \
-                                                    cgi.escape(toUnicode(name))
-    response     = sendCommands(wrapCommand(cmd.encode('utf-8'),
-                                session, host),
-                                host, port)
-    responseNode = extractResponseNode('getFilterSet', response)
-    name         = None
-    desc         = None
-    notes        = None
-    members      = []
-    for node in responseNode.specificElement.childNodes:
-        if node.nodeType == node.ELEMENT_NODE:
-            textContent = getTextContent(node)
-            if node.nodeName == 'FilterSetName':
-                name = textContent
-            elif node.nodeName == 'FilterSetDescription':
-                desc = textContent
-            elif node.nodeName == 'FilterSetNotes':
-                notes = textContent or None
-            elif node.nodeName == 'Filter':
-                member = IdAndName(node.getAttribute('DocId'), textContent)
-                members.append(member)
-            elif node.nodeName == 'FilterSet':
-                member = IdAndName(int(node.getAttribute('SetId')),
-                                   textContent)
-                members.append(member)
-    return FilterSet(name, desc, notes, members)
-
-#----------------------------------------------------------------------
-# Recursively rolls out the list of filters invoked by a named filter
-# set.  In contrast with getFilterSet, which returns a list of nested
-# filter sets and filters intermixed, all of the members of the list
-# returned by this function represent filters.  Since there is no need
-# to distinguish filters from nested sets by the artifice of
-# representing filter IDs as strings, the id member of each object
-# in this list is an integer.
-#
-# Takes the name of the filter set as input.  Returns a FilterSet
-# object, with the members attribute as described above.
-#
-# Note: since it is possible for bad data to trigger infinite
-# recursion, we throw an exception if the depth of nesting exceeds
-# a reasonable level.
-#
-# WARNING: treat the returned objects as read-only, otherwise you'll
-# corrupt the cache used for future calls.
-#----------------------------------------------------------------------
-_expandedFilterSetCache = {}
-def expandFilterSet(session, name, level=0,
-                    host=DEFAULT_HOST, port=DEFAULT_PORT):
-    global _expandedFilterSetCache
-    if level > 100:
-        raise Exception('expandFilterSet', 'infinite nesting of sets')
-    if _expandedFilterSetCache.has_key(name):
-        return _expandedFilterSetCache[name]
-    filterSet = getFilterSet(session, name, host, port)
-    newSetMembers = []
-    for member in filterSet.members:
-        if type(member.id) == type(9):
-            nestedSet = expandFilterSet(session, member.name, level + 1)
-            newSetMembers += nestedSet.members
-        else:
-            newSetMembers.append(member)
-    filterSet.members = newSetMembers
-    filterSet.expanded = 1
-    _expandedFilterSetCache[name] = filterSet
-    return filterSet
-
-#----------------------------------------------------------------------
-# Returns a dictionary containing all of the CDR filter sets, rolled
-# out by the expandFilterSet() function above, indexed by the filter
-# set names.
-#----------------------------------------------------------------------
-def expandFilterSets(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
-    sets = {}
-    for fSet in getFilterSets(session):
-        sets[fSet.name] = expandFilterSet(session, fSet.name, host = host,
-                                          port = port)
-    return sets
-
-#----------------------------------------------------------------------
-# Delete an existing CDR filter set.
-#----------------------------------------------------------------------
-def delFilterSet(session, name, host=DEFAULT_HOST, port=DEFAULT_PORT):
-    #import cdrcgi
-    #cdrcgi.bailnew(type(name))
-    cmd  = u"<CdrDelFilterSet><FilterSetName>%s" \
-           u"</FilterSetName></CdrDelFilterSet>" % cgi.escape(name)
-    resp = sendCommands(wrapCommand(cmd.encode('utf-8'), session, host),
-                        host, port)
-    extractResponseNode('delFilterSet', resp)
 
 #----------------------------------------------------------------------
 # Mark tracking documents generated by failed mailer jobs as deleted.
@@ -5664,31 +5850,6 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, chgOnly=True, useCDATA=False):
         diffText = diffText.encode('utf-8')
 
     return diffText
-
-#----------------------------------------------------------------------
-# Add a row to the external_map table.
-#----------------------------------------------------------------------
-def addExternalMapping(credentials, usage, value, docId = None,
-                       bogus='N', mappable='Y',
-                       host = DEFAULT_HOST, port = DEFAULT_PORT):
-    if type(usage) == type(u""):
-        usage = usage.encode('utf-8')
-    if type(value) == type(u""):
-        value = value.encode("utf-8")
-    docId = docId and ("<CdrId>%s</CdrId>" % normalize(docId)) or ""
-    cmd = ("<CdrAddExternalMapping>" +
-            "<Usage>" + cgi.escape(usage) + "</Usage>" +
-            "<Value>" + cgi.escape(value) + "</Value>" +
-            "<Bogus>" + bogus + "</Bogus>" +
-            "<Mappable>" + mappable + "</Mappable>" +
-                    docId +
-           "</CdrAddExternalMapping>")
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # This is how we should have been handling failures all along. :-<}
-    errors = getErrors(resp, errorsExpected = False, asSequence = True)
-    if errors:
-        raise Exception(errors)
 
 #----------------------------------------------------------------------
 # Change the active_status column for a document.

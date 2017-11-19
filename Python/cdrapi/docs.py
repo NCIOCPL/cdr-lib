@@ -2,12 +2,14 @@
 Manage CDR documents
 """
 
+import base64
 import copy
 import datetime
 import re
 import sys
 import threading
 import time
+from adodbapi import Binary
 import dateutil.parser
 from lxml import etree
 from cdrapi import db
@@ -20,8 +22,13 @@ from cdrapi.settings import Tier
 # ----------------------------------------------------------------------
 try:
     basestring
+    base64encode = base64.encodestring
+    base64decode = base64.decodestring
 except:
-    basestring = unicode = str
+    base64encode = base64.encodebytes
+    base64decode = base64.decodebytes
+    basestring = str, bytes
+    unicode = str
 try:
     from urllib.parse import quote as url_quote
     from urllib.parse import unquote as url_unquote
@@ -407,6 +414,8 @@ class Doc(object):
         """
 
         highest = 0
+        if self.root is None:
+            return 0
         for node in self.root.xpath("//*[@cdr:id]", namespaces=self.NSMAP):
             cdr_id = node.get(Link.CDR_ID)
             if cdr_id is not None and cdr_id.startswith("_"):
@@ -583,6 +592,8 @@ class Doc(object):
         Copy of `self.root` with revision markup applied.
         """
 
+        if self.root is None:
+            return None
         return self.__apply_revision_markup()
 
     @property
@@ -773,6 +784,76 @@ class Doc(object):
     # PUBLIC METHODS START HERE.
     # ------------------------------------------------------------------
 
+    def add_external_mapping(self, usage, value, **opts):
+        """
+        Insert a row into the external mapping table
+
+        This is used by the XMetaL client when the user wants to
+        register a variant phrase found in the document being edited
+        for a glossary term.
+
+        Required positional arguments:
+          usage - string representing the context for the mapping
+                  (for example, 'Spanish GlossaryTerm Phrases')
+          value - string for the value to be mapped to this document
+
+        Optional keyword arguments:
+          bogus - if "Y" value does not really map to any document,
+                  but is instead a known invalid value found in
+                  (usually imported) data
+          mappable - if "N" the value is not an actual field value;
+                     often it's a comment explaining why no value
+                     which could be mapped to a CDR doc is available
+
+        Return:
+          integer primary key for newly inserted mapping table row
+        """
+
+        # Make sure we have the required arguments.
+        if not usage:
+            raise Exception("Missing usage name")
+        if not value:
+            raise Exception("Missing mapping value")
+
+        # Get values for the optional arguments.
+        bogus = (opts.get("bogus") or "N").upper()
+        mappable = (opts.get("mappable") or "Y").upper()
+        assert bogus in "YN", "Bogus 'bogus' option"
+        assert mappable in "YN", "Invalidate 'mappable' options"
+
+        # Find the usage ID and action name.
+        query = Query("external_map_usage u", "u.id", "a.name")
+        query.join("action a", "a.id = u.auth_action")
+        query.where(query.Condition("u.name", usage))
+        row = query.execute(self.session.cursor).fetchone()
+        if not row:
+            raise Exception("Unknown usage {!r}".format(usage))
+        usage_id, action = row
+
+        # Make sure the user is allowed to add a row for this usage.
+        if not self.session.can_do(action):
+            message = "User not allowed to add {} mappings".format(usage)
+            raise Exception(message)
+
+        # Add the new mapping row.
+        fields = dict(
+            usage=usage_id,
+            value=str(value),
+            doc_id=self.id,
+            usr=self.session.user_id,
+            last_mod=datetime.datetime.now().replace(microsecond=0),
+            bogus=bogus,
+            mappable=mappable
+        )
+        names = sorted(fields)
+        args = ", ".join(names), ", ".join(["?"] * len(names))
+        values = tuple([fields[name] for name in names])
+        insert = "INSERT INTO external_map ({}) VALUES ({})".format(*args)
+        self.session.cursor.execute(insert, values)
+        self.session.conn.commit()
+        self.session.cursor.execute("SELECT @@IDENTITY AS id")
+        return self.session.cursor.fetchone().id
+
     def add_error(self, message, location=None, **opts):
         """
         Add an `Error` object to our list
@@ -936,11 +1017,7 @@ class Doc(object):
             else:
                 filters = self.__assemble_filters(*filters, **opts)
             for f in filters:
-                try:
-                    result = self.__apply_filter(f.xml, doc, parser, **parms)
-                except:
-                    self.session.logger.exception("__apply_filter(): xml=%r\ndoc=%r\nparser=%s\nparms=%s", f.xml, doc, parser, parms)
-                    raise
+                result = self.__apply_filter(f.xml, doc, parser, **parms)
                 doc = result.result_tree
                 for entry in result.error_log:
                     messages.append(entry.message)
@@ -1039,7 +1116,7 @@ class Doc(object):
             etree.SubElement(cdr_doc, "CdrDocXml").text = etree.CDATA(xml)
         if opts.get("get_blob") and self.has_blob:
             blob = etree.SubElement(cdr_doc, "CdrDocBlob", encoding="base64")
-            blob.text = base64.encodestring(self.blob).decode("ascii")
+            blob.text = base64encode(self.blob).decode("ascii")
         return cdr_doc
 
     def legacy_doc_control(self, **opts):
@@ -1162,8 +1239,8 @@ class Doc(object):
             self.session.conn.commit()
         except:
             self.session.logger.exception("Save failed")
-            self.session.cursor.execute("SELECT @@TRANCOUNT")
-            if self.session.cursor.fetchone()[0]:
+            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.session.cursor.fetchone().tc:
                 self.session.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
@@ -1193,13 +1270,13 @@ class Doc(object):
             self.__validate(**opts)
 
             # Find out if there are changes to the database; if so, commit them.
-            self.session.cursor.execute("SELECT @@TRANCOUNT")
-            if self.session.cursor.fetchone()[0]:
+            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.session.cursor.fetchone().tc:
                 self.session.conn.commit()
         except:
             self.session.logger.exception("Validation failed")
-            self.session.cursor.execute("SELECT @@TRANCOUNT")
-            if self.session.cursor.fetchone()[0]:
+            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.session.cursor.fetchone().tc:
                 self.session.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
@@ -1856,6 +1933,8 @@ class Doc(object):
         match the `root` property we just finished manipulating.
         """
 
+        message = "Can't generate fragment IDs for malformed documents"
+        assert self.root is not None, message
         allowed = self.doctype.elements_allowing_fragment_ids()
         highest_fragment_id = self.highest_fragment_id
         for node in self.root.iter("*"):
@@ -2022,10 +2101,11 @@ class Doc(object):
 
         if root is None:
             root = self.root
-        eid = 1
-        for node in root.iter("*"):
-            node.set("cdr-eid", "_%d" % eid)
-            eid += 1
+        if root is not None:
+            eid = 1
+            for node in root.iter("*"):
+                node.set("cdr-eid", "_%d" % eid)
+                eid += 1
 
     def __namespaces_off(self):
         """
@@ -2041,13 +2121,14 @@ class Doc(object):
           3. cdr-xxx => {CDR-NS}xxx
         """
 
-        NS = "{{{}}}".format(self.NS)
-        for node in self.resolved.iter("*"):
-            for name in node.attrib:
-                if name.startswith(NS):
-                    ncname = name.replace(NS, "cdr-")
-                    node.set(ncname, node.get(name))
-                    del node.attrib[name]
+        if self.resolved is not None:
+            NS = "{{{}}}".format(self.NS)
+            for node in self.resolved.iter("*"):
+                for name in node.attrib:
+                    if name.startswith(NS):
+                        ncname = name.replace(NS, "cdr-")
+                        node.set(ncname, node.get(name))
+                        del node.attrib[name]
 
     def __namespaces_on(self):
         """
@@ -2056,13 +2137,14 @@ class Doc(object):
         See comment above in `Doc.__namespaces_off`.
         """
 
-        NS = "{{{}}}".format(self.NS)
-        for node in self.resolved.iter("*"):
-            for name in node.attrib:
-                if name.startswith("cdr-") and name != "cdr-eid":
-                    qname = name.replace("cdr-", NS)
-                    node.set(qname, node.get(name))
-                    del node.attrib[name]
+        if self.resolved is not None:
+            NS = "{{{}}}".format(self.NS)
+            for node in self.resolved.iter("*"):
+                for name in node.attrib:
+                    if name.startswith("cdr-") and name != "cdr-eid":
+                        qname = name.replace("cdr-", NS)
+                        node.set(qname, node.get(name))
+                        del node.attrib[name]
 
     def __preprocess_save(self, **opts):
         """
@@ -2079,11 +2161,11 @@ class Doc(object):
                       it's time to get rid of the XMetaL PIs)
         """
 
-        if self.is_content_type:
+        if self.is_content_type and self.root is not None:
             if opts.get("val_types"):
                 self.__strip_xmetal_pis()
             self.__generate_fragment_ids()
-            if "cdr-eid" in self.xml and self.root:
+            if "cdr-eid" in self.xml:
                 self.__strip_eids()
                 xml = etree.tostring(self.root, encoding="utf-8")
                 self.xml = xml.decode("utf-8")
@@ -2141,8 +2223,8 @@ class Doc(object):
                         self.add_error(message, **error_opts)
                         opts["publishable"] = False
             if opts.get("set_links") != False and "links" not in val_types:
-                if self.id:
-                    self.__store_links(self.__collect_links())
+                if self.id and self.resolved:
+                    self.__store_links(self.__collect_links(self.resolved))
 
         # If the document already existed, we still need to store it.
         if not new:
@@ -2304,7 +2386,8 @@ class Doc(object):
             # have to do is replace the old bytes with the new bytes.
             if not blob_is_versioned:
                 update = "UPDATE doc_blob SET data = ? WHERE id = ?"
-                self.session.cursor.execute(update, (self.blob, blob_id))
+                blob = Binary(self.blob)
+                self.session.cursor.execute(update, (blob, blob_id))
                 return blob_id
 
         # Did the caller ask us to remove a BLOB which doesn't exist?
@@ -2319,7 +2402,7 @@ class Doc(object):
 
         # Store the bytes for the BLOB.
         insert = "INSERT INTO doc_blob (data) VALUES (?)"
-        self.session.cursor.execute(insert, (self.blob,))
+        self.session.cursor.execute(insert, (Binary(self.blob),))
 
         # Connect the document to the BLOB.
         self.session.cursor.execute("SELECT @@IDENTITY AS blob_id")
@@ -2454,8 +2537,9 @@ class Doc(object):
 
         if root is None:
             root = self.root
-        for node in root.xpath("//*[@cdr-eid]"):
-            del node.attrib["cdr-eid"]
+        if root is not None:
+            for node in root.xpath("//*[@cdr-eid]"):
+                del node.attrib["cdr-eid"]
 
     def __strip_xmetal_pis(self):
         """
@@ -2592,8 +2676,6 @@ class Doc(object):
         else:
             self.add_error("Document malformed")
             self._val_status = self.MALFORMED
-            if re.search(u"[\uE000-\uF8FF]+", self.xml):
-                self.add_error("Document contains private use character(s)")
 
         # Check for an error found in Microsoft documents which schema
         # validation can't detect. Do this for all documents.
@@ -3778,7 +3860,9 @@ class Doctype:
 
         The current CSS is stored in version control, not the CDR, but
         there's still a path in the DLL code which invokes this as a
-        fallback, so I'm not going to get rid of this (yet).
+        fallback, so I'm not going to get rid of this (yet). Leaving
+        the CSS as binary, as it seems to be a proprietary format
+        previously used by XMetaL (we use standard CSS text files now).
 
         Pass:
           session - reference to object representing user's login
@@ -3789,12 +3873,10 @@ class Doctype:
 
         query = Query("doc_blob b", "d.title", "b.data")
         query.join("document d", "d.id = b.id")
-        query.join("doc_type t", "t.id = d.doc_id")
+        query.join("doc_type t", "t.id = d.doc_type")
         query.where("t.name = 'css'")
-        files = dict()
-        for title, data in query.execute(session.cursor).fetchall():
-            files[title] = data.decode("utf-8")
-        return files
+        rows = query.execute(session.cursor).fetchall()
+        return dict([tuple(row) for row in rows])
 
     @staticmethod
     def list_doc_types(session):
@@ -4720,3 +4802,199 @@ class Link:
         # Check any custom rules for the link type.
         for property in self.link_type.properties:
             property.validate(self)
+
+class FilterSet:
+    def __init__(self, session, **opts):
+        """
+        """
+        self.__session = session
+        self.__opts = opts
+        self.session.logger.info("FilterSet(opts=%s)", opts)
+    @property
+    def id(self):
+        if not hasattr(self, "_id"):
+            self._id = int(self.__opts.get("id", 0)) or None
+            if not self._id and self.name:
+                query = Query("filter_set", "id")
+                query.where(query.Condition("name", self.name))
+                row = query.execute(self.session.cursor).fetchone()
+                self._id = row.id if row else None
+        return self._id
+    @property
+    def name(self):
+        if not hasattr(self, "_name"):
+            self._name = self.__opts.get("name")
+            if not self._name:
+                if not hasattr(self, "_id"):
+                    self._id = int(self.__opts.get("id", 0)) or None
+                if self.id:
+                    query = Query("filter_set", "name")
+                    query.where(query.Condition("id", self.id))
+                    row = query.execute(self.session.cursor).fetchone()
+                    self._name = row.name if row else None
+        return self._name
+    @property
+    def description(self):
+        if not hasattr(self, "_description"):
+            if "description" in self.__opts:
+                self._description = self.__opts["description"]
+            elif self.id:
+                query = Query("filter_set", "description")
+                query.where(query.Condition("id", self.id))
+                row = query.execute(self.session.cursor).fetchone()
+                self._description = row.description if row else None
+            else:
+                self._description = None
+        return self._description
+
+    @property
+    def members(self):
+        if not hasattr(self, "_members"):
+            if "members" in self.__opts:
+                self._members = self.__opts["members"]
+            elif self.id:
+                self._members = []
+                query = Query("filter_set_member", "filter", "subset")
+                query.where(query.Condition("filter_set", self.id))
+                query.order("position")
+                rows = query.execute(self.session.cursor).fetchall()
+                for filter_id, set_id in rows:
+                    if filter_id:
+                        self._members.append(Doc(self.session, id=filter_id))
+                    else:
+                        filter_set = FilterSet(self.session, id=set_id)
+                        self._members.append(filter_set)
+            else:
+                self._members = []
+        return self._members
+
+    @property
+    def notes(self):
+        if not hasattr(self, "_notes"):
+            if "notes" in self.__opts:
+                self._notes = self.__opts["notes"]
+            elif self.id:
+                query = Query("filter_set", "notes")
+                query.where(query.Condition("id", self.id))
+                row = query.execute(self.session.cursor).fetchone()
+                self._notes = row.notes if row else None
+            else:
+                self._notes = None
+        return self._notes
+
+    @property
+    def session(self):
+        return self.__session
+
+    def delete(self):
+        if not self.session.can_do("DELETE FILTER SET"):
+            raise Exception("User not authorized to delete filter sets.")
+        if not self.id:
+            if self.name:
+                raise Exception("Can't find filter set {}".format(self.name))
+            else:
+                raise Exception("No filter set identified for deletion")
+        query = Query("filter_set_member", "COUNT(*) AS n")
+        query.where(query.Condition("subset", self.id))
+        if query.execute(self.session.cursor).fetchone().n > 0:
+            raise Exception("Can't delete set which is itself a set member")
+        try:
+            return self.__delete()
+        except:
+            self.session.logger.exception("Validation failed")
+            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.session.cursor.fetchone().tc:
+                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            raise
+
+    def __delete(self):
+        tables = [
+            ("filter_set_member", "filter_set"),
+            ("filter_set", "id")
+        ]
+        for table, column in tables:
+            sql = "DELETE FROM {} WHERE {} = ?".format(table, column)
+            self.session.cursor.execute(sql, (self.id,))
+        self.session.conn.commit()
+
+    def save(self):
+        action = "MODIFY FILTER SET" if self.id else "ADD FILTER SET"
+        if not self.session.can_do(action):
+            what = "modify" if self.id else "add"
+            message = "User not authorized to {} filter sets.".format(what)
+            raise Exception(message)
+        try:
+            return self.__save()
+        except:
+            self.session.logger.exception("Validation failed")
+            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.session.cursor.fetchone().tc:
+                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            raise
+
+    def __save(self):
+        fields = dict(
+            name=self.name,
+            description=self.description,
+            notes=self.notes
+        )
+        names = sorted(fields)
+        values = [] #fields[name] for name in names]
+        # BUG IN ADODBAPI WHEN TRYING TO INSERT NULL INTO NTEXT WITH NONE
+        if self.id:
+            assignments = []
+            for name in names:
+                value = fields[name]
+                if value is None:
+                    assignments.append("{} = NULL".format(name))
+                else:
+                    assignments.append("{} = ?".format(name))
+                    values.append(value)
+            assignments = ", ".join(assignments)
+            values.append(self.id)
+            sql = "UPDATE filter_set SET {} WHERE id = ?".format(assignments)
+        else:
+            placeholders = []
+            for name in names:
+                value = fields[name]
+                if value is None:
+                    placeholders.append("NULL")
+                else:
+                    placeholders.append("?")
+                    values.append(value)
+            names = ", ".join(names)
+            ph = ", ".join(placeholders)
+            sql = "INSERT INTO filter_set ({}) VALUES ({})".format(names, ph)
+        self.session.logger.info("sql=%s values=%s", sql, tuple(values))
+        self.session.cursor.execute(sql, values)
+        if not self.id:
+            self.session.cursor.execute("SELECT @@IDENTITY AS id")
+            self._id = self.session.cursor.fetchone().id
+        else:
+            delete = "DELETE FROM filter_set_member WHERE filter_set = ?"
+            self.session.cursor.execute(delete, (self.id,))
+        names = "filter_set", "position", "filter", "subset"
+        args = ", ".join(names), ", ".join(["?"] * len(names))
+        insert = "INSERT INTO filter_set_member ({}) VALUES ({})".format(*args)
+        position = 1
+        for member in self.members:
+            if isinstance(member, Doc):
+                values = self.id, position, member.id, None
+            else:
+                values = self.id, position, None, member.id
+            self.session.cursor.execute(insert, values)
+            position += 1
+        self.session.conn.commit()
+        return len(self.members)
+
+    @classmethod
+    def get_filter_sets(cls, session):
+        query = Query("filter_set", "id", "name").order("name")
+        return [tuple(row) for row in query.execute(session.cursor).fetchall()]
+    @classmethod
+    def get_filters(cls, session):
+        query = Query("document d", "d.id", "d.title").order("d.title")
+        query.join("doc_type t", "t.id = d.doc_type")
+        query.where("t.name = 'Filter'")
+        rows = query.execute(session.cursor).fetchall()
+        return [Doc(session, id=row.id, title=row.title) for row in rows]
