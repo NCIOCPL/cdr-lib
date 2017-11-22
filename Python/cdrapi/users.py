@@ -2,7 +2,10 @@
 Control for who can use the CDR and what they can do
 """
 
+import binascii
+import hashlib
 import random
+import string
 import threading
 import time
 from cdrapi import db
@@ -112,16 +115,17 @@ class Session:
         """
 
         self.log("duplicate()")
-        query = db.Query("usr u", "u.name")
+        query = db.Query("usr u", "u.id", "u.name")
         query.join("session s", "s.usr = u.id")
         query.where("s.ended IS NULL")
         query.where(query.Condition("s.name", self.name))
         row = query.execute(self.cursor).fetchone()
         if not row:
             raise Exception("Can't duplicate invalid or expired session")
-        name = row[0]
+        name = row.name
         comment = "Session duplicated from id={}".format(self.name)
-        return self.create_session(name, comment, self.tier.name)
+        opts = dict(comment=comment, tier=self.tier.name)
+        return self.__create_session(self.conn, row.id, **opts)
 
     def can_do(self, action, doctype=None):
         """
@@ -151,6 +155,56 @@ class Session:
         query.where(query.Condition("action.name", action))
         query.where(query.Condition("doc_type.name", doctype or ""))
         return query.execute(self.cursor).fetchone()[0] > 0
+
+    def get_permissions(self):
+        """
+        Build a dictionary showing what this user is allowed to do
+
+        Return:
+          dictionary indexed by action name, with sets of document type
+          names on which the user is allowed to perform the action as
+          dictionary values; for actions which are not document-type
+          specific, the value is an empty set
+        """
+        query = db.Query("action a", "a.name AS action", "t.name AS doctype")
+        query.join("grp_action g", "g.action = a.id")
+        query.join("doc_type t", "t.id = g.doc_type")
+        query.join("grp_usr u", "u.grp = g.grp")
+        query.where(query.Condition("u.usr", self.user_id))
+        rows = query.execute(self.cursor).fetchall()
+        permissions = dict()
+        for action, doctype in rows:
+            if action not in permissions:
+                permissions[action] = set()
+            doctype = doctype.strip()
+            if doctype:
+                permissions[action].add(doctype)
+        return permissions
+
+    def check_permissions(self, pairs):
+        """
+        Filter the results of `get_permissions()` for requested subset
+        """
+
+        result = dict()
+        permissions = self.get_permissions()
+        for action, doctype in pairs:
+            if action == "*":
+                for a in permissions:
+                    if doctype == "*":
+                        result[a] = set(permissions[a])
+                    elif doctype in permissions[a]:
+                        if a not in result:
+                            result[a] = set()
+                        result[a].add(doctype)
+            elif action:
+                if doctype == "*":
+                    result[action] = set(permissions[action])
+                elif doctype in permissions[action]:
+                    if action not in result:
+                        result[action] = set()
+                    result[action].add(doctype)
+        return result
 
     def list_actions(self):
         """
@@ -230,7 +284,15 @@ class Session:
             raise Exception("LIST GROUPS action not authorized for this user")
         self.log("list_groups()")
         query = db.Query("grp", "name").order("name")
-        return [row[0] for row in query.execute(self.cursor).fetchall()]
+        return [row.name for row in query.execute(self.cursor).fetchall()]
+
+    def list_users(self):
+        """
+        Fetch the names for the active CDR user accounts
+        """
+
+        query = db.Query("usr", "name").where("expired is NULL").order("name")
+        return [row.name for row in query.execute(self.cursor).fetchall()]
 
     def __str__(self):
         """
@@ -247,7 +309,7 @@ class Session:
         return self.name or ""
 
     @classmethod
-    def create_session(cls, user, comment=None, tier=None):
+    def create_session(cls, user, **opts):
         """
         Insert a new row into the `session` database table
 
@@ -258,6 +320,7 @@ class Session:
 
         Pass:
           user - unique string naming the account
+          password - not needed for network accounts logging on locally
           comment - optional string describing the session request
           tier - optional string identifying which server should
                  be used for the session
@@ -266,27 +329,58 @@ class Session:
           `Session` object
         """
 
+        tier = opts.get("tier")
+        logger = Tier(tier).get_logger("session")
         conn = db.connect(tier=tier)
         cursor = conn.cursor()
-        query = db.Query("usr", "id")
+        query = db.Query("usr", "id", "hashedpw")
         query.where(query.Condition("name", user))
         query.where("expired IS NULL")
         row = query.execute(cursor).fetchone()
         if not row:
-            raise Exception("unknown or expired user: {}".format(user))
-        uid = row[0]
+            raise Exception("Unknown or expired user: {}".format(user))
+        uid, hashedpw = row
+        if hashedpw is not None:
+            hexhash = binascii.hexlify(hashedpw).upper()
+            if not isinstance(hexhash, unicode):
+                hexhash = hexhash.decode("ascii")
+            if hexhash != Session.User.EMPTY_PW:
+                password = opts.get("password")
+                if not password:
+                    raise Exception("Missing password")
+                if isinstance(password, unicode):
+                    password = password.encode("utf-8")
+                submitted = hashlib.sha1(password).hexdigest().upper()
+                if hexhash != submitted:
+                    logger.warning("%s vs %s", hexhash, submitted)
+                    raise Exception("Invalid credentials")
+        return cls.__create_session(conn, uid, **opts)
+
+    @classmethod
+    def __create_session(cls, conn, uid, **opts):
+        """
+        Insert a row in the `session` table
+
+        Pass:
+          conn - reference to database connection object
+          uid - required integer for the CDR user account
+          tier - optional name of tier (e.g., "DEV")
+          comment - optional string for comment to store in the session row
+        """
+
         secs, msecs = [int(n) for n in "{:.9f}".format(time.time()).split(".")]
         secs = secs & 0xFFFFFFFF
         msecs = msecs & 0xFFFFFF
-        letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        letters = string.ascii_uppercase + string.digits
         suffix = "".join([random.choice(letters) for i in range(12)])
         name = "{:08X}-{:06X}-{:03d}-{}".format(secs, msecs, uid, suffix)
         cols = "name, usr, comment, initiated, last_act"
         vals = "?, ?, ?, GETDATE(), GETDATE()"
         insert = "INSERT INTO session({}) VALUES({})".format(cols, vals)
-        cursor.execute(insert, (name, uid, comment))
+        cursor = conn.cursor()
+        cursor.execute(insert, (name, uid, opts.get("comment")))
         conn.commit()
-        session = Session(name, tier)
+        session = Session(name, opts.get("tier"))
         session.log("login({})".format(name))
         return session
 
@@ -426,16 +520,16 @@ class Session:
                     type)
         """
 
-        def __init__(self, **args):
+        def __init__(self, **opts):
             """
             Save the caller's values for the `Group` object
             """
 
-            self.id = args.get("id")
-            self.name = args.get("name")
-            self.comment = args.get("comment")
-            self.users = args.get("users") or []
-            self.actions = args.get("actions") or {}
+            self.id = opts.get("id")
+            self.name = opts.get("name")
+            self.comment = opts.get("comment")
+            self.users = opts.get("users") or []
+            self.actions = opts.get("actions") or {}
 
         def add(self, session):
             """
@@ -566,6 +660,235 @@ class Session:
                     insert = "INSERT INTO grp_action(grp, action, doc_type)"
                     insert += " VALUES(?, ?, ?)"
                     cursor.execute(insert, (self.id, action_id, doctype_id))
+
+
+    class User:
+
+        EMPTY_PW = hashlib.sha1(b"").hexdigest().upper()
+
+        def __init__(self, session, **opts):
+            self.__session = session
+            self.__opts = opts
+        @property
+        def session(self):
+            return self.__session
+        @property
+        def id(self):
+            if not hasattr(self, "_id"):
+                if "id" in self.__opts:
+                    self._id = self.__opts["id"]
+                else:
+                    if hasattr(self, "_name"):
+                        name = self._name
+                    else:
+                        name = self.__opts.get("name")
+                    if name:
+                        query = db.Query("usr", "id")
+                        query.where(query.Condition("name", name))
+                        row = query.execute(self.session.cursor).fetchone()
+                        self._id = row.id if row else None
+                    else:
+                        self._id = None
+                        self.session.logger.warning("User.id: NO NAME!!!")
+            return self._id
+
+        @property
+        def name(self):
+            if not hasattr(self, "_name"):
+                self._name = self.__opts.get("name")
+                if not self._name and self.id:
+                    query = db.Query("usr", "name")
+                    query.where(query.Condition("id", self.id))
+                    row = query.execute(self.session.cursor).fetchone()
+                    self._name = row.name if row else None
+            return self._name
+
+        @property
+        def authmode(self):
+            if not hasattr(self, "_authmode"):
+                if "authmode" in self.__opts:
+                    self._authmode = self.__opts["authmode"]
+                elif self.id:
+                    lines = [
+                        "SELECT authmode = CASE",
+                        "WHEN hashedpw IS NULL THEN 'network'",
+                        "WHEN hashedpw = HASHBYTES('SHA1', '') THEN 'network'",
+                        "ELSE 'local' END FROM usr WHERE id = ?"
+                    ]
+                    self.session.cursor.execute(" ".join(lines), (self.id,))
+                    row = self.session.cursor.fetchone()
+                    self._authmode = row.authmode if row else None
+                else:
+                    self._authmode = None
+            return self._authmode
+
+        @property
+        def fullname(self):
+            if not hasattr(self, "_fullname"):
+                if "fullname" in self.__opts:
+                    self._fullname = self.__opts["fullname"]
+                elif self.id:
+                    query = db.Query("usr", "fullname")
+                    query.where(query.Condition("id", self.id))
+                    row = query.execute(self.session.cursor).fetchone()
+                    self._fullname = row.fullname if row else None
+                else:
+                    self._fullname = None
+            return self._fullname
+
+        @property
+        def office(self):
+            if not hasattr(self, "_office"):
+                if "office" in self.__opts:
+                    self._office = self.__opts["office"]
+                elif self.id:
+                    query = db.Query("usr", "office")
+                    query.where(query.Condition("id", self.id))
+                    row = query.execute(self.session.cursor).fetchone()
+                    self._office = row.office if row else None
+                else:
+                    self._office = None
+            return self._office
+
+        @property
+        def email(self):
+            if not hasattr(self, "_email"):
+                if "email" in self.__opts:
+                    self._email = self.__opts["email"]
+                elif self.id:
+                    query = db.Query("usr", "email")
+                    query.where(query.Condition("id", self.id))
+                    row = query.execute(self.session.cursor).fetchone()
+                    self._email = row.email if row else None
+                else:
+                    self._email = None
+            return self._email
+
+        @property
+        def phone(self):
+            if not hasattr(self, "_phone"):
+                if "phone" in self.__opts:
+                    self._phone = self.__opts["phone"]
+                elif self.id:
+                    query = db.Query("usr", "phone")
+                    query.where(query.Condition("id", self.id))
+                    row = query.execute(self.session.cursor).fetchone()
+                    self._phone = row.phone if row else None
+                else:
+                    self._phone = None
+            return self._phone
+
+        @property
+        def comment(self):
+            if not hasattr(self, "_comment"):
+                if "comment" in self.__opts:
+                    self._comment = self.__opts["comment"]
+                elif self.id:
+                    query = db.Query("usr", "comment")
+                    query.where(query.Condition("id", self.id))
+                    row = query.execute(self.session.cursor).fetchone()
+                    self._comment = row.comment if row else None
+                else:
+                    self._comment = None
+            return self._comment
+
+        @property
+        def groups(self):
+            if not hasattr(self, "_groups"):
+                if "groups" in self.__opts:
+                    self._groups = self.__opts["groups"]
+                elif self.id:
+                    query = db.Query("grp g", "g.name")
+                    query.join("grp_usr u", "u.grp = g.id")
+                    query.where(query.Condition("u.usr", self.id))
+                    rows = query.execute(self.session.cursor).fetchall()
+                    self._groups = [row.name for row in rows]
+                else:
+                    self._groups = None
+            return self._groups
+
+        def save(self, password=None):
+            action = "MODIFY USER" if self.id else "CREATE USER"
+            if not self.session.can_do(action):
+                message = "{} action not authorized for this user"
+                raise Exception(message.format(action))
+            if not self.name:
+                raise Exception("Missing user name")
+            if self.authmode == "local":
+                if not password:
+                    raise Exception("Missing password")
+            else:
+                password = ""
+            if isinstance(password, unicode):
+                password = password.encode("utf-8")
+            query = db.Query("usr", "COUNT(*) AS n")
+            query.where(query.Condition("name", self.name))
+            if self.id:
+                query.where(query.Condition("id", self.id, "<>"))
+            if query.execute(self.session.cursor).fetchone().n > 0:
+                raise Exception("Name used by another account")
+            try:
+                self.__save(password)
+                self.session.conn.commit()
+            except:
+                self.session.logger.exception("User.save() failure")
+                self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
+                if self.session.cursor.fetchone().tc:
+                    self.session.cursor.execute("ROLLBACK TRANSACTION")
+                raise
+
+        def __save(self, password):
+            fields = dict(
+                name=self.name,
+                fullname=self.fullname,
+                office=self.office,
+                email=self.email,
+                phone=self.phone,
+                comment=self.comment
+            )
+            names = sorted(fields)
+            values = [fields[name] for name in names] + [password]
+            hashbytes = "HASHBYTES('SHA1', ?)"
+            if self.id:
+                user_id = self.id
+                delete = "DELETE FROM grp_usr WHERE usr = ?"
+                self.session.cursor.execute(delete, (self.id,))
+                assignments = ["{} = ?".format(name) for name in names]
+                assignments.append("hashedpw = {}".format(hashbytes))
+                assignments = ", ".join(assignments)
+                values.append(self.id)
+                sql = "UPDATE usr SET {} WHERE id = ?".format(assignments)
+            else:
+                names = ", ".join(names + ["hashedpw", "created", "password"])
+                extras = [hashbytes, "GETDATE()", "''"]
+                placeholders = ", ".join(["?"] * len(fields) + extras)
+                args = names, placeholders
+                sql = "INSERT INTO usr ({}) VALUES ({})".format(*args)
+            message = "User.save(): sql={} values={}".format(sql, values)
+            self.session.logger.info(message)
+            self.session.cursor.execute(sql, tuple(values))
+            if not self.id:
+                self.session.cursor.execute("SELECT @@IDENTITY AS id")
+                user_id = self.session.cursor.fetchone().id
+            insert = "INSERT INTO grp_usr(grp, usr) VALUES(?, ?)"
+            groups = set()
+            for name in (self.groups or []):
+                query = db.Query("grp", "id")
+                query.where(query.Condition("name", name))
+                row = query.execute(self.session.cursor).fetchone()
+                if not row:
+                    raise Exception("Unknown group {}".format(name))
+                if row.id not in groups:
+                    self.session.cursor.execute(insert, (row.id, user_id))
+                    groups.add(row.id)
+            self._id = user_id
+
+        def delete(self):
+            if not self.session.can_do("DELETE USER"):
+                raise Exception("DELETE USER action not allowed for this user")
+            delete = "UPDATE usr SET expired = GETDATE() WHERE id = ?"
+            self.session.cursor.execute(delete, (self.id,))
+            self.session.conn.commit()
 
     class Cache:
         def __init__(self):

@@ -12,14 +12,14 @@ import time
 from adodbapi import Binary
 import dateutil.parser
 from lxml import etree
-from cdrapi import db
+#from cdrapi import db
 from cdrapi.db import Query
-from cdrapi.settings import Tier
 
 
 # ----------------------------------------------------------------------
 # Try to make the module compatible with Python 2 and 3.
 # ----------------------------------------------------------------------
+from six import itervalues
 try:
     basestring
     base64encode = base64.encodestring
@@ -1070,7 +1070,7 @@ class Doc(object):
                 if f is not None:
                     return f
         # TODO - REMOVE FOLLOWING CODE; USE root = doc.root INSTEAD
-        query = db.Query("good_filters", "xml")
+        query = Query("good_filters", "xml")
         query.where(query.Condition("id", doc.id))
         xml = query.execute(self.session.cursor).fetchone()[0]
         root = etree.fromstring(xml.encode("utf-8"))
@@ -1238,7 +1238,7 @@ class Doc(object):
             self.__save(**opts)
             self.session.conn.commit()
         except:
-            self.session.logger.exception("Save failed")
+            self.session.logger.exception("Doc.save() failure")
             self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
             if self.session.cursor.fetchone().tc:
                 self.session.cursor.execute("ROLLBACK TRANSACTION")
@@ -2855,7 +2855,7 @@ class Doc(object):
         """
 
         title = title.replace("@@SLASH@@", "/").replace("+", " ")
-        query = db.Query("document", "id")
+        query = Query("document", "id")
         query.where(query.Condition("title", title))
         rows = query.execute(cursor).fetchall()
         if len(rows) > 1:
@@ -3207,7 +3207,7 @@ class Resolver(etree.Resolver):
         """
 
         result = etree.Element("ValidZip")
-        query = db.Query("zipcode", "zip")
+        query = Query("zipcode", "zip")
         query.where(query.Condition("zip", args))
         row = query.execute(self.cursor).fetchone()
         if row and row.zip:
@@ -3261,8 +3261,8 @@ class Resolver(etree.Resolver):
             raise Exception("query contains disallowed sql keywords")
         if query.count("?") != len(values):
             raise Exception("wrong number of sql query placeholder values")
-        if db.Query.PLACEHOLDER != "?":
-            query = query.replace("?", db.Query.PLACEHOLDER)
+        if Query.PLACEHOLDER != "?":
+            query = query.replace("?", Query.PLACEHOLDER)
         self.cursor.execute(query, tuple(values))
         names = [col[0] for col in self.cursor.description]
         result = etree.Element("SqlResult")
@@ -3551,14 +3551,12 @@ class Doctype:
                 else:
                     name = self.__opts.get("name")
                 if name:
-                    self.session.logger.info("@id: name=%s", name)
                     query = Query("doc_type", "id")
                     query.where(query.Condition("name", name))
                     row = query.execute(self.session.cursor).fetchone()
                     self._id = row.id if row else None
-                    self.session.logger.info("@id: query got %s", self._id)
                 else:
-                    self.session.logger.warning("@id: NO NAME!!!")
+                    self.session.logger.warning("Doctype.id: NO NAME!!!")
         return self._id
 
     @property
@@ -3785,28 +3783,6 @@ class Doctype:
                         value = value.replace(microsecond=0)
                     values.append(value)
                 self._created, self._schema_date = values
-
-    def __fetch_common_properties(self, **opts):
-        """
-        Fetch all values available directly from the `doc_type` table
-        """
-
-        fields = ("id", "name", "xml_schema", "active", "versioning", "format",
-                  "created", "schema_date", "comment")
-        query = Query("doc_type", *fields)
-        if self.name:
-            query.where(query.Condition("name", self.name))
-        else:
-            query.where(query.Condition("id", self.id))
-        row = query.execute(self.session.cursor).fetchone()
-        for i, name in enumerate(fields):
-            value = row[i] if row else None
-            if name == "format":
-                self._format_id = value
-            elif name == "xml_schema":
-                self._schema_id = value
-            else:
-                setattr(self, "_" + name, value)
 
     def __parse_schema(self, title, elements, types, schemas):
         """
@@ -4287,7 +4263,11 @@ class LinkType:
         "V": "document version"
     }
 
-    def __init__(self, id, cursor):
+    def __init__(self, session, **opts): #id, cursor):
+        self.__session = session
+        self.__opts = opts
+
+        """
         self.id = id
         query = Query("link_type", "name", "chk_type")
         query.where(query.Condition("id", id))
@@ -4297,29 +4277,263 @@ class LinkType:
         query.where(query.Condition("l.source_link_type", id))
         rows = query.execute(cursor).fetchall()
         self.target_types = dict([row for row in rows])
-        query = Query("link_properties p", "t.name", "p.value")
-        query.join("link_prop_type t", "t.id = p.property_id")
-        query.where(query.Condition("p.link_id", id))
-        rows = query.execute(cursor).fetchall()
-        self.properties = []
-        for name, value in rows:
-            message = "Property type {!r} not supported".format(name)
+        """
+
+    @property
+    def session(self):
+        return self.__session
+
+    @property
+    def properties(self):
+        if not hasattr(self, "_properties"):
+            if "properties" in self.__opts:
+                self._properties = self.__opts["properties"]
+            elif self.id:
+                fields = "t.name", "p.value", "p.comment"
+                query = Query("link_properties p", *fields)
+                query.join("link_prop_type t", "t.id = p.property_id")
+                query.where(query.Condition("p.link_id", self.id))
+                rows = query.execute(self.session.cursor).fetchall()
+                self._properties = []
+                message = "Property type {!r} not supported"
+                for row in rows:
+                    try:
+                        cls = getattr(LinkType, row.name)
+                        property = cls(self.session, *row)
+                        if not isinstance(property, LinkType.Property):
+                            raise Exception(message.format(row.name))
+                        self._properties.append(property)
+                    except:
+                        raise Exception(message.format(row.name))
+            else:
+                self._properties = []
+        return self._properties
+
+    class LinkSource:
+        def __init__(self, doctype, element):
+            self.doctype = doctype
+            self.element = element
+
+    @property
+    def sources(self):
+        if not hasattr(self, "_sources"):
+            if "sources" in self.__opts:
+                self._sources = self.__opts["sources"]
+            elif self.id:
+                query = Query("doc_type t", "t.id", "t.name", "x.element")
+                query.join("link_xml x", "x.doc_type = t.id")
+                query.where(query.Condition("x.link_id", self.id))
+                rows = query.execute(self.session.cursor).fetchall()
+                sources = []
+                for row in rows:
+                    doctype = Doctype(self.session, id=row.id, name=row.name)
+                    sources.append(self.LinkSource(doctype, row.element))
+                self._sources = sources
+            else:
+                self._sources = []
+        return self._sources
+
+    @property
+    def comment(self):
+        if not hasattr(self, "_comment"):
+            if "comment" in self.__opts:
+                self._comment = self.__opts["comment"]
+            elif self.id:
+                query = Query("link_type", "comment")
+                query.where(query.Condition("id", self.id))
+                row = query.execute(self.session.cursor).fetchone()
+                self._comment = row.comment if row else None
+
+                # Clean up from an old CGI bug.
+                if self._comment == "None":
+                    self._comment = None
+            else:
+                self._comment = None
+        return self._comment
+
+    @property
+    def targets(self):
+        if not hasattr(self, "_targets"):
+            if "targets" in self.__opts:
+                self._targets = self.__opts["targets"]
+            elif self.id:
+                query = Query("doc_type t", "t.id", "t.name")
+                query.join("link_target l", "l.target_doc_type = t.id")
+                query.where(query.Condition("l.source_link_type", self.id))
+                rows = query.execute(self.session.cursor).fetchall()
+                targets = dict()
+                for row in rows:
+                    doctype = Doctype(self.session, id=row.id, name=row.name)
+                    targets[row.id] = doctype
+                self._targets = targets
+            else:
+                self._targets = dict()
+        return self._targets
+
+    @property
+    def chk_type(self):
+        if not hasattr(self, "_chk_type"):
+            if "chk_type" in self.__opts:
+                self._chk_type = self.__opts["chk_type"]
+            elif self.id:
+                query = Query("link_type", "chk_type")
+                query.where(query.Condition("id", self.id))
+                row = query.execute(self.session.cursor).fetchone()
+                self._chk_type = row.chk_type if row else None
+            else:
+                self._chk_type = None
+        if self._chk_type is not None:
+            message = "Invalid check type {!r}".format(self._chk_type)
+            assert self._chk_type in self.CHECK_TYPES, message
+        return self._chk_type
+
+    @property
+    def id(self):
+        if not hasattr(self, "_id"):
+            if "id" in self.__opts:
+                self._id = self.__opts["id"]
+            elif self.name:
+                query = Query("link_type", "id")
+                query.where(query.Condition("name", self.name))
+                row = query.execute(self.session.cursor).fetchone()
+                self._id = row.id if row else None
+            else:
+                self._id = None
+        return self._id
+
+    @property
+    def name(self):
+        if not hasattr(self, "_name"):
+            if "name" in self.__opts:
+                self._name = self.__opts["name"]
+            else:
+                if not hasattr(self, "_id"):
+                    if "id" in self.__opts:
+                        self._id = self.__opts["id"]
+                    else:
+                        self._id = None
+                if self.id:
+                    query = Query("link_type", "name")
+                    query.where(query.Condition("id", self.id))
+                    row = query.execute(self.session.cursor).fetchone()
+                    self._name = row.name if row else None
+                else:
+                    self._name = None
+        return self._name
+
+    def save(self):
+        action = "MODIFY LINKTYPE" if self.id else "ADD LINKTYPE"
+        if not self.session.can_do(action):
+            raise Exception("User not authorized to perform {}".format(action))
+        if not self.targets:
+            raise Exception("Link type {} allows no targets".format(self.name))
+        if self.chk_type not in self.CHECK_TYPES:
+            raise Exception("Invalid check type {!r}".format(self.chk_type))
+        try:
+            self.__save()
+            self.session.conn.commit()
+        except:
+            self.session.logger.exception("LinkType.save() failure")
+            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.session.cursor.fetchone().tc:
+                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            raise
+
+    def __drop_related_rows(self):
+        for table in ("link_xml", "link_target", "link_properties"):
+            column = "link_id"
+            if table == "link_target":
+                column = "source_link_type"
+            delete = "DELETE FROM {} WHERE {} = ?".format(table, column)
+            self.session.cursor.execute(delete, (self.id,))
+
+    def delete(self):
+        if not self.session.can_do("DELETE LINKTYPE"):
+            raise Exception("User not authorized to delete link types")
+        if not self.id:
+            raise Exception("Link type {} not found".format(self.name))
+        try:
+            self.__delete()
+            self.session.conn.commit()
+        except:
+            self.session.logger.exception("LinkType.delete() failure")
+            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.session.cursor.fetchone().tc:
+                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            raise
+
+    def __delete(self):
+        self.__drop_related_rows()
+        delete = "DELETE FROM link_type WHERE id = ?"
+        self.session.cursor.execute(delete, (self.id,))
+
+    def __save(self):
+        fields = dict(
+            name=self.name,
+            chk_type=self.chk_type,
+            comment=self.comment
+        )
+        names = sorted(fields)
+        values = [fields[name] for name in names]
+        if self.id:
+            values.append(self.id)
+            assignments = ", ".join(["{} = ?".format(name) for name in names])
+            sql = "UPDATE link_type SET {} WHERE id = ?".format(assignments)
+        else:
+            names = ", ".join(names)
+            sql = "INSERT INTO link_type ({}) VALUES (?, ?, ?)".format(names)
+        self.session.cursor.execute(sql, tuple(values))
+        if self.id:
+            self.__drop_related_rows()
+        else:
+            self.session.cursor.execute("SELECT @@IDENTITY as id")
+            self._id = self.session.cursor.fetchone().id
+        for source in self.sources:
+            args = self.session, source.doctype, source.element
+            linktype = self.lookup(*args)
+            if linktype:
+                args = linktype.name, source.doctype.name, source.element
+                message = "Link type {} already defined for {}/{}"
+                raise Exception(message.format(*args))
+            names = "link_id, doc_type, element"
+            values = self.id, source.doctype.id, source.element
+            insert = "INSERT INTO link_xml ({}) VALUES (?, ?, ?)".format(names)
+            self.session.cursor.execute(insert, values)
+        for target in itervalues(self.targets):
+            assert target.id, "doc type {} not found".format(target.name)
+            names = "source_link_type, target_doc_type"
+            values = self.id, target.id
+            insert = "INSERT INTO link_target ({}) VALUES (?, ?)".format(names)
             try:
-                property = getattr(LinkType, name)(value)
-                if not isinstance(property, LinkType.Property):
-                    raise Exception(message)
-                self.properties.append(property)
+                self.session.cursor.execute(insert, values)
             except:
-                raise Exception(message)
+                self.session.logger.info("targets=%s", self.targets)
+                raise
+        for prop in (self.properties or []):
+            names = "link_id, property_id, value, comment"
+            values = self.id, prop.id, prop.value, prop.comment
+            insert = "INSERT INTO link_properties ({}) VALUES (?, ?, ?, ?)"
+            insert = insert.format(names)
+            self.session.cursor.execute(insert, values)
+    @classmethod
+    def get_linktype_names(cls, session):
+        """
+        Fetch the list of all link type names
+
+        Bypass the cache for this.
+        """
+
+        query = Query("link_type", "name").order("name")
+        return [row.name for row in query.execute(session.cursor).fetchall()]
 
     @classmethod
-    def get(cls, id, cursor):
+    def get(cls, session, id):
         if id not in cls.TYPES:
-            cls.TYPES[id] = cls(id, cursor)
+            cls.TYPES[id] = cls(session, id)
         return cls.TYPES[id]
 
     @classmethod
-    def lookup(cls, doctype, element_tag, cursor):
+    def lookup(cls, session, doctype, element_tag):
         """
         Find the `LinkType` object for this linking source
 
@@ -4331,6 +4545,16 @@ class LinkType:
         Return:
           `LinkType` object or None
         """
+
+        query = Query("link_xml", "link_id")
+        query.where(query.Condition("doc_type", doctype.id))
+        query.where(query.Condition("element", element_tag))
+        row = query.execute(session.cursor).fetchone()
+        return cls(session, id=row.link_id) if row else None
+
+        ### XXXX TODO AVOID CACHEING THESE!!!
+
+
 
         key = doctype.id, element_tag
         with cls.LOCK:
@@ -4344,7 +4568,21 @@ class LinkType:
             with cls.LOCK:
                 if key not in cls.TYPE_IDS:
                     cls.TYPE_IDS[key] = type_id
-        return cls.get(type_id, cursor)
+        return cls.get(session, type_id)
+
+    @classmethod
+    def get_property_types(cls, session):
+        """
+        Fetch information from the link_prop_type table
+        """
+
+        query = Query("link_prop_type", "name", "comment")
+        rows = query.execute(session.cursor).fetchall()
+        class PropertyType:
+            def __init__(self, row):
+                self.name = row.name
+                self.comment = row.comment
+        return [PropertyType(row) for row in rows]
 
     class TargetType:
         def __init__(self, id, name):
@@ -4360,6 +4598,23 @@ class LinkType:
         flavor of `Property`, for determining whether the target document
         contains specific values.
         """
+
+        def __init__(self, session, name, value, comment):
+            self.session = session
+            self.name = name
+            self.value = value
+            self.comment = comment
+        @property
+        def id(self):
+            if hasattr(self, "_id"):
+                return self._id
+            query = Query("link_prop_type", "id")
+            query.where(query.Condition("name", self.name))
+            row = query.execute(self.session.cursor).fetchone()
+            if row:
+                self._id = row.id
+                return self._id
+            return None
 
     class LinkTargetContains(Property):
         """
@@ -4413,9 +4668,9 @@ class LinkType:
         CONNECTORS = {"|": "OR", "&": "AND"}
         OPERATORS = {"==", "!=", "+=", "-="}
 
-        def __init__(self, value):
-            self.value = value
-            self.assertions = parse(value)
+        def __init__(self, session, name, value, comment):
+            LinkType.Property.__init__(self, session, name, value, comment)
+            self.assertions = self.parse(value)
 
         @classmethod
         def parse(cls, property_string):
@@ -4482,8 +4737,8 @@ class LinkType:
                 raise Exception("malformed link property specification")
             return cls.Assertions(top)
 
-        def validate(self, assertions):
-            if not assertions.test(self):
+        def validate(self, link):
+            if not self.assertions.test(link):
                 error = "Failed link target rule: {}".format(self.value)
                 link.add_error(error)
 
@@ -4651,8 +4906,8 @@ class Link:
                    (if any)
       fragment_id - string identifying specific node to which we are
                     linking if appropriate
-      link_type - reference to `LinkType` object used to validate this
-                  link
+      linktype - reference to `LinkType` object used to validate this
+                 link
       eid - unique identifier of the link's element node, used for
             helping the client find the location of the linking element
             if any errors are found (this is an ephemeral identifier)
@@ -4678,7 +4933,7 @@ class Link:
 
         # Start with a clean slate
         self.link_name = self.url = self.internal = self.store = None
-        self.target_doc = self.fragment_id = self.link_type = None
+        self.target_doc = self.fragment_id = self.linktype = None
         self.nlink_attrs = 0
 
         # Capture the values we were given.
@@ -4707,9 +4962,9 @@ class Link:
                 doc_id, self.fragment_id = self.url.split("#", 1)
             else:
                 doc_id = self.url
-            args = doc.doctype, node.tag, doc.session.cursor
-            self.link_type = LinkType.lookup(*args)
-            self.chk_type = self.link_type.chk_type if self.link_type else "C"
+            args = doc.session, doc.doctype, node.tag
+            self.linktype = LinkType.lookup(*args)
+            self.chk_type = self.linktype.chk_type if self.linktype else "C"
             version = self.VERSIONS[self.chk_type]
             try:
                 target_doc = Doc(doc.session, id=doc_id, version=version)
@@ -4730,7 +4985,7 @@ class Link:
         target_doc_id = target_doc.id if target_doc else None
         fields = dict(
             source_doc=self.doc.id,
-            link_type=self.link_type.id,
+            linktype=self.linktype.id,
             source_elem=self.element,
             target_doc=target_doc_id,
             target_frag=self.fragment_id,
@@ -4786,13 +5041,13 @@ class Link:
                 self.add_error(message)
 
         # Make sure we're allowed to link from this element.
-        if not self.link_type:
+        if not self.linktype:
             message = "linking not allowed from {}".format(self.element)
             self.add_error(message)
             return
 
         # Make sure we're linking to an allowed document type.
-        if self.target_doc.doctype.id not in self.link_type.target_types:
+        if self.target_doc.doctype.id not in self.linktype.targets:
             pattern = "linking from {} to {} documents not permitted"
             doctype = self.target_doc.doctype.name
             message = pattern.format(self.element, doctype)
@@ -4800,7 +5055,7 @@ class Link:
             return
 
         # Check any custom rules for the link type.
-        for property in self.link_type.properties:
+        for property in self.linktype.properties:
             property.validate(self)
 
 class FilterSet:

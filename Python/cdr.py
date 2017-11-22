@@ -22,11 +22,12 @@ from lxml import etree
 import cdrapi.db
 from cdrapi.settings import Tier
 from cdrapi.users import Session
-from cdrapi import docs
+from cdrapi import docs, searches
 
 # ======================================================================
 # Make sure we can run on both Python 2 and Python 3
 # ======================================================================
+from six import itervalues
 try:
     basestring
     is_python3 = False
@@ -51,7 +52,7 @@ def login(username, password="", **opts):
     Pass:
       username - name of CDR use account
       password - password for the account (can be empty when logging in
-                 from localhost)
+                 from localhost with a network account)
       comment - optional comment to be stored with the session info
       tier - optional; one of DEV, QA, STAGE, PROD
       host - deprecated alias for tier
@@ -114,8 +115,203 @@ def logout(session, **opts):
 
 
 # ======================================================================
-# Manage CDR groups/actions/permissions
+# Manage CDR users/groups/actions/permissions
 # ======================================================================
+
+class User:
+    """
+    Information about a single CDR user account
+    """
+
+    def __init__(self,
+                 name,
+                 password = '',
+                 fullname = None,
+                 office   = None,
+                 email    = None,
+                 phone    = None,
+                 groups   = None,
+                 comment  = None,
+                 authMode = "network"):
+        self.name         = name
+        self.password     = password
+        self.fullname     = fullname
+        self.office       = office
+        self.email        = email
+        self.phone        = phone
+        self.groups       = groups or []
+        self.comment      = comment
+        self.authMode     = authMode
+
+
+def getUser(credentials, name, **opts):
+    """
+    Retrieve information about a single CDR user account
+
+    Required positional arguments:
+      credentials - name of existing session or login credentials
+      name - string for name of account to be fetched
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      `User` object
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        user = Session.User(session, name=name)
+        user_opts = dict(
+            fullname=user.fullname,
+            office=user.office,
+            email=user.email,
+            phone=user.phone,
+            groups=user.groups,
+            comment=user.comment,
+            authMode=user.authmode
+        )
+        return User(user.name, **user_opts)
+    command = etree.Element("CdrGetUsr")
+    etree.SubElement(command, "UserName").text = name
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrGetUsrResp":
+            opts = dict(
+                fullname=get_text(response.node.find("FullName")),
+                office=get_text(response.node.find("Office")),
+                email=get_text(response.node.find("Email")),
+                phone=get_text(response.node.find("Phone")),
+                comment=get_text(response.node.find("Comment")),
+                authMode=get_text(response.node.find("AuthenticationMode")),
+                groups=[get_text(g) for g in response.node.findall("GrpName")]
+            )
+            name = get_text(response.node.find("UserName"))
+            return User(name, **opts)
+        raise Exception(";".join(response.errors) or "missing response")
+    raise Exception("missing response")
+
+def putUser(credentials, name, user, **opts):
+    """
+    Add or update the database record for a CDR user
+
+    Required positional arguments:
+      credentials - name of existing session or login credentials
+      name - string for name of account to be modified (None for new user)
+      user - `User` object with values to be stored
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        user_opts = dict(
+            name=user.name,
+            fullname=user.fullname,
+            office=user.office,
+            email=user.email,
+            phone=user.phone,
+            groups=user.groups,
+            comment=user.comment,
+            authmode=user.authMode
+        )
+        if name:
+            user_opts["id"] = Session.User(session, name=name).id
+        Session.User(session, **user_opts).save(user.password)
+    else:
+        tag = "CdrModUsr" if name else "CdrAddUsr"
+        command = etree.Element(tag)
+        if name:
+            etree.SubElement(command, "UserName").text = name
+            if name != user.name:
+                etree.SubElement(command, "NewName").text = user.name
+        else:
+            etree.SubElement(command, "UserName").text = user.name
+        etree.SubElement(command, "AuthenticationMode").text = user.authMode
+        etree.SubElement(command, "Password").text = user.password
+        if user.fullname is not None:
+            etree.SubElement(command, "FullName").text = user.fullname
+        if user.office is not None:
+            etree.SubElement(command, "Office").text = user.office
+        if user.email is not None:
+            etree.SubElement(command, "Email").text = user.email
+        if user.phone is not None:
+            etree.SubElement(command, "Phone").text = user.phone
+        if user.comment is not None:
+            etree.SubElement(command, "Comment").text = user.comment
+        for group in user.groups:
+            etree.SubElement(command, "GrpName").text = group
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == tag + "Resp":
+                return
+            raise Exception(";".join(response.errors) or "missing response")
+        raise Exception("missing response")
+
+def delUser(credentials, name, **opts):
+    """
+    Mark the user's account as expired
+
+    Required positional arguments:
+      credentials - name of existing session or login credentials
+      name - string for name of account to be deleted
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        Session.User(session, name=name).delete()
+    else:
+        command = etree.Element("CdrDelUsr")
+        etree.SubElement(command, "UserName").text = name
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrDelUsrResp":
+                return
+            raise Exception(";".join(response.errors) or "missing response")
+        raise Exception("missing response")
+
+#----------------------------------------------------------------------
+# Gets the list of CDR users.
+#----------------------------------------------------------------------
+def getUsers(credentials, **opts):
+    """
+    Get the list of name for active CDR user accounts
+
+    Required positional argument:
+      credentials - name of existing session or login credentials
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sequence of strings for user account names
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return session.list_users()
+    command = etree.Element("CdrListUsrs")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrListUsrsResp":
+            node = response.node
+            return [get_text(child) for child in node.findall("UserName")]
+        raise Exception(";".join(response.errors) or "missing response")
+    raise Exception("missing response")
 
 def canDo(session, action, doctype="", **opts):
     """
@@ -145,6 +341,50 @@ def canDo(session, action, doctype="", **opts):
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
 
+def checkAuth(session, pairs, **opts):
+    """
+    Determine which actions specified by the caller are allowed for this user
+
+    Pass:
+      session - name of session whose permissions are being checked
+      pairs - sequence of action, doctype tuples; the wildcard string
+              "*" can be given for the action to ask for information
+              about all allowed actions; similarly "*" can be given
+              the doctype member of a tuple to ask for all doctypes
+              which are allowed to be operated on for a doctype-specific
+              action (or as a placeholder for actions which are not
+              doctype specific)
+
+    Return:
+      dictionary indexed by names of allowed actions, with values being
+      sets of document type names on which the action can be performed
+      (for doctype-specific actions), or the empty set (for actions which
+      are not doctype specific)
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(session, tier)
+    if isinstance(session, Session):
+        return session.check_permissions(pairs)
+    command = etree.Element("CdrCheckAuth")
+    for action, doctype in pairs:
+        wrapper = etree.SubElement(command, "Auth")
+        etree.SubElement(wrapper, "Action").text = action
+        if doctype.strip():
+            etree.SubElement(wrapper, "DocType").text = doctype
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrCheckAuthResp":
+            auth = dict()
+            for wrapper in response.node.findall("Auth"):
+                action = get_text(wrapper.find("Action"))
+                doctype = get_text(wrapper.find("DocType"))
+                if action not in auth:
+                    auth[action] = set()
+                if doctype:
+                    auth[action].add(doctype)
+            return auth
+        raise Exception(";".join(response.errors) or "missing response")
+    raise Exception("missing response")
 
 def getActions(credentials, **opts):
     """
@@ -1522,7 +1762,7 @@ def valDoc(credentials, doctype, **opts):
 
     # Handle the command locally if appropriate.
     if isinstance(session, Session):
-        validation_opts = dict(type=val_types, locators=locators, store=store)
+        validation_opts = dict(types=val_types, locators=locators, store=store)
         if doc_id:
             doc = docs.Doc(session, id=doc_id)
         else:
@@ -1981,6 +2221,414 @@ def delFilterSet(credentials, name, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+
+# ======================================================================
+# Manage CDR link types
+# ======================================================================
+
+
+class LinkType:
+    """
+    Information about a single CDR link type definition
+    """
+
+    LISTS = "linkSources", "linkTargets", "linkProps"
+
+    def __init__(self, name, **opts):
+        self.name = name
+        for attr_name in self.LISTS:
+            setattr(self, attr_name, opts.get(attr_name) or [])
+        self.comment = opts.get("comment")
+        self.linkChkType = opts.get("linkChkType", "P")
+        if self.comment == "None":
+            self.comment = None
+
+    def __str__(self):
+        lines = ["LinkType("]
+        for name in self.LISTS:
+            lines.append(str(getattr(self, name)))
+        lines += [self.linkChkType or u"?", self.comment or u"[NO COMMENT]"]
+        return u",\n    ".join(lines) + u"\n)"
+
+class LinkPropType:
+    """
+    Custom property type for a CDR link types
+
+    Currently there is only one type of property supported by the
+    CDR, named LinkTargetContains, which checks the query index
+    tables to narrow the set of available link target to those
+    which have (or do not have) certain values or combinations
+    of values.
+    """
+
+    def __init__(self, name, comment=None):
+        self.name = name
+        self.comment = comment
+
+def getLinkTypes(credentials, **opts):
+    """
+    Fetch the list of CDR link type names
+
+    Required positional argument:
+      credentials - result of login
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sequence of strings for link type names
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return docs.LinkType.get_linktype_names(session)
+    command = etree.Element("CdrListLinkTypes")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrListLinkTypesResp":
+            return [get_text(node) for node in response.node.findall("Name")]
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+def getLinkType(credentials, name, **opts):
+    """
+    Fetch detailed information about a single link type
+
+    Required positional arguments:
+      credentials - result of login
+      name - string for unique link type name
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      `LinkType` object
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        t = docs.LinkType(session, name=name)
+        props = t.properties or []
+        opts = {
+            "linkTargets": [v.name for v in itervalues(t.targets)],
+            "linkSources": [(s.doctype.name, s.element) for s in t.sources],
+            "linkProps": [(p.name, p.value, p.comment) for p in props],
+            "linkChkType": t.chk_type,
+            "comment": t.comment,
+        }
+        return LinkType(t.name, **opts)
+    command = etree.Element("CdrGetLinkType")
+    etree.SubElement(command, "Name").text = name
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrGetLinkTypeResp":
+            name = get_text(response.node.find("Name"))
+            opts = dict(
+                linkTargets=[],
+                linkSources=[],
+                linkProps=[],
+                linkChkType=get_text(response.node.find("LinkChkType")),
+                comment=get_text(response.node.find("LinkTypeComment")),
+            )
+            for wrapper in response.node.findall("LinkSource"):
+                doctype = get_text(wrapper.find("SrcDocType"))
+                element = get_text(wrapper.find("SrcField"))
+                opts["linkSources"].append((doctype, element))
+            for node in response.node.findall("TargetDocType"):
+                opts["linkTargets"].append(get_text(node))
+            tags = "LinkProperty", "PropertyValue", "PropertyComment"
+            for wrapper in response.node.findall("LinkProperties"):
+                prop = tuple([get_text(wrapper.find(tag)) for tag in tags])
+                opts["linkProps"].append(prop)
+            return LinkType(name, **opts)
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+def putLinkType(credentials, name, linktype, action, **opts):
+    """
+    Add a new CDR link type or update an existing one
+
+    Required positional argument:
+      credentials - result of login
+      name - string for name of existing link type (ignored for new type)
+      link_type - `LinkType` object
+      action - 'addlink' or 'modlink'
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        opts = dict(
+            name=linktype.name,
+            sources=[],
+            targets={},
+            properties=[],
+            chk_type=linktype.linkChkType,
+            comment=linktype.comment
+        )
+        if action == "modlink":
+            opts["id"] = docs.LinkType(session, name=name).id
+            if opts["id"] is None:
+                raise Exception("Can't find link type {}".format(name))
+        for doctype_name, element in linktype.linkSources:
+            doctype = docs.Doctype(session, name=doctype_name)
+            opts["sources"].append(docs.LinkType.LinkSource(doctype, element))
+        for doctype_name in linktype.linkTargets:
+            doctype = docs.Doctype(session, name=doctype_name)
+            assert doctype.id, "doctype {!r} not found".format(doctype_name)
+            opts["targets"][doctype.id] = doctype
+        message = "Property type {!r} not supported"
+        for name, value, comment in linktype.linkProps:
+            try:
+                cls = getattr(docs.LinkType, name)
+                property = cls(session, name, value, comment)
+                if not isinstance(property, docs.LinkType.Property):
+                    raise Exception(message.format(name))
+                opts["properties"].append(property)
+            except:
+                raise Exception(message.format(name))
+        linktype = docs.LinkType(session, **opts)
+        linktype.save()
+    else:
+        tag = "CdrModLinkType" if action == "modlink" else "CdrAddLinkType"
+        command = etree.Element(tag)
+        if action == "modlink":
+            etree.SubElement(command, "Name").text = name
+            if linktype.name and name != linktype.name:
+                etree.SubElement(command, "NewName").text = linktype.name
+        else:
+            etree.SubElement(command, "Name").text = linktype.name
+        etree.SubElement(command, "LinkChkType").text = linktype.linkChkType
+        if linktype.comment is not None:
+            etree.SubElement(command, "Comment").text = linktype.comment
+        for doctype, element in linktype.linkSources:
+            wrapper = etree.SubElement(command, "LinkSource")
+            etree.SubElement(wrapper, "SrcDocType").text = doctype
+            etree.SubElement(wrapper, "SrcField").text = element
+        for doctype in linktype.linkTargets:
+            etree.SubElement(command, "TargetDocType").text = doctype
+        for name, value, comment in linktype.linkProps:
+            wrapper = etree.SubElement(command, "LinkProperties")
+            etree.SubElement(wrapper, "LinkProperty").text = name
+            etree.SubElement(wrapper, "PropertyValue").text = value
+            etree.SubElement(wrapper, "Comment").text = comment or u""
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == tag + u"Resp":
+                return
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
+
+def delLinkType(credentials, name, **opts):
+    """
+    Remove a link type from the CDR
+
+    Required positional arguments:
+      credentials - result of login
+      name - string for unique link type name to be deleted
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        docs.LinkType(session, name=name).delete()
+    else:
+        command = etree.Element("CdrDelLinkType")
+        etree.SubElement(command, "Name").text = name
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrDelLinkTypeResp":
+                return
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
+
+def getLinkProps(credentials, **opts):
+    """
+    Fetch the information on available custom property types for link types
+
+    Required positional argument:
+      credentials - result of login
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sequence of `LinkPropType` objects
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        prop_types = docs.LinkType.get_property_types(session)
+        return [LinkPropType(p.name, p.comment) for p in prop_types]
+    command = etree.Element("CdrListLinkProps")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrListLinkPropsResp":
+            prop_types = []
+            for wrapper in response.node.findall("LinkProperty"):
+                name = get_text(wrapper.find("Name"))
+                comment = get_text(wrapper.find("Comment"))
+                prop_types.append(LinkPropType(name, comment))
+            return prop_types
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+
+# ======================================================================
+# Manage CDR searching
+# ======================================================================
+
+def listQueryTermRules(credentials, **opts):
+    """
+    Return the list of available query term rules
+
+    Required positional argument:
+      credentials - result of login
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sequence of custom rule name strings
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return searches.QueryTermDef.get_rules(session)
+    command = etree.Element("CdrListQueryTermRules")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrListQueryTermRulesResp":
+            return [get_text(n) for n in response.node.findall("Rule")]
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+def listQueryTermDefs(credentials, **opts):
+    """
+    Return the list of CDR query term definitions
+
+    Required positional argument:
+      credentials - result of login
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sequence of path, rule tuples
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        definitions = searches.QueryTermDef.get_definitions(session)
+        return [(d.path, d.rule) for d in definitions]
+    command = etree.Element("CdrListQueryTermDefs")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrListQueryTermDefsResp":
+            definitions = []
+            for wrapper in response.node.findall("Definition"):
+                path = get_text(wrapper.find("Path"))
+                rule = get_text(wrapper.find("Rule")) or None
+                definitions.append((path, rule))
+            return definitions
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+def addQueryTermDef(credentials, path, rule=None, **opts):
+    """
+    Add a new query term definition to the CDR
+
+    Required positional arguments:
+      credentials - result of login
+      path - string for the location of information to be indexed
+
+    Optional position argument:
+      rule - string for the definition's custom indexing rule name (if any)
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        searches.QueryTermDef(session, path, rule).add()
+    else:
+        command = etree.Element("CdrAddQueryTermDef")
+        etree.SubElement(command, "Path").text = path
+        if rule is not None:
+            etree.SubElement(command, "Rule").text = rule
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrAddQueryTermDefResp":
+                return
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
+
+def delQueryTermDef(credentials, path, rule=None, **opts):
+    """
+    Delete an existing query term definition from the CDR
+
+    Required positional arguments:
+      credentials - result of login
+      path - string for the path of the defintion to be deleted
+
+    Optional position argument:
+      rule - string for the custom indexing rule name (if any)
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        searches.QueryTermDef(session, path, rule).delete()
+    else:
+        command = etree.Element("CdrDelQueryTermDef")
+        etree.SubElement(command, "Path").text = path
+        if rule is not None:
+            etree.SubElement(command, "Rule").text = rule
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrDelQueryTermDefResp":
+                return
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
+
+
 class Logging:
     """
     The CDR has too many ways to do logging already. In spite of this,
@@ -1992,14 +2640,14 @@ class Logging:
     """
 
     FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
-    LEVELS = {
-        "info": logging.INFO,
-        "debug": logging.DEBUG,
-        "warn": logging.WARN,
-        "warning": logging.WARNING,
-        "critical": logging.CRITICAL,
-        "error": logging.ERROR
-    }
+    LEVELS = dict(
+        info=logging.INFO,
+        debug=logging.DEBUG,
+        warn=logging.WARN,
+        warning=logging.WARNING,
+        critical=logging.CRITICAL,
+        error=logging.ERROR
+    )
 
     class Formatter(logging.Formatter):
         """Make our own logging formatter to get the time stamps right."""
@@ -2106,11 +2754,11 @@ class _Control:
             else:
                 username, password = credentials
                 return cls.windows_login(username, password, tier)
-        if not isinstance(credentials, basestring):
-            user, password = credentials
-            opts = dict(comment=comment, tier=tier)
-            return Session.create_session(user, **opts)
-        return Session(credentials, tier)
+        if isinstance(credentials, basestring):
+            return Session(credentials, tier)
+        user, password = credentials
+        opts = dict(comment=comment, password=password, tier=tier)
+        return Session.create_session(user, **opts)
 
     @classmethod
     def windows_login(cls, username, password, tier=None):
@@ -4195,24 +4843,6 @@ def getTree(credentials, docId, depth=1,
     return result
 
 #----------------------------------------------------------------------
-# Gets the list of CDR users.
-#----------------------------------------------------------------------
-def getUsers(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrListUsrs/>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # Parse the response.
-    users = re.findall("<UserName>(.*?)</UserName>", resp)
-    users.sort()
-    return users
-
-#----------------------------------------------------------------------
 # Gets the list of CDR document types.
 #----------------------------------------------------------------------
 def getDoctypes(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
@@ -4430,385 +5060,6 @@ def getSchemaEnumVals(schemaTitle, typeName, sorted=False):
     if sorted:
         valList.sort()
     return valList
-
-#----------------------------------------------------------------------
-# Holds information about a single CDR user.
-#----------------------------------------------------------------------
-class User:
-    def __init__(self,
-                 name,
-                 password = '',
-                 fullname = None,
-                 office   = None,
-                 email    = None,
-                 phone    = None,
-                 groups   = None,
-                 comment  = None,
-                 authMode = "network"):
-        self.name         = name
-        self.password     = password
-        self.fullname     = fullname
-        self.office       = office
-        self.email        = email
-        self.phone        = phone
-        self.groups       = groups or []
-        self.comment      = comment
-        self.authMode     = authMode
-
-#----------------------------------------------------------------------
-# Retrieves information about a CDR user.
-#----------------------------------------------------------------------
-def getUser(credentials, uName, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = etree.Element("CdrGetUsr")
-    etree.SubElement(cmd, "UserName").text = uName
-    cmd  = etree.tostring(cmd)
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # Parse the response.
-    root = etree.XML(resp)
-    for responseNode in root.findall("CdrResponse/CdrGetUsrResp"):
-        for userNode in responseNode.findall("UserName"):
-            user = User(userNode.text)
-            for child in responseNode:
-                if child.tag == "FullName":
-                    user.fullname = child.text
-                elif child.tag == "Office":
-                    user.office = child.text
-                elif child.tag == "Email":
-                    user.email = child.text
-                elif child.tag == "Phone":
-                    user.phone = child.text
-                elif child.tag == "Comment":
-                    user.comment = child.text
-                elif child.tag == "GrpName":
-                    user.groups.append(child.text)
-                elif child.tag == "AuthenticationMode":
-                    user.authMode = child.text
-            return user
-    return "User %s not found" % repr(uName)
-
-#----------------------------------------------------------------------
-# Add or update the database record for a CDR user.
-#
-# Pass:
-#   credentials - Session for person creating the user (not the user himself).
-#   uName       - Name of user whose record should be modified.
-#   user        - Object containing the values to be stored for the user
-#   host        - Which server to use.
-#   port        - Which port.
-#
-# Return:
-#   string      - Error message if operation failed.
-#   None        - Operation succeeded.
-#----------------------------------------------------------------------
-def putUser(credentials, uName, user, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    if uName:
-        cmd = etree.Element("CdrModUsr")
-        etree.SubElement(cmd, "UserName").text = uName
-        if user.name and uName != user.name:
-            etree.SubElement(cmd, "NewName").text = user.name
-    else:
-        cmd = etree.Element("CdrAddUsr")
-        etree.SubElement(cmd, "UserName").text = user.name
-
-    etree.SubElement(cmd, "AuthenticationMode").text = user.authMode
-    etree.SubElement(cmd, "Password").text = user.password
-    if user.fullname is not None:
-        etree.SubElement(cmd, "FullName").text = user.fullname
-    if user.office is not None:
-        etree.SubElement(cmd, "Office").text = user.office
-    if user.email is not None:
-        etree.SubElement(cmd, "Email").text = user.email
-    if user.phone is not None:
-        etree.SubElement(cmd, "Phone").text = user.phone
-    if user.comment is not None:
-        etree.SubElement(cmd, "Comment").text = user.comment
-    for group in user.groups:
-        etree.SubElement(cmd, "GrpName").text = group
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # No errors to report.
-    return None
-
-#----------------------------------------------------------------------
-# Deletes a CDR user.
-#----------------------------------------------------------------------
-def delUser(credentials, usr, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = etree.Element("CdrDelUsr")
-    etree.SubElement(cmd, "UserName").text = usr
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # No errors to report.
-    return None
-
-#----------------------------------------------------------------------
-# Holds information about a single CDR link type.
-#----------------------------------------------------------------------
-class LinkType:
-    def __init__(self, name, linkSources = None,
-                             linkTargets = None,
-                             linkProps   = None,
-                             comment     = None,
-                             linkChkType = "P"):
-        self.name        = name
-        self.linkSources = linkSources or []
-        self.linkTargets = linkTargets or []
-        self.linkProps   = linkProps   or []
-        self.comment     = comment
-        self.linkChkType = linkChkType
-    def __str__(self):
-        return "LinkType(%s,\n%s,\n%s,\n%s,\n%s,\n%s)" % (self.name,
-                                                 self.linkSources,
-                                                 self.linkTargets,
-                                                 self.linkProps,
-                                                 self.linkChkType,
-                                                 self.comment)
-
-#----------------------------------------------------------------------
-# Holds information about a single CDR link property.
-#----------------------------------------------------------------------
-class LinkProp:
-    def __init__(self, name, comment = None):
-        self.name        = name
-        self.comment     = comment
-
-#----------------------------------------------------------------------
-# Retrieves list of CDR link type names.
-#----------------------------------------------------------------------
-def getLinkTypes(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrListLinkTypes/>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # Parse the response
-    types = re.findall("<Name>(.*?)</Name>", resp)
-    types.sort()
-    return types
-
-#----------------------------------------------------------------------
-# Retrieves information from the CDR for a link type.
-#----------------------------------------------------------------------
-def getLinkType(credentials, name, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrGetLinkType><Name>%s</Name></CdrGetLinkType>" % name
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # Parse the response
-    name     = re.findall("<Name>(.*)</Name>", resp)[0]
-    cmtExpr  = re.compile("<LinkTypeComment>(.*)</LinkTypeComment>", re.DOTALL)
-    chkExpr  = re.compile("<LinkChkType>(.*?)</LinkChkType>", re.DOTALL)
-    srcExpr  = re.compile("<LinkSource>(.*?)</LinkSource>", re.DOTALL)
-    tgtExpr  = re.compile("<TargetDocType>(.*?)</TargetDocType>", re.DOTALL)
-    prpExpr  = re.compile("<LinkProperties>(.*?)</LinkProperties>", re.DOTALL)
-    sdtExpr  = re.compile("<SrcDocType>(.*)</SrcDocType>", re.DOTALL)
-    fldExpr  = re.compile("<SrcField>(.*)</SrcField>", re.DOTALL)
-    prnExpr  = re.compile("<LinkProperty>(.*)</LinkProperty>", re.DOTALL)
-    prvExpr  = re.compile("<PropertyValue>(.*)</PropertyValue>", re.DOTALL)
-    prcExpr  = re.compile("<PropertyComment>(.*)</PropertyComment>", re.DOTALL)
-    comment  = cmtExpr.findall(resp)
-    chkType  = chkExpr.findall(resp)
-    sources  = srcExpr.findall(resp)
-    targets  = tgtExpr.findall(resp)
-    props    = prpExpr.findall(resp)
-    linkType = LinkType(name)
-    if comment:  linkType.comment     = comment[0]
-    if targets:  linkType.linkTargets = targets
-    if chkType:  linkType.linkChkType = chkType[0]
-    for source in sources:
-        srcDocType  = sdtExpr.search(source).group(1)
-        srcField    = fldExpr.search(source).group(1)
-        linkType.linkSources.append((srcDocType, srcField))
-    for prop in props:
-        propName    = prnExpr.search(prop).group(1)
-        propVal     = prvExpr.search(prop)
-        propComment = prcExpr.search(prop)
-        propVal     = propVal and propVal.group(1) or None
-        propComment = propComment and propComment.group(1) or None
-        linkType.linkProps.append((propName, propVal, propComment))
-    return linkType
-
-#----------------------------------------------------------------------
-# Stores information for a CDR link type.
-#----------------------------------------------------------------------
-def putLinkType(credentials, name, linkType, linkAct,
-                host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    if linkAct == "modlink":
-        cmd = "<CdrModLinkType><Name>%s</Name>" % name
-        if linkType.name and name != linkType.name:
-            cmd += "<NewName>%s</NewName>" % linkType.name
-    else:
-        cmd = "<CdrAddLinkType><Name>%s</Name>" % linkType.name
-
-    # Add the target document version type to check against
-    if not linkType.linkChkType:
-        raise Exception("No linkChkType specified for link type %s:" %
-                        linkType.name);
-    cmd += "<LinkChkType>%s</LinkChkType>" % linkType.linkChkType
-
-    # Add the comment, if present.
-    if linkType.comment is not None:
-        cmd += "<Comment>%s</Comment>" % linkType.comment
-
-    # Add the link sources.
-    for src in linkType.linkSources:
-        cmd += "<LinkSource><SrcDocType>%s</SrcDocType>" % src[0]
-        cmd += "<SrcField>%s</SrcField></LinkSource>" % src[1]
-
-    # Add the link targets.
-    for tgt in linkType.linkTargets:
-        cmd += "<TargetDocType>%s</TargetDocType>" % tgt
-
-    # Add the link properties.
-    for prop in linkType.linkProps:
-        cmd += "<LinkProperties><LinkProperty>%s</LinkProperty>" % prop[0]
-        cmd += "<PropertyValue>%s</PropertyValue>" % prop[1]
-        cmd += "<Comment>%s</Comment></LinkProperties>" % prop[2]
-
-    # Submit the request.
-    if linkAct == "modlink":
-        cmd += "</CdrModLinkType>"
-    else:
-        cmd += "</CdrAddLinkType>"
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # No errors to report if we get here.
-    return None
-
-#----------------------------------------------------------------------
-# Retrieves list of CDR link properties.
-#----------------------------------------------------------------------
-def getLinkProps(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrListLinkProps/>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # Parse the response
-    propExpr = re.compile("<LinkProperty>(.*?)</LinkProperty>", re.DOTALL)
-    nameExpr = re.compile("<Name>(.*)</Name>", re.DOTALL)
-    cmtExpr  = re.compile("<Comment>(.*)</Comment>", re.DOTALL)
-    ret      = []
-    props    = propExpr.findall(resp)
-    if props:
-        for prop in props:
-            name = nameExpr.findall(prop)[0]
-            cmt  = cmtExpr.findall(prop)
-            pr   = LinkProp(name)
-            if cmt: pr.comment = cmt[0]
-            ret.append(pr)
-    return ret
-
-#----------------------------------------------------------------------
-# Returns a list of available query term rules.
-#----------------------------------------------------------------------
-def listQueryTermRules(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrListQueryTermRules/>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, session, host), host, port)
-
-    # Check for problems.
-    err = checkErr(resp)
-    if err: return err
-
-    # Extract the rules.
-    return re.findall("<Rule>(.*?)</Rule>", resp)
-
-#----------------------------------------------------------------------
-# Returns a list of CDR query term definitions.
-#----------------------------------------------------------------------
-def listQueryTermDefs(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrListQueryTermDefs/>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, session, host), host, port)
-
-    # Extract the definitions.
-    defExpr      = re.compile("<Definition>(.*?)</Definition>", re.DOTALL)
-    pathExpr     = re.compile("<Path>(.*)</Path>")
-    ruleExpr     = re.compile("<Rule>(.*)</Rule>")
-    err          = checkErr(resp)
-    if err:
-        return err
-    definitions  = defExpr.findall(resp)
-    rc           = []
-    if definitions:
-        for definition in definitions:
-            path = pathExpr.search(definition).group(1)
-            rule = ruleExpr.search(definition)
-            rule = rule and rule.group(1) or None
-            rc.append((path, rule))
-    return rc
-
-#----------------------------------------------------------------------
-# Adds a new query term definition.
-#----------------------------------------------------------------------
-def addQueryTermDef(session, path, rule=None,
-                    host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrAddQueryTermDef><Path>%s</Path>" % path
-    if rule: cmd += "<Rule>%s</Rule>" % rule
-    cmd += "</CdrAddQueryTermDef>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, session, host), host, port)
-    return checkErr(resp)
-
-#----------------------------------------------------------------------
-# Deletes an existing query term definition.
-#----------------------------------------------------------------------
-def delQueryTermDef(session, path, rule=None, host=DEFAULT_HOST,
-                    port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrDelQueryTermDef><Path>%s</Path>" % path
-    if rule: cmd += "<Rule>%s</Rule>" % rule
-    cmd += "</CdrDelQueryTermDef>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, session, host), host, port)
-    return checkErr(resp)
 
 #----------------------------------------------------------------------
 # Construct a string containing the description of the last exception.
