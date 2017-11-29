@@ -116,6 +116,7 @@ class Doc(object):
     REVISION_LEVEL_PUBLISHED_OR_APPROVED = 2
     REVISION_LEVEL_PUBLISHED_OR_APPROVED_OR_PROPOSED = 1
     DEFAULT_REVISION_LEVEL = REVISION_LEVEL_PUBLISHED
+    LEGACY_MAILER_CUTOFF = 390000
 
     def __init__(self, session, **opts):
         """
@@ -203,7 +204,7 @@ class Doc(object):
         Canonical string form for the CDR document ID (CDR9999999999)
         """
 
-        return "CDR{:010}".format(self.id) if self.id else None
+        return "CDR{:010d}".format(self.id) if self.id else None
 
     @property
     def comment(self):
@@ -395,9 +396,12 @@ class Doc(object):
         Determine if the document has saved after the last version
         """
 
+        last_saved = self.last_saved
+        if last_saved is None:
+            return False
         last_version_date = self.last_version_date
         if not last_version_date:
-            return False
+            return True
         return last_version_date < self.last_saved
 
     @property
@@ -509,7 +513,7 @@ class Doc(object):
 
         if not self.id:
             return None
-        query = Query("doc_version", "MAX(dt) as dt")
+        query = Query("doc_version", "MAX(updated_dt) as dt")
         query.where(query.Condition("id", self.id))
         row = query.execute(self.session.cursor).fetchone()
         date = row.dt if row else None
@@ -667,7 +671,7 @@ class Doc(object):
     @property
     def version(self):
         """
-        Integer for specific version of None for all_doc_versions row
+        Integer for specific version for all_doc_versions row (or None)
         """
 
         #self.session.logger.info("@version: __opts = %s", self.__opts)
@@ -687,7 +691,7 @@ class Doc(object):
                 lastp = str(version).startswith("lastp")
                 self._version = self.__get_version_before(cutoff, lastp)
 
-            # There might be an object for any version of the document.
+            # See if this is an object for the current working document.
             elif not version:
                 self._version = None
 
@@ -725,6 +729,7 @@ class Doc(object):
                     if len(tokens) != 2:
                         error = "missing token for version specifier"
                         raise Exception(error)
+                    prefix, label = tokens
                     self._version = self.__get_labeled_version(label)
 
                 # Last chance: an integer string.
@@ -890,10 +895,13 @@ class Doc(object):
           force - if True, try to check in even if locked by another account
           comment - optional string to update comment (to NULL if empty)
           abandon - if True, don't save unversioned changes as a new version
+          publishable - if True, mark version publishable if we create one
         """
 
+        self.session.logger.info("checking in %s", self.cdr_id)
         self.__check_in(**opts)
         self.session.conn.commit()
+        self.session.logger.info("checked in %s", self.cdr_id)
 
     def check_out(self, **opts):
         """
@@ -909,6 +917,21 @@ class Doc(object):
         self.__check_out(**opts)
         self.session.conn.commit()
 
+    def __audit_trail_delay(self):
+        if self.id:
+            query = Query("audit_trail", "MAX(dt) AS dt")
+            query.where(query.Condition("document", self.id))
+            last = query.execute(self.session.cursor).fetchone().dt
+            now = datetime.datetime.now().replace(microsecond=0)
+            logged = False
+            while now == last:
+                if not logged:
+                    message = "{}: audit trail delay".format(self.cdr_id)
+                    self.session.logger.warning(message)
+                    logged = True
+                time.sleep(.1)
+                now = datetime.datetime.now().replace(microsecond=0)
+
     def delete(self, **opts):
         """
         Mark the document as deleted
@@ -922,11 +945,11 @@ class Doc(object):
           reason - string to be recorded in the audit trail
         """
 
+        # Make sure the audit trail records don't step on each other.
+        self.__audit_trail_delay()
+
         # Start with a clean slate.
         self._errors = []
-
-        # Use a default reason if none supplied.
-        reason = opts.get("reason", "Document deleted. No reason recorded.")
 
         # Make sure the user can delete documents of this type.
         if not self.session.can_do("DELETE DOCUMENT", self.doctype.name):
@@ -949,24 +972,34 @@ class Doc(object):
             raise Exception(message.format(self.cdr_id))
 
         # Make sure someone else doesn't have it locked.
+        reason = opts.get("reason")
         lock = self.lock
         if lock:
             if lock.locker.id != self.session.user_id:
                 message = "Document {} is checked out by another user"
                 raise Exception(message.format(self.cdr_id))
-            self.check_in(abandon=True, comment=reason)
+            self.__check_in(abandon=True, comment=reason)
 
-        # Deal with links to this document.
-        if self.__delete_incoming_links(**opts):
+        # Make sure we back out any pending transactions if we fail.
+        try:
 
-            # We got the green light to proceed with the deletion.
-            for table in "query_term", "query_term_pub":
-                delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
-                self.session.cursor.execute(delete, (self.id,))
-            update = "UPDATE document SET active_status = 'D' WHERE id = ?"
-            self.session.cursor.execute(update, (self.id,))
-            self.__audit_action("Doc.delete", "DELETE DOCUMENT", reason)
-            self.session.conn.commit()
+            # Take care of any links to this document.
+            if self.__delete_incoming_links(**opts):
+
+                # We got the green light to proceed with the deletion.
+                update = "UPDATE document SET active_status = 'D' WHERE id = ?"
+                for table in "query_term", "query_term_pub":
+                    delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
+                    self.session.cursor.execute(delete, (self.id,))
+                self.session.cursor.execute(update, (self.id,))
+                self.__audit_action("Doc.delete", "DELETE DOCUMENT", reason)
+                self.session.conn.commit()
+        except:
+            self.session.logger.exception("Deletion failed")
+            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.session.cursor.fetchone().tc:
+                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            raise
 
     def filter(self, *filters, **opts):
         """
@@ -1088,6 +1121,55 @@ class Doc(object):
                 return self.session.cache.filters[key]
         else:
             return Filter(doc_id, xml)
+
+    def get_tree(self, depth=1):
+        """
+        Fetch parents and children of this Term document
+
+        Pass:
+          depth - number of levels to descend for children (default=1)
+
+        Return:
+          object containing parent-child relationships and term names
+        """
+
+        if not self.session.can_do("GET TREE"):
+            raise Exception("GET TREE action not authorized for this user")
+        class Tree:
+            def __init__(self):
+                self.relationships, self.names = list(), dict()
+            class Relationship:
+                def __init__(self, parent, child):
+                    self.parent, self.child = parent, child
+        tree = Tree()
+        self.session.cursor.callproc("cdr_get_term_tree", (self.id, depth))
+        for child, parent in self.session.cursor.fetchall():
+            tree.relationships.append(Tree.Relationship(parent, child))
+        if not self.session.cursor.nextset():
+            raise Exception("Failure retrieving Term data")
+        for term_id, term_name in self.session.cursor.fetchall():
+            tree.names[term_id] = term_name
+        return tree
+
+    def label(self, label):
+        """
+        Apply a label to a specific version of this document
+
+        Pass:
+          label - string for this label's name
+        """
+
+        assert self.version, "Missing version for label"
+        query = Query("version_label", "id")
+        query.where(query.Condition("name", label))
+        row = query.execute(self.session.cursor).fetchone()
+        if not row:
+            raise Exception("Unable to find label {!r}".format(label))
+        names = "label, document, num"
+        values = row.id, self.id, self.version
+        insert = "INSERT INTO doc_version_label ({}) VALUES (?, ?, ?)"
+        self.session.cursor.execute(insert.format(names), values)
+        self.session.conn.commit()
 
     def legacy_doc(self, **opts):
         """
@@ -1211,6 +1293,65 @@ class Doc(object):
                 response.append(self.legacy_doc(get_xml=True, locators=True))
         return response
 
+    def link_report(self):
+        query = Query("link_net n", "n.source_doc", "d.title", "n.target_frag")
+        query.join("document d", "d.id = n.source_doc")
+        query.where(query.Condition("n.target_doc", self.id))
+        links = []
+        pattern = "Document {:d}: ({}) links to this document"
+        for row in query.execute(self.session.cursor).fetchall():
+            link = pattern.format(row.source_doc, row.title)
+            if row.target_frag:
+                link += " Fragment({})".format(row.target_frag)
+            links.append(link)
+        return links
+
+    def list_versions(self, limit=None):
+        fields = "num AS number", "dt AS saved", "comment"
+        query = Query("doc_version", *fields).order("num DESC")
+        query.where(query.Condition("id", self.id))
+        if limit is not None:
+            query.limit(limit)
+        return list(query.execute(self.session.cursor).fetchall())
+
+    def reindex(self):
+        """
+        Repopulate the search support tables for this document
+        """
+
+        # Make sure the document is in the repository.
+        if not self.id:
+            raise Exception("reindex(): missing document id")
+
+        # Make sure the object we have represents the latest XML.
+        doc = self
+        last_pub_ver = doc.last_publishable_version
+        last_saved = doc.last_saved
+        last_ver = doc.last_version
+        last_ver_date = doc.last_version_date
+        if doc.version:
+            if doc.version < last_ver or last_ver_date < last_saved:
+                doc = Doc(self.session, id=doc.id)
+
+        # Find out which tables to populate with this XML
+        tables = ["query_term"]
+        if last_pub_ver:
+            if last_pub_ver == last_ver and last_saved == last_ver_date:
+                tables.append("query_term_pub")
+
+        # Make sure we roll back everything if we fail anything.
+        try:
+            doc.update_query_terms(tables=tables)
+            if last_pub_ver and "query_term_pub" not in tables:
+                doc = Doc(self.session, id=doc.id, version=last_pub_ver)
+                doc.update_query_terms(tables=["query_term_pub"])
+        except Exception as e:
+            self.session.logger.exception("Reindex failed")
+            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.session.cursor.fetchone().tc:
+                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            raise
+
     def save(self, **opts):
         """
         Store the new or updated document
@@ -1235,6 +1376,7 @@ class Doc(object):
         """
 
         try:
+            self.__audit_trail_delay()
             self.__save(**opts)
             self.session.conn.commit()
         except:
@@ -1243,6 +1385,61 @@ class Doc(object):
             if self.session.cursor.fetchone().tc:
                 self.session.cursor.execute("ROLLBACK TRANSACTION")
             raise
+
+    def unlabel(self, label):
+        """
+        Apply a label to a specific version of this document
+
+        Pass:
+          label - string for this label's name
+        """
+
+        query = Query("version_label", "id")
+        query.where(query.Condition("name", label))
+        row = query.execute(self.session.cursor).fetchone()
+        if not row:
+            raise Exception("Unable to find label {!r}".format(label))
+        table = "doc_version_label"
+        delete = "DELETE FROM {} WHERE document = ? AND label = ?"
+        self.session.cursor.execute(delete.format(table), (self.id, row.id))
+        self.session.conn.commit()
+
+    def update_query_terms(self, **opts):
+        """
+        Populate the query support tables with values from the document
+
+        Optional keyword argument:
+          tables - set of strings identifying which index table(s) to
+                   update (`query_term` and/or `query_term_def`); default
+                   is both tables
+        """
+
+        # We don't index control documents or documents with malformed XML.
+        if not self.is_content_type or self.root is None:
+            return
+
+        # Nor do we index unsaved documents or documents with no doctype.
+        if not self.id or not self.doctype.name:
+            return
+
+        # Find out which table(s) we're updating.
+        tables = opts.get("tables", ["query_term", "query_term_def"])
+        if not tables:
+            return
+
+        # Find out which elements and attributes get indexed (`paths`).
+        absolute_path = "path LIKE '/{}/%'".format(self.doctype.name)
+        relative_path = "path LIKE '//%'"
+        query = Query("query_term_def", "path")
+        query.where(query.Or(absolute_path, relative_path))
+        rows = query.execute(self.session.cursor).fetchall()
+        paths = set([row.path for row in rows])
+
+        # Collect the indexable values and store them.
+        terms = set()
+        self.__collect_query_terms(self.resolved, terms, paths)
+        for table in tables:
+            self.__store_query_terms(terms, table=table)
 
     def validate(self, **opts):
         """
@@ -1426,6 +1623,7 @@ class Doc(object):
           force - if True, try to check in even if locked by another account
           comment - optional string to update comment (to NULL if empty)
           abandon - if True, don't save unversioned changes as a new version
+          publishable - if True, mark version publishable if we create one
         """
 
         # Make sure there's a lock to release.
@@ -1452,6 +1650,7 @@ class Doc(object):
             version = None
 
         # Clear out all the locks for the document.
+        self.__audit_trail_delay()
         update = "UPDATE checkout SET dt_in = ?, version = ?"
         when = datetime.datetime.now().replace(microsecond=0)
         values = when, version, self.id
@@ -1464,15 +1663,11 @@ class Doc(object):
 
         # Save any unversioned changes unless instructed otherwise.
         if need_new_version:
-            self.__create_version()
+            self.__create_version(publishable=opts.get("publishable"))
 
         # If we broke someone else's lock, audit that information.
         if lock_broken:
             self.__audit_action("Doc.check_in", "UNLOCK", comment)
-
-        # Make the changes permanent unless told otherwise.
-        if opts.get("commit", True):
-            self.session.conn.commit()
 
     def __check_out(self, **opts):
         """
@@ -1481,7 +1676,6 @@ class Doc(object):
         Optional keyword arguments:
           force - if True, steal the lock if necessary (and allowed)
           comment - optional string for the `checkout.comment` column
-          commit - if True (the default), commit the changes to the database
         """
 
         # Make sure the account has sufficient permissions.
@@ -1785,6 +1979,8 @@ class Doc(object):
             "val_date": val_date,
             "publishable": "Y" if opts.get("publishable") else "N"
         }
+        if row.val_status != "V":
+            fields["publishable"] = "N"
         names = sorted(fields)
         values = [fields[name] for name in names]
         names.append("dt")
@@ -2030,7 +2226,7 @@ class Doc(object):
         query.where(query.Condition("v.id", self.id))
         query.where(query.Condition("l.name", label))
         row = query.execute(self.session.cursor).fetchone()
-        if not row:
+        if not row.n:
             raise Exception("no version labeled {}".format(label))
         return row.n
 
@@ -2075,6 +2271,10 @@ class Doc(object):
                 when = dateutil.parser.parse(before)
             except:
                 raise Exception("unrecognized date/time format")
+
+        # Fix for bug in adodbapi.
+        when = when.replace(microsecond=0)
+
         query = Query("doc_version", "MAX(num) AS n")
         query.where(query.Condition("id", self.id))
         query.where(query.Condition("dt", when, "<"))
@@ -2182,6 +2382,21 @@ class Doc(object):
         method in the C++ code!
         """
 
+        """
+        # Make sure we can detect unversioned changes.
+        if not opts.get("version") and not opts.get("publishable"):
+            last_versioned = self.last_version_date
+            if last_versioned is not None:
+                now = datetime.datetime.now().replace(microsecond=0)
+                logged = False
+                while now == last_versioned:
+                    if not logged:
+                        self.session.logger.info("delay for document save")
+                        logged = True
+                    time.sleep(.1)
+                    now = datetime.datetime.now().replace(microsecond=0)
+        """
+
         # Set the stage for validation.
         self._errors = []
         if self.root is None:
@@ -2223,7 +2438,7 @@ class Doc(object):
                         self.add_error(message, **error_opts)
                         opts["publishable"] = False
             if opts.get("set_links") != False and "links" not in val_types:
-                if self.id and self.resolved:
+                if self.id and self.resolved is not None:
                     self.__store_links(self.__collect_links(self.resolved))
 
         # If the document already existed, we still need to store it.
@@ -2232,7 +2447,10 @@ class Doc(object):
 
         # Index the document for searching.
         if self.is_content_type:
-            self.__update_query_terms(**opts)
+            index_tables = ["query_term"]
+            if opts.get("publishable"):
+                index_tables.append("query_term_pub")
+            self.update_query_terms(tables=index_tables)
 
         # Remember who performed this save action.
         action = "ADD DOCUMENT" if new else "MODIFY DOCUMENT"
@@ -2553,38 +2771,6 @@ class Doc(object):
 
         self.xml = unicode(self.filter("name:Strip XMetaL PIs").result_tree)
 
-    def __update_query_terms(self, **opts):
-        """
-        Populate the query support tables with values from the document
-
-        Optional keyword argument:
-          publishable - True if we're creating a publishable version for
-                        the document
-        """
-
-        # We don't index control documents or documents with malformed XML.
-        if not self.is_content_type or self.root is None:
-            return
-
-        # Nor do we index unsaved documents or documents with no doctype.
-        if not self.id or not self.doctype.name:
-            return
-
-        # Find out which elements and attributes get indexed (`paths`).
-        absolute_path = "path LIKE '/{}/%'".format(self.doctype.name)
-        relative_path = "path LIKE '//%'"
-        query = Query("query_term_def", "path")
-        query.where(query.Or(absolute_path, relative_path))
-        rows = query.execute(self.session.cursor).fetchall()
-        paths = set([row.path for row in rows])
-
-        # Collect the indexable values and store them.
-        terms = set()
-        self.__collect_query_terms(self.resolved, terms, paths)
-        self.__store_query_terms(terms)
-        if opts.get("publishable"):
-            self.__store_query_terms(terms, table="query_term_pub")
-
     def __update_val_status(self, store):
         """
         Store the current validation status in the database
@@ -2786,6 +2972,46 @@ class Doc(object):
     # ------------------------------------------------------------------
 
     @staticmethod
+    def create_label(session, label, comment=None):
+        """
+        Create a name which can be used for tagging one or more doc versions
+
+        Pass:
+          session - reference to object representing user's login
+          label - string used to tag document versions
+          comment - optional string describing the label's usage
+        """
+
+        assert label, "Missing label name"
+        query = Query("version_label", "COUNT(*) AS n")
+        query.where(query.Condition("name", label))
+        if query.execute(session.cursor).fetchone().n > 0:
+            raise Exception("Label {!r} already exists".format(label))
+        insert = "INSERT INTO version_label (name, comment) VALUES (?, ?)"
+        session.cursor.execute(insert, (label, comment))
+        session.conn.commit()
+
+    @staticmethod
+    def delete_label(session, label):
+        assert label, "Missing label name"
+        query = Query("version_label", "id")
+        query.where(query.Condition("name", label))
+        row = query.execute(session.cursor).fetchone()
+        if not row:
+            raise Exception("Can't find label {!r}".format(label))
+        label_id = row.id
+        delete = "DELETE FROM doc_version_label WHERE label = ?"
+        session.cursor.execute(delete, (label_id,))
+        delete = "DELETE FROM version_label WHERE id = ?"
+        try:
+            session.cursor.execute(delete, (label_id,))
+            session.conn.commit()
+        except:
+            session.cursor.execute("ROLLBACK TRANSACTION")
+            session.logger.exception("delete_label() failure")
+            raise Exception("Failure deleting label {!r}".format(label))
+
+    @staticmethod
     def extract_id(arg):
         """
         Return the CDR document ID as an integer (ignoring fragment suffixes)
@@ -2864,6 +3090,37 @@ class Doc(object):
             return row.id
         return None
 
+    @classmethod
+    def delete_failed_mailers(cls, session):
+        """
+        Mark tracking documents for failed mailer jobs as deleted
+
+        Invoked by the CdrMailerCleanup command. We skip past mailers
+        converted from the legacy Oracle PDQ system as an optimization.
+
+        Pass:
+          session - reference to object representing user's login
+
+        Return:
+          object carrying IDs for deleted documents and error strings
+        """
+
+        class CleanupReport:
+            def __init__(self): self.deleted, self.errors = [],[]
+        reason = "Deleting tracking document for failed mailer job"
+        report = CleanupReport()
+        query = Query("query_term q", "q.doc_id").unique()
+        query.join("pub_proc p", "p.id = q.int_val", "p.status = 'Failure'")
+        query.where("q.path = '/Mailer/JobId'")
+        query.where("q.doc_id > {}".format(cls.LEGACY_MAILER_CUTOFF))
+        for row in query.execute(session.cursor).fetchall():
+            try:
+                Doc(session, id=row.doc_id).delete(reason=reason)
+                report.deleted.append(row.doc_id)
+            except Exception as e:
+                report.errors.append(str(e))
+        return report
+
     @staticmethod
     def make_xml_date_string(value):
         """
@@ -2880,6 +3137,16 @@ class Doc(object):
         if not value:
             return None
         return str(value)[:19].replace(" ", "T")
+
+    @staticmethod
+    def normalize_id(doc_id):
+        if doc_id is None:
+            return None
+        if isinstance(doc_id, basestring):
+            if not isinstance(doc_id, unicode):
+                doc_id = doc_id.decode("ascii")
+            doc_id = int(re.sub("[^0-9]", "", doc_id))
+        return "CDR{:010d}".format(doc_id)
 
     @classmethod
     def qname(cls, local, ns=None):
@@ -3294,6 +3561,7 @@ class Resolver(etree.Resolver):
                 return self.package_result(element, context)
             else:
                 raise Exception("unsupported url {!r}".format(self.url))
+        uri = parms
         if parms.startswith("name:"):
             parms = parms[5:]
             if "/" in parms:
@@ -3316,7 +3584,11 @@ class Resolver(etree.Resolver):
                 doc_id, version = parms.split("/", 1)
             if not doc_id:
                 raise Exception("no document specified")
-            doc = Doc(self.session, id=doc_id, version=version)
+        doc = Doc(self.session, id=doc_id, version=version)
+        try:
+            xml = doc.xml
+        except:
+            raise Exception("Unable to resolve uri {}".format(uri))
         return self.resolve_string(doc.xml, context)
 
     def package_result(self, result, context):
@@ -3330,12 +3602,17 @@ class Resolver(etree.Resolver):
         try:
             return url_quote(arg.replace("+", "@@PLUS@@"))
         except:
-            print("cdr:escape_uri(%r)" % arg)
             raise
 
 etree.FunctionNamespace(Doc.NS).update({"escape-uri": Resolver.escape_uri})
 
 class Term:
+    """
+    Term document with parents
+
+    This class is used for XSL/T filtering callbacks.
+    """
+
     def __init__(self, session, doc_id, depth=0):
         self.session = session
         self.doc_id = doc_id
@@ -3451,7 +3728,6 @@ class Doctype:
     def __init__(self, session, **opts):
         self.__session = session
         self.__opts = opts
-        session.logger.info("Doctype(): opts=%s", opts)
 
     @property
     def active(self):
@@ -5253,3 +5529,56 @@ class FilterSet:
         query.where("t.name = 'Filter'")
         rows = query.execute(session.cursor).fetchall()
         return [Doc(session, id=row.id, title=row.title) for row in rows]
+
+
+class GlossaryTermName:
+
+    UNWANTED = re.compile(u"""['".,?!:;()[\]{}<>\u201C\u201D\u00A1\u00BF]+""")
+    TOKEN_SEP = re.compile(r"[\n\r\t -]+")
+
+    def __init__(self, id, name):
+        self.id = id
+        self.name = name or None
+        self.phrases = set()
+    @classmethod
+    def get_mappings(cls, session, language="en"):
+        names = dict()
+        phrases = set()
+        name_tag = "TermName" if language == "en" else "TranslatedName"
+        n_path = "/GlossaryTermName/{}/TermNameString".format(name_tag)
+        s_path = "/GlossaryTermName/TermNameStatus"
+        e_path = "/GlossaryTermName/{}/@ExcludeFromGlossifier".format(name_tag)
+        e_cond = ["e.doc_id = n.doc_id", "e.path = '{}'".format(e_path)]
+        if language == "es":
+            e_cond.append("LEFT(n.node_loc, 4) = LEFT(e.node_loc, 4)")
+        query = Query("query_term n", "n.doc_id", "n.value")
+        query.join("query_term s", "s.doc_id = n.doc_id")
+        query.outer("query_term e", *e_cond)
+        query.where(query.Condition("n.path", n_path))
+        query.where(query.Condition("s.path", s_path))
+        query.where("s.value <> 'Rejected'")
+        query.where("(e.value IS NULL OR e.value <> 'Yes')")
+        for doc_id, name in query.execute(session.cursor).fetchall():
+            term_name = names[doc_id] = GlossaryTermName(doc_id, name)
+            phrase = cls.normalize(name)
+            if phrase and phrase not in phrases:
+                phrases.add(phrase)
+                term_name.phrases.add(phrase)
+        query = Query("external_map m", "m.doc_id", "m.value")
+        query.join("external_map_usage u", "u.id = m.usage")
+        prefix = "" if language == "en" else "Spanish "
+        usage = prefix + "GlossaryTerm Phrases"
+        query.where(query.Condition("u.name", usage))
+        for doc_id, name in query.execute(session.cursor).fetchall():
+            term_name = names.get(doc_id)
+            if term_name is not None:
+                phrase = cls.normalize(name)
+                if phrase and phrase not in phrases:
+                    phrases.add(phrase)
+                    term_name.phrases.add(phrase)
+        return list(names.values())
+
+    @classmethod
+    def normalize(cls, phrase):
+        phrase = cls.UNWANTED.sub(u"", cls.TOKEN_SEP.sub(u" ", phrase)).upper()
+        return phrase.strip()

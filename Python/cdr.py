@@ -19,10 +19,15 @@ import re
 import dateutil.parser
 import requests
 from lxml import etree
-import cdrapi.db
+from cdrapi import db as cdrdb
 from cdrapi.settings import Tier
 from cdrapi.users import Session
-from cdrapi import docs, searches
+from cdrapi.docs import Doc as APIDoc
+from cdrapi.docs import Doctype, GlossaryTermName
+from cdrapi.docs import LinkType as APILinkType
+from cdrapi.docs import FilterSet as APIFilterSet
+from cdrapi.publishing import Job as PublishingJob
+from cdrapi.searches import QueryTermDef
 
 # ======================================================================
 # Make sure we can run on both Python 2 and Python 3
@@ -481,8 +486,6 @@ def putAction(credentials, name, action, **opts):
             name = action.name
             new_name = None
         command = etree.Element(command_name)
-        fp = open("d:/tmp/putAction.log", "a")
-        fp.write("command_name is {}\n".format(command_name))
         etree.SubElement(command, "Name").text = name
         if new_name and new_name != name:
             etree.SubElement(command, "NewName").text = new_name
@@ -491,11 +494,8 @@ def putAction(credentials, name, action, **opts):
         if action.comment is not None:
             etree.SubElement(command, "Comment").text = action.comment
         for response in _Control.send_command(session, command, tier):
-            fp.write("tag nams is {}\n".format(response.node.tag))
             if response.node.tag == command_name + "Resp":
-                fp.close()
                 return
-            fp.close()
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
 
@@ -759,7 +759,7 @@ def getDoctype(credentials, name, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        doctype = docs.Doctype(session, name=name)
+        doctype = Doctype(session, name=name)
         values = doctype.vv_lists
         vv_lists = [(name, values[name]) for name in sorted(values)]
         args = dict(
@@ -831,7 +831,7 @@ def addDoctype(credentials, info, **opts):
             versioning=info.versioning,
             comment=info.comment
         )
-        doctype = docs.Doctype(session, **opts)
+        doctype = Doctype(session, **opts)
         doctype.save()
         return getDoctype(credentials, info.name, tier=tier)
 
@@ -885,7 +885,7 @@ def modDoctype(credentials, info, **opts):
         )
         if info.active:
             opts["active"] = info.active
-        doctype = docs.Doctype(session, **opts)
+        doctype = Doctype(session, **opts)
         doctype.save()
         return getDoctype(credentials, info.name, tier=tier)
 
@@ -927,7 +927,7 @@ def delDoctype(credentials, name, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        doctype = docs.Doctype(session, name=name)
+        doctype = Doctype(session, name=name)
         doctype.delete()
     else:
         command = etree.Element("CdrDelDocType", Type=name)
@@ -1003,7 +1003,7 @@ def getDoctypes(credentials, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        return docs.Doctype.list_doc_types(session)
+        return Doctype.list_doc_types(session)
     command = etree.Element("CdrListDocTypes")
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == "CdrListDocTypesResp":
@@ -1028,7 +1028,7 @@ def getSchemaDocs(credentials, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        return docs.Doctype.list_schema_docs(session)
+        return Doctype.list_schema_docs(session)
     command = etree.Element("CdrListSchemaDocs")
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == "CdrListSchemaDocsResp":
@@ -1151,11 +1151,8 @@ class Doc:
             blob = base64encode(self.blob).decode("ascii")
             etree.SubElement(doc, "CdrDocBlob", encoding="base64").text = blob
         cdr_doc_xml = etree.tostring(doc, encoding="utf-8")
-        #return cdr_doc_xml
         if is_python3:
-            #print("converting")
             return cdr_doc_xml.decode("utf-8")
-        #print("Not converting")
         return cdr_doc_xml
 
     # Construct name for publishing the document.  Zero padding is
@@ -1231,7 +1228,7 @@ def _put_doc(session, command_name, **opts):
     command = etree.Element(command_name)
 
     # Indicate whether we should keep the document locked or check it in.
-    check_in = opts.get("checkin") == "Y" or opts.get("checkIn") == "Y"
+    check_in = opts.get("check_in") == "Y" or opts.get("checkIn") == "Y"
     etree.SubElement(command, "CheckIn").text = "Y" if check_in else "N"
 
     # Should a new version be created?
@@ -1454,7 +1451,7 @@ def getDoc(credentials, docId, *args, **opts):
       getObject - return a `cdr.Doc` object if True (default is to
                   retrieve a serialized string version of the doc object)
                   note that this legacy object is not the same as the
-                  new `docs.Doc` class objects
+                  new `APIDoc` class objects
       tier - optional; one of DEV, QA, STAGE, PROD
       host - deprecated alias for tier
     """
@@ -1466,7 +1463,7 @@ def getDoc(credentials, docId, *args, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        doc = docs.Doc(session, id=docId, version=version)
+        doc = APIDoc(session, id=docId, version=version)
         if checkout == "Y":
             doc.check_out()
         doc = doc.legacy_doc(get_xml=include_xml, get_blob=include_blob)
@@ -1491,13 +1488,13 @@ def getDoc(credentials, docId, *args, **opts):
         return Doc(doc_string, encoding="utf-8")
     return doc_string
 
-def delDoc(credentials, docId, **opts):
+def delDoc(credentials, doc_id, **opts):
     """
     Mark a CDR document as deleted
 
     Required positional arguments:
       credentials - name of existing session or login credentials
-      docId - CDR ID string or integer
+      doc_id - CDR ID string or integer
 
     Keyword options
       validate - if True, don't delete if any docs link to this one
@@ -1512,13 +1509,13 @@ def delDoc(credentials, docId, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        doc = docs.Doc(session, id=docId)
+        doc = APIDoc(session, id=doc_id)
         opts = dict(reason=reason, validate=validate)
         doc.delete(**opts)
         if doc.errors:
             return etree.tostring(doc.errors_node, encoding="utf-8")
         return doc.cdr_id
-    cdr_id = normalize(docId)
+    cdr_id = normalize(doc_id)
     command = etree.Element("CdrDelDoc")
     etree.SubElement(command, "DocId").text = cdr_id
     etree.SubElement(command, "Validate").text = "Y" if validate else "N"
@@ -1532,6 +1529,92 @@ def delDoc(credentials, docId, **opts):
         else:
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
+    raise Exception("missing response")
+
+def lastVersions(credentials, doc_id, **opts):
+    """
+    Find information about the last versions of a document
+
+    Required positional arguments:
+      credentials - name of existing session or login credentials
+      doc_id - CDR ID string or integer
+
+    Keyword options
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      tuple of:
+        * last version number, or -1 if no versions
+        * last publishable version number or -1, may be same as last version
+        * change information:
+         'Y' = last version is different from current working doc.
+         'N' = last version is not different.
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        doc = APIDoc(session, id=doc_id)
+        return (
+            doc.last_version or -1,
+            doc.last_publishable_version or -1,
+            doc.has_unversioned_changes and "Y" or "N"
+        )
+    command = etree.Element("CdrLastVersions")
+    etree.SubElement(command, "DocId").text = normalize(doc_id)
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrLastVersionsResp":
+            return (
+                int(get_text(response.node.find("LastVersionNum"))),
+                int(get_text(response.node.find("LastPubVersionNum"))),
+                get_text(response.node.find("IsChanged"))
+            )
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+def listVersions(credentials, doc_id, **opts):
+    """
+    Find information about the last versions of a document
+
+    Required positional arguments:
+      credentials - name of existing session or login credentials
+      doc_id - CDR ID string or integer
+
+    Keyword options
+      limit - maximum number of version tuples to return (default=None)
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sequence of tuples, latest versions first, each tuple containing:
+        * integer for the version number
+        * date/time the version was saved
+        * comment for the version, if any (otherwise None)
+    """
+
+    limit = opts.get("limit")
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        versions = APIDoc(session, id=doc_id).list_versions(limit)
+        return [(v.number, v.saved, v.comment) for v in versions]
+    command = etree.Element("CdrListVersions")
+    etree.SubElement(command, "DocId").text = normalize(doc_id)
+    if limit:
+        etree.SubElement(command, "NumVersions").text = str(limit)
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrListVersionsResp":
+            versions = []
+            for wrapper in response.node.findall("Version"):
+                number = int(get_text(wrapper.find("Num")))
+                saved = get_text(wrapper.find("Date"))
+                comment = get_text(wrapper.find("Comment"))
+                versions.append((number, saved, comment))
+            return versions
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
     raise Exception("missing response")
 
 def filterDoc(credentials, filter, docId=None, **opts):
@@ -1591,7 +1674,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
     parms = dict(parms) if parms else {}
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        doc = docs.Doc(session, id=docId, version=ver, before=date, xml=xml)
+        doc = APIDoc(session, id=docId, version=ver, before=date, xml=xml)
         options = dict(
             parms=parms,
             output=output,
@@ -1675,6 +1758,130 @@ def filterDoc(credentials, filter, docId=None, **opts):
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
+
+def create_label(credentials, label, **opts):
+    """
+    Create a name which can be used to tag a set of document version
+
+    Pass:
+      credentials - results of login
+      label - string for the label name
+      comment - option string describing the label's usage
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        APIDoc.create_label(session, label, comment=opts.get("comment"))
+    else:
+        command = etree.Element("CdrCreateLabel")
+        etree.SubElement(command, "Name").text = label
+        comment = opts.get("comment")
+        if comment:
+            etree.SubElement(command, "Comment").text = comment
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrCreateLabelResp":
+                return
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
+
+def delete_label(credentials, label, **opts):
+    """
+    Create a name which can be used to tag a set of document version
+
+    Pass:
+      credentials - results of login
+      label - string for the label name
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        APIDoc.delete_label(session, label)
+    else:
+        command = etree.Element("CdrDeleteLabel")
+        etree.SubElement(command, "Name").text = label
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrDeleteLabelResp":
+                return
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
+
+def label_doc(credentials, doc_id, version, label, **opts):
+    """
+    Create a name which can be used to tag a set of document version
+
+    Pass:
+      credentials - results of login
+      doc_id - unique identifier for CDR document
+      version - which version should be labeled
+      label - string for the label name to be applied
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        doc = APIDoc(session, id=doc_id, version=version)
+        doc.label(label)
+    else:
+        command = etree.Element("CdrLabelDocument")
+        etree.SubElement(command, "DocumentId").text = normalize(doc_id)
+        etree.SubElement(command, "DocumentVersion").text = str(version)
+        etree.SubElement(command, "LabelName").text = label
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrLabelDocumentResp":
+                return
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
+
+def unlabel_doc(credentials, doc_id, label, **opts):
+    """
+    Create a name which can be used to tag a set of document version
+
+    Pass:
+      credentials - results of login
+      doc_id - unique identifier for CDR document
+      label - string for the label name to be removed
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        doc = APIDoc(session, id=doc_id)
+        doc.unlabel(label)
+    else:
+        command = etree.Element("CdrUnlabelDocument")
+        etree.SubElement(command, "DocumentId").text = normalize(doc_id)
+        etree.SubElement(command, "LabelName").text = label
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrUnlabelDocumentResp":
+                return
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
 
 def valDoc(credentials, doctype, **opts):
     """
@@ -1764,13 +1971,13 @@ def valDoc(credentials, doctype, **opts):
     if isinstance(session, Session):
         validation_opts = dict(types=val_types, locators=locators, store=store)
         if doc_id:
-            doc = docs.Doc(session, id=doc_id)
+            doc = APIDoc(session, id=doc_id)
         else:
             xml = get_text(doc.find("CdrDocXml"))
             level = doc.get("RevisionFilterLevel")
             if level:
                 validation_opts["revision_filter_level"] = level
-            doc = docs.Doc(session, xml=xml, doctype=doctype)
+            doc = APIDoc(session, xml=xml, doctype=doctype)
         doc.validate(**validation_opts)
         response = doc.legacy_validation_response(locators)
         return etree.tostring(response, encoding="utf-8")
@@ -1789,7 +1996,309 @@ def valDoc(credentials, doctype, **opts):
         command.append(doc)
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == "CdrValidateDocResp":
-            return etree.tostring(response.node, encoding="utf-8")
+            parent = response.node.getparent()
+            return etree.tostring(parent, encoding="utf-8")
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+def reindex(credentials, doc_id, **opts):
+    """
+    Reindex the specified document
+
+    Required positional arguments:
+      credentials - result of login
+      doc_id - unique identifier for document to be reindexed
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        APIDoc(session, id=doc_id).reindex()
+    else:
+        command = etree.Element("CdrReindexDoc")
+        etree.SubElement(command, "DocId").text = normalize(doc_id)
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == command.tag + "Resp":
+                return
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
+
+def checkOutDoc(credentials, doc_id, **opts):
+    """
+    Checkout a document to the logged in user without retrieving it
+
+    Required positional arguments:
+      credentials - result of login
+      doc_id - unique identifier for document to be checked out
+
+    Optional keyword arguments:
+      force - if "Y" break another user's lock if necessary (default "N")
+      comment - optional string explaining why we're locking the document
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      current version number or 0 if no version number returned.
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        opts = {
+            "force": True if opts.get("force") == "Y" else False,
+            "comment": opts.get("reason")
+        }
+        doc = APIDoc(session, id=doc_id)
+        doc.check_out(**opts)
+        return doc.last_version or 0
+    else:
+        command = etree.Element("CdrCheckOut")
+        command.set("ForceCheckOut", opts.get("force", "N") or "N")
+        etree.SubElement(command, "DocumentId").text = normalize(doc_id)
+        comment = opts.get("comment")
+        if comment:
+            etree.SubElement("Comment").text = comment
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrCheckOutResp":
+                return int(get_text(response.node.find("Version")) or "0")
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
+
+def unlock(credentials, doc_id, **opts):
+    """
+    Check in a CDR document
+
+    Required positional arguments:
+      credentials - result of login
+      doc_id - unique identifier for document to be unlocked
+
+    Optional keyword arguments:
+      abandon - if "N" version unsaved changes (default "Y")
+      force - if "N" don't break another user's lock (default "Y")
+      reason - optional string explaining why we're releasing the lock
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        opts = {
+            "abandon": False if opts.get("abandon") == "N" else True,
+            "force": False if opts.get("force") == "N" else True,
+            "comment": opts.get("reason")
+        }
+        APIDoc(session, id=doc_id).check_in(**opts)
+    else:
+        command = etree.Element("CdrCheckIn")
+        command.set("Abandon", opts.get("abandon", "Y") or "Y")
+        command.set("ForceCheckIn", opts.get("force", "Y") or "Y")
+        comment = opts.get("reason")
+        etree.SubElement(command, "DocumentId").text = normalize(doc_id)
+        if comment:
+            etree.SubElement(command, "Comment").text = comment
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrCheckInResp":
+                return
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
+
+
+class LockedDoc(object):
+    """
+    Container object for information about the checkout status of a doc.
+    """
+
+    def __init__(self, row):
+        self.__userId       = row.uid
+        self.__userAbbrev   = row.username
+        self.__userFullName = row.fullname
+        self.__docId        = row.id
+        self.__docVersion   = row.version
+        self.__docType      = row.doctype
+        self.__docTitle     = row.title
+        self.__dateOut      = row.dt_out
+
+    # Read-only property accessors
+    def getUserId(self): return self.__userId
+    userId = property(getUserId)
+
+    def getUserAbbrev(self): return self.__userAbbrev
+    userAbbrev = property(getUserAbbrev)
+
+    def getUserFullName(self): return self.__userFullName
+    userFullName = property(getUserFullName)
+
+    def getDocId(self): return self.__docId
+    docId = property(getDocId)
+
+    def getDocType(self): return self.__docType
+    docType = property(getDocType)
+
+    def getDocTitle(self):
+        return self.__docTitle
+        # Conversion for use in log files and messages XXX - no, don't
+        if type(self.__docTitle) == type(u""):
+            return self.__docTitle.encode('ascii', 'replace')
+        return self.__docTitle
+    docTitle = property(getDocTitle)
+
+    def getDateOut(self): return self.__dateOut
+    dateOut = property(getDateOut)
+
+    def __str__(self):
+        """ Human readable form """
+
+        args = (self.docId, self.docType, self.docTitle, self.__docVersion,
+                self.userId, self.userAbbrev, self.userFullName, self.dateOut)
+        return """\
+       docId: {}
+     docType: {}
+    docTitle: {}
+  docVersion: {}
+      userId: {}
+  userAbbrev: {}
+userFullName: {}
+     dateOut: {}""".format(*args)
+
+
+def isCheckedOut(doc_id, conn=None):
+    """
+    Determine if a document is checked out.
+
+    Pass:
+        docId - Doc ID, any exNormalizable format.
+        conn  - Optional connection object, to optimize many checks in a row
+
+    Return:
+        If locked: returns a `LockedDoc` object.
+        Else: returns None
+    """
+
+    cursor = conn.cursor() if conn else None
+    fields = ("u.id AS uid", "u.name AS username", "u.fullname",
+              "d.id", "d.title", "t.name AS doctype",
+              "c.version", "c.dt_out")
+    query = cdrdb.Query("document d", *fields)
+    query.join("doc_type t", "t.id = d.doc_type")
+    query.join("checkout c", "c.id = d.id")
+    query.join("open_usr u", "u.id = c.usr")
+    query.where("c.dt_in IS NULL")
+    query.where(query.Condition("d.id", exNormalize(doc_id)[1]))
+    row = query.execute(cursor).fetchone()
+    if cursor:
+        cursor.close()
+    return LockedDoc(row) if row else None
+
+def get_links(credentials, doc_id, **opts):
+    """
+    Find the links to a CDR document
+
+    Required positional arguments:
+      credentials - result of login
+      doc_id - unique identifier for target of links
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sequence of strings describing the links to this document
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return APIDoc(session, id=doc_id).link_report()
+    command = etree.Element("CdrGetLinks")
+    etree.SubElement(command, "DocId").text = normalize(doc_id)
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrGetLinksResp":
+            nodes = response.node.findall("LnkList/LnkItem")
+            return [get_text(node) for node in nodes]
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+class Term:
+    def __init__(self, id, name):
+        self.id       = id
+        self.name     = name
+        self.parents  = []
+        self.children = []
+
+class TermSet:
+    def __init__(self, error = None):
+        self.terms = {}
+        self.error = error
+
+def getTree(credentials, doc_id, **opts):
+    """
+    Fetch context information for document's position in the terminology tree
+
+    Required positional arguments:
+      credentials - result of login
+      doc_id - unique identifier for Term document
+
+    Optional keyword arguments:
+      depth - number of levels (default=1) to descend for child terms
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      `TermSet` object; for compatibility with the existing software
+      which uses this function, the `Term` and `TermSet` objects
+      use integer strings instead of integers for term document IDs;
+      to fix this to use integers instead, modifications to at least
+      the TermHierarchy.py CGI script will need to be made (possibly
+      elsewhere as well); if this is done, we can dispense with the
+      `TermSet` class and just return the dictionary of `Term` objects,
+      since we now throw an exception for errors instead of returning
+      an error string (and of course the unittest code will need to
+      be modified as well)
+    """
+
+    depth = int(opts.get("depth", 1))
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    term_set = TermSet()
+    terms = term_set.terms
+    if isinstance(session, Session):
+        tree = APIDoc(session, id=doc_id).get_tree(depth)
+        for term_id in tree.names:
+            terms[str(term_id)] = Term(str(term_id), tree.names[term_id])
+        for relationship in tree.relationships:
+            parent = str(relationship.parent)
+            child = str(relationship.child)
+            terms[parent].children.append(terms[child])
+            terms[child].parents.append(terms[parent])
+        return term_set
+    command = etree.Element("CdrGetTree")
+    etree.SubElement(command, "DocId").text = normalize(doc_id)
+    etree.SubElement(command, "ChildDepth").text = str(depth)
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrGetTreeResp":
+            for wrapper in response.node.findall("Terms/Term"):
+                term_id = get_text(wrapper.find("Id"))
+                term_name = get_text(wrapper.find("Name"))
+                terms[term_id] = Term(term_id, term_name)
+            for wrapper in response.node.findall("Pairs/Pair"):
+                parent = get_text(wrapper.find("Parent"))
+                child = get_text(wrapper.find("Child"))
+                terms[parent].children.append(terms[child])
+                terms[child].parents.append(terms[parent])
+            return term_set
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
@@ -1821,7 +2330,7 @@ def getCssFiles(credentials, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        files = docs.Doctype.get_css_files(session)
+        files = Doctype.get_css_files(session)
         return [CssFile(name, files[name]) for name in sorted(files)]
     command = etree.Element("CdrGetCssFiles")
     for response in _Control.send_command(session, command, tier):
@@ -1869,7 +2378,7 @@ def addExternalMapping(credentials, usage, value, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        doc = docs.Doc(session, id=opts.get("doc_id"))
+        doc = APIDoc(session, id=opts.get("doc_id"))
         return doc.add_external_mapping(usage, value, **opts)
     command = etree.Element("CdrAddExternalMapping")
     etree.SubElement(command, "Usage").text = usage
@@ -1882,6 +2391,43 @@ def addExternalMapping(credentials, usage, value, **opts):
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == "CdrAddExternalMappingResp":
             return int(response.node.get("MappingId"))
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+def get_glossary_map(credentials, lang, **opts):
+    """
+    Fetch the mappings of phrases to English or Spanish glossary term names
+
+    Required positional argument:
+      credentials - result of login
+      lang - "en" or "es"
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sequence of `GlossaryTermName` objects
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return GlossaryTermName.get_mappings(session, lang)
+    tag = "CdrGetGlossaryMap" if lang == "en" else "CdrGetSpanishGlossaryMap"
+    command = etree.Element(tag)
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == tag + "Resp":
+            terms = []
+            for node in response.node.findall("Term"):
+                doc_id = int(node.get("id"))
+                name = get_text(node.find("Name"))
+                term = GlossaryTermName(doc_id, name)
+                for child in node.findall("Phrase"):
+                    term.phrases.add(get_text(child))
+                terms.append(term)
+            return terms
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
@@ -1910,7 +2456,7 @@ def getFilters(credentials, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        filters = docs.FilterSet.get_filters(session)
+        filters = APIFilterSet.get_filters(session)
         return [IdAndName(doc.cdr_id, doc.title) for doc in filters]
     command = etree.Element("CdrGetFilters")
     for response in _Control.send_command(session, command, tier):
@@ -1943,7 +2489,7 @@ def getFilterSets(credentials, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        return [IdAndName(*s) for s in docs.FilterSet.get_filter_sets(session)]
+        return [IdAndName(*s) for s in APIFilterSet.get_filter_sets(session)]
     command = etree.Element("CdrGetFilterSets")
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == "CdrGetFilterSetsResp":
@@ -2010,9 +2556,9 @@ class FilterSet:
             members = []
             for m in self.members:
                 if isinstance(m.id, basestring):
-                    member = docs.Doc(session, id=m.id, title=self.name)
+                    member = APIDoc(session, id=m.id, title=self.name)
                 else:
-                    member = docs.FilterSet(session, id=m.id, name=self.name)
+                    member = APIFilterSet(session, id=m.id, name=self.name)
                 members.append(member)
             set_opts = dict(
                 name=self.name,
@@ -2020,7 +2566,7 @@ class FilterSet:
                 notes=self.notes,
                 members=members
             )
-            filter_set = docs.FilterSet(session, **set_opts)
+            filter_set = APIFilterSet(session, **set_opts)
             if new and filter_set.id:
                 message = "Filter set {!r} already exists".format(self.name)
                 raise Exception(message)
@@ -2108,9 +2654,9 @@ def getFilterSet(credentials, name, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        filter_set = docs.FilterSet(session, name=name)
+        filter_set = APIFilterSet(session, name=name)
         for member in filter_set.members:
-            if isinstance(member, docs.Doc):
+            if isinstance(member, APIDoc):
                 members.append(IdAndName(member.cdr_id, member.title))
             else:
                 members.append(IdAndName(member.id, member.name))
@@ -2209,7 +2755,7 @@ def delFilterSet(credentials, name, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        filter_set = docs.FilterSet(session, name=name)
+        filter_set = APIFilterSet(session, name=name)
         filter_set.delete()
         return
     command = etree.Element("CdrDelFilterSet")
@@ -2283,7 +2829,7 @@ def getLinkTypes(credentials, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        return docs.LinkType.get_linktype_names(session)
+        return APILinkType.get_linktype_names(session)
     command = etree.Element("CdrListLinkTypes")
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == "CdrListLinkTypesResp":
@@ -2311,7 +2857,7 @@ def getLinkType(credentials, name, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        t = docs.LinkType(session, name=name)
+        t = APILinkType(session, name=name)
         props = t.properties or []
         opts = {
             "linkTargets": [v.name for v in itervalues(t.targets)],
@@ -2378,27 +2924,27 @@ def putLinkType(credentials, name, linktype, action, **opts):
             comment=linktype.comment
         )
         if action == "modlink":
-            opts["id"] = docs.LinkType(session, name=name).id
+            opts["id"] = APILinkType(session, name=name).id
             if opts["id"] is None:
                 raise Exception("Can't find link type {}".format(name))
         for doctype_name, element in linktype.linkSources:
-            doctype = docs.Doctype(session, name=doctype_name)
-            opts["sources"].append(docs.LinkType.LinkSource(doctype, element))
+            doctype = Doctype(session, name=doctype_name)
+            opts["sources"].append(APILinkType.LinkSource(doctype, element))
         for doctype_name in linktype.linkTargets:
-            doctype = docs.Doctype(session, name=doctype_name)
+            doctype = Doctype(session, name=doctype_name)
             assert doctype.id, "doctype {!r} not found".format(doctype_name)
             opts["targets"][doctype.id] = doctype
         message = "Property type {!r} not supported"
         for name, value, comment in linktype.linkProps:
             try:
-                cls = getattr(docs.LinkType, name)
+                cls = getattr(APILinkType, name)
                 property = cls(session, name, value, comment)
-                if not isinstance(property, docs.LinkType.Property):
+                if not isinstance(property, APILinkType.Property):
                     raise Exception(message.format(name))
                 opts["properties"].append(property)
             except:
                 raise Exception(message.format(name))
-        linktype = docs.LinkType(session, **opts)
+        linktype = APILinkType(session, **opts)
         linktype.save()
     else:
         tag = "CdrModLinkType" if action == "modlink" else "CdrAddLinkType"
@@ -2449,7 +2995,7 @@ def delLinkType(credentials, name, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        docs.LinkType(session, name=name).delete()
+        APILinkType(session, name=name).delete()
     else:
         command = etree.Element("CdrDelLinkType")
         etree.SubElement(command, "Name").text = name
@@ -2478,7 +3024,7 @@ def getLinkProps(credentials, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        prop_types = docs.LinkType.get_property_types(session)
+        prop_types = APILinkType.get_property_types(session)
         return [LinkPropType(p.name, p.comment) for p in prop_types]
     command = etree.Element("CdrListLinkProps")
     for response in _Control.send_command(session, command, tier):
@@ -2492,6 +3038,195 @@ def getLinkProps(credentials, **opts):
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
+
+def check_proposed_link(credentials, source_type, element, target, **opts):
+    """
+    Verify that proposed link is allowed
+
+    Pass:
+      credentials - result of login
+      source_type - string for linking document type
+      element - string for linking element
+      target - CDR document ID for target of link
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      title of target document for denormalizing link
+
+    Raise:
+      Exception if proposed link is not allowed
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        message = "Link from {} elements of {} documents"
+        tail = " not permitted"
+        doctype = Doctype(session, name=source_type)
+        link_type = APILinkType.lookup(session, doctype, element)
+        if link_type is None:
+            raise Exception(message.format(element, source_type) + tail)
+        doc = APIDoc(session, id=target)
+        if doc.doctype.id not in link_type.targets:
+            message += " to document {}" + tail
+            raise Exception(message.format(element, source_type, doc.cdr_id))
+        return doc.title
+    command = etree.Element("CdrPasteLink")
+    etree.SubElement(command, "SourceDocType").text = source_type
+    etree.SubElement(command, "SourceElementType").text = element
+    etree.SubElement(command, "TargetDocId").text = normalize(target)
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == command.tag + "Resp":
+            return get_text(response.node.find("DenormalizedContent"))
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+
+# ======================================================================
+# Manage CDR publishing
+# ======================================================================
+
+def publish(credentials, pubSystem, pubSubset, **opts):
+    """
+    Create a new CDR publishing job
+
+    Required positional arguments:
+      credentials - result of login
+      pubSystem - string for name of publishing system (e.g., "Primary")
+      pubSubset - string for name of publishing subset (e.g., "Export")
+
+    Optional keyword arguments:
+      parms - sequence of name, value tuples to override defaults
+      docList - sequence of document ID strings with optional version suffix
+                (in the form CDR0000999999 or CDR0000999999/99)
+      email - string for address to which reports should be sent
+      noOutput - if "Y" job will not write published docs to the file system
+      allowNonPub - if "Y" non-publishable versions can be specified
+      allowInActive - set to "Y" for unpublishing blocked documents
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      tuple of job ID string (None for failure) and serialized (utf-8)
+      `Errors` XML node (None if no errors)
+    """
+
+    # Log what we're doing to the publishing log
+    logwrite("cdr.publish(opts={})".format(opts), PUBLOG)
+
+    # Parse the doc list
+    doc_list = opts.get("docList", [])
+    if isinstance(doc_list, basestring):
+        doc_list = [doc_list]
+    docs = []
+    for doc in doc_list:
+        doc_string = str(doc)
+        if "/" in doc_string:
+            doc_id, version = doc_string.split("/", 1)
+        else:
+            doc_id, version = doc_string, None
+        try:
+            docs.append((doc_id, int(version)))
+        except:
+            return None, "<Errors><Err>Invalid version</Err></Errors>"
+
+    # Handle the request locally if possible.
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        pub_opts = dict(
+            system=pubSystem,
+            subsystem=pubSubset,
+            parms=dict(opts.get("parms") or []),
+            docs=[APIDoc(session, id=doc[0], version=doc[1]) for doc in docs],
+            email=opts.get("email"),
+            no_output=opts.get("noOutput", "N") == "Y",
+            permissive=opts.get("allowNonPub", "N") == "Y",
+            force=opts.get("allowInActive", "N") == "Y"
+        )
+        try:
+            job_id = PublishingJob(session, **pub_opts).create()
+            logwrite("Job {} created".format(job_id), PUBLOG)
+            return (str(job_id), None)
+        except Exception as e:
+            session.logger.exception("publish() failed")
+            logwrite("failure: {}".format(e), PUBLOG)
+            errors = etree.Element("Errors")
+            etree.SubElement(errors, "Err").text = str(e)
+            return (None, etree.tostring(errors, encoding="utf-8"))
+
+    # Can't do it locally, so use the HTTPS tunnel.
+    command = etree.Element("CdrPublish")
+    etree.SubElement(command, "PubSystem").text = pubSystem or ""
+    etree.SubElement(command, "PubSubset").text = pubSubset or ""
+    parms = opts.get("parms", [])
+    email = opts.get("email")
+    no_output = opts.get("noOutput")
+    allow_non_pub = opts.get("allowNonPub")
+    allow_inactive = opts.get("allowInActive")
+    if parms:
+        wrapper = etree.SubElement(command, "Parms")
+        for name, value in parms:
+            parm = etree.SubElement(wrapper, "Parm")
+            etree.SubElement(parm, "Name").text = name
+            etree.SubElement(parm, "Value").text = value
+    if docs:
+        wrapper = etree.SubElement(command, "DocList")
+        for doc_id, doc_version in docs:
+            cdr_id = normalize(doc_id)
+            version = str(doc_version or "0")
+            etree.SubElement(wrapper, "Doc", Id=cdr_id, Version=version)
+    if email:
+        etree.SubElement(command, "Email").text = email
+    if no_output:
+        etree.SubElement(command, "NoOutput").text = no_output
+    if allow_non_pub:
+        etree.SubElement(command, "AllowNonPub").text = allow_non_pub
+    if allow_inactive:
+        etree.SubElement(command, "AllowInActive").text = allow_inactive
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == command.tag + "Resp":
+            parent = response.node.getparent()
+            node_bytes = etree.tostring(parent, encoding="utf-8")
+            node_string = node_bytes.decode("utf-8")
+            message = "cdr.publish() returned {}".format(node_string)
+            logwrite(message, PUBLOG)
+            job_id = get_text(response.node.find("JobId"))
+            return (job_id, None)
+
+        # Break from the normal pattern of raising exceptions for
+        # errors, so we don't break the publishing system. When
+        # we buckle down to rewrite cdrpub.py (see OCECDR-2324)
+        # we can fix this.
+        error = ";".join(response.errors) or "missing response"
+        return (None, error)
+    return (None, "missing response")
+
+
+class PubStatus:
+    def __init__(self, id, pubSystem, pubSubset, parms, userName, outputDir,
+                 started, completed, status, messages, email, docList,
+                 errors):
+        self.id        = id
+        self.pubSystem = pubSystem
+        self.pubSubset = pubSubset
+        self.parms     = parms
+        self.userName  = userName
+        self.outputDir = outputDir
+        self.started   = started
+        self.completed = completed
+        self.status    = status
+        self.messages  = messages
+        self.email     = email
+        self.docList   = docList
+        self.errors    = errors
+
+def pubStatus(self, jobId, getDocInfo=False):
+    return "XXX this is a stub"
 
 
 # ======================================================================
@@ -2516,7 +3251,7 @@ def listQueryTermRules(credentials, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        return searches.QueryTermDef.get_rules(session)
+        return QueryTermDef.get_rules(session)
     command = etree.Element("CdrListQueryTermRules")
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == "CdrListQueryTermRulesResp":
@@ -2543,7 +3278,7 @@ def listQueryTermDefs(credentials, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        definitions = searches.QueryTermDef.get_definitions(session)
+        definitions = QueryTermDef.get_definitions(session)
         return [(d.path, d.rule) for d in definitions]
     command = etree.Element("CdrListQueryTermDefs")
     for response in _Control.send_command(session, command, tier):
@@ -2580,7 +3315,7 @@ def addQueryTermDef(credentials, path, rule=None, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        searches.QueryTermDef(session, path, rule).add()
+        QueryTermDef(session, path, rule).add()
     else:
         command = etree.Element("CdrAddQueryTermDef")
         etree.SubElement(command, "Path").text = path
@@ -2615,7 +3350,7 @@ def delQueryTermDef(credentials, path, rule=None, **opts):
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        searches.QueryTermDef(session, path, rule).delete()
+        QueryTermDef(session, path, rule).delete()
     else:
         command = etree.Element("CdrDelQueryTermDef")
         etree.SubElement(command, "Path").text = path
@@ -2627,6 +3362,48 @@ def delQueryTermDef(credentials, path, rule=None, **opts):
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
         raise Exception("missing response")
+
+def log_client_event(credentials, description, **opts):
+    """
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        session.log_client_event(description)
+    else:
+        command = etree.Element("CdrLogClientEvent")
+        etree.SubElement(command, "EventDescription").text = description
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == "CdrLogClientEventResp":
+                return
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
+
+def mailerCleanup(credentials, **opts):
+    """
+    Mark tracking documents generated by failed mailer jobs as deleted
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        report = APIDoc.delete_failed_mailers(session)
+        return (report.deleted, report.errors)
+    command = etree.Element("CdrMailerCleanup")
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == "CdrMailerCleanupResp":
+            doc_ids = []
+            errors = []
+            for node in response.node.findall("DeletedDoc"):
+                doc_ids.append(re.sub(r"[^\d]", "", get_text(node)))
+            for node in reponse.node.findall("Errors/Err"):
+                errors.append(text_text(node))
+            return (doc_ids, errors)
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
 
 
 class Logging:
@@ -2721,7 +3498,7 @@ class _Control:
     TIER = Tier()
 
     try:
-        CONN = cdrapi.db.connect(timeout=2)
+        CONN = cdrdb.connect(timeout=2)
     except Exception as e:
         print(e)
         CONN = None
@@ -2775,7 +3552,7 @@ class _Control:
           unique (for this tier) session name string
         """
 
-        tier = cdrapi.settings.Tier(tier) if tier else cls.TIER
+        tier = Tier(tier) if tier else cls.TIER
         url = "https://{}/cgi-bin/secure/login.py".format(tier.hosts["APPC"])
         auth = requests.auth.HTTPDigestAuth(username, password)
         response = requests.get(url, auth=auth)
@@ -2816,7 +3593,7 @@ class _Control:
 
     @classmethod
     def send_commands(cls, commands, tier=None):
-        tier = cdrapi.settings.Tier(tier) if tier else cls.TIER
+        tier = Tier(tier) if tier else cls.TIER
         url = "https://" + tier.hosts["API"]
         request = etree.tostring(commands, encoding="utf-8")
         response = requests.post(url, request)
@@ -2881,7 +3658,7 @@ class _Control:
             "xml": get_text(root.find("CdrDocXml")),
             "blob": blob
         }
-        doc = docs.Doc(session, **doc_opts)
+        doc = APIDoc(session, **doc_opts)
         comment = opts.get("comment")
         reason = opts.get("reason")
         if comment and not isinstance(comment, unicode):
@@ -3106,7 +3883,6 @@ def exNormalize(id):
 
     return (fullId, idNum, frag)
 
-
 # ======================================================================
 # Legacy global names
 # ======================================================================
@@ -3122,8 +3898,6 @@ OPERATOR = "NCIPDQoperator@mail.nih.gov"
 DOMAIN_NAME = FQDN.split(".", 1)[1]
 PUB_NAME = HOST_NAMES[0]
 DEFAULT_HOST = "localhost"
-DEFAULT_PORT = 2019
-BATCHPUB_PORT = 2020
 URDATE = "2002-06-22"
 PYTHON = WORK_DRIVE + ":\\python\\python.exe"
 BASEDIR = WORK_DRIVE + ":/cdr"
@@ -3155,6 +3929,247 @@ PUBTYPES = {
     'Hotfix (Remove)': 'Delete individual documents from Cancer.gov',
     'Hotfix (Export)': 'Send individual documents to Cancer.gov'
 }
+
+
+# ======================================================================
+# Legacy functions
+# ======================================================================
+
+def logwrite(msgs, logfile=DEFAULT_LOGFILE, tback=False, stackTrace=False):
+    """
+    Append one or messages to a log file - closing the file when done.
+    Can also record traceback information.
+
+    Pass:
+        msgs    - Single string or sequence of strings to write.
+                   Should not contain binary data.
+        logfile - Optional log file path, else uses default.
+        tback   - True = log the latest traceback object.
+                   False = do not.
+                   See stack trace notes.
+        stack   - True = log a stack trace even if there is no traceback
+                   object.  Useful for logging the stack trace even though
+                   no exception occurred.
+                   See stack trace notes.
+
+    Stack trace notes:
+        For unconditional logging of a stack trace, use stackTrace=True,
+        not tback=True.  tback will _only_ print a stack trace if there was
+        an exception.
+
+    Return:
+        Void.  Does nothing at all if it can't open the logfile or
+          append to it.
+    """
+    f = None
+    try:
+        f = open(logfile, "a", 0)
+
+        # Write process id and timestamp
+        f.write("!%d %s: " % (os.getpid(), time.ctime()))
+
+        # Sequence of messages or single message
+        if isinstance(msgs, (tuple, list)):
+            for msg in msgs:
+                if isinstance(msg, unicode):
+                    msg = msg.encode('utf-8')
+                f.write(msg)
+                f.write("\n")
+        else:
+            if isinstance(msgs, unicode):
+                msgs = msgs.encode('utf-8')
+            f.write(msgs)
+            f.write("\n")
+
+        # If traceback of the last exception is requested
+        if tback:
+            try:
+                traceback.print_exc(999, f)
+            except:
+                pass
+
+        # If an unconditional stack trace (no exception required) is requested
+        if stackTrace:
+            try:
+                traceback.print_stack(file=f)
+            except:
+                pass
+
+    except:
+        pass
+
+    # Close file if opened.  This ensures that caller will see his
+    #   logged messages even if his program crashes
+    if f:
+        try:
+            f.close()
+        except:
+            pass
+
+
+class Log:
+    """
+    Manage a logfile.  Improved functionality compared to cdr.logwrite()
+
+    Provides efficient logging to any file desired.
+
+    Instantiate one of these to create, or append to an existing,
+    logfile.
+    """
+
+    _DEFAULT_BANNER = "=========== Opening Log ==========="
+
+    def __init__(self, filename,
+                 dirname=DEFAULT_LOGDIR, banner=_DEFAULT_BANNER,
+                 logTime=True, logPID=True, level=DEFAULT_LOGLVL,
+                 logTier=False):
+        """
+        Creates log object.
+
+        Pass:
+            filename - All logging goes here.
+            dirname  - Directory for log file.
+            banner   - If present, write it to signify opening
+                       the log.
+            logTime  - Prepend date/time to each entry.
+            logPID   - Prepend process ID.
+            level    - Log any message at this level or lower.
+                       (Possibly override with environment
+                       variable or by calling function to change
+                       level.)
+            logTier  - Prepend tier ID (DEV, QA, etc.) to each log msg.
+                       Tier will always be under the banner if there
+                       is one.
+
+        Raises:
+            IOError if log cannot be opened.
+        """
+
+        # Defaults for banner
+        self.__logTime  = True
+        self.__logPID   = True
+        self.__level    = level
+
+        # Can get the PID once and save it, formatted
+        self.__pid = "!%d: " % os.getpid()
+
+        # Save parms
+        self.__banner  = banner
+        self.__logTime = logTime
+        self.__logPID  = logPID
+        self.__level   = level
+        self.__fp      = None
+
+        # Find the tier once and format it
+        if logTier:
+            self.__logTier = cdrutil.getTier(WORK_DRIVE + ":") + ':'
+        else:
+            self.__logTier = False
+
+        # Open for append, unbuffered
+        self.__filename = dirname + '/' + filename
+        self.__fp = open(self.__filename, "a", 0)
+
+        # If there's a banner, write it with stamps
+        if banner:
+            self.writeRaw("\n%s\nTIER: %s  DATETIME: %s\n" %
+                          (banner, cdrutil.getTier(WORK_DRIVE + ":"),
+                           time.ctime()))
+
+    def write(self, msgs, level=DEFAULT_LOGLVL, tback=False,
+              stdout=False, stderr=False):
+        """
+        Writes msg(s) to log file.
+        Flushes after each write but does not close the file.
+
+        Pass:
+            msgs   - If type=string, write single message with
+                     newline.
+                   - If type=sequence, write each sequence in
+                     string with newline (assuming raw = False).
+            level  - See __init__().
+            tback  - Write latest traceback object.
+                     Use this when writing from an exception
+                     handler if desired.
+            stdout - True=Also write to stdout.
+            stderr - True=Also write to stderr.
+        """
+        # No write if level too high
+        if level > self.__level:
+            return
+
+        # Write process id and timestamp
+        if self.__logTier:
+            self.__fp.write(self.__logTier)
+        if self.__logPID:
+            self.__fp.write(self.__pid)
+        if self.__logTime:
+            self.__fp.write("%s: " % time.ctime())
+
+        # Sequence of messages or single message
+        if type(msgs) == type(()) or type(msgs) == type([]):
+            for msg in msgs:
+                if (type(msg)) == type(u""):
+                    msg = msg.encode ('utf-8')
+                self.__fp.write(msg)
+                self.__fp.write("\n")
+                if stdout:
+                    print(msg)
+                if stderr:
+                    sys.stderr.write(msg + "\n")
+        else:
+            if (type(msgs)) == type(u""):
+                msgs = msgs.encode('utf-8')
+            self.__fp.write(msgs)
+            self.__fp.write("\n")
+            if stdout:
+                print(msgs)
+            if stderr:
+                sys.stderr.write(msgs + "\n")
+
+        # If traceback is requested, include the last one
+        if tback:
+            try:
+                self.writeRaw("Traceback follows:\n")
+                traceback.print_exc(999, self.__fp)
+            except:
+                pass
+
+    def writeRaw(self, msg, level=DEFAULT_LOGLVL):
+        """
+        No processing of any kind.  But we do respect level.
+
+        Caller can use this to dump data as he sees fit, but must
+        take care about encoding and other issues.
+        """
+        # No write if level too high
+        if level > self.__level:
+            return
+
+        self.__fp.write(msg)
+
+    def __del__(self):
+        """
+        Final close of the log file.
+
+        May write a closing banner - this tells when the program
+        exited, or caller explicitly called del(log_object).
+        """
+        # If there's a banner, put one at the end
+        if self.__banner:
+            # Insure PID: date time on closing banner
+            self.__logTime  = True
+            self.__logPID   = True
+            self.__level    = DEFAULT_LOGLVL
+            if isinstance(self.__fp, file):
+                self.writeRaw("\n%s\n" % time.ctime())
+                self.writeRaw("=========== Closing Log ===========\n\n")
+
+        # Can only close the file if we were able to open it earlier.
+        # Permission problems exist and file pointer is None.
+        # -----------------------------------------------------------
+        if isinstance(self.__fp, file):
+            self.__fp.close()
 
 
 # ======================================================================
@@ -3227,18 +4242,6 @@ FILTERS = {
 
 '''
 REPLACE/REWRITE ALL OF THIS
-#----------------------------------------------------------------------
-# Import required packages.
-#----------------------------------------------------------------------
-import socket, string, struct, sys, re, cgi, base64, xml.dom.minidom
-import os, smtplib, time, atexit, cdrdb, tempfile, traceback, difflib
-import xml.sax.saxutils, datetime, subprocess, cdrutil
-import math
-import lxml.etree as etree
-import logging
-import cdrdb2
-import requests
-
 # ---------------------------------------------------------------------
 # The file cdrapphosts knows about the different server names in the
 # CBIIT and OCE environments based on the tier
@@ -3246,11 +4249,6 @@ import requests
 h = cdrutil.AppHost(cdrutil.getEnvironment(),
                     cdrutil.getTier(WORK_DRIVE + ":"),
                     filename=WORK_DRIVE + ':/etc/cdrapphosts.rc')
-
-
-#----------------------------------------------------------------------
-# Set some package constants
-#----------------------------------------------------------------------
 
 #----------------------------------------------------------------------
 # If we're not actually running on the CDR server machine, then
@@ -3283,288 +4281,6 @@ class Exception(_baseException):
         else:
             return Exception.__baseException.__str__(self)
 del _baseException
-
-#----------------------------------------------------------------------
-# Find a port to the CdrServer, searching port numbers in the following
-#
-# Set TCP/IP port for publishing to value of CDRPUBPORT, if present,
-# else DEFAULT_PORT, else BATCHPUB_PORT
-#----------------------------------------------------------------------
-def getPubPort():
-    """
-    Find a TCP/IP port to the CdrServer, searching port numbers in
-    the following order:
-        Value of environment variable "CDRPUBPORT".
-            Typically used for testing/debugging software.
-        DEFAULT_PORT (2019 at this time).
-            The CDR is normally running on this port.
-        BATCHPUB_PORT (2020 at this time).
-            Typically used when 2019 is turned off to prevent users
-            from running interactively during a publication job.
-    Raises an error if there is no CdrServer listening on that port.
-    """
-    ports2check = (os.getenv("CDRPUBPORT"), DEFAULT_PORT, BATCHPUB_PORT)
-    for port in ports2check:
-        if port:
-            try:
-                # See if there's a CdrServer listening on this port
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.connect((DEFAULT_HOST, port))
-                sock.close()
-                return port
-            except:
-                # No listener, keep trying
-                pass
-
-    # If we got here, we've tried all possibilities
-    raise Exception("No CdrServer found for publishing")
-
-#----------------------------------------------------------------------
-# Log an error from sendCommands
-#----------------------------------------------------------------------
-def logSendFailure(failingPart, connAttempts, sendRecvAttempts,
-                   startTime, timeout):
-    """
-    Write a message to the debug log describing an exception generated
-    within sendCommands.
-
-    Pass:
-        failingPart      - Where we failed, connecting or send/recv
-        connAttempts     - How many times we tried to connect
-        sendRecvAttempts - How many times we tried to send/recv
-        startTime        - Start time, time.time() at start of call
-        timeout          - Number of seconds requested for timeout
-    """
-    # Human readable datetimes
-    now      = datetime.datetime.now()
-    start    = datetime.datetime.fromtimestamp(startTime)
-    dtFormat = "%Y-%m-%d %H:%M:%S.%f"
-    nowPrt   = now.strftime(dtFormat)
-    startPrt = start.strftime(dtFormat)
-
-    # Log to default debugging log
-    logwrite("""\
-%s - sendCommands.%s  Connection attempts=%d  Send/Recv attempts=%d
-First started at %s  timeout=%d  Exception message follows:
-%s""" % (nowPrt, failingPart, connAttempts, sendRecvAttempts,
-         startPrt, timeout, exceptionInfo()))
-
-#----------------------------------------------------------------------
-# Change the default timeout for sendCommands
-# Call this after importing CDR if it is desirable to change the default
-#   for every call until the current module calls it again or exits.
-#----------------------------------------------------------------------
-def setGlobalSendCommandsTimeout(newTimeout):
-    global SENDCMDS_TIMEOUT
-    SENDCMDS_TIMEOUT = newTimeout
-
-#----------------------------------------------------------------------
-# CBIIT now requires that connections to the CDR Server from other
-# hosts be encrypted. See https://tracker.nci.nih.gov/browse/OCECDR-3845.
-#----------------------------------------------------------------------
-def tunnelCommands(cmds, timeout, tier=None):
-    prefix = CBIIT_NAMES[2]
-    if tier is not None:
-        prefix = "https://%s" % h.getTierHostNames(tier.upper(), "APPC").qname
-    url = "%s/cgi-bin/cdr/https-tunnel.ashx" % prefix
-    limit = time.time() + timeout
-    attempts = 0
-    while time.time() < limit:
-        try:
-            attempts += 1
-            response = requests.post(url, cmds)
-            return response.content
-        except Exception, e:
-            logwrite("tunnelCommands (attempt %d): %s" % (attempts, e))
-            now = time.time()
-            if now >= limit:
-                logwrite("tunnelCommands: Giving up on connect failure")
-                break
-            sleep = SENDCMDS_SLEEP
-            if now + sleep > limit:
-                sleep = math.ceil(limit - now)
-            time.sleep(sleep)
-    raise Exception("tunnelCommands could not connect.  "
-                    "See info in %s" % DEFAULT_LOGFILE)
-
-#----------------------------------------------------------------------
-# Send a set of commands to the CDR Server and return its response.
-# The `host` parameter is actually the name of a tier. We can't change
-# its name in case a caller used the old parameter name.
-#----------------------------------------------------------------------
-def sendCommands(cmds, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=None):
-
-    # Set the timeout to the global default value if not set by the caller
-    # Note: setting timeout=SENDCMDS_TIMEOUT would be bound at compile time,
-    #       so we set the compile time timeout to None.
-    # See setGlobalSendCommandsTimeout() above to change for entire process.
-    if timeout is None:
-        timeout = SENDCMDS_TIMEOUT
-
-    # Approach mandated by CBIIT for outside connections to the CDR server.
-    if DEFAULT_HOST != "localhost" or host != DEFAULT_HOST:
-        tier = host if host != DEFAULT_HOST else None
-        return tunnelCommands(cmds, timeout, tier)
-
-    # Connect to the CDR Server.
-    connAttempts     = 0
-    sendRecvAttempts = 0
-    startTime        = time.time()
-    endTime          = startTime + timeout
-
-    # Run until logic raises exception or returns data
-    while True:
-        try:
-            connAttempts += 1
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect(("localhost", port))
-        except:
-            # Find out what network connections are active
-            # This produces a huge output, so only do it if there is a failure
-            #   and only do it once
-            if connAttempts == 1:
-                netStat = os.popen('netstat -a 2>&1')
-                netStatus = netStat.read()
-                netStat.close()
-
-                # Log details to default log (not application log, don't know
-                #  what the application is)
-                logwrite("""\
-sendCommands: netstat output from connection failure in sendCommands
-host=localhost port=%d current netstat=
-%s
-""" % (port, netStatus))
-            logSendFailure("Connecting", connAttempts, sendRecvAttempts,
-                            startTime, timeout)
-
-            # Can we keep trying
-            now = time.time()
-            if now >= endTime:
-                logwrite("sendCommands: Giving up on connect failure")
-                raise Exception("sendCommands could not connect.  "
-                                "See info in %s" % DEFAULT_LOGFILE)
-
-            # Keep trying
-            sleepTime = SENDCMDS_SLEEP
-            if now + sleepTime > endTime:
-                sleepTime = int(endTime - now)
-            time.sleep(sleepTime)
-            continue
-
-        # If we got here we have a connection
-        try:
-            # Send the commands to the server.
-            sendRecvAttempts += 1
-            sock.send(struct.pack('!L', len(cmds)))
-            sock.send(cmds)
-
-            # Read the server's response.
-            (rlen,) = struct.unpack('!L', sock.recv(4))
-            resp = ''
-            while len(resp) < rlen:
-                resp = resp + sock.recv(rlen - len(resp))
-
-            # We got the response.  We're done.  Return it to the caller
-            break
-
-        except:
-            # The connection is almost certainly gone, but make sure
-            try:
-                sock.close()
-            except:
-                pass
-
-            # Log the failure, as above
-            logSendFailure("send/recv", connAttempts, sendRecvAttempts,
-                            startTime, timeout)
-
-            # Handle timeouts as above
-            now = time.time()
-            if now >= endTime:
-                logwrite("sendCommands: Giving up on send/recv failure")
-                raise Exception("sendCommands could not send/recv.  "
-                                "See info in %s" % DEFAULT_LOGFILE)
-            sleepTime = SENDCMDS_SLEEP
-            if now + sleepTime > endTime:
-                sleepTime = int(endTime - now)
-            time.sleep(sleepTime)
-            continue
-
-    # If we got here, we succeeded
-    # If there were errors, log the success
-    if connAttempts > 1 or sendRecvAttempts > 1:
-        logSendFailure("Success after retry", connAttempts, sendRecvAttempts,
-                        startTime, timeout)
-
-    # Clean up and hand the server's response back to the caller.
-    sock.close()
-    return resp
-
-#----------------------------------------------------------------------
-# Wrap a command in a CdrCommandSet element. Command can be an etree node,
-# or a UTF-8 string. Credentials can be a string or a tuple containing
-# user name and password. In the latter case we insert logon and logoff
-# commands around the commands passed to this function.
-#
-# Returns a string with one of the two following structures:
-#
-#               CdrCommandSet
-#                  SessionId
-#                  CdrCommand ...
-#
-#               CdrCommandSet
-#                 CdrCommand
-#                   CdrLogon ...
-#                 CdrCommand ...
-#                 CdrCommand
-#                   CdrLogoff
-#
-#----------------------------------------------------------------------
-def wrapCommand(command, credentials, host=DEFAULT_HOST):
-
-    # Do we already have a session ID?
-    if isinstance(credentials, tuple):
-        if DEFAULT_HOST != "localhost" or host != DEFAULT_HOST:
-            tier = host if host != DEFAULT_HOST else None
-            sessionId = windowsLogin(credentials[0], credentials[1], tier)
-        else:
-            sessionId = None
-    elif isinstance(credentials, unicode):
-        sessionId = credentials.encode("ascii")
-    else:
-        sessionId = credentials
-
-    # If the command is a node, we can build the command set with XML tools.
-    # (We should have done all commands this way, but the tools weren't
-    # as capable back when we started as they are now).
-    if isinstance(command, etree._Element):
-        commandSet = etree.Element("CdrCommandSet")
-        if sessionId:
-            etree.SubElement(commandSet, "SessionId").text = sessionId
-        else:
-            commandSet.append(createLoginCommand(*credentials))
-        cdr_command = etree.SubElement(commandSet, "CdrCommand")
-        cdr_command.append(command)
-        if isinstance(credentials, tuple):
-            logoff = etree.SubElement(commandSet, "CdrCommand")
-            logoff.append(etree.Element("CdrLogoff"))
-        return etree.tostring(commandSet)
-
-    # Otherwise, we use string manipulation to build the command set.
-    commandSet = ["<CdrCommandSet>"]
-    if sessionId:
-        commandSet.append("<SessionId>")
-        commandSet.append(sessionId)
-        commandSet.append("</SessionId>")
-    else:
-        commandSet.append(etree.tostring(createLoginCommand(*credentials)))
-    commandSet.append("<CdrCommand>")
-    commandSet.append(command)
-    commandSet.append("</CdrCommand>")
-    if isinstance(credentials, tuple):
-        commandSet.append("<CdrCommand><CdrLogoff/></CdrCommand>")
-    commandSet.append("</CdrCommandSet>")
-    return "".join(commandSet)
 
 #----------------------------------------------------------------------
 # Validate date/time strings using strptime.
@@ -3820,54 +4536,6 @@ def extract_multiple(pattern, response):
     else:     return getErrors(response)
 
 #----------------------------------------------------------------------
-# Create login command. If password is None or empty, name represents
-# an NIH domain account name which has already been authenticated.
-# Otherwise, the user is to be authenticated against credentials
-# stored in the CDR database.
-#----------------------------------------------------------------------
-def createLoginCommand(user, password):
-    command = etree.Element("CdrCommand")
-    logon = etree.SubElement(command, "CdrLogon")
-    etree.SubElement(logon, "UserName").text = user
-    if password:
-        etree.SubElement(logon, "Password").text = password
-    return command
-
-#----------------------------------------------------------------------
-# Log in using Windows authentication verified through a connection
-# to IIS.
-#----------------------------------------------------------------------
-def windowsLogin(user, password, tier=None):
-    prefix = CBIIT_NAMES[2]
-    if tier is not None:
-        prefix = "https://%s" % h.getTierHostNames(tier.upper(), "APPC").qname
-    url = "%s/cgi-bin/secure/login.py" % prefix
-    requests.packages.urllib3.disable_warnings()
-    auth = requests.auth.HTTPDigestAuth(user, password)
-    response = requests.get(url, auth=auth, verify=False)
-    return response.text.strip()
-
-#----------------------------------------------------------------------
-# Log in to the CDR Server.  Returns session ID.
-# If passWord is None, userId is an NIH domain account name.
-#----------------------------------------------------------------------
-def login(userId, passWord, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # If we're not running directly on the CDR, we must log in using
-    # Windows authentication.
-    if DEFAULT_HOST != "localhost" or host != DEFAULT_HOST:
-        tier = host if host != DEFAULT_HOST else None
-        return windowsLogin(userId, passWord, tier)
-
-    # Send the login request to the server.
-    command = createLoginCommand(userId, passWord)
-    cmds = "<CdrCommandSet>%s</CdrCommandSet>" % etree.tostring(command)
-    resp = sendCommands(cmds, host, port)
-
-    # Extract the session ID.
-    return extract("<SessionId[^>]*>(.+)</SessionId>", resp)
-
-#----------------------------------------------------------------------
 # Identify the user associated with a session.
 # Originally this was a reverse login, providing a userid and password
 # enabling a program to re-login the same user with a new session.
@@ -3965,41 +4633,6 @@ def getEmail(mySession):
                 (mySession, info[1][0])
 
 #----------------------------------------------------------------------
-# Find information about the last versions of a document.
-# Returns tuple of:
-#   Last version number, or -1 if no versions
-#   Last publishable version number or -1, may be same as last version.
-#   Is changed information:
-#     'Y' = last version is different from current working doc.
-#     'N' = last version is not different.
-# These are pass throughs of the response from the CdrLastVersions command.
-# Single error string returned if errors.
-#----------------------------------------------------------------------
-def lastVersions(session, docId, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = wrapCommand ("""
- <CdrLastVersions>
-   <DocId>%s</DocId>
- </CdrLastVersions>
-""" % normalize(docId), session, host)
-
-    # Submit it
-    resp = sendCommands (cmd, host, port)
-
-    # Failed?
-    errs = getErrors (resp, 0)
-    if len (errs) > 0:
-        return errs
-
-    # Else get the parts we want
-    lastAny   = extract ("<LastVersionNum>(.+)</LastVersionNum>", resp)
-    lastPub   = extract ("<LastPubVersionNum>(.+)</LastPubVersionNum>", resp)
-    isChanged = extract ("<IsChanged>(.+)</IsChanged>", resp)
-
-    return (int(lastAny), int(lastPub), isChanged)
-
-#----------------------------------------------------------------------
 # Find the date that a current working document was created or modified.
 #----------------------------------------------------------------------
 def getCWDDate(docId, conn=None):
@@ -4091,12 +4724,6 @@ def getQueryTermValueForId(path, docId, conn=None):
                         info[1][0])
 
 #----------------------------------------------------------------------
-# Extract the text content of an lxml.etree node.
-#----------------------------------------------------------------------
-def getEtreeTextContent(node):
-    return node.xpath("string()")
-
-#----------------------------------------------------------------------
 # Extract the text content of a DOM element.
 #----------------------------------------------------------------------
 def getTextContent(node, recurse=False, separator=''):
@@ -4121,419 +4748,6 @@ def getTextContent(node, recurse=False, separator=''):
         elif recurse and child.nodeType == child.ELEMENT_NODE:
             text = text + getTextContent(child, recurse, separator)
     return text
-
-#----------------------------------------------------------------------
-# Encode a blob.
-#----------------------------------------------------------------------
-def makeDocBlob(blob=None, inFile=None, outFile=None, wrapper=None, attrs=""):
-    """
-    Encode a blob from either a string or a file in base64 with
-    optional CdrDocBlob XML wrapper.
-
-    This is a pretty trivial and probably unnecessary function, but
-    it gives us a single point of control for constructing blobs.
-
-    Parameters:
-        blob=None       Blob as a string of bytes.  If None, use inFile.
-                        An empty blob ("") is legal.  We return a null
-                         string with the requested wrapper.
-        inFile=None     Name of input file containing blob.  If None use blob.
-        outFile=None    Write output to this file, overwriting whatever
-                         may be there, if anything.  If None, return blob
-                         as a string.
-        wrapper=None    True=wrap blob in passed xml element tag.  Else not.
-        attrs=None      Attribute string to include if passed wrapper.
-
-    Returns:
-        Base64 encoded blob if outFile not specified.
-        Else returns empty string with output to file.
-
-    Raises Exception if invalid parms or bad file i/o.
-    """
-    # Check parms
-    if blob == None and not inFile:
-        raise Exception("makeDocBlob: requires passed blob or inFile")
-    if blob and inFile:
-        raise Exception("makeDocBlob: pass blob or inFile, not both")
-
-    if inFile:
-        # Get blob from file
-        try:
-            fp = open(inFile, "rb")
-            blob = fp.read()
-            fp.close()
-        except IOError, info:
-            raise Exception("makeDocBlob: %s" % info)
-        if not blob:
-            raise Exception("makeDocBlob: no data read from file %s" % inFile)
-
-    # Encode with or without wrapper
-    startTag = endTag = ""
-    if wrapper:
-        startTag = "<" + wrapper
-        if attrs:
-            startTag += " " + attrs
-        startTag += ">"
-        endTag   = "</" + wrapper + ">"
-    encodedBlob = startTag + base64.encodestring(blob) + endTag
-
-    # Output
-    if outFile:
-        try:
-            fp = open(outFile, "wb")
-            fp.write(encodedBlob)
-            fp.close()
-        except IOError, info:
-            raise Exception("makeDocBlob: %s" % info)
-        return ""
-    return encodedBlob
-
-#----------------------------------------------------------------------
-# Internal subroutine to add or replace DocComment element in CdrDocCtl.
-#----------------------------------------------------------------------
-def _addRepDocComment(doc, comment):
-
-    """
-    Add or replace DocComment element in CdrDocCtl.
-    Done via XML parsing.
-
-    Pass:
-        doc - Full document in CdrDoc format, unicode or utf-8
-        comment - Comment to insert, unicode or utf-8
-
-    Return:
-        Full CdrDoc as utf-8 with DocComment element inserted or replaced.
-    """
-    # Sanity checks.  Failure here means caller passed bad parms
-    if not doc:
-        raise Exception("_addRepDocComment(): missing doc argument")
-
-    # Data must be utf-8
-    if type(doc) == type(u""):
-        doc = doc.encode('utf-8')
-    if type(comment) == type(u""):
-        comment = comment.encode('utf-8')
-
-    # Parse doc wrapper, elements only include the CdrDoc elements
-    # Actual content is all in a CDATA section, which must be recognized
-    # Have to override the default lxml behavior to do that
-    from lxml import etree as lx
-    parser = lx.XMLParser(strip_cdata=False)
-    tree = lx.fromstring(doc, parser=parser)
-
-    # Parent element for DocComment
-    found = tree.findall('CdrDocCtl')
-    if len(found) == 0:
-        raise Exception("_addRepDocComment: No CdrDocCtl in doc:\n%s" % doc)
-    docCtl = found[0]
-
-    # Create the new DocComment element, newline tail makes it prettier
-    newCmt = lx.Element('DocComment')
-    newCmt.text = comment
-    newCmt.tail = "\n"
-
-    # Find DocComment, if it exists
-    docCmt = docCtl.findall('DocComment')
-    if len(docCmt):
-        docCtl.replace(docCmt[0], newCmt)
-    else:
-        docCtl.append(newCmt)
-
-    # Return re-serialized doc
-    return lx.tostring(tree, pretty_print=True)
-
-#----------------------------------------------------------------------
-# Internal subroutine to add or replace DocActiveStatus element in CdrDocCtl.
-#----------------------------------------------------------------------
-def _addRepDocActiveStatus(doc, newStatus):
-
-    """
-    Add or replace DocActiveStatus element in CdrDocCtl.
-    Done by text manipulation.
-
-    Pass:
-        doc - Full document in CdrDoc format.
-        newStatus - 'I' or 'A'.
-
-    Return:
-        Full CdrDoc with DocActiveStatus element inserted or replaced.
-
-    Assumptions:
-        Both doc and comment must be UTF-8.  (Else must add conversions here.)
-    """
-
-    # Sanity check.
-    if not doc:
-        raise Exception("_addRepDocActiveStatus(): missing doc argument")
-
-    # Search for and delete existing DocComment
-    delPat = re.compile (r"\n*<DocActiveStatus.*</DocActiveStatus>\n*",
-                         re.DOTALL)
-    newDoc = delPat.sub ('', doc).replace('<DocActiveStatus/>', '')
-
-    # Search for CdrDocCtl to insert new DocComment after it
-    newDoc = newDoc.replace('<CdrDocCtl/>', '<CdrDocCtl></CdrDocCtl>')
-    insPat = re.compile (r"(?P<first>.*<CdrDocCtl[^>]*>)\n*(?P<last>.*)",
-                         re.DOTALL)
-    insRes = insPat.search (newDoc)
-    if insRes:
-        parts = insRes.group ('first', 'last')
-    if not insRes or len (parts) != 2:
-        # Should never happen unless there's a bug
-        raise Exception("addRepDocActiveStatus: No CdrDocCtl in doc:\n%s" %
-                        doc)
-
-    # Comment must be compatible with CdrDoc utf-8
-    if type(newStatus) == type(u""):
-        newStatus = newStatus.encode('utf-8')
-
-    # Insert new status
-    return (parts[0] + "\n<DocActiveStatus>" + newStatus
-            + "</DocActiveStatus>\n" + parts[1])
-
-#----------------------------------------------------------------------
-# Add a blob to a document, replacing existing blob if necessary
-#----------------------------------------------------------------------
-def _addDocBlob(doc, blob=None, blobFileName=None):
-    """
-    If either a blob (array of bytes) or the name of a file containing
-    a blob is passed, then:
-
-        Delete any existing CdrDocBlob in the doc.
-        Add in the blob from the byte string or file as a base64
-          encoded CdrDocBlob subelement of a CdrDoc.
-
-    As a convenience, _addDocBlob accepts the case where blob and
-    blobFileName are both None, returning doc unchanged.  This is
-    so we don't have to check these parms in two different places.
-
-    Pass:
-        doc          - Document in CdrDoc utf-8 format.
-        blob         - Optional blob as a string of bytes, NOT base64.
-                        base64 conversion will be applied here.
-                        May be None, may be empty.
-                        An empty blob ("") causes an empty CdrDocBlob
-                        element to be inserted in the doc, which in turn
-                        causes any blob associated with this doc in the
-                        database to be disassociated and, if it is not
-                        versioned, deleted.
-        blobFileName - Optional name of file containing binary bytes, not
-                        in base64.  May be None.  May be the name of a
-                        zero length file.
-
-    Return:
-        Possibly revised CdrDoc string.
-
-    Raises:
-        Exception if both blob and blobFileName are passed, or no
-        CdrDoc end tag is found.
-    """
-    # Common case, we're just checking for the caller
-    if (blob == None and not blobFileName):
-        return doc
-
-    # Check parms
-    if (blob and blobFileName):
-        raise Exception("_addDocBlob called with two blobs, one in "
-                        "memory and one in named file")
-
-    # Encode blob from memory or file
-    encodedBlob = makeDocBlob(blob, blobFileName, wrapper='CdrDocBlob')
-
-    # Delete any existing blob in doc.  We'll replace it
-    delBlobPat  = re.compile(r"\n*<CdrDocBlob.*</CdrDocBlob>\n*", re.DOTALL)
-    strippedDoc = delBlobPat.sub('', doc)
-
-    # Prepare replacement
-    encodedBlob = "\n" + encodedBlob + "\n</CdrDoc>\n"
-
-    # Add the new blob just before the CdrDoc end tag
-    addBlobPat = re.compile("\n*</CdrDoc>\n*", re.DOTALL)
-    newDoc     = addBlobPat.sub(encodedBlob, strippedDoc)
-
-    # Should never happen
-    if newDoc == strippedDoc:
-        raise Exception("_addDocBlob: could not find CdrDoc end tag")
-
-    return newDoc
-
-#----------------------------------------------------------------------
-# Determine if a document is checked out without retrieving it
-#----------------------------------------------------------------------
-class lockedDoc(object):
-    """
-    Container object for information about the checkout status of a doc.
-    """
-    def __init__(self, userId, userAbbrev, userFullName,
-                 docId, docVersion, docType, docTitle, dateOut):
-        self.__userId       = userId
-        self.__userAbbrev   = userAbbrev
-        self.__userFullName = userFullName
-        self.__docId        = docId
-        self.__docVersion   = docVersion
-        self.__docType      = docType
-        self.__docTitle     = docTitle
-        self.__dateOut      = dateOut
-
-    # Read-only property accessors
-    def getUserId(self): return self.__userId
-    userId = property(getUserId)
-
-    def getUserAbbrev(self): return self.__userAbbrev
-    userAbbrev = property(getUserAbbrev)
-
-    def getUserFullName(self): return self.__userFullName
-    userFullName = property(getUserFullName)
-
-    def getDocId(self): return self.__docId
-    docId = property(getDocId)
-
-    def getDocType(self): return self.__docType
-    docType = property(getDocType)
-
-    def getDocTitle(self):
-        # Conversion for use in log files and messages
-        if type(self.__docTitle) == type(u""):
-            return self.__docTitle.encode('ascii', 'replace')
-        return self.__docTitle
-    docTitle = property(getDocTitle)
-
-    def getDateOut(self): return self.__dateOut
-    dateOut = property(getDateOut)
-
-    def __str__(self):
-        """ Human readable form """
-        s = \
-"""       docId: %s
-     docType: %s
-    docTitle: %s
-  docVersion: %s
-      userId: %s
-  userAbbrev: %s
-userFullName: %s
-     dateOut: %s""" % (self.__docId, self.__docType, self.__docTitle,
-     self.__docVersion, self.__userId, self.__userAbbrev,
-     self.userFullName, self.dateOut)
-
-        return s
-
-
-def isCheckedOut(docId, conn=None):
-    """
-    Determine if a document is checked out.
-
-    Pass:
-        docId - Doc ID, any exNormal'izable format.
-        conn  - Optional connection object, to optimize many checks in a row
-
-    Return:
-        If locked: returns a lockedDoc object.
-        Else: returns None
-    """
-    # DB connection
-    if not conn:
-        conn = cdrdb.connect()
-    cursor = conn.cursor()
-
-    # Normalize id
-    docId = exNormalize(docId)[1]
-
-    # Data for lockedDoc object
-    try:
-        cursor.execute("""
-        SELECT d.id, d.title, t.name,
-               c.usr, c.version, c.dt_out, u.name, u.fullname
-          FROM document d
-          JOIN doc_type t on d.doc_type = t.id
-          JOIN checkout c on d.id = c.id
-          JOIN usr      u on c.usr = u.id
-         WHERE c.id = ?
-           AND c.dt_in IS NULL
-        """, docId)
-
-        row = cursor.fetchone()
-
-        cursor.close()
-    except cdrdb.Error, info:
-        raise Exception("Database error in isCheckedOut. docId=%d:\n%s" %
-                             (docId, str(info)))
-
-    # No hits means not checked out
-    if row is None:
-        return None
-
-    # Else return full info
-    lockObj = lockedDoc(row[3], row[6], row[7], row[0], row[4], row[2],
-                        row[1], row[5])
-    return lockObj
-
-
-#----------------------------------------------------------------------
-# Checkout a document without retrieving it
-#----------------------------------------------------------------------
-def checkOutDoc(credentials, docId, force='N', comment='',
-                host=DEFAULT_HOST, port=DEFAULT_PORT):
-    """
-    Checkout a document to the logged in user.
-
-    Pass:
-        credentials - returned form cdr.login().
-        docId       - ID as number or string.
-        force       - 'Y' = force checkout even if already out to another
-                      user.  Requires that user have FORCE CHECKOUT
-                      permission.
-        comment     - checkout comment.
-        host        - server.
-        port        - TCP/IP port number.
-
-    Return:
-        Current version number or 0 if no version number returned.
-
-    Raises:
-        cdr.Exception if error.
-    """
-    docId = exNormalize(docId)[0]
-    cmd = wrapCommand("""
-<CdrCheckOut ForceCheckOut='%s'>
- <DocumentId>%s</DocumentId>
- <Comment>%s</Comment>
-</CdrCheckOut>""" % (force, docId, comment), credentials, host)
-
-    response = sendCommands(cmd, host, port)
-    errs     = getErrors(response, False)
-    if errs:
-        raise Exception(errs)
-    else:
-        pattern = re.compile("<Version>(.*)</Version>", re.DOTALL)
-        match   = pattern.search(response)
-        if match:
-            verNum  = match.group(1)
-            return int(verNum)
-        return 0
-
-#----------------------------------------------------------------------
-# Mark a CDR document as deleted.
-#----------------------------------------------------------------------
-def delDoc(credentials, docId, val='N', reason='',
-           host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command.
-    docId   = "<DocId>%s</DocId>" % docId
-    val     = "<Validate>%s</Validate>" % val
-    reason  = reason and ("<Reason>%s</Reason>" % reason) or ''
-    cmd     = "<CdrDelDoc>%s%s%s</CdrDelDoc>" % (docId, val, reason)
-
-    # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # Check for failure.
-    errors = getErrors(resp, errorsExpected=False, asSequence=True,
-                       asUtf8=False)
-    if errors:
-        return errors
-
-    # Extract the document ID.
-    return extract("<DocId.*>(CDR\d+)</DocId>", resp)
 
 #----------------------------------------------------------------------
 # Validate new and old docs
@@ -4788,79 +5002,6 @@ SELECT d.title, t.name, d.active_status,
     return docData
 
 
-class Term:
-    def __init__(self, id, name):
-        self.id       = id
-        self.name     = name
-        self.parents  = []
-        self.children = []
-
-class TermSet:
-    def __init__(self, error = None):
-        self.terms = {}
-        self.error = error
-
-#----------------------------------------------------------------------
-# Gets context information for term's position in terminology tree.
-#----------------------------------------------------------------------
-def getTree(credentials, docId, depth=1,
-            host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = """\
-<CdrGetTree><DocId>%s</DocId><ChildDepth>%d</ChildDepth></CdrGetTree>
-""" % (normalize(docId), depth)
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return TermSet(error = err)
-
-    # Parse the response.
-    respExpr = re.compile("<CdrGetTreeResp>\s*"
-                          "<Pairs>(.*)</Pairs>\s*"
-                          "<Terms>(.*)</Terms>\s*"
-                          "</CdrGetTreeResp>", re.DOTALL)
-    pairExpr = re.compile("<Pair><Child>(.*?)</Child>\s*"
-                          "<Parent>(.*?)</Parent></Pair>")
-    termExpr = re.compile("<Term><Id>(.*?)</Id>\s*"
-                          "<Name>(.*?)</Name></Term>")
-    groups   = respExpr.search(resp)
-    result   = TermSet()
-    terms    = result.terms
-
-    # Extract the names of all terms returned.
-    for term in termExpr.findall(groups.group(2)):
-        (trmId, name) = term
-        terms[trmId]  = Term(id = trmId, name = name)
-
-    # Extract the child-parent relationship pairs.
-    for pair in pairExpr.findall(groups.group(1)):
-        (child, parent) = pair
-        terms[child].parents.append(terms[parent])
-        terms[parent].children.append(terms[child])
-
-    return result
-
-#----------------------------------------------------------------------
-# Gets the list of CDR document types.
-#----------------------------------------------------------------------
-def getDoctypes(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrListDocTypes/>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # Parse the response.
-    types = re.findall("<DocType>(.*?)</DocType>", resp)
-    if 'Filter' not in types: types.append('Filter')
-    types.sort()
-    return types
-
 #----------------------------------------------------------------------
 # Gets the list of currently known CDR document formats.
 #----------------------------------------------------------------------
@@ -4966,22 +5107,6 @@ def updateCtl(credentials, action,
         raise Exception("Server error on cdr.updateCtl:\n%s" % errs)
 
     return None
-
-#----------------------------------------------------------------------
-# Gets the list of CDR schema documents.
-#----------------------------------------------------------------------
-def getSchemaDocs(credentials, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrListSchemaDocs/>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # Parse the response.
-    return re.findall("<DocTitle>(.*?)</DocTitle>", resp)
 
 #----------------------------------------------------------------------
 # Get a list of enumerated values for a CDR schema simpleType.
@@ -5269,168 +5394,6 @@ Subject: %s
         return msg
 
 #----------------------------------------------------------------------
-# Check in a CDR document.
-#----------------------------------------------------------------------
-def unlock(credentials, docId, abandon='Y', force='Y', reason='',
-           host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Normalize doc id
-    docId = exNormalize(docId)[0]
-
-    # Create the command.
-    attrs   = "Abandon='%s' ForceCheckIn='%s'" % (abandon, force)
-    docId   = "<DocumentId>%s</DocumentId>" % docId
-    reason  = reason and ("<Comment>%s</Comment>" % reason) or ''
-    cmd     = "<CdrCheckIn %s>%s%s</CdrCheckIn>" % (attrs, docId, reason)
-
-    # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # Find any error messages.
-    err = checkErr(resp)
-    if err: return err
-    return ""
-
-#----------------------------------------------------------------------
-# Get the most recent versions for a document.
-#----------------------------------------------------------------------
-def listVersions(credentials, docId, nVersions=-1,
-                 host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command.
-    cmd = "<CdrListVersions><DocId>%s</DocId>" \
-          "<NumVersions>%d</NumVersions></CdrListVersions>" % (
-          normalize(docId), nVersions)
-
-    # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # Check for failure.
-    if resp.find("<Errors") != -1:
-        raise Exception(extract(r"(<Errors[\s>].*</Errors>)", resp))
-
-    # Extract the versions.
-    versions    = []
-    versionExpr = re.compile("<Version>(.*?)</Version>", re.DOTALL)
-    numExpr     = re.compile("<Num>(.*)</Num>")
-    commentExpr = re.compile("<Comment>(.*)</Comment>", re.DOTALL)
-    verList     = versionExpr.findall(resp)
-    if verList:
-        for ver in verList:
-            numMatch     = numExpr.search(ver)
-            commentMatch = commentExpr.search(ver)
-            if not numMatch:
-                raise Exception("listVersions: missing Num element")
-            num = int(numMatch.group(1))
-            comment = commentMatch and commentMatch.group(1) or None
-            versions.append((num, comment))
-    return versions
-
-#----------------------------------------------------------------------
-# Reindex the specified document.
-#----------------------------------------------------------------------
-def reindex(credentials, docId, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command.
-    docId = normalize(docId)
-    cmd = "<CdrReindexDoc><DocId>%s</DocId></CdrReindexDoc>" % docId
-
-    # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # Check for errors.
-    if resp.find("<Errors") != -1:
-        return extract(r"(<Errors[\s>].*</Errors>)", resp)
-    return None
-
-#----------------------------------------------------------------------
-# Create a new publishing job.
-#----------------------------------------------------------------------
-def publish(credentials, pubSystem, pubSubset, parms=None, docList=None,
-           email='', noOutput='N', allowNonPub='N', docTime=None,
-           host=DEFAULT_HOST, port=DEFAULT_PORT, allowInActive='N'):
-
-    # Create the command.
-    pubSystem   = pubSystem and ("<PubSystem>%s</PubSystem>" % pubSystem) or ""
-    pubSubset   = pubSubset and ("<PubSubset>%s</PubSubset>" % pubSubset) or ""
-    email       = email and "<Email>%s</Email>" % email or ""
-    noOutput    = noOutput and "<NoOutput>%s</NoOutput>" % noOutput
-    allowNonPub = (allowNonPub == 'N') and 'N' or 'Y'
-    allowNonPub = "<AllowNonPub>%s</AllowNonPub>" % allowNonPub
-    allowInAct  = (allowInActive == 'N') and 'N' or 'Y'
-    allowInAct  = "<AllowInActive>%s</AllowInActive>" % allowInAct
-    parmElem    = ''
-    docsElem    = ''
-    if parms:
-        parmElem = "<Parms>"
-        for parm in parms:
-            parmElem += "<Parm><Name>%s</Name><Value>%s</Value></Parm>" % (
-                        parm[0], parm[1])
-        parmElem += "</Parms>"
-    if docList:
-        expr = re.compile(r"CDR(\d+)(/(\d+))?")
-        docsElem += "<DocList>"
-        if docTime: docsElem += "<DocTime>%s</DocTime>" % docTime
-        for doc in docList:
-            match = expr.search(doc)
-            if not match:
-                return (None, "<Errors><Err>Malformed docList member '%s'"\
-                              "</Err></Errors>" % cgi.escape(doc))
-            docId = normalize(match.group(1))
-            version = match.group(3) or "0"
-            docsElem += "<Doc Id='%s' Version='%s'/>" % (docId, version)
-        docsElem += "</DocList>"
-
-    cmd = "<CdrPublish>%s%s%s%s%s%s%s%s</CdrPublish>" % (pubSystem,
-                                                       pubSubset,
-                                                       parmElem,
-                                                       docsElem,
-                                                       email,
-                                                       noOutput,
-                                                       allowNonPub,
-                                                       allowInAct)
-
-    # Log what we're doing to the publishing log
-    logwrite('cdr.publish: Sending cmd to CdrServer: \n"%s"\n' % cmd,
-                 PUBLOG)
-
-    # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # And log response
-    logwrite('cdr.publish: received response:\n"%s"\n' % resp, PUBLOG)
-
-    # Return the job ID and any warnings/errors.
-    jobId  = None
-    errors = None
-    if resp.find("<JobId") != -1:
-        jobId  = extract(r"<JobId>([^<]*)</JobId>", resp)
-    if resp.find("<Errors") != -1:
-        errors = extract(r"(<Errors[\s>].*</Errors>)", resp)
-    return (jobId, errors)
-
-class PubStatus:
-    def __init__(self, id, pubSystem, pubSubset, parms, userName, outputDir,
-                 started, completed, status, messages, email, docList,
-                 errors):
-        self.id        = id
-        self.pubSystem = pubSystem
-        self.pubSubset = pubSubset
-        self.parms     = parms
-        self.userName  = userName
-        self.outputDir = outputDir
-        self.started   = started
-        self.completed = completed
-        self.status    = status
-        self.messages  = messages
-        self.email     = email
-        self.docList   = docList
-        self.errors    = errors
-
-def pubStatus(self, jobId, getDocInfo=False):
-    return "XXX this is a stub"
-
-#----------------------------------------------------------------------
 # Turn cacheing on or off in the CdrServer
 #----------------------------------------------------------------------
 def cacheInit(credentials, cacheOn, cacheType,
@@ -5482,246 +5445,6 @@ def cacheInit(credentials, cacheOn, cacheType,
     return None
 
 #----------------------------------------------------------------------
-# Write messages to a logfile.
-#----------------------------------------------------------------------
-def logwrite(msgs, logfile=DEFAULT_LOGFILE, tback=False, stackTrace=False):
-    """
-    Append one or messages to a log file - closing the file when done.
-    Can also record traceback information.
-
-    Pass:
-        msgs    - Single string or sequence of strings to write.
-                   Should not contain binary data.
-        logfile - Optional log file path, else uses default.
-        tback   - True = log the latest traceback object.
-                   False = do not.
-                   See stack trace notes.
-        stack   - True = log a stack trace even if there is no traceback
-                   object.  Useful for logging the stack trace even though
-                   no exception occurred.
-                   See stack trace notes.
-
-    Stack trace notes:
-        For unconditional logging of a stack trace, use stackTrace=True,
-        not tback=True.  tback will _only_ print a stack trace if there was
-        an exception.
-
-    Return:
-        Void.  Does nothing at all if it can't open the logfile or
-          append to it.
-    """
-    f = None
-    try:
-        f = open (logfile, "a", 0)
-
-        # Write process id and timestamp
-        f.write ("!%d %s: " % (os.getpid(), time.ctime()))
-
-        # Sequence of messages or single message
-        if type(msgs) == type(()) or type(msgs) == type([]):
-            for msg in msgs:
-                if (type(msg)) == type(u""):
-                    msg = msg.encode ('utf-8')
-                f.write (msg)
-                f.write ("\n")
-        else:
-            if (type(msgs)) == type(u""):
-                msgs = msgs.encode ('utf-8')
-            f.write (msgs)
-            f.write ("\n")
-
-        # If traceback of the last exception is requested
-        if tback:
-            try:
-                traceback.print_exc (999, f)
-            except:
-                pass
-
-        # If an unconditional stack trace (no exception required) is requested
-        if stackTrace:
-            try:
-                traceback.print_stack(file=f)
-            except:
-                pass
-
-    except:
-        pass
-
-    # Close file if opened.  This ensures that caller will see his
-    #   logged messages even if his program crashes
-    if f:
-        try:
-            f.close()
-        except:
-            pass
-
-
-#----------------------------------------------------------------------
-# Manage a logfile.  Improved functionality compared to cdr.logwrite()
-#----------------------------------------------------------------------
-class Log:
-    """
-    Provides efficient logging to any file desired.
-
-    Instantiate one of these to create, or append to an existing,
-    logfile.
-    """
-
-    _DEFAULT_BANNER = "=========== Opening Log ==========="
-
-    def __init__(self, filename,
-                 dirname=DEFAULT_LOGDIR, banner=_DEFAULT_BANNER,
-                 logTime=True, logPID=True, level=DEFAULT_LOGLVL,
-                 logTier=False):
-        """
-        Creates log object.
-
-        Pass:
-            filename - All logging goes here.
-            dirname  - Directory for log file.
-            banner   - If present, write it to signify opening
-                       the log.
-            logTime  - Prepend date/time to each entry.
-            logPID   - Prepend process ID.
-            level    - Log any message at this level or lower.
-                       (Possibly override with environment
-                       variable or by calling function to change
-                       level.)
-            logTier  - Prepend tier ID (DEV, QA, etc.) to each log msg.
-                       Tier will always be under the banner if there
-                       is one.
-
-        Raises:
-            IOError if log cannot be opened.
-        """
-
-        # Defaults for banner
-        self.__logTime  = True
-        self.__logPID   = True
-        self.__level    = level
-
-        # Can get the PID once and save it, formatted
-        self.__pid = "!%d: " % os.getpid()
-
-        # Save parms
-        self.__banner  = banner
-        self.__logTime = logTime
-        self.__logPID  = logPID
-        self.__level   = level
-        self.__fp      = None
-
-        # Find the tier once and format it
-        if logTier:
-            self.__logTier = cdrutil.getTier(WORK_DRIVE + ":") + ':'
-        else:
-            self.__logTier = False
-
-        # Open for append, unbuffered
-        self.__filename = dirname + '/' + filename
-        self.__fp = open(self.__filename, "a", 0)
-
-        # If there's a banner, write it with stamps
-        if banner:
-            self.writeRaw("\n%s\nTIER: %s  DATETIME: %s\n" %
-                          (banner, cdrutil.getTier(WORK_DRIVE + ":"),
-                           time.ctime()))
-
-    def write(self, msgs, level=DEFAULT_LOGLVL, tback=False,
-              stdout=False, stderr=False):
-        """
-        Writes msg(s) to log file.
-        Flushes after each write but does not close the file.
-
-        Pass:
-            msgs   - If type=string, write single message with
-                     newline.
-                   - If type=sequence, write each sequence in
-                     string with newline (assuming raw = False).
-            level  - See __init__().
-            tback  - Write latest traceback object.
-                     Use this when writing from an exception
-                     handler if desired.
-            stdout - True=Also write to stdout.
-            stderr - True=Also write to stderr.
-        """
-        # No write if level too high
-        if level > self.__level:
-            return
-
-        # Write process id and timestamp
-        if self.__logTier:
-            self.__fp.write(self.__logTier)
-        if self.__logPID:
-            self.__fp.write(self.__pid)
-        if self.__logTime:
-            self.__fp.write("%s: " % time.ctime())
-
-        # Sequence of messages or single message
-        if type(msgs) == type(()) or type(msgs) == type([]):
-            for msg in msgs:
-                if (type(msg)) == type(u""):
-                    msg = msg.encode ('utf-8')
-                self.__fp.write(msg)
-                self.__fp.write("\n")
-                if stdout:
-                    print(msg)
-                if stderr:
-                    sys.stderr.write(msg + "\n")
-        else:
-            if (type(msgs)) == type(u""):
-                msgs = msgs.encode('utf-8')
-            self.__fp.write(msgs)
-            self.__fp.write("\n")
-            if stdout:
-                print(msgs)
-            if stderr:
-                sys.stderr.write(msgs + "\n")
-
-        # If traceback is requested, include the last one
-        if tback:
-            try:
-                self.writeRaw("Traceback follows:\n")
-                traceback.print_exc(999, self.__fp)
-            except:
-                pass
-
-    def writeRaw(self, msg, level=DEFAULT_LOGLVL):
-        """
-        No processing of any kind.  But we do respect level.
-
-        Caller can use this to dump data as he sees fit, but must
-        take care about encoding and other issues.
-        """
-        # No write if level too high
-        if level > self.__level:
-            return
-
-        self.__fp.write(msg)
-
-    def __del__(self):
-        """
-        Final close of the log file.
-
-        May write a closing banner - this tells when the program
-        exited, or caller explicitly called del(log_object).
-        """
-        # If there's a banner, put one at the end
-        if self.__banner:
-            # Insure PID: date time on closing banner
-            self.__logTime  = True
-            self.__logPID   = True
-            self.__level    = DEFAULT_LOGLVL
-            if isinstance(self.__fp, file):
-                self.writeRaw("\n%s\n" % time.ctime())
-                self.writeRaw("=========== Closing Log ===========\n\n")
-
-        # Can only close the file if we were able to open it earlier.
-        # Permission problems exist and file pointer is None.
-        # -----------------------------------------------------------
-        if isinstance(self.__fp, file):
-            self.__fp.close()
-
-#----------------------------------------------------------------------
 # Create an HTML table from a passed data
 #----------------------------------------------------------------------
 def tabularize (rows, tblAttrs=None):
@@ -5759,22 +5482,6 @@ def tabularize (rows, tblAttrs=None):
     html += "</table>"
 
     return html
-
-#----------------------------------------------------------------------
-# Log out from the CDR.
-#----------------------------------------------------------------------
-def logout(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command
-    cmd = "<CdrLogoff/>"
-
-    # Submit the request.
-    resp = sendCommands(wrapCommand(cmd, session, host), host, port)
-    err = checkErr(resp)
-    if err: return err
-
-    # No errors to report.
-    return None
 
 #----------------------------------------------------------------------
 # Object for results of an external command.
@@ -5905,89 +5612,6 @@ def makeTempDir(basename="tmp", chdir=True):
         except:
             raise Exception("makeTempDir", "Cannot chdir to %s" % abspath)
     return abspath
-
-#----------------------------------------------------------------------
-# Object representing a CdrResponseNode.
-#----------------------------------------------------------------------
-class CdrResponseNode:
-    def __init__(self, node, when):
-        self.when            = when
-        self.responseWrapper = node
-        self.specificElement = None
-        for child in node.childNodes:
-            if child.nodeType == child.ELEMENT_NODE:
-                if self.specificElement:
-                    raise Exception("CdrResponseNode: too many children "
-                                        "of CdrResponse element")
-                self.specificElement = child
-        if not self.specificElement:
-            raise Exception("No element children found for CdrResponse")
-        self.elapsed         = self.specificElement.getAttribute('Elapsed')
-
-#----------------------------------------------------------------------
-# Raise an exception using the text content of Err elements.
-#----------------------------------------------------------------------
-def wrapException(caller, errElems):
-    args = [caller]
-    for elem in errElems:
-        args.append(getTextContent(elem))
-    exception = Exception()
-    exception.args = tuple(args)
-    raise exception
-
-#----------------------------------------------------------------------
-# Extract main CdrResponse node from a response document.  This
-# function will be called in one of two situations:
-#  (a) a CDR session has already been established, and only
-#      one CdrResponse element will be present; or
-#  (b) the caller was given a login ID and password, in which case
-#      there will be three CdrResponse elements present: one for
-#      the CdrLogon command; one for the command submitted by the
-#      original caller; and one for the CdrLogoff command.
-# While we're at it, we check to make sure that the status of the
-# command was success.
-#----------------------------------------------------------------------
-def extractResponseNode(caller, responseString):
-    docElem = xml.dom.minidom.parseString(responseString).documentElement
-    when = docElem.getAttribute('Time')
-    cdrResponseElems = docElem.getElementsByTagName('CdrResponse')
-    if not cdrResponseElems:
-        errElems = docElem.getElementsByTagName('Err')
-        if errElems:
-            wrapException(caller, errElems)
-        else:
-            raise Exception(caller, 'No CdrResponse elements found')
-    if len(cdrResponseElems) == 1:
-        responseElem = cdrResponseElems[0]
-    elif len(cdrResponseElems) == 3:
-        responseElem = cdrResponseElems[2]
-        raise Exception(caller, 'Found %d CdrResponse elements; expected '
-                                'one or three' % len(cdrResponseElems))
-    if responseElem.getAttribute('Status') == 'success':
-        return CdrResponseNode(responseElem, when)
-    errElems = cdrResponseElems[0].getElementsByTagName('Err')
-    if not errElems:
-        raise Exception(caller, 'call failed but Err elements missing')
-    wrapException(caller, errElems)
-
-    # wrapException does not return, but add a return to silence pychecker
-    return None
-
-#----------------------------------------------------------------------
-# Mark tracking documents generated by failed mailer jobs as deleted.
-#----------------------------------------------------------------------
-def mailerCleanup(session, host=DEFAULT_HOST, port=DEFAULT_PORT):
-    resp = sendCommands(wrapCommand("<CdrMailerCleanup/>", session, host),
-                        host, port)
-    dom = xml.dom.minidom.parseString(resp)
-    docs = []
-    errs = []
-    for elem in dom.getElementsByTagName('DeletedDoc'):
-        digits = re.sub(r'[^\d]', '', getTextContent(elem))
-        docs.append(int(digits))
-    for elem in dom.getElementsByTagName('Err'):
-        errs.append(getTextContent(elem))
-    return (docs, errs, resp)
 
 #----------------------------------------------------------------------
 # Used by normalizeDoc; treats string as writable file object.
@@ -6601,73 +6225,6 @@ def logClientEvent(session, desc, host=DEFAULT_HOST, port=DEFAULT_PORT):
     if not match:
         raise Exception(u"malformed response: %s" % resp)
     return int(match.group(1))
-
-#----------------------------------------------------------------------
-# Transform URLs for DEV and QA
-#----------------------------------------------------------------------
-class MutateCGUrl:
-    """
-    Class for transforming URLs that point to cancer.gov pages to URLs that
-    point to the equivalent pages on the DEV or QA versions of cancer.gov.
-
-    This enables testing in the CBIIT DEV and QA CDR servers which are
-    forbidden from talking to the cancer.gov servers.
-    """
-    def __init__(self):
-        # Where are we?
-        global h
-        self.tier = h.tier
-
-        # If in DEV or QA, we need info for the transmutations
-        if self.tier in ("DEV", "QA"):
-
-            # Where are the cancer.gov sites for this use?
-            cgHostProp  = h.getHostNames("CG")
-            mcgHostProp = h.getHostNames("CGMOBILE")
-
-            # Corresponding names
-            self.cgTargetUrlName  = "http://" + cgHostProp.qname
-            self.mcgTargetUrlName = "http://" + mcgHostProp.qname
-
-            self.cgpat  = re.compile("(https?://(www\.)?cancer.gov)/?.*")
-            self.mcgpat = re.compile("(https?://m.cancer.gov)/?.*")
-        else:
-            self.cgtargetUrlName = None
-            self.mcgtargetUrlName = None
-
-    #------------------------------------------------------------------
-    # Convert a URL for use on DEV or QA versions of cancer.gov
-    #------------------------------------------------------------------
-    def mutateUrl(self, url):
-        """
-        Convert a url from the production server if we're not running
-        in production.
-
-        Pass:
-            url - Where we're trying to go
-
-        Return:
-            Transformed url or, if not going to cancer.gov or not on
-            DEV or QA, the original url passed to us.
-        """
-        # Default returns unmodifed url
-        retUrl = url
-
-        if self.tier in ("DEV", "QA"):
-            # Try standard browser url match
-            m = self.cgpat.match(url)
-            if m:
-                # Substitute whatever we need for this tier
-                retUrl = self.cgTargetUrlName + url[m.end(1):]
-
-            # If failed, try mobile browser url match
-            else:
-                m = self.mcgpat.match(url)
-                if m:
-                    retUrl = self.mcgTargetUrlName + url[m.end(1):]
-
-        # Return possibly transformed url
-        return retUrl
 
 #----------------------------------------------------------------------
 # Pull out the portion of an editorial board name used for menu options.

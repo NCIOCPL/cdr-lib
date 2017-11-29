@@ -294,6 +294,12 @@ class Session:
         query = db.Query("usr", "name").where("expired is NULL").order("name")
         return [row.name for row in query.execute(self.cursor).fetchall()]
 
+    def log_client_event(self, description):
+        fields = "event_time, event_desc, session"
+        insert = "INSERT INTO client_log ({}) VALUES (GETDATE(), ?, ?)"
+        self.cursor.execute(insert.format(fields), (description, self.id))
+        self.conn.commit()
+
     def __str__(self):
         """
         Support code which thinks it's got a string instead of an object
@@ -864,8 +870,6 @@ class Session:
                 placeholders = ", ".join(["?"] * len(fields) + extras)
                 args = names, placeholders
                 sql = "INSERT INTO usr ({}) VALUES ({})".format(*args)
-            message = "User.save(): sql={} values={}".format(sql, values)
-            self.session.logger.info(message)
             self.session.cursor.execute(sql, tuple(values))
             if not self.id:
                 self.session.cursor.execute("SELECT @@IDENTITY AS id")
