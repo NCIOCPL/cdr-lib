@@ -148,9 +148,7 @@ import cdrutil
 # Provides lookup of database passwords from centralized file.
 import cdrpw
 
-# Setting up the propper database source
-# --------------------------------------
-# Default
+# Determine some values from the hosting environment
 CBIIT_HOSTING = True
 
 # Find out where the CDR files are.
@@ -164,6 +162,23 @@ def _getWorkingDrive():
     raise Exception("unable to find CDR working files")
 WORK_DRIVE = _getWorkingDrive()
 DRIVE_PREFIX = "%s:" % WORK_DRIVE
+del _getWorkingDrive
+
+# CBIIT abandoned its original commitment to keep the DB ports stable
+def _load_ports():
+    ports = {}
+    try:
+        for line in open(DRIVE_PREFIX + "/etc/cdrdbports"):
+            tokens = line.strip().split(":")
+            if len(tokens) == 3:
+                tier, db, port = tokens
+                if db.lower() == "cdr":
+                    ports[tier] = int(port)
+        return ports
+    except:
+        raise Exception("database port configuration file not found")
+PORTS = _load_ports()
+del _load_ports
 
 # Accounting for alternate tiers later, see def connect()
 h = cdrutil.AppHost(cdrutil.getEnvironment(), cdrutil.getTier(DRIVE_PREFIX),
@@ -767,8 +782,6 @@ def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr'):
     to the CDR data.
     """
 
-    global CBIIT_HOSTING
-    global h
     tier = h.tier
     if dataSource != CDR_DB_SERVER:
         # Default server name established above
@@ -779,13 +792,7 @@ def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr'):
             tier = hostInfo.tier
 
     adoConn = win32com.client.Dispatch("ADODB.Connection")
-    ports = {
-        "PROD": 55733,
-        "STAGE": 55459,
-        "QA": 53100,
-        "DEV": 52400
-    }
-    port = ports.get(tier, 52400)
+    port = PORTS.get(tier, 52300)
     if user.upper() == "CDR":
         user = "cdrsqlaccount"
     password = cdrpw.password(h.org, tier, db, user, DRIVE_PREFIX)

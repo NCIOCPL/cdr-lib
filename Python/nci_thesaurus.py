@@ -6,6 +6,7 @@
 # BZIssue::5073
 # JIRA::OCECDR-4153 - strip unwanted OtherName and Definition blocks
 # JIRA::OCECDR-4226 - complete rewrite to use new EVS API
+# JIRA::OCECDR-4338 - make module adaptable to volatile API
 #----------------------------------------------------------------------
 
 import datetime
@@ -455,10 +456,12 @@ class Concept:
                        of a specific EVS concept record
         """
 
-        SCHEME = "https"
-        HOST = "lexevscts2.nci.nih.gov"
-        PATH = "lexevscts2/codesystem/NCI_Thesaurus/entity/{self.code}"
-        PARMS = "format={self.format}"
+        GRP = cdr.getControlGroup("thesaurus")
+        SCHEME = GRP.get("scheme", "https")
+        HOST = GRP.get("host", "lexevscts2.nci.nih.gov")
+        DFLT_PATH = "lexevscts2/codesystem/NCI_Thesaurus/entity/{self.code}"
+        PATH = GRP.get("path", DFLT_PATH)
+        PARMS = GRP.get("parms", "format={self.format}")
         TEMPLATE = "{}://{}/{}?{}".format(SCHEME, HOST, PATH, PARMS)
 
         def __init__(self, code, format="json"):

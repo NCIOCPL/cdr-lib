@@ -260,8 +260,7 @@ class Publish:
                    p.email,
                    p.started,
                    p.no_output,
-                   u.name,
-                   u.password
+                   u.name
               FROM pub_proc p
               JOIN usr u
                 ON u.id     = p.usr
@@ -300,9 +299,8 @@ class Publish:
         self.__jobTime     = row[5]
         self.__withOutput  = row[6] == "N"
         self.__userName    = row[7]
-        self.__passWord    = row[8]
         self.__credentials = cdr.login(self.__userName,
-                                       self.__passWord,
+                                       cdr.getpw(self.__userName) or "",
                                        port = self.__pubPort)
 
         # Load user-supplied list of document IDs.
