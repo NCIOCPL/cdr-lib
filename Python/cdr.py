@@ -2887,13 +2887,25 @@ def getDocFormats(conn=None):
 #----------------------------------------------------------------------
 # Fetch a value from the ctl table.
 #----------------------------------------------------------------------
-def getControlValue(group, name):
+def getControlValue(group, name, default=None):
     query = cdrdb2.Query("ctl", "val")
     query.where(query.Condition("grp", group))
     query.where(query.Condition("name", name))
     query.where("inactivated IS NULL")
     row = query.execute().fetchone()
-    return row and row[0] or None
+    return row and row[0] or default
+
+#----------------------------------------------------------------------
+# Fetch a group of values from the ctl table.
+#----------------------------------------------------------------------
+def getControlGroup(group):
+    query = cdrdb2.Query("ctl", "name", "val")
+    query.where(query.Condition("grp", group))
+    query.where("inactivated IS NULL")
+    group = dict()
+    for name, value in query.execute().fetchall():
+        group[name] = value
+    return group
 
 #----------------------------------------------------------------------
 # Update the ctl table.
