@@ -46,7 +46,7 @@ class Tests(unittest.TestCase):
 # the new ones working without having to grind through the entire set.
 
 FULL = True
-FULL = False
+#FULL = False
 if FULL:
 
     class _01SessionTests___(Tests):
@@ -434,6 +434,7 @@ if FULL:
             cdr.unlock(self.session, doc_id, tier=self.TIER)
             lock = cdr.isCheckedOut(doc_id)
             self.assertIsNone(lock)
+            cdr.delDoc(self.session, doc_id, tier=self.TIER)
         def test_32_create_label(self):
             opts = dict(comment=self.COMMENT, tier=self.TIER)
             result = cdr.create_label(self.session, self.LABEL, **opts)
@@ -834,6 +835,8 @@ if FULL:
             defs = cdr.listQueryTermDefs(self.session, tier=self.TIER)
             self.assertFalse((self.PATH, self.RULE) in defs)
             self.assertFalse((self.PATH, None) in defs)
+        def test_61_reindex_doc_(self):
+            self.assertIsNone(cdr.reindex(self.session, 5000, tier=self.TIER))
 
 
     class _07UserTests______(Tests):
@@ -859,17 +862,17 @@ if FULL:
             comment=COMMENT,
             authMode=AUTHMODE
         )
-        def test_61_add_user____(self):
+        def test_62_add_user____(self):
             user = cdr.User(self.NAME, **self.OPTS)
             result = cdr.putUser(self.session, None, user, tier=self.TIER)
             self.assertIsNone(result)
-        def test_62_mod_user____(self):
+        def test_63_mod_user____(self):
             opts = dict(self.OPTS)
             opts["comment"] = self.NEW_COMMENT
             user = cdr.User(self.NEW_NAME, **opts)
             result = cdr.putUser(self.session, self.NAME, user, tier=self.TIER)
             self.assertIsNone(result)
-        def test_63_get_user____(self):
+        def test_64_get_user____(self):
             user = cdr.getUser(self.session, self.NEW_NAME, tier=self.TIER)
             self.assertEqual(user.name, self.NEW_NAME)
             self.assertEqual(user.comment, self.NEW_COMMENT)
@@ -877,17 +880,17 @@ if FULL:
             self.assertEqual(user.phone, self.PHONE)
             self.assertEqual(user.groups, self.GROUPS)
             self.assertEqual(user.authMode, self.AUTHMODE)
-        def test_64_list_users__(self):
+        def test_65_list_users__(self):
             users = cdr.getUsers(self.session, tier=self.TIER)
             self.assertTrue(self.NEW_NAME in users)
             self.assertFalse(self.NAME in users)
-        def test_65_del_user____(self):
+        def test_66_del_user____(self):
             result = cdr.delUser(self.session, self.NEW_NAME, tier=self.TIER)
             self.assertIsNone(result)
             users = cdr.getUsers(self.session, tier=self.TIER)
             self.assertFalse(self.NEW_NAME in users)
             self.assertFalse(self.NAME in users)
-        def test_66_log_cli_evnt(self):
+        def test_67_log_cli_evnt(self):
             description = "This is a test event description"
             cdr.log_client_event(self.session, description, tier=self.TIER)
             query = db.Query("client_log", "event_time", "event_desc")
@@ -895,14 +898,39 @@ if FULL:
             row = query.execute().fetchone()
             self.assertEqual(description, row.event_desc)
             delta = datetime.datetime.now() - row.event_time
-            self.assertTrue(abs(delta.total_seconds()) < 1)
+            self.assertTrue(abs(delta.total_seconds()) < 2)
 
-if True:
+
+    class _08ReportingTests_(Tests):
+        def test_68_report______(self):
+            directory = os.path.dirname(os.path.realpath(__file__))
+            with open("{}/{}".format(directory, "003.xml"), "rb") as fp:
+                xml = fp.read()
+            ctrl = {"DocTitle": "reporting test"}
+            doc = cdr.makeCdrDoc(xml, "xxtest", None, ctrl)
+            doc_id = cdr.addDoc(self.session, doc=doc, tier=self.TIER)
+            self.assertTrue(doc_id.startswith("CDR"))
+            name = "Dated Actions"
+            opts = dict(parms=dict(DocType="Person"), tier=self.TIER)
+            report = cdr.report(self.session, name, **opts)
+            report = etree.tostring(report, encoding="utf-8").decode("utf-8")
+            self.assertIn(doc_id, report)
+            self.assertIn("Test the reports module", report)
+            name = "Person Locations Picklist"
+            opts["parms"] = dict(DocId=doc_id)
+            report = cdr.report(self.session, name, **opts)
+            report = etree.tostring(report, encoding="utf-8").decode("utf-8")
+            self.assertIn("Kalamazoo", report)
+            name = "Person Address Fragment"
+            opts["parms"] = dict(Link="{}#_3".format(doc_id))
+            report = cdr.report(self.session, name, **opts)
+            report = etree.tostring(report, encoding="utf-8").decode("utf-8")
+            self.assertIn("Shady Grove", report)
+            cdr.delDoc(self.session, doc_id, tier=self.TIER)
+
     class _92TestsInProgress(Tests):
         """
         """
-        def test_66_reindex_doc_(self):
-            self.assertIsNone(cdr.reindex(self.session, 5000, tier=self.TIER))
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ from cdrapi.docs import Doctype, GlossaryTermName
 from cdrapi.docs import LinkType as APILinkType
 from cdrapi.docs import FilterSet as APIFilterSet
 from cdrapi.publishing import Job as PublishingJob
+from cdrapi.reports import Report
 from cdrapi.searches import QueryTermDef
 
 # ======================================================================
@@ -1660,6 +1661,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
 
     Return:
         tuple of document, messages if successful, else error string
+        document is serialized as utf-8 bytes
     """
 
     xml = opts.get("doc")
@@ -3230,6 +3232,50 @@ def pubStatus(self, jobId, getDocInfo=False):
 
 
 # ======================================================================
+# Manage CDR reports
+# ======================================================================
+
+def report(credentials, name, **opts):
+    """
+    Request the output for a CDR report
+
+    Required positional argument:
+      credentials - result of login
+      name - required string for report name
+
+    Optional keyword arguments:
+      parms - dictionary of named parameter values to be passed to report
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      `ReportBody` DOM node
+    """
+
+    parms = opts.get("parms", {})
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return Report(session, name, **parms).run()
+    command = etree.Element("CdrReport")
+    etree.SubElement(command, "ReportName").text = name
+    if parms:
+        wrapper = etree.SubElement(command, "ReportParams")
+        for name in parms:
+            value = parms[name]
+            etree.SubElement(wrapper, "ReportParam", Name=name, Value=value)
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == command.tag + "Resp":
+            body = response.node.find("ReportBody")
+            if body is None:
+                raise Exception("ReportBody missing")
+            return body
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
+
+# ======================================================================
 # Manage CDR searching
 # ======================================================================
 
@@ -3375,11 +3421,28 @@ def log_client_event(credentials, description, **opts):
         command = etree.Element("CdrLogClientEvent")
         etree.SubElement(command, "EventDescription").text = description
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrLogClientEventResp":
+            if response.node.tag == command.tag + "Resp":
                 return
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
         raise Exception("missing response")
+
+def save_client_trace_log(credentials, log_data, **opts):
+    """
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return session.save_client_trace_log(log_data)
+    command = etree.Element("CdrSaveClientTraceLog")
+    etree.SubElement(command, "LogData").text = log_data
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == command.tag + "Resp":
+            return int(get_text(response.node.find("LogId")))
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
 
 def mailerCleanup(credentials, **opts):
     """
@@ -4893,29 +4956,6 @@ def deDupErrs(errXml):
         result.append(errString)
 
     return result
-
-#----------------------------------------------------------------------
-# Request the output for a CDR report.
-#----------------------------------------------------------------------
-def report(credentials, name, parms, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command.
-    cmd = "<CdrReport><ReportName>%s</ReportName>" % name
-
-    # Add the parameters.
-    if parms:
-        cmd = cmd + "<ReportParams>"
-        for parm in parms:
-            cmd = cmd + '<ReportParam Name="%s" Value="%s"/>' % (
-                cgi.escape(parm[0], 1), cgi.escape(parm[1], 1))
-        cmd = cmd + "</ReportParams>"
-
-    # Submit the commands.
-    resp = sendCommands(wrapCommand(cmd + "</CdrReport>", credentials, host),
-                        host, port)
-
-    # Extract the report.
-    return extract("(<ReportBody[>\s].*</ReportBody>)", resp)
 
 #----------------------------------------------------------------------
 # Class to contain one hit from query result set.

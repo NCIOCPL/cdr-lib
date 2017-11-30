@@ -5,6 +5,7 @@ Control for who can use the CDR and what they can do
 import binascii
 import hashlib
 import random
+import re
 import string
 import threading
 import time
@@ -300,6 +301,17 @@ class Session:
         self.cursor.execute(insert.format(fields), (description, self.id))
         self.conn.commit()
 
+    def save_client_trace_log(self, log_data):
+        match = re.search(r"logon\(([^,]+),", log_data)
+        user = match.group(1) if match else None
+        fields = "log_saved, cdr_user, session_id, log_data"
+        values = user, self.name, log_data
+        insert = "INSERT INTO dll_trace_log ({}) VALUES (GETDATE, ?, ?, ?)"
+        self.cursor.execute(insert.format(fields), values)
+        self.conn.commit()
+        self.cursor.execute("SELECT @@IDENTITY AS id")
+        return self.cursor.fetchone().id
+
     def __str__(self):
         """
         Support code which thinks it's got a string instead of an object
@@ -561,8 +573,8 @@ class Session:
                 raise Exception("Group name already exists")
             insert = "INSERT INTO grp(name, comment) VALUES(?, ?)"
             session.cursor.execute(insert, (self.name, self.comment))
-            session.cursor.execute("SELECT @@IDENTITY")
-            self.id = session.cursor.fetchone()[0]
+            session.cursor.execute("SELECT @@IDENTITY AS id")
+            self.id = session.cursor.fetchone().id
             self.save_users(session)
             self.save_actions(session)
             session.conn.commit()

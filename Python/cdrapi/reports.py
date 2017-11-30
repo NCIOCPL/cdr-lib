@@ -2,7 +2,7 @@ from datetime import datetime
 import re
 from dateutil.relativedelta import relativedelta
 from lxml import etree
-from cdrapi.db import Query
+from cdrapi.db import Query, connect as db_connect
 from cdrapi.docs import Doc
 
 class Report:
@@ -26,7 +26,9 @@ class Report:
 
     @property
     def cursor(self):
-        return self.session.cursor
+        if not hasattr(self, "_cursor"):
+            self._cursor = db_connect().cursor()
+        return self._cursor
 
     @property
     def name(self):
@@ -97,10 +99,6 @@ class Report:
         """
         Find the to-do list for documents of a particular type
 
-        Odd that the requirements for this report didn't include
-        the description of the action to be performed or the
-        due date.
-
         Parameters:
           DocType - required string naming the document type for
                     which documents should be included
@@ -119,7 +117,6 @@ class Report:
             raise Exception("Missing required 'DocType' parameter")
         path = "/{}/DatedAction/ActionDate".format(doctype)
         query = Query("document d", "d.id", "d.title").unique()
-        query.join("doc_type t", "t.id = d.doc_type")
         query.join("query_term a", "a.doc_id = d.id")
         query.where(query.Condition("a.path", path))
         rows = query.execute(self.cursor).fetchall()
@@ -128,6 +125,8 @@ class Report:
             wrapper = etree.SubElement(body, "ReportRow")
             etree.SubElement(wrapper, "DocId").text = Doc.normalize_id(id)
             etree.SubElement(wrapper, "DocTitle").text = title
+            result = Doc(self.session, id=id).filter("name:Dated Actions")
+            wrapper.append(result.result_tree.getroot())
         return body
 
     def _genetics_syndromes(self):

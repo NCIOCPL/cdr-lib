@@ -171,7 +171,7 @@ class Doc(object):
             return None
         query = Query("all_docs", "active_status")
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         assert row.active_status in "AID", "Invalid active_status value"
         return row.active_status
 
@@ -189,7 +189,7 @@ class Doc(object):
             else:
                 query = Query("doc_blob", "data")
                 query.where(query.Condition("id", self._blob_id))
-                row = query.execute(self.session.cursor).fetchone()
+                row = query.execute(self.cursor).fetchone()
                 if not row:
                     raise Exception("no blob found")
                 self._blob = row.data
@@ -230,10 +230,20 @@ class Doc(object):
         query.join("usr u", "u.id = t.usr")
         query.where(query.Condition("t.document", self.id))
         query.where("a.name = 'ADD DOCUMENT'")
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         if not row:
             raise Exception("No audit trail for document creation")
         return self.Action(row)
+
+    @property
+    def cursor(self):
+        """
+        Give the document object its own cursor
+        """
+
+        if not hasattr(self, "_cursor"):
+            self._cursor = self.session.conn.cursor()
+        return self._cursor
 
     @property
     def denormalized_xml(self):
@@ -282,7 +292,7 @@ class Doc(object):
                 query.where(query.Condition("id", self.id))
                 if self.version:
                     query.where(query.Condition("num", self.version))
-                row = query.execute(self.session.cursor).fetchone()
+                row = query.execute(self.cursor).fetchone()
                 if not row:
                     what = "version" if self.version else "document"
                     raise Exception(what + " not found")
@@ -340,7 +350,7 @@ class Doc(object):
             return None
         query = Query("document", "first_pub")
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         date = row.first_pub
         if isinstance(date, datetime.datetime):
             return date.replace(microsecond=0)
@@ -386,7 +396,7 @@ class Doc(object):
         query.where(query.Condition("doc_id", self.id))
         if self.version:
             query.where(query.Condition("doc_version", self.version))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         self._blob_id = row.blob_id if row else None
         return True if self._blob_id else False
 
@@ -472,7 +482,7 @@ class Doc(object):
         query = Query("doc_version", "MAX(num) AS n")
         query.where(query.Condition("id", self.id))
         query.where("publishable = 'Y'")
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         return row.n if row else None
 
     @property
@@ -502,7 +512,7 @@ class Doc(object):
             return None
         query = Query("doc_version", "MAX(num) AS n")
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         return row.n if row else None
 
     @property
@@ -515,7 +525,7 @@ class Doc(object):
             return None
         query = Query("doc_version", "MAX(updated_dt) as dt")
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         date = row.dt if row else None
         if isinstance(date, datetime.datetime):
             return date.replace(microsecond=0)
@@ -539,7 +549,7 @@ class Doc(object):
         query.join("usr u", "u.id = c.usr")
         query.where(query.Condition("c.id", self.id))
         query.where("c.dt_in IS NULL")
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         return self.Lock(row) if row else None
 
     @property
@@ -559,7 +569,7 @@ class Doc(object):
         query.where(query.Condition("t.document", self.id))
         query.where("a.name = 'MODIFY DOCUMENT'")
         query.order("t.dt DESC").limit(1)
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         return self.Action(row) if row else None
 
     @property
@@ -573,7 +583,7 @@ class Doc(object):
         query = Query("doc_version", "publishable")
         query.where(query.Condition("id", self.id))
         query.where(query.Condition("num", self.version))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         if not row:
             message = "Information for version {} missing".format(self.version)
             raise Exception(message)
@@ -587,7 +597,7 @@ class Doc(object):
 
         query = Query("ready_for_review", "doc_id")
         query.where(query.Condition("doc_id", self.id))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         return True if row else False
 
     @property
@@ -763,7 +773,7 @@ class Doc(object):
             else:
                 query = Query("document", "xml")
             query.where(query.Condition("id", self.id))
-            row = query.execute(self.session.cursor).fetchone()
+            row = query.execute(self.cursor).fetchone()
             if not row:
                 raise Exception("no xml found")
             self._xml = row.xml
@@ -830,7 +840,7 @@ class Doc(object):
         query = Query("external_map_usage u", "u.id", "a.name")
         query.join("action a", "a.id = u.auth_action")
         query.where(query.Condition("u.name", usage))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         if not row:
             raise Exception("Unknown usage {!r}".format(usage))
         usage_id, action = row
@@ -854,10 +864,10 @@ class Doc(object):
         args = ", ".join(names), ", ".join(["?"] * len(names))
         values = tuple([fields[name] for name in names])
         insert = "INSERT INTO external_map ({}) VALUES ({})".format(*args)
-        self.session.cursor.execute(insert, values)
+        self.cursor.execute(insert, values)
         self.session.conn.commit()
-        self.session.cursor.execute("SELECT @@IDENTITY AS id")
-        return self.session.cursor.fetchone().id
+        self.cursor.execute("SELECT @@IDENTITY AS id")
+        return self.cursor.fetchone().id
 
     def add_error(self, message, location=None, **opts):
         """
@@ -921,7 +931,7 @@ class Doc(object):
         if self.id:
             query = Query("audit_trail", "MAX(dt) AS dt")
             query.where(query.Condition("document", self.id))
-            last = query.execute(self.session.cursor).fetchone().dt
+            last = query.execute(self.cursor).fetchone().dt
             now = datetime.datetime.now().replace(microsecond=0)
             logged = False
             while now == last:
@@ -959,7 +969,7 @@ class Doc(object):
         # Make sure the document isn't published.
         query = Query("pub_proc_cg", "id")
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         if row:
             message = "Cannot delete published doc {}".format(self.cdr_id)
             raise Exception(message)
@@ -967,7 +977,7 @@ class Doc(object):
         # Make sure it's not in the external mapping table.
         query = Query("external_map", "COUNT(*) AS n")
         query.where(query.Condition("doc_id", self.id))
-        if query.execute(self.session.cursor).fetchone().n > 0:
+        if query.execute(self.cursor).fetchone().n > 0:
             message = "Cannot delete {} which is in the external mapping table"
             raise Exception(message.format(self.cdr_id))
 
@@ -990,15 +1000,15 @@ class Doc(object):
                 update = "UPDATE document SET active_status = 'D' WHERE id = ?"
                 for table in "query_term", "query_term_pub":
                     delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
-                    self.session.cursor.execute(delete, (self.id,))
-                self.session.cursor.execute(update, (self.id,))
+                    self.cursor.execute(delete, (self.id,))
+                self.cursor.execute(update, (self.id,))
                 self.__audit_action("Doc.delete", "DELETE DOCUMENT", reason)
                 self.session.conn.commit()
         except:
             self.session.logger.exception("Deletion failed")
-            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.session.cursor.fetchone().tc:
-                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.cursor.fetchone().tc:
+                self.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
     def filter(self, *filters, **opts):
@@ -1105,7 +1115,7 @@ class Doc(object):
         # TODO - REMOVE FOLLOWING CODE; USE root = doc.root INSTEAD
         query = Query("good_filters", "xml")
         query.where(query.Condition("id", doc.id))
-        xml = query.execute(self.session.cursor).fetchone()[0]
+        xml = query.execute(self.cursor).fetchone()[0]
         root = etree.fromstring(xml.encode("utf-8"))
         # TODO - END TEMPORARY CODE
         for name in ("import", "include"):
@@ -1142,12 +1152,12 @@ class Doc(object):
                 def __init__(self, parent, child):
                     self.parent, self.child = parent, child
         tree = Tree()
-        self.session.cursor.callproc("cdr_get_term_tree", (self.id, depth))
-        for child, parent in self.session.cursor.fetchall():
+        self.cursor.callproc("cdr_get_term_tree", (self.id, depth))
+        for child, parent in self.cursor.fetchall():
             tree.relationships.append(Tree.Relationship(parent, child))
-        if not self.session.cursor.nextset():
+        if not self.cursor.nextset():
             raise Exception("Failure retrieving Term data")
-        for term_id, term_name in self.session.cursor.fetchall():
+        for term_id, term_name in self.cursor.fetchall():
             tree.names[term_id] = term_name
         return tree
 
@@ -1162,13 +1172,13 @@ class Doc(object):
         assert self.version, "Missing version for label"
         query = Query("version_label", "id")
         query.where(query.Condition("name", label))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         if not row:
             raise Exception("Unable to find label {!r}".format(label))
         names = "label, document, num"
         values = row.id, self.id, self.version
         insert = "INSERT INTO doc_version_label ({}) VALUES (?, ?, ?)"
-        self.session.cursor.execute(insert.format(names), values)
+        self.cursor.execute(insert.format(names), values)
         self.session.conn.commit()
 
     def legacy_doc(self, **opts):
@@ -1299,7 +1309,7 @@ class Doc(object):
         query.where(query.Condition("n.target_doc", self.id))
         links = []
         pattern = "Document {:d}: ({}) links to this document"
-        for row in query.execute(self.session.cursor).fetchall():
+        for row in query.execute(self.cursor).fetchall():
             link = pattern.format(row.source_doc, row.title)
             if row.target_frag:
                 link += " Fragment({})".format(row.target_frag)
@@ -1312,7 +1322,7 @@ class Doc(object):
         query.where(query.Condition("id", self.id))
         if limit is not None:
             query.limit(limit)
-        return list(query.execute(self.session.cursor).fetchall())
+        return list(query.execute(self.cursor).fetchall())
 
     def reindex(self):
         """
@@ -1345,11 +1355,12 @@ class Doc(object):
             if last_pub_ver and "query_term_pub" not in tables:
                 doc = Doc(self.session, id=doc.id, version=last_pub_ver)
                 doc.update_query_terms(tables=["query_term_pub"])
+                self.session.conn.commit()
         except Exception as e:
             self.session.logger.exception("Reindex failed")
-            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.session.cursor.fetchone().tc:
-                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.cursor.fetchone().tc:
+                self.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
     def save(self, **opts):
@@ -1379,11 +1390,12 @@ class Doc(object):
             self.__audit_trail_delay()
             self.__save(**opts)
             self.session.conn.commit()
+            self.cursor.close()
         except:
             self.session.logger.exception("Doc.save() failure")
-            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.session.cursor.fetchone().tc:
-                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.cursor.fetchone().tc:
+                self.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
     def unlabel(self, label):
@@ -1396,12 +1408,12 @@ class Doc(object):
 
         query = Query("version_label", "id")
         query.where(query.Condition("name", label))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         if not row:
             raise Exception("Unable to find label {!r}".format(label))
         table = "doc_version_label"
         delete = "DELETE FROM {} WHERE document = ? AND label = ?"
-        self.session.cursor.execute(delete.format(table), (self.id, row.id))
+        self.cursor.execute(delete.format(table), (self.id, row.id))
         self.session.conn.commit()
 
     def update_query_terms(self, **opts):
@@ -1432,7 +1444,7 @@ class Doc(object):
         relative_path = "path LIKE '//%'"
         query = Query("query_term_def", "path")
         query.where(query.Or(absolute_path, relative_path))
-        rows = query.execute(self.session.cursor).fetchall()
+        rows = query.execute(self.cursor).fetchall()
         paths = set([row.path for row in rows])
 
         # Collect the indexable values and store them.
@@ -1467,14 +1479,14 @@ class Doc(object):
             self.__validate(**opts)
 
             # Find out if there are changes to the database; if so, commit them.
-            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.session.cursor.fetchone().tc:
+            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.cursor.fetchone().tc:
                 self.session.conn.commit()
         except:
             self.session.logger.exception("Validation failed")
-            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.session.cursor.fetchone().tc:
-                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.cursor.fetchone().tc:
+                self.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
     # ------------------------------------------------------------------
@@ -1545,7 +1557,7 @@ class Doc(object):
             else:
                 if spec.startswith("name:"):
                     name = spec.split(":", 1)[1]
-                    doc_id = Doc.id_from_title(name, self.session.cursor)
+                    doc_id = Doc.id_from_title(name, self.cursor)
                 else:
                     doc_id = spec
                 filters.append(self.get_filter(doc_id, **opts))
@@ -1574,7 +1586,7 @@ class Doc(object):
         # Look up the primary key matching the action's name.
         query = Query("action", "id")
         query.where(query.Condition("name", action))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         if not row:
             raise Exception("Invalid action {!r}".format(action))
 
@@ -1584,7 +1596,7 @@ class Doc(object):
         fields = "document", "usr", "action", "program", "comment", "dt"
         args = ", ".join(fields), ", ".join(["?"] * len(fields))
         insert = "INSERT INTO audit_trail ({}) VALUES ({})".format(*args)
-        self.session.cursor.execute(insert, values)
+        self.cursor.execute(insert, values)
         return when
 
     def __audit_added_action(self, action, when):
@@ -1603,7 +1615,7 @@ class Doc(object):
         # Look up the primary key matching the action's name.
         query = Query("action", "id")
         query.where(query.Condition("name", action))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         if not row:
             raise Exception("Invalid action {!r}".format(action))
         action_id = row.id
@@ -1613,7 +1625,7 @@ class Doc(object):
         fields = "document", "dt", "action"
         insert = "INSERT INTO audit_trail_added_action ({}) VALUES (?, ?, ?)"
         insert = insert.format(", ".join(fields))
-        self.session.cursor.execute(insert, values)
+        self.cursor.execute(insert, values)
 
     def __check_in(self, **opts):
         """
@@ -1659,7 +1671,7 @@ class Doc(object):
             update += ", comment = ?"
             values = when, version, comment or None, self.id
         update += " WHERE id = ? AND dt_in IS NULL"
-        self.session.cursor.execute(update, values)
+        self.cursor.execute(update, values)
 
         # Save any unversioned changes unless instructed otherwise.
         if need_new_version:
@@ -1701,7 +1713,7 @@ class Doc(object):
         fields = "id", "dt_out", "usr", "comment"
         template = "INSERT INTO checkout ({}) VALUES (?, ?, ?, ?)"
         insert = template.format(", ".join(fields))
-        self.session.cursor.execute(insert, values)
+        self.cursor.execute(insert, values)
 
     def __check_save_permissions(self, **opts):
         """
@@ -1724,7 +1736,7 @@ class Doc(object):
             query.join("checkout c", "c.usr = u.id")
             query.where(query.Condition("c.id", self.id))
             query.where("c.dt_in IS NULL")
-            row = query.execute(self.session.cursor).fetchone()
+            row = query.execute(self.cursor).fetchone()
             if row:
                 user_id, name, fullname, checked_out = row
                 if user_id != self.session.user_id:
@@ -1776,7 +1788,7 @@ class Doc(object):
             query.where(query.Condition("title", title))
             if self.id:
                 query.where(query.Condition("id", self.id, "<>"))
-            row = query.execute(self.session.cursor).fetchone()
+            row = query.execute(self.cursor).fetchone()
             if row.n:
                 raise Exception("title {!r} already exists".format(title))
 
@@ -1785,7 +1797,7 @@ class Doc(object):
         if self.id:
             query = Query("all_docs", "active_status")
             query.where(query.Condition("id", self.id))
-            row = query.execute(self.session.cursor).fetchone()
+            row = query.execute(self.cursor).fetchone()
             if not row:
                 raise Exception("document {} not found".format(self.cdr_id))
             active_status = row.active_status
@@ -1920,7 +1932,7 @@ class Doc(object):
 
         query = Query("doc_type", "title_filter")
         query.where(query.Condition("id", self.doctype.id))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         try:
             opts = dict(filter=row.title_filter, doc=self.revised)
             return unicode(self.filter(**opts).result_tree)
@@ -1947,20 +1959,20 @@ class Doc(object):
         # Get the document's BLOB ID (if any).
         query = Query("doc_blob_usage", "blob_id")
         query.where(query.Condition("doc_id", self.id))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         blob_id = row.blob_id if row else None
 
         # Figure out what the next version number is for the document.
         query = Query("doc_version", "MAX(num) AS n")
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         version = (row.n if row and row.n else 0) + 1
 
         # Assemble the values for the insertion SQL.
         cols = "val_status", "val_date", "title", "xml", "comment", "doc_type"
         query = Query("document", *cols)
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         if not row:
             raise Exception("Can't version a document which hasn't been saved")
         val_date = row.val_date
@@ -1988,7 +2000,7 @@ class Doc(object):
         # Insert the new row and adjust the internal property values.
         args = ", ".join(names), ", ".join(["?"] * len(values) + ["GETDATE()"])
         insert = "INSERT INTO all_doc_versions ({}) VALUES ({})".format(*args)
-        self.session.cursor.execute(insert, tuple(values))
+        self.cursor.execute(insert, tuple(values))
         self._version = self._last_version = version
         if opts.get("publishable"):
             self._last_publishable_version = version
@@ -2000,7 +2012,7 @@ class Doc(object):
             template = "INSERT INTO version_blob_usage ({}) VALUES ({})"
             args = ", ".join(fields), ", ".join(["?"] * len(fields))
             insert = template.format(*args)
-            self.session.cursor.execute(insert, values)
+            self.cursor.execute(insert, values)
 
     def __delete_blobs(self):
         """
@@ -2022,15 +2034,15 @@ class Doc(object):
         for table in ("version_blob_usage", "doc_blob_usage"):
             query = Query(table, "blob_id")
             query.where(query.Condition("doc_id", self.id))
-            rows = query.execute(self.session.cursor).fetchall()
+            rows = query.execute(self.cursor).fetchall()
             blob_ids += set([row.blog_id for row in rows])
             delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
-            self.session.cursor.execute(delete, (self.id,))
+            self.cursor.execute(delete, (self.id,))
 
         # Remove the BLOBs themselves.
         for blob_id in blob_ids:
             delete = "DELETE FROM doc_blob WHERE id = ?"
-            self.session.cursor.execute(delete, (blob_id,))
+            self.cursor.execute(delete, (blob_id,))
 
         # Wipe the cached information about the BLOB.
         self._blob = self._blob_id = None
@@ -2052,7 +2064,7 @@ class Doc(object):
         query = Query("link_net", "source_doc", "target_frag")
         query.where(query.Condition("target_doc", self.id))
         query.where(query.Condition("source_doc", self.id, "<>"))
-        rows = query.execute(self.session.cursor).fetchall()
+        rows = query.execute(self.cursor).fetchall()
 
         # If no inbound links, the document can be marked as deleted.
         if not rows:
@@ -2075,7 +2087,7 @@ class Doc(object):
         delete = "DELETE FROM {} WHERE source_doc = ?"
         for table in ("link_net", "link_fragment"):
             sql = delete.format(table)
-            self.session.cursor.execute(sql, (self.id,))
+            self.cursor.execute(sql, (self.id,))
         return True
 
     def __extract_rule_sets(self, schema, sets):
@@ -2096,7 +2108,7 @@ class Doc(object):
                     sets[rule_set.name].append(rule_set)
             elif node.tag == Schema.INCLUDE:
                 name = node.get("schemaLocation")
-                xml = self.get_schema_xml(name, self.session.cursor)
+                xml = self.get_schema_xml(name, self.cursor)
                 included_schema = etree.fromstring(xml.encode("utf-8"))
                 self.__extract_rule_sets(included_schema, sets)
 
@@ -2118,7 +2130,7 @@ class Doc(object):
         query.where(query.Condition("id", self.id))
         if self.version:
             query.where(query.Condition("num", self.version))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         return row[0]
 
     def __generate_fragment_ids(self):
@@ -2159,7 +2171,7 @@ class Doc(object):
 
         query = Query("filter_set", "id")
         query.where(query.Condition("name", name))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         if not row:
             return []
         return self.__get_filter_set_by_id(row.id, 0, **opts)
@@ -2195,7 +2207,7 @@ class Doc(object):
         query = Query("filter_set_member", *fields).order("position")
         query.where(query.Condition("filter_set", set_id))
         filters = []
-        rows = query.execute(self.session.cursor).fetchall()
+        rows = query.execute(self.cursor).fetchall()
         for filter_id, subset_id in rows:
             if filter_id:
                 filters.append(self.get_filter(filter_id, **opts))
@@ -2225,7 +2237,7 @@ class Doc(object):
         query.join("version_label l", "l.id = d.label")
         query.where(query.Condition("v.id", self.id))
         query.where(query.Condition("l.name", label))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         if not row.n:
             raise Exception("no version labeled {}".format(label))
         return row.n
@@ -2243,11 +2255,11 @@ class Doc(object):
 
         query = Query("document", "title")
         query.where(query.Condition("id", self.doctype.schema_id))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         assert row, "no schema for document type {}".format(self.doctype.name)
         parser = etree.XMLParser()
-        parser.resolvers.add(self.SchemaResolver(self.session.cursor))
-        xml = self.get_schema_xml(row.title, self.session.cursor)
+        parser.resolvers.add(self.SchemaResolver(self.cursor))
+        xml = self.get_schema_xml(row.title, self.cursor)
         return etree.fromstring(xml.encode("utf-8"), parser)
 
     def __get_version_before(self, before, publishable=None):
@@ -2282,7 +2294,7 @@ class Doc(object):
             query.where("publishable = 'Y'")
         elif publishable is False:
             query.where("publishable = 'N'")
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         if not row:
             raise Exception("no version before {}".format(when))
         return row.n
@@ -2474,7 +2486,7 @@ class Doc(object):
             update = "UPDATE checkout SET dt_in = GETDATE(), comment = ? "
             update += "WHERE id = ? AND dt_in IS NULL"
             values = reason, self.id
-            self.session.cursor.execute(update, values)
+            self.cursor.execute(update, values)
 
 
     def __store(self, **opts):
@@ -2514,25 +2526,25 @@ class Doc(object):
             values.append(self.id)
             sql = "UPDATE document SET {} WHERE id = ?"
             sql = sql.format(", ".join([name + " = ?" for name in names]))
-        self.session.cursor.execute(sql, tuple(values))
+        self.cursor.execute(sql, tuple(values))
 
         # If the document is new, get its ID and update the title (in
         # case the title filter uses the document ID).
         if not self.id:
-            self.session.cursor.execute("SELECT @@IDENTITY")
-            self._id = self.session.cursor.fetchone()[0]
+            self.cursor.execute("SELECT @@IDENTITY AS id")
+            self._id = int(self.cursor.fetchone().id)
             title = self.__create_title()
             if title and title != fields["title"]:
                 update = "UPDATE document SET title = ? WHERE id = ?"
-                self.session.cursor.execute(update, (title, self.id))
+                self.cursor.execute(update, (title, self.id))
 
             # XXX TODO GET RID OF THIS CODE WHEN WE GO TO PRODUCTION!!!!
             if self.doctype.name == "schema":
                 insert = "INSERT INTO good_schemas (id, xml) VALUES (?, ?)"
-                self.session.cursor.execute(insert, (self.id, self.xml))
+                self.cursor.execute(insert, (self.id, self.xml))
         elif self.doctype.name == "schema":
             update = "UPDATE good_schemas SET xml = ? WHERE id = ?"
-            self.session.cursor.execute(update, (self.xml, self.id))
+            self.cursor.execute(update, (self.xml, self.id))
             # XXX TODO END OF CODE BLOCK THAT NEEDS TO GO AWAY
 
         # If the document has a binary large object (BLOB), save it.
@@ -2544,7 +2556,7 @@ class Doc(object):
         if opts.get("needs_review"):
             insert = "INSERT INTO ready_for_review (doc_id) VALUES (?)"
             try:
-                self.session.cursor.execute(insert, (self.id,))
+                self.cursor.execute(insert, (self.id,))
             except:
                 pass
 
@@ -2568,25 +2580,25 @@ class Doc(object):
         # Find out if a BLOB is already connected to the document.
         query = Query("doc_blob_usage", "blob_id")
         query.where(query.Condition("doc_id", self.id))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         blob_id = row.blob_id if row else None
         if blob_id:
 
             # Find out if the BLOB is connected with any of the doc's versions.
             query = Query("version_blob_usage", "COUNT(*) AS n")
             query.where(query.Condition("blob_id", blob_id))
-            row = query.execute(self.session.cursor).fetchone()
+            row = query.execute(self.cursor).fetchone()
             blob_is_versioned = row.n > 0
             if not self.blob:
 
                 # self.blob is an empty sequence of bytes; break the link.
                 delete = "DELETE FROM doc_blob_usage WHERE doc_id = ?"
-                self.session.cursor.execute(delete, (self.id,))
+                self.cursor.execute(delete, (self.id,))
                 if not blob_is_versioned:
 
                     # The blob is completely orphaned; drop the row.
                     delete = "DELETE FROM doc_blob WHERE id = ?"
-                    self.session.cursor.execute(delete, (blob_id,))
+                    self.cursor.execute(delete, (blob_id,))
 
                 # The document no longer has a BLOB; we're done here.
                 return None
@@ -2594,7 +2606,7 @@ class Doc(object):
             # We have a real BLOB--see if it has changed.
             query = Query("doc_blob", "data")
             query.where(query.Condition("id", blob_id))
-            blob = query.execute(self.session.cursor.execute).fetchone().data
+            blob = query.execute(self.cursor.execute).fetchone().data
 
             # If the BLOB is unchanged we're done.
             if blob == self.blob:
@@ -2605,7 +2617,7 @@ class Doc(object):
             if not blob_is_versioned:
                 update = "UPDATE doc_blob SET data = ? WHERE id = ?"
                 blob = Binary(self.blob)
-                self.session.cursor.execute(update, (blob, blob_id))
+                self.cursor.execute(update, (blob, blob_id))
                 return blob_id
 
         # Did the caller ask us to remove a BLOB which doesn't exist?
@@ -2620,12 +2632,12 @@ class Doc(object):
 
         # Store the bytes for the BLOB.
         insert = "INSERT INTO doc_blob (data) VALUES (?)"
-        self.session.cursor.execute(insert, (Binary(self.blob),))
+        self.cursor.execute(insert, (Binary(self.blob),))
 
         # Connect the document to the BLOB.
-        self.session.cursor.execute("SELECT @@IDENTITY AS blob_id")
-        blob_id = self.session.cursor.fetchone().blob_id
-        self.session.cursor.execute(dbu, (blob_id, self.id))
+        self.cursor.execute("SELECT @@IDENTITY AS blob_id")
+        blob_id = self.cursor.fetchone().blob_id
+        self.cursor.execute(dbu, (blob_id, self.id))
         return blob_id
 
     def __store_links(self, links):
@@ -2645,9 +2657,9 @@ class Doc(object):
         # between what we found last time and what we found now.
         query = Query("link_net", "source_elem", "url")
         query.where(query.Condition("source_doc", self.id))
-        rows = query.execute(self.session.cursor).fetchall()
+        rows = query.execute(self.cursor).fetchall()
         old_links = set([tuple(row) for row in rows])
-        new_links = set([link.key for link in links])
+        new_links = set([link.key for link in links if link.linktype])
         wanted = new_links - old_links
         unwanted = old_links - new_links
 
@@ -2655,24 +2667,24 @@ class Doc(object):
         delete = "DELETE FROM link_net WHERE source_doc = ?"
         if len(unwanted) > 500 and len(unwanted) > len(new_links) / 2:
             wanted = new_links
-            self.session.cursor.execute(delete, (self.id,))
+            self.cursor.execute(delete, (self.id,))
 
         # Otherwise just delete the rows which are not longer correct.
         else:
             delete += " AND source_elem = ? AND url = ?"
             for source_element, url in unwanted:
                 args = self.id, source_element, url
-                self.session.cursor.execute(delete, args)
+                self.cursor.execute(delete, args)
 
         # Insert the rows that aren't already in place.
         for link in links:
             if link.key in wanted:
-                link.save(self.session.cursor)
+                link.save(self.cursor)
 
         # Apply the same technique to the `link_fragment` table.
         query = Query("link_fragment", "fragment")
         query.where(query.Condition("doc_id", self.id))
-        rows = query.execute(self.session.cursor).fetchall()
+        rows = query.execute(self.cursor).fetchall()
         old = set([row.fragment for row in rows])
         new = self.frag_ids or set()
         wanted = new - old
@@ -2680,14 +2692,14 @@ class Doc(object):
         delete = "DELETE FROM link_fragment WHERE doc_id = ?"
         if len(unwanted) > 500 and len(unwanted) > len(new) / 2:
             wanted = new
-            self.session.cursor.execute(delete, (self.id))
+            self.cursor.execute(delete, (self.id))
         else:
             delete += " AND fragment = ?"
             for fragment_id in unwanted:
-                self.session.cursor.execute(delete, (self.id, fragment_id))
+                self.cursor.execute(delete, (self.id, fragment_id))
         insert = "INSERT INTO link_fragment (doc_id, fragment) VALUES (?, ?)"
         for fragment_id in wanted:
-            self.session.cursor.execute(insert, (self.id, fragment_id))
+            self.cursor.execute(insert, (self.id, fragment_id))
 
     def __store_query_terms(self, terms, **opts):
         """
@@ -2712,7 +2724,7 @@ class Doc(object):
         table = opts.get("table", "query_term")
         query = Query(table, "path", "node_loc", "value")
         query.where(query.Condition("doc_id", self.id))
-        rows = query.execute(self.session.cursor).fetchall()
+        rows = query.execute(self.cursor).fetchall()
         old_terms = set([tuple(row) for row in rows])
 
         # Figure out what needs to be eliminated, what needs to be added.
@@ -2723,14 +2735,14 @@ class Doc(object):
         delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
         if len(unwanted) > 1000 and len(unwanted) > len(terms) / 2:
             wanted = terms
-            self.session.cursor.execute(delete, (self.id,))
+            self.cursor.execute(delete, (self.id,))
 
         # Otherwise, refine the DELETE query and do some surgical pruning.
         else:
             delete += " AND path = ? AND node_loc = ? AND value = ?"
             for path, location, value in unwanted:
                 args = self.id, path, location, value
-                self.session.cursor.execute(delete, args)
+                self.cursor.execute(delete, args)
 
         # Insert the rows which still need to be added (possibly all of them).
         fields = "doc_id", "path", "value", "int_val", "node_loc"
@@ -2740,7 +2752,7 @@ class Doc(object):
             integers = self.INTEGERS.findall(value)
             int_val = int(integers[0]) if integers else None
             args = self.id, path, value, int_val, location
-            self.session.cursor.execute(insert, args)
+            self.cursor.execute(insert, args)
 
     def __strip_eids(self, root=None):
         """
@@ -2797,7 +2809,7 @@ class Doc(object):
         update = "UPDATE document SET val_status = ?, val_date = GETDATE() "
         update += "WHERE id = ?"
         args = self.val_status, self.id
-        self.session.cursor.execute(update, args)
+        self.cursor.execute(update, args)
         return True
 
     def __validate(self, **opts):
@@ -2898,7 +2910,7 @@ class Doc(object):
         with self.session.cache.filter_lock:
             if not Doc.VALIDATION_TEMPLATE:
                 title = "Validation Template"
-                doc_id = Doc.id_from_title(title, self.session.cursor)
+                doc_id = Doc.id_from_title(title, self.cursor)
                 Doc.VALIDATION_TEMPLATE = self.get_filter(doc_id).xml
 
         # Get the document node to validate and schema for the document's type.
@@ -2983,31 +2995,34 @@ class Doc(object):
         """
 
         assert label, "Missing label name"
+        cursor = session.conn.cursor()
         query = Query("version_label", "COUNT(*) AS n")
         query.where(query.Condition("name", label))
-        if query.execute(session.cursor).fetchone().n > 0:
+        if query.execute(cursor).fetchone().n > 0:
             raise Exception("Label {!r} already exists".format(label))
         insert = "INSERT INTO version_label (name, comment) VALUES (?, ?)"
-        session.cursor.execute(insert, (label, comment))
+        cursor.execute(insert, (label, comment))
         session.conn.commit()
+        cursor.close()
 
     @staticmethod
     def delete_label(session, label):
         assert label, "Missing label name"
+        cursor = session.conn.cursor()
         query = Query("version_label", "id")
         query.where(query.Condition("name", label))
-        row = query.execute(session.cursor).fetchone()
+        row = query.execute(cursor).fetchone()
         if not row:
             raise Exception("Can't find label {!r}".format(label))
         label_id = row.id
         delete = "DELETE FROM doc_version_label WHERE label = ?"
-        session.cursor.execute(delete, (label_id,))
+        cursor.execute(delete, (label_id,))
         delete = "DELETE FROM version_label WHERE id = ?"
         try:
-            session.cursor.execute(delete, (label_id,))
+            cursor.execute(delete, (label_id,))
             session.conn.commit()
         except:
-            session.cursor.execute("ROLLBACK TRANSACTION")
+            cursor.execute("ROLLBACK TRANSACTION")
             session.logger.exception("delete_label() failure")
             raise Exception("Failure deleting label {!r}".format(label))
 
@@ -3017,7 +3032,9 @@ class Doc(object):
         Return the CDR document ID as an integer (ignoring fragment suffixes)
         """
 
-        return int(re.sub(r"[^\d]", "", str(arg).split("#")[0]))
+        if isinstance(arg, basestring):
+            return int(re.sub(r"[^\d]", "", str(arg).split("#")[0]))
+        return int(arg)
 
     @staticmethod
     def get_text(node, default=None):
@@ -3109,16 +3126,18 @@ class Doc(object):
             def __init__(self): self.deleted, self.errors = [],[]
         reason = "Deleting tracking document for failed mailer job"
         report = CleanupReport()
+        cursor = session.conn.cursor()
         query = Query("query_term q", "q.doc_id").unique()
         query.join("pub_proc p", "p.id = q.int_val", "p.status = 'Failure'")
         query.where("q.path = '/Mailer/JobId'")
         query.where("q.doc_id > {}".format(cls.LEGACY_MAILER_CUTOFF))
-        for row in query.execute(session.cursor).fetchall():
+        for row in query.execute(cursor).fetchall():
             try:
                 Doc(session, id=row.doc_id).delete(reason=reason)
                 report.deleted.append(row.doc_id)
             except Exception as e:
                 report.errors.append(str(e))
+        cursor.close()
         return report
 
     @staticmethod
@@ -3429,7 +3448,7 @@ class Resolver(etree.Resolver):
         #sys.stderr.write("url={}\n".format(url))
         self.doc = self.local.docs[-1]
         self.session = self.doc.session
-        self.cursor = self.session.cursor
+        self.cursor = self.session.conn.cursor()
         self.url = url_unquote(url.replace("+", " "))
         self.url = self.url.replace("@@PLUS@@", "+")
         if url == "cdrx:/last":
@@ -3737,7 +3756,7 @@ class Doctype:
                 if self.id:
                     query = Query("doc_type", "active")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.session.cursor).fetchone()
+                    row = query.execute(self.cursor).fetchone()
                     self._active = row.active if row else "Y"
                 else:
                     self._active = "Y"
@@ -3757,7 +3776,7 @@ class Doctype:
             elif self.id:
                 query = Query("doc_type", "comment")
                 query.where(query.Condition("id", self.id))
-                row = query.execute(self.session.cursor).fetchone()
+                row = query.execute(self.cursor).fetchone()
                 self._comment = row.comment if row else None
             else:
                 self._comment = None
@@ -3778,6 +3797,12 @@ class Doctype:
         return self._created
 
     @property
+    def cursor(self):
+        if not hasattr(self, "_cursor"):
+            self._cursor = self.session.conn.cursor()
+        return self._cursor
+
+    @property
     def dtd(self):
         if not hasattr(self, "_dtd_string"):
             self._dtd = DTD(self.session, name=self.schema)
@@ -3792,7 +3817,7 @@ class Doctype:
                 query = Query("format f", "f.name", "f.id")
                 query.join("doc_type t", "t.format = f.id")
                 query.where(query.Condition("t.id", self.id))
-                row = query.execute(self.session.cursor).fetchone()
+                row = query.execute(self.cursor).fetchone()
                 if row:
                     self._format, self._format_id = row
                 else:
@@ -3829,7 +3854,7 @@ class Doctype:
                 if name:
                     query = Query("doc_type", "id")
                     query.where(query.Condition("name", name))
-                    row = query.execute(self.session.cursor).fetchone()
+                    row = query.execute(self.cursor).fetchone()
                     self._id = row.id if row else None
                 else:
                     self.session.logger.warning("Doctype.id: NO NAME!!!")
@@ -3842,7 +3867,7 @@ class Doctype:
             if not self._name and self.id:
                 query = Query("doc_type", "name")
                 query.where(query.Condition("id", self.id))
-                row = query.execute(self.session.cursor).fetchone()
+                row = query.execute(self.cursor).fetchone()
                 self._name = row.name if row else None
         return self._name
 
@@ -3870,7 +3895,7 @@ class Doctype:
                 query = Query("document d", "d.id", "d.title")
                 query.join("doc_type t", "t.xml_schema = d.id")
                 query.where(query.Condition("t.id", self.id))
-                row = query.execute(self.session.cursor).fetchone()
+                row = query.execute(self.cursor).fetchone()
                 if row:
                     self._schema_id, self._schema = row
             else:
@@ -3884,7 +3909,7 @@ class Doctype:
         if value is None:
             self._schema_id = None
         else:
-            schema_id = Doc.id_from_title(value, self.session.cursor)
+            schema_id = Doc.id_from_title(value, self.cursor)
             if not schema_id:
                 raise Exception("Schema {!r} not found".format(value))
             self._schema_id = schema_id
@@ -3893,7 +3918,7 @@ class Doctype:
     def schema_id(self):
         if not hasattr(self, "_schema_id"):
             if self.schema and not hasattr(self, "_schema_id"):
-                schema_id = Doc.id_from_title(self.schema, self.session.cursor)
+                schema_id = Doc.id_from_title(self.schema, self.cursor)
                 if schema_id:
                     self._schema_id = schema_id
                 else:
@@ -3919,7 +3944,7 @@ class Doctype:
                 if self.id:
                     query = Query("doc_type", "versioning")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.session.cursor).fetchone()
+                    row = query.execute(self.cursor).fetchone()
                     self._versioning = row.versioning if row else "Y"
                 else:
                     self._versioning = "Y"
@@ -3953,7 +3978,7 @@ class Doctype:
             raise Exception("Document type {!r} not found".format(self.name))
         query = Query("all_docs", "COUNT(*) AS n")
         query.where(query.Condition("doc_type", self.id))
-        if query.execute(self.session.cursor).fetchone().n:
+        if query.execute(self.cursor).fetchone().n:
             message = "Cannot delete document type for which documents exist"
             raise Exception(message)
         tables = [
@@ -3964,7 +3989,7 @@ class Doctype:
         ]
         for table, column in tables:
             sql = "DELETE FROM {} WHERE {} = ?".format(table, column)
-            self.session.cursor.execute(sql, (self.id,))
+            self.cursor.execute(sql, (self.id,))
         self.session.conn.commit()
 
     def elements_allowing_fragment_ids(self):
@@ -4030,12 +4055,12 @@ class Doctype:
             sql = pattern.format(", ".join(assignments))
         self.session.logger.info("sql=%s", sql)
         self.session.logger.info("values=%s", values)
-        self.session.cursor.execute(sql, values)
+        self.cursor.execute(sql, values)
         self._schema_date = now
         if not self.id:
             self._created = now
-            self.session.cursor.execute("SELECT @@IDENTITY AS id")
-            self._id = self.session.cursor.fetchone().id
+            self.cursor.execute("SELECT @@IDENTITY AS id")
+            self._id = self.cursor.fetchone().id
         self.session.conn.commit()
         self.session.logger.info("committed doctype %s", self.id)
         return self.id
@@ -4043,7 +4068,7 @@ class Doctype:
     def __format_id_from_name(self, name):
         query = Query("format", "id")
         query.where(query.Condition("name", name))
-        row = query.execute(self.session.cursor).fetchone()
+        row = query.execute(self.cursor).fetchone()
         return row.id if row else None
 
     def __fetch_dates(self):
@@ -4051,7 +4076,7 @@ class Doctype:
         if self.id:
             query = Query("doc_type", "created", "schema_date")
             query.where(query.Condition("id", self.id))
-            row = query.execute(self.session.cursor).fetchone()
+            row = query.execute(self.cursor).fetchone()
             if row:
                 values = []
                 for value in row:
@@ -4083,7 +4108,7 @@ class Doctype:
         if title in schemas:
             raise Exception("infinite schema inclusion")
         schemas.add(title)
-        xml = Doc.get_schema_xml(title, self.session.cursor)
+        xml = Doc.get_schema_xml(title, self.cursor)
         root = etree.fromstring(xml.encode("utf-8"))
         for node in root.iter("*"):
             if node.tag == Schema.COMPLEX_TYPE:
@@ -4178,6 +4203,7 @@ class DTD:
 
     def __init__(self, session, **opts):
         self.session = session
+        self.cursor = session.conn.cursor()
         self.types = dict()
         self.groups = dict()
         self.top = None
@@ -4186,7 +4212,7 @@ class DTD:
 
     def parse_schema(self, name):
         assert name, "how can we parse something we can't find?"
-        schema_xml = Doc.get_schema_xml(name, self.session.cursor)
+        schema_xml = Doc.get_schema_xml(name, self.cursor)
         root = etree.fromstring(schema_xml.encode("utf-8"))
         if root.tag != Schema.SCHEMA:
             raise Exception("Top-level element must be schema")
@@ -4539,21 +4565,15 @@ class LinkType:
         "V": "document version"
     }
 
-    def __init__(self, session, **opts): #id, cursor):
+    def __init__(self, session, **opts):
         self.__session = session
         self.__opts = opts
 
-        """
-        self.id = id
-        query = Query("link_type", "name", "chk_type")
-        query.where(query.Condition("id", id))
-        self.name, self.chk_type = query.execute(cursor).fetchone()
-        query = Query("doc_type t", "t.id", "t.name")
-        query.join("link_target l", "l.target_doc_type = t.id")
-        query.where(query.Condition("l.source_link_type", id))
-        rows = query.execute(cursor).fetchall()
-        self.target_types = dict([row for row in rows])
-        """
+    @property
+    def cursor(self):
+        if not hasattr(self, "_cursor"):
+            self._cursor = self.session.conn.cursor()
+        return self._cursor
 
     @property
     def session(self):
@@ -4569,7 +4589,7 @@ class LinkType:
                 query = Query("link_properties p", *fields)
                 query.join("link_prop_type t", "t.id = p.property_id")
                 query.where(query.Condition("p.link_id", self.id))
-                rows = query.execute(self.session.cursor).fetchall()
+                rows = query.execute(self.cursor).fetchall()
                 self._properties = []
                 message = "Property type {!r} not supported"
                 for row in rows:
@@ -4599,7 +4619,7 @@ class LinkType:
                 query = Query("doc_type t", "t.id", "t.name", "x.element")
                 query.join("link_xml x", "x.doc_type = t.id")
                 query.where(query.Condition("x.link_id", self.id))
-                rows = query.execute(self.session.cursor).fetchall()
+                rows = query.execute(self.cursor).fetchall()
                 sources = []
                 for row in rows:
                     doctype = Doctype(self.session, id=row.id, name=row.name)
@@ -4617,7 +4637,7 @@ class LinkType:
             elif self.id:
                 query = Query("link_type", "comment")
                 query.where(query.Condition("id", self.id))
-                row = query.execute(self.session.cursor).fetchone()
+                row = query.execute(self.cursor).fetchone()
                 self._comment = row.comment if row else None
 
                 # Clean up from an old CGI bug.
@@ -4636,7 +4656,7 @@ class LinkType:
                 query = Query("doc_type t", "t.id", "t.name")
                 query.join("link_target l", "l.target_doc_type = t.id")
                 query.where(query.Condition("l.source_link_type", self.id))
-                rows = query.execute(self.session.cursor).fetchall()
+                rows = query.execute(self.cursor).fetchall()
                 targets = dict()
                 for row in rows:
                     doctype = Doctype(self.session, id=row.id, name=row.name)
@@ -4654,7 +4674,7 @@ class LinkType:
             elif self.id:
                 query = Query("link_type", "chk_type")
                 query.where(query.Condition("id", self.id))
-                row = query.execute(self.session.cursor).fetchone()
+                row = query.execute(self.cursor).fetchone()
                 self._chk_type = row.chk_type if row else None
             else:
                 self._chk_type = None
@@ -4671,7 +4691,7 @@ class LinkType:
             elif self.name:
                 query = Query("link_type", "id")
                 query.where(query.Condition("name", self.name))
-                row = query.execute(self.session.cursor).fetchone()
+                row = query.execute(self.cursor).fetchone()
                 self._id = row.id if row else None
             else:
                 self._id = None
@@ -4691,7 +4711,7 @@ class LinkType:
                 if self.id:
                     query = Query("link_type", "name")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.session.cursor).fetchone()
+                    row = query.execute(self.cursor).fetchone()
                     self._name = row.name if row else None
                 else:
                     self._name = None
@@ -4710,9 +4730,9 @@ class LinkType:
             self.session.conn.commit()
         except:
             self.session.logger.exception("LinkType.save() failure")
-            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.session.cursor.fetchone().tc:
-                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.cursor.fetchone().tc:
+                self.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
     def __drop_related_rows(self):
@@ -4721,7 +4741,7 @@ class LinkType:
             if table == "link_target":
                 column = "source_link_type"
             delete = "DELETE FROM {} WHERE {} = ?".format(table, column)
-            self.session.cursor.execute(delete, (self.id,))
+            self.cursor.execute(delete, (self.id,))
 
     def delete(self):
         if not self.session.can_do("DELETE LINKTYPE"):
@@ -4733,15 +4753,15 @@ class LinkType:
             self.session.conn.commit()
         except:
             self.session.logger.exception("LinkType.delete() failure")
-            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.session.cursor.fetchone().tc:
-                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.cursor.fetchone().tc:
+                self.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
     def __delete(self):
         self.__drop_related_rows()
         delete = "DELETE FROM link_type WHERE id = ?"
-        self.session.cursor.execute(delete, (self.id,))
+        self.cursor.execute(delete, (self.id,))
 
     def __save(self):
         fields = dict(
@@ -4758,12 +4778,12 @@ class LinkType:
         else:
             names = ", ".join(names)
             sql = "INSERT INTO link_type ({}) VALUES (?, ?, ?)".format(names)
-        self.session.cursor.execute(sql, tuple(values))
+        self.cursor.execute(sql, tuple(values))
         if self.id:
             self.__drop_related_rows()
         else:
-            self.session.cursor.execute("SELECT @@IDENTITY as id")
-            self._id = self.session.cursor.fetchone().id
+            self.cursor.execute("SELECT @@IDENTITY as id")
+            self._id = self.cursor.fetchone().id
         for source in self.sources:
             args = self.session, source.doctype, source.element
             linktype = self.lookup(*args)
@@ -4774,14 +4794,14 @@ class LinkType:
             names = "link_id, doc_type, element"
             values = self.id, source.doctype.id, source.element
             insert = "INSERT INTO link_xml ({}) VALUES (?, ?, ?)".format(names)
-            self.session.cursor.execute(insert, values)
+            self.cursor.execute(insert, values)
         for target in itervalues(self.targets):
             assert target.id, "doc type {} not found".format(target.name)
             names = "source_link_type, target_doc_type"
             values = self.id, target.id
             insert = "INSERT INTO link_target ({}) VALUES (?, ?)".format(names)
             try:
-                self.session.cursor.execute(insert, values)
+                self.cursor.execute(insert, values)
             except:
                 self.session.logger.info("targets=%s", self.targets)
                 raise
@@ -4790,7 +4810,7 @@ class LinkType:
             values = self.id, prop.id, prop.value, prop.comment
             insert = "INSERT INTO link_properties ({}) VALUES (?, ?, ?, ?)"
             insert = insert.format(names)
-            self.session.cursor.execute(insert, values)
+            self.cursor.execute(insert, values)
     @classmethod
     def get_linktype_names(cls, session):
         """
@@ -4814,37 +4834,21 @@ class LinkType:
         Find the `LinkType` object for this linking source
 
         Pass:
+          session - logged-in sesion of CDR account
           doctype - `Doctype` for the linking document
           element_tag - string for the linking element's name
-          cursor - access to the database
 
         Return:
           `LinkType` object or None
         """
 
+        cursor = session.conn.cursor()
         query = Query("link_xml", "link_id")
         query.where(query.Condition("doc_type", doctype.id))
         query.where(query.Condition("element", element_tag))
-        row = query.execute(session.cursor).fetchone()
+        row = query.execute(cursor).fetchone()
+        cursor.close()
         return cls(session, id=row.link_id) if row else None
-
-        ### XXXX TODO AVOID CACHEING THESE!!!
-
-
-
-        key = doctype.id, element_tag
-        with cls.LOCK:
-            type_id = cls.TYPE_IDS.get(key)
-        if not type_id:
-            query = Query("link_xml", "link_id")
-            query.where(query.Condition("doc_type", doctype.id))
-            query.where(query.Condition("element", element_tag))
-            row = query.execute(cursor).fetchone()
-            type_id = row.link_id if row else None
-            with cls.LOCK:
-                if key not in cls.TYPE_IDS:
-                    cls.TYPE_IDS[key] = type_id
-        return cls.get(session, type_id)
 
     @classmethod
     def get_property_types(cls, session):
@@ -4852,13 +4856,16 @@ class LinkType:
         Fetch information from the link_prop_type table
         """
 
+        cursor = session.conn.cursor()
         query = Query("link_prop_type", "name", "comment")
-        rows = query.execute(session.cursor).fetchall()
+        rows = query.execute(cursor).fetchall()
         class PropertyType:
             def __init__(self, row):
                 self.name = row.name
                 self.comment = row.comment
-        return [PropertyType(row) for row in rows]
+        types = [PropertyType(row) for row in rows]
+        cursor.close()
+        return types
 
     class TargetType:
         def __init__(self, id, name):
@@ -4877,6 +4884,7 @@ class LinkType:
 
         def __init__(self, session, name, value, comment):
             self.session = session
+            self.cursor = session.conn.cursor()
             self.name = name
             self.value = value
             self.comment = comment
@@ -4886,7 +4894,7 @@ class LinkType:
                 return self._id
             query = Query("link_prop_type", "id")
             query.where(query.Condition("name", self.name))
-            row = query.execute(self.session.cursor).fetchone()
+            row = query.execute(self.cursor).fetchone()
             if row:
                 self._id = row.id
                 return self._id
@@ -5113,7 +5121,7 @@ class LinkType:
                     result = True
                 else:
                     doc_id = link.target_doc.id
-                    cursor = link.doc.session.cursor
+                    cursor = link.doc.session.conn.cursor()
                     query = Query("query_term", "COUNT(*)")
                     query.where(query.Condition("doc_id", doc_id))
                     query.where(query.Condition("path", self.path))
@@ -5307,7 +5315,7 @@ class Link:
                 query.where(query.Condition("doc_id", self.target_doc.id))
                 query.where(query.Condition("value", self.fragment_id))
                 query.where("path LIKE '%@cdr:id'")
-                for row in query.execute(self.doc.session.cursor).fetchall():
+                for row in query.execute(self.doc.cursor).fetchall():
                     if self.fragment_id == row.value:
                         found = True
                         break
@@ -5342,13 +5350,19 @@ class FilterSet:
         self.__opts = opts
         self.session.logger.info("FilterSet(opts=%s)", opts)
     @property
+    def cursor(self):
+        if not hasattr(self, "_cursor"):
+            self._cursor = self.session.conn.cursor()
+        return self._cursor
+
+    @property
     def id(self):
         if not hasattr(self, "_id"):
             self._id = int(self.__opts.get("id", 0)) or None
             if not self._id and self.name:
                 query = Query("filter_set", "id")
                 query.where(query.Condition("name", self.name))
-                row = query.execute(self.session.cursor).fetchone()
+                row = query.execute(self.cursor).fetchone()
                 self._id = row.id if row else None
         return self._id
     @property
@@ -5361,7 +5375,7 @@ class FilterSet:
                 if self.id:
                     query = Query("filter_set", "name")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.session.cursor).fetchone()
+                    row = query.execute(self.cursor).fetchone()
                     self._name = row.name if row else None
         return self._name
     @property
@@ -5372,7 +5386,7 @@ class FilterSet:
             elif self.id:
                 query = Query("filter_set", "description")
                 query.where(query.Condition("id", self.id))
-                row = query.execute(self.session.cursor).fetchone()
+                row = query.execute(self.cursor).fetchone()
                 self._description = row.description if row else None
             else:
                 self._description = None
@@ -5388,7 +5402,7 @@ class FilterSet:
                 query = Query("filter_set_member", "filter", "subset")
                 query.where(query.Condition("filter_set", self.id))
                 query.order("position")
-                rows = query.execute(self.session.cursor).fetchall()
+                rows = query.execute(self.cursor).fetchall()
                 for filter_id, set_id in rows:
                     if filter_id:
                         self._members.append(Doc(self.session, id=filter_id))
@@ -5407,7 +5421,7 @@ class FilterSet:
             elif self.id:
                 query = Query("filter_set", "notes")
                 query.where(query.Condition("id", self.id))
-                row = query.execute(self.session.cursor).fetchone()
+                row = query.execute(self.cursor).fetchone()
                 self._notes = row.notes if row else None
             else:
                 self._notes = None
@@ -5427,15 +5441,15 @@ class FilterSet:
                 raise Exception("No filter set identified for deletion")
         query = Query("filter_set_member", "COUNT(*) AS n")
         query.where(query.Condition("subset", self.id))
-        if query.execute(self.session.cursor).fetchone().n > 0:
+        if query.execute(self.cursor).fetchone().n > 0:
             raise Exception("Can't delete set which is itself a set member")
         try:
             return self.__delete()
         except:
             self.session.logger.exception("Validation failed")
-            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.session.cursor.fetchone().tc:
-                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.cursor.fetchone().tc:
+                self.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
     def __delete(self):
@@ -5445,7 +5459,7 @@ class FilterSet:
         ]
         for table, column in tables:
             sql = "DELETE FROM {} WHERE {} = ?".format(table, column)
-            self.session.cursor.execute(sql, (self.id,))
+            self.cursor.execute(sql, (self.id,))
         self.session.conn.commit()
 
     def save(self):
@@ -5458,9 +5472,9 @@ class FilterSet:
             return self.__save()
         except:
             self.session.logger.exception("Validation failed")
-            self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.session.cursor.fetchone().tc:
-                self.session.cursor.execute("ROLLBACK TRANSACTION")
+            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if self.cursor.fetchone().tc:
+                self.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
     def __save(self):
@@ -5497,13 +5511,13 @@ class FilterSet:
             ph = ", ".join(placeholders)
             sql = "INSERT INTO filter_set ({}) VALUES ({})".format(names, ph)
         self.session.logger.info("sql=%s values=%s", sql, tuple(values))
-        self.session.cursor.execute(sql, values)
+        self.cursor.execute(sql, values)
         if not self.id:
-            self.session.cursor.execute("SELECT @@IDENTITY AS id")
-            self._id = self.session.cursor.fetchone().id
+            self.cursor.execute("SELECT @@IDENTITY AS id")
+            self._id = self.cursor.fetchone().id
         else:
             delete = "DELETE FROM filter_set_member WHERE filter_set = ?"
-            self.session.cursor.execute(delete, (self.id,))
+            self.cursor.execute(delete, (self.id,))
         names = "filter_set", "position", "filter", "subset"
         args = ", ".join(names), ", ".join(["?"] * len(names))
         insert = "INSERT INTO filter_set_member ({}) VALUES ({})".format(*args)
@@ -5513,7 +5527,7 @@ class FilterSet:
                 values = self.id, position, member.id, None
             else:
                 values = self.id, position, None, member.id
-            self.session.cursor.execute(insert, values)
+            self.cursor.execute(insert, values)
             position += 1
         self.session.conn.commit()
         return len(self.members)
