@@ -715,8 +715,8 @@ class MiscellaneousDoc:
 
         import xml.dom.minidom, cdr
         self.letter = letter
-        attr  = 'CdrAttr/MiscellaneousDocument/MiscellaneousDocumentTitle'
-        query = '%s = "%s"' % (attr, name)
+        path  = "/MiscellaneousDocument/MiscellaneousDocumentTitle"
+        query = "{}/value eq {}".format(path, name)
         resp  = cdr.search('guest', query)
         if isinstance(resp, (str, unicode)):
             raise Exception("failure loading misc doc '%s': %s" % (name, resp))
