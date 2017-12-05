@@ -302,15 +302,18 @@ class Session:
         self.conn.commit()
 
     def save_client_trace_log(self, log_data):
-        match = re.search(r"logon\(([^,]+),", log_data)
-        user = match.group(1) if match else None
+        user = session = None
+        match = re.search(r"logon\(([^,]+), ([^)]+)\)", log_data)
+        if match:
+            user = match.group(1)
+            session = match.group(2)
         fields = "log_saved, cdr_user, session_id, log_data"
-        values = user, self.name, log_data
-        insert = "INSERT INTO dll_trace_log ({}) VALUES (GETDATE, ?, ?, ?)"
+        values = user, session, log_data
+        insert = "INSERT INTO dll_trace_log ({}) VALUES (GETDATE(), ?, ?, ?)"
         self.cursor.execute(insert.format(fields), values)
         self.conn.commit()
         self.cursor.execute("SELECT @@IDENTITY AS id")
-        return self.cursor.fetchone().id
+        return int(self.cursor.fetchone().id)
 
     def __str__(self):
         """

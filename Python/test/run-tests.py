@@ -480,7 +480,72 @@ if FULL:
             row = query.execute(self.CURSOR).fetchone()
             self.assertIsNone(row)
             cdr.delDoc(self.session, self.__class__.doc_id, tier=self.TIER)
-        def test_36_english_map_(self):
+        def test_36_set_doc_stat(self):
+            ctrl = dict(DocTitle="doc status test")
+            xml = u"<xxtest><a>dada</a></xxtest>"
+            doc = cdr.makeCdrDoc(xml, "xxtest", None, ctrl)
+            doc_id = cdr.addDoc(self.session, doc=doc, tier=self.TIER)
+            self.assertTrue(doc_id.startswith("CDR"))
+            doc_id = int(doc_id[3:])
+            status = cdr.getDocStatus(self.session, doc_id, tier=self.TIER)
+            self.assertEqual(status, "A")
+            opts = dict(comment="testing setDocStatus()", tier=self.TIER)
+            result = cdr.setDocStatus(self.session, doc_id, "I", **opts)
+            self.assertIsNone(result)
+            status = cdr.getDocStatus(self.session, doc_id, tier=self.TIER)
+            self.assertEqual(status, "I")
+            query = db.Query("audit_trail", "COUNT(*) AS n")
+            query.where(query.Condition("document", doc_id))
+            self.assertEqual(query.execute().fetchone().n, 2)
+            query = db.Query("audit_trail_added_action", "COUNT(*) AS n")
+            query.where(query.Condition("document", doc_id))
+            self.assertEqual(query.execute().fetchone().n, 1)
+            cdr.delDoc(self.session, doc_id, tier=self.TIER)
+        def test_37_update_title(self):
+            directory = os.path.dirname(os.path.realpath(__file__))
+            with open("{}/{}".format(directory, "004.xml"), "rb") as fp:
+                filter1 = fp.read()
+            with open("{}/{}".format(directory, "005.xml"), "rb") as fp:
+                filter2 = fp.read()
+            conn = db.connect()
+            cursor = conn.cursor()
+            query = db.Query("doc_type", "title_filter")
+            query.where("name = 'xxtest'")
+            filter_id = query.execute(cursor).fetchone().title_filter
+            if filter_id is None:
+                ctrl = dict(DocTitle="Filter title: DocTitle for xxtest")
+                doc = cdr.makeCdrDoc(filter1, "Filter", None, ctrl)
+                doc_id = cdr.addDoc(self.session, doc=doc, tier=self.TIER)
+                self.assertTrue(doc_id.startswith("CDR"))
+                filter_id = int(doc_id[3:])
+                update = "UPDATE doc_type SET title_filter = ? WHERE name = ?"
+                cursor.execute(update, (filter_id, "xxtest"))
+                conn.commit()
+            else:
+                opts = dict(getObject=True, tier=self.TIER)
+                doc = cdr.getDoc(self.session, filter_id, **opts)
+                doc.xml = filter1
+                doc_id = cdr.repDoc(self.session, doc=str(doc), tier=self.TIER)
+                self.assertTrue(doc_id.startswith("CDR"))
+            xml = u"<xxtest><a>gimte</a></xxtest>"
+            doc = cdr.makeCdrDoc(xml, "xxtest")
+            doc_id = cdr.addDoc(self.session, doc=doc, tier=self.TIER)
+            self.assertTrue(doc_id.startswith("CDR"))
+            doc_id = int(doc_id[3:])
+            query = db.Query("document", "title")
+            query.where(query.Condition("id", doc_id))
+            title = query.execute(cursor).fetchone().title
+            self.assertEqual(title, "This is a test gimte")
+            opts = dict(getObject=True, tier=self.TIER)
+            doc = cdr.getDoc(self.session, filter_id, **opts)
+            doc.xml = filter2
+            filter_id = cdr.repDoc(self.session, doc=str(doc), tier=self.TIER)
+            self.assertTrue(filter_id.startswith("CDR"))
+            result = cdr.updateTitle(self.session, doc_id, tier=self.TIER)
+            self.assertTrue(result)
+            title = query.execute(cursor).fetchone().title
+            self.assertEqual(title, "Modified title for gimte")
+        def test_38_english_map_(self):
             name = u"stage II cutaneous T-cell lymphoma"
             phrase = u"STAGE IIA CUTANEOUS T CELL LYMPHOMA"
             names = cdr.get_glossary_map(self.session, "en", tier=self.TIER)
@@ -488,7 +553,7 @@ if FULL:
             index = dict([(n.id, n) for n in names])
             self.assertEqual(index[43966].name, name)
             self.assertTrue(phrase in index[43966].phrases)
-        def test_37_spanish_map_(self):
+        def test_39_spanish_map_(self):
             name = u"microscopio electr\xf3nico"
             phrase = u"ELECTR\xd3NICA"
             names = cdr.get_glossary_map(self.session, "es", tier=self.TIER)
@@ -496,7 +561,7 @@ if FULL:
             index = dict([(n.id, n) for n in names])
             self.assertEqual(index[44025].name, name)
             self.assertTrue(phrase in index[44025].phrases)
-        def test_38_last_doc_ver(self):
+        def test_40_last_doc_ver(self):
             ctrl = dict(DocTitle="last version test")
             xml = u"<xxtest><a>dada</a></xxtest>"
             doc = cdr.makeCdrDoc(xml, "xxtest", ctrl=ctrl)
@@ -520,7 +585,7 @@ if FULL:
             versions = cdr.lastVersions(self.session, doc_id, tier=self.TIER)
             self.assertEqual(versions, (2, 2, "N"))
             cdr.delDoc(self.session, doc_id, tier=self.TIER)
-        def test_39_list_docvers(self):
+        def test_41_list_docvers(self):
             ctrl = dict(DocTitle="list versions test")
             xml = u"<xxtest><a>dada</a></xxtest>"
             doc = cdr.makeCdrDoc(xml, "xxtest", ctrl=ctrl)
@@ -547,7 +612,7 @@ if FULL:
             self.assertEqual(comment, "this is version two")
             self.assertFalse(last_version_date < penultimate_version_date)
             cdr.delDoc(self.session, doc_id, tier=self.TIER)
-        def test_40_publish_docs(self):
+        def test_42_publish_docs(self):
             args = self.session, "Primary", "Hotfix-Remove"
             opts = dict(docs=["CDR5000"], allowInActive="Y", tier=self.TIER)
             result = cdr.publish(*args, **opts)
@@ -561,7 +626,7 @@ if FULL:
             sql = "UPDATE pub_proc SET status = 'Failure' WHERE id = ?"
             cursor.execute(sql, (int(job_id),))
             conn.commit()
-        def test_41_mailrcleanup(self):
+        def test_43_mailrcleanup(self):
             cdr.mailerCleanup(self.session)
             query = db.Query("pub_proc", "id").limit(2)
             query.where("status = 'Failure'")
@@ -592,12 +657,12 @@ if FULL:
         set_name = "Test Filter Set {}".format(datetime.datetime.now())
         set_desc = "Test Filter Set Description"
         set_notes = "Quo usque tandem abutere Catalina patientia nostra?"
-        def test_42_get_filters_(self):
+        def test_44_get_filters_(self):
             filters = cdr.getFilters(self.session, tier=self.TIER)
             self.assertTrue(filters[0].id.startswith("CDR"))
             self.__class__.filters = dict([(f.name, f.id) for f in filters])
             self.assertTrue("Vendor Filter: Summary" in self.filters)
-        def test_43_add_flt_set_(self):
+        def test_45_add_flt_set_(self):
             members = []
             for name in sorted(self.filters)[:self.num_filters]:
                 members.append(cdr.IdAndName(self.filters[name], name))
@@ -605,14 +670,14 @@ if FULL:
             filter_set = cdr.FilterSet(*args)
             result = cdr.addFilterSet(self.session, filter_set, tier=self.TIER)
             self.assertEqual(result, len(members))
-        def test_44_get_flt_sets(self):
+        def test_46_get_flt_sets(self):
             sets = cdr.getFilterSets(self.session, tier=self.TIER)
             self.assertTrue(isinstance(sets, list))
             self.assertTrue(isinstance(sets[0], cdr.IdAndName))
             self.__class__.filter_sets = dict([(s.name, s.id) for s in sets])
             self.assertTrue("Vendor Summary Set" in self.filter_sets)
             self.assertTrue(self.set_name in self.filter_sets)
-        def test_45_get_flt_set_(self):
+        def test_47_get_flt_set_(self):
             name = "Vendor Summary Set"
             filter_set = cdr.getFilterSet(self.session, name, tier=self.TIER)
             self.assertTrue(isinstance(filter_set, cdr.FilterSet))
@@ -624,7 +689,7 @@ if FULL:
             self.assertEqual(filter_set.desc, self.set_desc)
             self.assertIsNone(filter_set.notes)
             self.assertEqual(len(filter_set.members), 3)
-        def test_46_rep_flt_set_(self):
+        def test_48_rep_flt_set_(self):
             name = self.set_name
             filter_set = cdr.getFilterSet(self.session, name, tier=self.TIER)
             filter_set.notes = self.set_notes
@@ -642,7 +707,7 @@ if FULL:
             self.assertTrue(isinstance(filter_set.members[0].id, basestring))
             self.assertTrue(isinstance(filter_set.members[-1], cdr.IdAndName))
             self.assertFalse(isinstance(filter_set.members[-1].id, basestring))
-        def test_47_del_flt_set_(self):
+        def test_49_del_flt_set_(self):
             name = self.set_name
             result = cdr.delFilterSet(self.session, name, tier=self.TIER)
             self.assertIsNone(result)
@@ -679,7 +744,7 @@ if FULL:
         def __make_test_xml(self, doc_id):
             pattern = '<xxtest xmlns:cdr="{}"><a cdr:ref="{}">x</a></xxtest>'
             return pattern.format(cdr.NAMESPACE, cdr.normalize(doc_id))
-        def test_48_add_linktype(self):
+        def test_50_add_linktype(self):
             opts = dict(
                 comment=self.COMMENT,
                 linkChkType="P",
@@ -705,10 +770,10 @@ if FULL:
             result = cdr.valDoc(self.session, "xxtest", **opts).decode("utf-8")
             self.assertTrue("<Errors" in result)
             self.assertTrue("Failed link target rule" in result)
-        def test_49_linktypes___(self):
+        def test_51_linktypes___(self):
             types = cdr.getLinkTypes(self.session, tier=self.TIER)
             self.assertTrue(self.NAME in types)
-        def test_50_get_linktype(self):
+        def test_52_get_linktype(self):
             linktype = cdr.getLinkType(self.session, self.NAME, tier=self.TIER)
             self.assertEqual(linktype.name, self.NAME)
             self.assertEqual(linktype.linkChkType, "P")
@@ -716,7 +781,7 @@ if FULL:
             self.assertEqual(linktype.linkSources, [("xxtest", "a")])
             self.assertEqual(linktype.linkProps, [self.PROP])
             self.assertEqual(linktype.comment, self.COMMENT)
-        def test_51_rep_linktype(self):
+        def test_53_rep_linktype(self):
             opts = dict(tier=self.TIER)
             action = "modlink"
             lt = cdr.getLinkType(self.session, self.NAME, **opts)
@@ -740,7 +805,7 @@ if FULL:
             with test(Exception, expression):
                 name = self.NEW_NAME
                 cdr.putLinkType(self.session, name, lt, action, **opts)
-        def test_52_del_linktype(self):
+        def test_54_del_linktype(self):
             opts = dict(tier=self.TIER)
             types = cdr.getLinkTypes(self.session, tier=self.TIER)
             for name in (self.NAME, self.NEW_NAME):
@@ -750,12 +815,12 @@ if FULL:
             types = cdr.getLinkTypes(self.session, tier=self.TIER)
             self.assertTrue(self.NAME not in types)
             self.assertTrue(self.NEW_NAME not in types)
-        def test_53_proptypes___(self):
+        def test_55_proptypes___(self):
             types = cdr.getLinkProps(self.session, tier=self.TIER)
             self.assertEqual(len(types), 1)
             self.assertEqual(types[0].name, "LinkTargetContains")
             self.assertTrue(isinstance(types[0].comment, basestring))
-        def test_54_get_tree____(self):
+        def test_56_get_tree____(self):
             opts = dict(tier=self.TIER)
             tree = cdr.getTree(self.session, self.BREAST_CANCER, **opts)
             term = tree.terms[self.BREAST_CANCER]
@@ -765,7 +830,7 @@ if FULL:
             self.assertTrue(term.name.startswith("breast cancer"))
             self.assertTrue(self.MALE_BREAST_CANCER in children)
             self.assertTrue(self.ADULT_SOLID_TUMOR in parents)
-        def test_55_paste_link__(self):
+        def test_57_paste_link__(self):
             query = db.Query("query_term", "doc_id").limit(1)
             query.where("path = '/Term/PreferredName'")
             query.where("value = 'bevacizumab'")
@@ -788,20 +853,34 @@ if FULL:
                         "documents to document {} not permitted")
             with test(Exception, expected.format(cdr.normalize(target))):
                 cdr.check_proposed_link(*args, **opts)
-        def test_56_get_links___(self):
+        def test_58_get_links___(self):
             links = cdr.get_links(self.session, 5000, tier=self.TIER)
             self.assertTrue(len(links) >= 4)
             self.assertTrue("Physician-Annual remail" in "".join(links))
             self.assertTrue(links[0].startswith("Document "))
             self.assertTrue("links to this document" in links[-1])
+        def test_59_search_links(self):
+            args = "guest", "Person", "PDQEditorialBoard"
+            opts = dict(tier=self.TIER, limit=1, pattern="PDQ Adult%")
+            docs = cdr.search_links(*args, **opts)
+            self.assertTrue(isinstance(docs, (list, tuple)))
+            self.assertEqual(len(docs), 1)
+            self.assertTrue(isinstance(docs[0], cdr.IdAndName))
+            self.assertIn("PDQ Adult", docs[0].name)
+            args = "guest", "Summary", "Term"
+            opts = dict(tier=self.TIER, pattern="BRAF%inhibitor%")
+            docs = cdr.search_links(*args, **opts)
+            for doc in docs:
+                self.assertTrue(doc.name.upper().startswith("BRAF"))
+                self.assertIn("inhibitor", doc.name.lower())
 
     class _07SearchTests____(Tests):
         PATH = "/Term/Gimte"
         RULE = "Test Rule Number One"
-        def test_57_list_rules__(self):
+        def test_60_list_rules__(self):
             rules = cdr.listQueryTermRules(self.session, tier=self.TIER)
             self.assertTrue(self.RULE in rules)
-        def test_58_add_qt_def__(self):
+        def test_61_add_qt_def__(self):
             opts = dict(tier=self.TIER)
             path = self.PATH
             rule = self.RULE
@@ -816,11 +895,11 @@ if FULL:
                 cdr.addQueryTermDef(self.session, path, None, **opts)
             with test(Exception, "Unknown query term rule"):
                 cdr.addQueryTermDef(self.session, "/XXX", "bogus", **opts)
-        def test_59_list_defs___(self):
+        def test_62_list_defs___(self):
             defs = cdr.listQueryTermDefs(self.session, tier=self.TIER)
             self.assertTrue((self.PATH, self.RULE) in defs)
             self.assertFalse((self.PATH, None) in defs)
-        def test_60_del_qt_def__(self):
+        def test_63_del_qt_def__(self):
             opts = dict(tier=self.TIER)
             rule = self.RULE
             path = self.PATH
@@ -835,8 +914,19 @@ if FULL:
             defs = cdr.listQueryTermDefs(self.session, tier=self.TIER)
             self.assertFalse((self.PATH, self.RULE) in defs)
             self.assertFalse((self.PATH, None) in defs)
-        def test_61_reindex_doc_(self):
+        def test_64_reindex_doc_(self):
             self.assertIsNone(cdr.reindex(self.session, 5000, tier=self.TIER))
+        def test_65_search______(self):
+            opts = dict(doctypes=["PublishingSystem"], tier=self.TIER)
+            docs = cdr.search("guest", **opts)
+            self.assertIn("Primary", str(docs))
+            query = "CdrCtl/Title begins genetics"
+            opts["doctypes"] = ["Summary"]
+            docs = cdr.search("guest", query, **opts)
+            for doc in docs:
+                self.assertEqual("Summary", doc.docType)
+                self.assertTrue(doc.docTitle.lower().startswith("genetics"))
+                self.assertTrue(doc.docId.startswith("CDR0"))
 
 
     class _07UserTests______(Tests):
@@ -862,17 +952,17 @@ if FULL:
             comment=COMMENT,
             authMode=AUTHMODE
         )
-        def test_62_add_user____(self):
+        def test_66_add_user____(self):
             user = cdr.User(self.NAME, **self.OPTS)
             result = cdr.putUser(self.session, None, user, tier=self.TIER)
             self.assertIsNone(result)
-        def test_63_mod_user____(self):
+        def test_67_mod_user____(self):
             opts = dict(self.OPTS)
             opts["comment"] = self.NEW_COMMENT
             user = cdr.User(self.NEW_NAME, **opts)
             result = cdr.putUser(self.session, self.NAME, user, tier=self.TIER)
             self.assertIsNone(result)
-        def test_64_get_user____(self):
+        def test_68_get_user____(self):
             user = cdr.getUser(self.session, self.NEW_NAME, tier=self.TIER)
             self.assertEqual(user.name, self.NEW_NAME)
             self.assertEqual(user.comment, self.NEW_COMMENT)
@@ -880,17 +970,17 @@ if FULL:
             self.assertEqual(user.phone, self.PHONE)
             self.assertEqual(user.groups, self.GROUPS)
             self.assertEqual(user.authMode, self.AUTHMODE)
-        def test_65_list_users__(self):
+        def test_69_list_users__(self):
             users = cdr.getUsers(self.session, tier=self.TIER)
             self.assertTrue(self.NEW_NAME in users)
             self.assertFalse(self.NAME in users)
-        def test_66_del_user____(self):
+        def test_70_del_user____(self):
             result = cdr.delUser(self.session, self.NEW_NAME, tier=self.TIER)
             self.assertIsNone(result)
             users = cdr.getUsers(self.session, tier=self.TIER)
             self.assertFalse(self.NEW_NAME in users)
             self.assertFalse(self.NAME in users)
-        def test_67_log_cli_evnt(self):
+        def test_71_log_cli_evnt(self):
             description = "This is a test event description"
             cdr.log_client_event(self.session, description, tier=self.TIER)
             query = db.Query("client_log", "event_time", "event_desc")
@@ -899,15 +989,26 @@ if FULL:
             self.assertEqual(description, row.event_desc)
             delta = datetime.datetime.now() - row.event_time
             self.assertTrue(abs(delta.total_seconds()) < 2)
+        def test_72_save_trcelog(self):
+            opts = dict(tier=self.TIER)
+            args = datetime.datetime.now(), self.session
+            log_data = "{} logon(joe, {}) test trace log data".format(*args)
+            log_id = cdr.save_client_trace_log(self.session, log_data, **opts)
+            self.assertTrue(isinstance(log_id, int))
+            query = db.Query("dll_trace_log", "cdr_user", "session_id")
+            query.where(query.Condition("log_id", log_id))
+            row = query.execute().fetchone()
+            self.assertEqual(row.cdr_user, "joe")
+            self.assertEqual(row.session_id, self.session)
 
 
     class _08ReportingTests_(Tests):
-        def test_68_report______(self):
+        def test_73_report______(self):
             directory = os.path.dirname(os.path.realpath(__file__))
             with open("{}/{}".format(directory, "003.xml"), "rb") as fp:
                 xml = fp.read()
-            ctrl = {"DocTitle": "reporting test"}
-            doc = cdr.makeCdrDoc(xml, "xxtest", None, ctrl)
+            #ctrl = {"DocTitle": "reporting test"}
+            doc = cdr.makeCdrDoc(xml, "Person")#, None, ctrl)
             doc_id = cdr.addDoc(self.session, doc=doc, tier=self.TIER)
             self.assertTrue(doc_id.startswith("CDR"))
             name = "Dated Actions"
@@ -928,10 +1029,18 @@ if FULL:
             self.assertIn("Shady Grove", report)
             cdr.delDoc(self.session, doc_id, tier=self.TIER)
 
-    class _92TestsInProgress(Tests):
-        """
-        """
-
+    class _09SystemCtlTests_(Tests):
+        def test_74_set_control_(self):
+            opts = dict(group="test", name="n", value="v", comment="c")
+            opts["tier"] = self.TIER
+            result = cdr.updateCtl(self.session, "Create", **opts)
+            self.assertIsNone(result)
+            value = cdr.getControlValue("test", "n", tier=self.TIER)
+            self.assertEqual("v", value)
+            result = cdr.updateCtl(self.session, "Inactivate", **opts)
+            self.assertIsNone(result)
+            value = cdr.getControlValue("test", "n", tier=self.TIER)
+            self.assertIsNone(value)
 
 if __name__ == "__main__":
     unittest.main()

@@ -28,7 +28,7 @@ from cdrapi.docs import LinkType as APILinkType
 from cdrapi.docs import FilterSet as APIFilterSet
 from cdrapi.publishing import Job as PublishingJob
 from cdrapi.reports import Report
-from cdrapi.searches import QueryTermDef
+from cdrapi.searches import QueryTermDef, Search
 
 # ======================================================================
 # Make sure we can run on both Python 2 and Python 3
@@ -48,8 +48,135 @@ except:
 
 
 # ======================================================================
+# Manage CDR control values
+# ======================================================================
+
+def getControlValue(group, name, default=None, tier=None):
+    """
+    Fetch a value from the ctl table
+
+    Pass:
+      group - string naming group for which value is stored
+      name - string for value's key withing the group
+      default - optional value to return if no active value found
+      tier - optional; one of DEV, QA, STAGE, PROD
+
+    Return:
+      string for control value if active value found; otherwise `default`
+    """
+
+    cursor = None
+    if tier:
+        cursor = cdrdb.connect(user="CdrGuest", tier=tier).cursor()
+    query = cdrdb.Query("ctl", "val")
+    query.where(query.Condition("grp", group))
+    query.where(query.Condition("name", name))
+    query.where("inactivated IS NULL")
+    row = query.execute(cursor).fetchone()
+    return row.val if row else default
+
+def getControlGroup(group, tier=None):
+    """
+    Fetch a named group of CDR control values
+
+    Pass:
+      group - string naming group to be fetched
+      tier - optional; one of DEV, QA, STAGE, PROD
+
+    Return:
+      dictionary of active values for the group, indexed by their names
+    """
+
+    cursor = cdrdb.connect("CdrGuest", tier=tier).cursor if tier else None
+    query = cdrdb.Query("ctl", "name", "val")
+    query.where(query.Condition("grp", group))
+    query.where("inactivated IS NULL")
+    group = dict()
+    for name, value in query.execute(cursor).fetchall():
+        group[name] = value
+    return group
+
+def updateCtl(credentials, action, **opts):
+    """
+    Update the `ctl` table
+
+    The `ctl` table holds groups of named CDR system values used to
+    control the behavior of the software at run time. This function
+    is used to set or deactivate a value in this table.
+
+    Pass:
+      action - required string indicating what the function should do;
+               one of:
+                  "Create"
+                      add a new row to the table, assigning a value for
+                      a group/name combination; any existing rows for
+                      that comibinaty will be inactivated
+                  "Inactivate"
+                      mark the row for a group/name combination as
+                      inactivated
+                  "Install"
+                      obsolete action, used for managing the cache of
+                      control values when the CDR used a Windows
+                      service to handle all of the client/server
+                      requests; currently ignored
+      group - string naming the group for which the value is to be
+              installed or inactivated (e.g., "Publishing"); required
+              for the "Create" and "Inactivate" commands; otherwise ignored
+      name - string for the value's key (unique within the group, but
+             not necessarily withing the table); e.g., "ThreadCount";
+             required for the "Create" and "Inactivate" commands;
+             otherwise ignored
+      value - string for the value to be added to the table (e.g., "6");
+              required for the "Create" action; otherwise ignored
+      comment - optional string describing the new value; ignored for
+                all actions except "Create"
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+        None
+
+    Throws
+        Exception if there is an error return from the CdrServer.
+    """
+
+    group = opts.get("group")
+    name = opts.get("name")
+    value = opts.get("value")
+    comment = opts.get("comment")
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        if action == "Create":
+            opts = dict(comment=comment)
+            Tier.set_control_value(session, group, name, value, **opts)
+        elif action == "Inactivate":
+            Tier.inactivate_control_value(session, group, name)
+        elif action != "Install":
+            raise Exception("Invalid action {!r}".format(action))
+    else:
+        command = etree.Element("CdrSetCtl")
+        wrapper = etree.SubElement(command, "Ctl")
+        etree.SubElement(wrapper, "Action").text = action
+        if group:
+            etree.SubElement(wrapper, "Group").text = group
+        if name:
+            etree.SubElement(wrapper, "Key").text = name
+        if value:
+            etree.SubElement(wrapper, "Value").text = value
+        if comment:
+            etree.SubElement(wrapper, "Comment").text = value
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == command.tag + "Resp":
+                return
+            raise Exception(";".join(response.errors) or "missing response")
+        raise Exception("missing response")
+
+
+# ======================================================================
 # Manage CDR login sessions
 # ======================================================================
+
 def login(username, password="", **opts):
 
     """
@@ -1885,6 +2012,112 @@ def unlabel_doc(credentials, doc_id, label, **opts):
             raise Exception(error)
         raise Exception("missing response")
 
+def setDocStatus(credentials, docId, newStatus, **opts):
+    """
+    Change the active_status column for a document.
+
+    Required positional arguments:
+      credentials - result of login()
+      docId - unique ID for document to be modified
+      newStatus - "I" (inactive) or "A" (active)
+
+    Optional keyword arguments:
+      comment - optional string to be written to the audit table
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+    """
+
+    comment = opts.get("comment")
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        APIDoc(session, id=docId).set_status(newStatus, comment=comment)
+    else:
+        command = etree.Element("CdrSetDocStatus")
+        etree.SubElement(command, "DocId").text = normalize(docId)
+        etree.SubElement(command, "NewStatus").text = newStatus
+        if comment:
+            etree.SubElement(command, "Comment").text = comment
+        for response in _Control.send_command(session, command, tier):
+            if response.node.tag == command.tag + "Resp":
+                return
+            error = ";".join(response.errors) or "missing response"
+            raise Exception(error)
+        raise Exception("missing response")
+
+def getDocStatus(credentials, docId, tier=None):
+    """
+    Retrieve the active status for a document
+
+    Pass:
+      credentials - ignored
+      docId - unique ID for CDR document
+      tier - optional keyword argument
+    """
+
+    cursor = cdrdb.connect(user="CdrGuest", tier=tier).cursor()
+    cdr_id, int_id, frag_id = exNormalize(docId)
+    query = cdrdb.Query("all_docs", "active_status")
+    query.where(query.Condition("id", int_id))
+    row = query.execute(cursor).fetchone()
+    if not row:
+        raise Exception("Invalid document ID {!r}".format(docId))
+    return row.active_status
+
+def unblockDoc(credentials, docId, **opts):
+    """
+    Set document status to "A" (active)
+
+    This is a convenience wrapper for cdr.setDocStatus(..., "A")
+
+    Required positional arguments:
+      credentials - result of login()
+      docId - unique ID for document to be modified
+      newStatus - "I" (inactive) or "A" (active)
+
+    Optional keyword arguments:
+      comment - optional string to be written to the audit table
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+    """
+
+    setDocStatus(credentials, docId, "A", **opts)
+
+def updateTitle(credentials, docId, **opts):
+    """
+    Update a document title
+
+    Tell the CdrServer to re-run the title filter for this document,
+    updating the title stored in the document table.
+
+    No locking is done since the this action does not change the document
+    itself.  If another user has the document checked out, no harm will
+    be done when and if he saves it.
+
+    Pass:
+      credentials - Logon credentials or session.
+      docId       - Document ID, any format is okay.
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+        True  = Host says title was changed.
+        False = Host says regenerated title is the same as the old one.
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        return APIDoc(session, id=docId).update_title()
+    command = etree.Element("CdrUpdateTitle")
+    etree.SubElement(command, "DocId").text = normalize(docId)
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == command.tag + "Resp":
+            return get_text(response.node) == "changed"
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
 def valDoc(credentials, doctype, **opts):
     """
     Validate a document, either in the database or passed to here.
@@ -3041,6 +3274,61 @@ def getLinkProps(credentials, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+def search_links(credentials, source_type, element, **opts):
+    """
+    Find candidate target documents for a link type
+
+    Pass:
+      credentials - result of login
+      source_type - string for linking document type
+      element - string for linking element
+
+    Optional keyword arguments:
+      pattern - string for title pattern to be matched (may contain wildcards)
+      limit - integer to constrain the size of the result set
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      sequence of zero or more `IdAndName` objects
+
+    Raise:
+      Exception if linking from the specified element is now allowed
+      for documents of the specified source type
+    """
+
+    limit = opts.get("limit")
+    pattern = opts.get("pattern")
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        message = "Link from {} elements of {} documents not permitted"
+        doctype = Doctype(session, name=source_type)
+        link_type = APILinkType.lookup(session, doctype, element)
+        if link_type is None:
+            raise Exception(message.format(element, source_type))
+        opts = dict(limit=limit, pattern=pattern)
+        docs = link_type.search(**opts)
+        return [IdAndName(doc.id, doc.title) for doc in docs]
+    command = etree.Element("CdrSearchLinks")
+    if limit:
+        command.set("MaxDocs", str(limit))
+    etree.SubElement(command, "SourceDocType").text = source_type
+    etree.SubElement(command, "SourceElementType").text = element
+    if pattern:
+        etree.SubElement(command, "TargetTitlePattern").text = pattern
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == command.tag + "Resp":
+            results = []
+            for result in response.node.findall("QueryResults/QueryResult"):
+                doc_id = get_text(result.find("DocId"))
+                title = get_text(result.find("DocTitle"))
+                results.append(IdAndName(doc_id, title))
+            return results
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
+
 def check_proposed_link(credentials, source_type, element, target, **opts):
     """
     Verify that proposed link is allowed
@@ -3278,6 +3566,84 @@ def report(credentials, name, **opts):
 # ======================================================================
 # Manage CDR searching
 # ======================================================================
+
+
+class QueryResult:
+    """
+    Class to contain one hit from query result set.
+    """
+
+    def __init__(self, docId, docType, docTitle):
+        self.docId      = docId
+        self.docType    = docType
+        self.docTitle   = docTitle
+    def __repr__(self):
+        return "%s (%s) %s\n" % (self.docId, self.docType, self.docTitle)
+
+
+def search(credentials, *tests, **opts):
+    """
+    Process a CDR document search request
+
+    Pass:
+      credentials - results of login()
+      tests - one or more assertion strings
+      limit - optional integer keyword argument limiting number of results
+      doctypes - optional sequence of document type name strings to limit set
+
+    Each valid test assertion string contains exactly three tokens:
+
+       * a path, which can be one of
+
+         - CdrCtl/Title
+
+         - the xpath (starting with a single forward slash) for an
+           element or attribute, with /value or /int_val appended to
+           indicate which column of the query_term table should be
+           used for the test
+
+       * an operator; (one of eq, ne, lt, lte, gt, gte, begins, contains)
+
+       * a value to be used in the test; wildcards are added as
+         appropriate if the operator is "contains" or "begins"
+
+    The three tokens are separated by whitespace. The first two tokens
+    cannot contain whitespace, but there are no whitespace restrictions
+    on the value component of the test, which should not be enclosed
+    in quote marks.
+
+    Return:
+      sequence of `QueryResult` object (possibly empty)
+    """
+
+    tier = opts.get("tier") or opts.get("host") or None
+    session = _Control.get_session(credentials, tier)
+    if isinstance(session, Session):
+        results = []
+        for doc in Search(session, *tests, **opts).run():
+            result = QueryResult(doc.cdr_id, doc.doctype.name, doc.title)
+            results.append(result)
+        return results
+    command = etree.Element("CdrSearch")
+    query = etree.SubElement(command, "Query")
+    if "limit" in opts:
+        query.set("MaxDocs", str(opts["limit"]))
+    for doctype in opts.get("doctypes", []):
+        etree.SubElement(query, "DocType").text = doctype
+    for test in tests:
+        etree.SubElement(query, "Test").text = test
+    for response in _Control.send_command(session, command, tier):
+        if response.node.tag == command.tag + "Resp":
+            results = []
+            for node in response.node.findall("QueryResults/QueryResult"):
+                doc_id = get_text(node.find("DocId"))
+                doc_type = get_text(node.find("DocType"))
+                doc_title = get_text(node.find("DocTitle"))
+                results.append(QueryResult(doc_id, doc_type, doc_title))
+            return results
+        error = ";".join(response.errors) or "missing response"
+        raise Exception(error)
+    raise Exception("missing response")
 
 def listQueryTermRules(credentials, **opts):
     """
@@ -3946,28 +4312,6 @@ def exNormalize(id):
 
     return (fullId, idNum, frag)
 
-#----------------------------------------------------------------------
-# Fetch a value from the ctl table.
-#----------------------------------------------------------------------
-def getControlValue(group, name, default=None):
-    query = cdrdb.Query("ctl", "val")
-    query.where(query.Condition("grp", group))
-    query.where(query.Condition("name", name))
-    query.where("inactivated IS NULL")
-    row = query.execute().fetchone()
-    return row and row[0] or default
-
-#----------------------------------------------------------------------
-# Fetch a group of values from the ctl table.
-#----------------------------------------------------------------------
-def getControlGroup(group):
-    query = cdrdb.Query("ctl", "name", "val")
-    query.where(query.Condition("grp", group))
-    query.where("inactivated IS NULL")
-    group = dict()
-    for name, value in query.execute().fetchall():
-        group[name] = value
-    return group
 
 # ======================================================================
 # Legacy global names
@@ -4873,51 +5217,6 @@ def valPair(session, docType, oldDoc, newDoc, host=DEFAULT_HOST,
     return []
 
 #----------------------------------------------------------------------
-# Update a document title
-#----------------------------------------------------------------------
-def updateTitle(credentials, docId, host=DEFAULT_HOST, port=DEFAULT_PORT):
-    """
-    Tell the CdrServer to re-run the title filter for this document,
-    updating the title stored in the document table.
-
-    No locking is done since the this action does not change the document
-    itself.  If another user has the document checked out, no harm will
-    be done when and if he saves it.
-
-    Pass:
-        credentials - Logon credentials or session.
-        docId       - Document ID, any format is okay.
-        host        - Update on this host.
-        port        - Via this CdrServer port.
-
-    Return:
-        True  = Host says title was changed.
-        False = Host says regenerated title is the same as the old one.
-    """
-    docIdStr = exNormalize(docId)[0]
-
-    # Prepare transaction
-    cmd = """
- <CdrUpdateTitle>
-  <DocId>%s</DocId>
- </CdrUpdateTitle>
-""" % docIdStr
-    cmd = wrapCommand(cmd, credentials, host)
-
-    # Interact with the host
-    resp = sendCommands(cmd, host, port)
-
-    # Check response
-    if resp.find("unchanged") >= 0:
-        return False
-    if resp.find("changed") >= 0:
-        return True
-
-    # Should be here
-    raise Exception("cdr.updateTitle: Unexpected return from server:\n%s\n" %
-                    resp)
-
-#----------------------------------------------------------------------
 # De-duplicate and list a sequence of error messages
 #----------------------------------------------------------------------
 def deDupErrs(errXml):
@@ -4956,50 +5255,6 @@ def deDupErrs(errXml):
         result.append(errString)
 
     return result
-
-#----------------------------------------------------------------------
-# Class to contain one hit from query result set.
-#----------------------------------------------------------------------
-class QueryResult:
-    def __init__(self, docId, docType, docTitle):
-        self.docId      = docId
-        self.docType    = docType
-        self.docTitle   = docTitle
-    def __repr__(self):
-        return "%s (%s) %s\n" % (self.docId, self.docType, self.docTitle)
-
-#----------------------------------------------------------------------
-# Process a CDR query.  Returns a tuple with two members, the first of
-# which is a list of tuples containing id, doctype and title for each
-# document in the search result, and the second of which is an <Errors>
-# element.  Exactly one of these two member of the tuple will be None.
-#----------------------------------------------------------------------
-def search(credentials, query, host=DEFAULT_HOST, port=DEFAULT_PORT):
-
-    # Create the command.
-    cmd = ("<CdrSearch><Query>//CdrDoc[%s]/CdrCtl/DocId</Query></CdrSearch>"
-            % query)
-
-    # Submit the search.
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # Check for problems.
-    err = checkErr(resp)
-    if err: return err
-
-    # Extract the results.
-    results = extract("<QueryResults>(.*)</QueryResults>", resp)
-    qrElemsPattern  = re.compile("<QueryResult>(.*?)</QueryResult>", re.DOTALL)
-    docIdPattern    = re.compile("<DocId>(.*)</DocId>", re.DOTALL)
-    docTypePattern  = re.compile("<DocType>(.*)</DocType>", re.DOTALL)
-    docTitlePattern = re.compile("<DocTitle>(.*)</DocTitle>", re.DOTALL)
-    ret = []
-    for qr in qrElemsPattern.findall(results):
-        docId    = docIdPattern.search(qr).group(1)
-        docType  = docTypePattern.search(qr).group(1)
-        docTitle = docTitlePattern.search(qr).group(1)
-        ret.append(QueryResult(docId, docType, docTitle))
-    return ret
 
 #----------------------------------------------------------------------
 # Return all all_docs info for a CDR document specified by ID
@@ -5095,81 +5350,6 @@ def getDocFormats(conn=None):
 
     formats = [row[0] for row in rows]
     return formats
-
-#----------------------------------------------------------------------
-# Fetch a value from the ctl table.
-#----------------------------------------------------------------------
-def getControlValue(group, name):
-    query = cdrdb2.Query("ctl", "val")
-    query.where(query.Condition("grp", group))
-    query.where(query.Condition("name", name))
-    query.where("inactivated IS NULL")
-    row = query.execute().fetchone()
-    return row and row[0] or None
-
-#----------------------------------------------------------------------
-# Update the ctl table.
-#----------------------------------------------------------------------
-def updateCtl(credentials, action,
-              grp=None, name=None, val=None, comment=None,
-              host=DEFAULT_HOST, port=DEFAULT_PORT):
-    """
-    Update the ctl table.  See CdrCtl.h/.cpp in the server for what this does.
-
-    Caller must be logged in as user with SET_SYS_VALUE privilege.
-
-    Pass:
-        credentials - as elsewhere.  See cdr.login().
-        action      - one of "Create", "Inactivate", "Install".
-                      Create:     Creates a new row in the ctl table.  If
-                                  another row exists with the same grp and
-                                  name, it will be inactivated, effectively
-                                  replaced by this new one.
-                      Inactivate: Inactivate an existing grp/name/val
-                                  without replacing it with a new one.
-                      Install:    Causes the CdrServer to load the latest
-                                  version of the ctl table into memory.  Until
-                                  this is done, or the CdrServer restarted,
-                                  the old values will still be active.
-        grp         - grouping string for names in Create or Inactivate.
-                       Example: 'Publishing'
-        name        - name of the value for Create or Inactivate.
-                       Example: 'ThreadCount'.
-        val         - value itself, required for Create, else ignored.
-                       Example: '6'.
-        comment     - optional comment to store in the table.
-
-        All parameters are strings.  Max length is defined in the database,
-        currently as 255 chars each for grp, name, val, comment.
-
-    Return:
-        None
-
-    Throws
-        Exception if there is an error return from the CdrServer.
-    """
-    # Parameters are checked in the server.  Don't need to do it here.
-    cmd = "<CdrSetCtl>\n <Ctl>\n  <Action>%s</Action>\n" % action
-    if grp is not None:
-        cmd += "  <Group>%s</Group>\n" % cgi.escape(grp)
-    if name is not None:
-        cmd += "  <Key>%s</Key>\n" % cgi.escape(name)
-    if val is not None:
-        cmd += "  <Value>%s</Value>\n" % cgi.escape(val)
-    if comment is not None:
-        cmd += "  <Comment>%s</Comment>\n" % cgi.escape(comment)
-    cmd += " </Ctl>\n</CdrSetCtl>\n"
-
-    # Wrap it with credentials and send it
-    cmd  = wrapCommand(cmd, credentials, host)
-    resp = sendCommands(cmd, host, port)
-
-    # Did server report error?
-    errs = getErrors(resp, 0)
-    if len(errs) > 0:
-        raise Exception("Server error on cdr.updateCtl:\n%s" % errs)
-
-    return None
 
 #----------------------------------------------------------------------
 # Get a list of enumerated values for a CDR schema simpleType.
@@ -5788,45 +5968,6 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, chgOnly=True, useCDATA=False):
         diffText = diffText.encode('utf-8')
 
     return diffText
-
-#----------------------------------------------------------------------
-# Change the active_status column for a document.
-#----------------------------------------------------------------------
-def setDocStatus(credentials, docId, newStatus,
-                 host=DEFAULT_HOST, port=DEFAULT_PORT, comment=None):
-    docIdStr = u"<DocId>%s</DocId>" % normalize(docId)
-    stat = u"<NewStatus>%s</NewStatus>" % newStatus
-    cmt  = comment and (u"<Comment>%s</Comment>" % comment) or u""
-    cmd  = u"<CdrSetDocStatus>%s%s%s</CdrSetDocStatus>" % (docIdStr, stat, cmt)
-    resp = sendCommands(wrapCommand(cmd.encode('utf-8'), credentials, host),
-                        host, port)
-    errs = getErrors(resp, errorsExpected = False, asSequence = True)
-    if errs:
-        raise Exception(errs)
-
-#----------------------------------------------------------------------
-# Retrieve the active status for a document.
-#----------------------------------------------------------------------
-def getDocStatus(credentials, docId, tier=None):
-    if tier:
-        conn = cdrdb.connect('CdrGuest', tier)
-    else:
-        conn = cdrdb.connect('CdrGuest')
-    cursor = conn.cursor()
-    idTuple = exNormalize(docId)
-    docId = idTuple[1]
-    cursor.execute("SELECT active_status FROM all_docs WHERE id = ?", docId)
-    rows = cursor.fetchall()
-    if not rows:
-        raise Exception(['Invalid document ID %s' % docId])
-    return rows[0][0]
-
-#----------------------------------------------------------------------
-# Convenience wrapper for unblocking a document.
-#----------------------------------------------------------------------
-def unblockDoc(credentials, docId, host=DEFAULT_HOST, port=DEFAULT_PORT,
-               comment=None):
-    setDocStatus(credentials, docId, "A", host, port, comment)
 
 #----------------------------------------------------------------------
 # Determine the last date a versioned blob changed.

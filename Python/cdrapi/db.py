@@ -487,7 +487,7 @@ class Query:
             return
 
         # Start the test string.
-        test = "%s %s%s" % (condition.column, prefix, condition.test)
+        test = "%s%s %s" % (prefix, condition.column, condition.test)
 
         # Handle a nested query.
         if isinstance(condition.value, Query):

@@ -106,6 +106,8 @@ class Doc(object):
     LEVEL_WARNING = "warning"
     LEVEL_ERROR = "error"
     LEVEL_FATAL = "fatal"
+    MAX_TITLE_LEN = 255
+    MAX_COMMENT_LEN = 255
     MAX_SQLSERVER_INDEX_SIZE = 800
     MAX_INDEX_ELEMENT_DEPTH = 40
     INDEX_POSITION_WIDTH = 4
@@ -927,21 +929,6 @@ class Doc(object):
         self.__check_out(**opts)
         self.session.conn.commit()
 
-    def __audit_trail_delay(self):
-        if self.id:
-            query = Query("audit_trail", "MAX(dt) AS dt")
-            query.where(query.Condition("document", self.id))
-            last = query.execute(self.cursor).fetchone().dt
-            now = datetime.datetime.now().replace(microsecond=0)
-            logged = False
-            while now == last:
-                if not logged:
-                    message = "{}: audit trail delay".format(self.cdr_id)
-                    self.session.logger.warning(message)
-                    logged = True
-                time.sleep(.1)
-                now = datetime.datetime.now().replace(microsecond=0)
-
     def delete(self, **opts):
         """
         Mark the document as deleted
@@ -1067,6 +1054,9 @@ class Doc(object):
             if opts.get("output", True):
                 return self.FilterResult(doc, messages=messages)
             return messages
+        except:
+            self.session.logger.exception("filter() failure")
+            raise
         finally:
             Resolver.local.docs.pop()
 
@@ -1115,8 +1105,10 @@ class Doc(object):
         # TODO - REMOVE FOLLOWING CODE; USE root = doc.root INSTEAD
         query = Query("good_filters", "xml")
         query.where(query.Condition("id", doc.id))
-        xml = query.execute(self.cursor).fetchone()[0]
-        root = etree.fromstring(xml.encode("utf-8"))
+        row = query.execute(self.cursor).fetchone()
+        if not row:
+            raise Exception("filter {} not found".format(doc.cdr_id))
+        root = etree.fromstring(row.xml.encode("utf-8"))
         # TODO - END TEMPORARY CODE
         for name in ("import", "include"):
             qname = Doc.qname(name, Filter.NS)
@@ -1391,12 +1383,46 @@ class Doc(object):
             self.__save(**opts)
             self.session.conn.commit()
             self.cursor.close()
+            self._cursor = None
         except:
             self.session.logger.exception("Doc.save() failure")
             self.cursor.execute("SELECT @@TRANCOUNT AS tc")
             if self.cursor.fetchone().tc:
                 self.cursor.execute("ROLLBACK TRANSACTION")
             raise
+
+    def set_status(self, status, **opts):
+        """
+        Modify the `all_docs.active_status` value for the document
+
+        Pass:
+          status - "A" (active) or "I" (inactive); required
+          comment - optional keyword argument for string describing the change
+        """
+
+        if not self.doctype:
+            raise Exception("Document not found")
+        if not self.session.can_do("PUBLISH DOCUMENT", self.doctype.name):
+            message = "User not authorized to change status of {} documents"
+            raise Exception(message.format(self.doctype.name))
+        valid = self.ACTIVE, self.INACTIVE
+        if status not in valid:
+            raise Exception("Status must be {} or {}".format(*valid))
+        args = self.active_status, status
+        self.session.logger.info("Old status=%r new status=%r", *args)
+        if status != self.active_status:
+            try:
+                self.__audit_trail_delay()
+                self.__set_status(status, **opts)
+                self.session.conn.commit()
+                self._active_status = status
+                self.session.logger.info("New status committed")
+            except:
+                self.session.logger.exception("Doc.set_status() failure")
+                self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+                if self.cursor.fetchone().tc:
+                    self.cursor.execute("ROLLBACK TRANSACTION")
+                raise
 
     def unlabel(self, label):
         """
@@ -1415,6 +1441,25 @@ class Doc(object):
         delete = "DELETE FROM {} WHERE document = ? AND label = ?"
         self.cursor.execute(delete.format(table), (self.id, row.id))
         self.session.conn.commit()
+
+    def update_title(self):
+        """
+        Regenerate the document's title using the document type's title filter
+
+        Return:
+          True if the document's title was changed; otherwise False
+        """
+
+        if self.id and self.title is not None:
+            title = self.__create_title()
+            #print("created title is {} existing title is {}".format(title, self.title))
+            if title is not None and self.title != title:
+                update = "UPDATE all_docs SET title = ? WHERE id = ?"
+                self.cursor.execute(update, (title, self.id))
+                self.session.conn.commit()
+                self._title = title
+                return True
+        return False
 
     def update_query_terms(self, **opts):
         """
@@ -1508,6 +1553,7 @@ class Doc(object):
           `Doc.FilterResult` object
         """
 
+        #print("filter_xml={}".format(filter_xml))
         transform = etree.XSLT(etree.fromstring(filter_xml, parser))
         doc = transform(doc, **parms)
         return self.FilterResult(doc, error_log=transform.error_log)
@@ -1549,6 +1595,7 @@ class Doc(object):
         before = opts.get("before")
         opts = dict(version=version, before=before)
         filters = []
+        #print("filter_specs={}".format(filter_specs))
         for spec in filter_specs:
             spec = str(spec)
             if spec.startswith("set:"):
@@ -1560,6 +1607,7 @@ class Doc(object):
                     doc_id = Doc.id_from_title(name, self.cursor)
                 else:
                     doc_id = spec
+                #print("doc_id={} opts={}".format(doc_id, opts))
                 filters.append(self.get_filter(doc_id, **opts))
         return filters
 
@@ -1626,6 +1674,21 @@ class Doc(object):
         insert = "INSERT INTO audit_trail_added_action ({}) VALUES (?, ?, ?)"
         insert = insert.format(", ".join(fields))
         self.cursor.execute(insert, values)
+
+    def __audit_trail_delay(self):
+        if self.id:
+            query = Query("audit_trail", "MAX(dt) AS dt")
+            query.where(query.Condition("document", self.id))
+            last = query.execute(self.cursor).fetchone().dt
+            now = datetime.datetime.now().replace(microsecond=0)
+            logged = False
+            while now == last:
+                if not logged:
+                    message = "{}: audit trail delay".format(self.cdr_id)
+                    self.session.logger.warning(message)
+                    logged = True
+                time.sleep(.1)
+                now = datetime.datetime.now().replace(microsecond=0)
 
     def __check_in(self, **opts):
         """
@@ -1934,9 +1997,10 @@ class Doc(object):
         query.where(query.Condition("id", self.doctype.id))
         row = query.execute(self.cursor).fetchone()
         try:
-            opts = dict(filter=row.title_filter, doc=self.revised)
-            return unicode(self.filter(**opts).result_tree)
+            opts = dict(doc=self.resolved)
+            return unicode(self.filter(row.title_filter, **opts).result_tree)
         except:
+            self.session.logger.exception("__create_title() failure")
             return None
 
     def __create_version(self, **opts):
@@ -2489,6 +2553,26 @@ class Doc(object):
             self.cursor.execute(update, values)
 
 
+    def __set_status(self, status, **opts):
+        """
+        Do the database writes for setting the document status
+
+        This is separated out into a helper method so that we can
+        roll back interim writes if we fail along the way.
+
+        Pass:
+          status - "A" (active) or "I" (inactive); required
+          comment - optional string describing the change
+        """
+
+        action = "Block" if status == self.INACTIVE else "Unblock"
+        comment = opts.get("comment", "{}ing document".format(action))
+        args = "set_status()", "MODIFY DOCUMENT"
+        when = self.__audit_action(*args, comment=opts.get("comment"))
+        self.__audit_added_action("{} DOCUMENT".format(action.upper()), when)
+        update = "UPDATE all_docs SET active_status = ? WHERE id = ?"
+        self.cursor.execute(update, (status, self.id))
+
     def __store(self, **opts):
         """
         Write to the `all_docs` table (through the `document` view)
@@ -2504,14 +2588,24 @@ class Doc(object):
           needs_review - if True, try to add row to ready_for_review table
         """
 
+        # Make sure the values will fit.
+        title = self.__create_title() or opts.get("title") or "[NO TITLE]"
+        if len(title) > self.MAX_TITLE_LEN:
+            self.session.logger.warning("truncating title %r", title)
+            title = title[:self.MAX_TITLE_LEN-4] + " ..."
+        comment = opts.get("comment")
+        if comment and len(comment) > self.MAX_COMMENT_LEN:
+            self.session.logger.warning("truncating comment %r", comment)
+            comment = comment[:self.MAX_COMMENT_LEN-4] + " ..."
+
         # Assemble the values for the `all_docs` table row.
         fields = {
             "val_status": self.val_status or self.UNVALIDATED,
             "active_status": self.active_status or self.ACTIVE,
             "doc_type": self.doctype.id,
-            "title": self.__create_title() or opts.get("title"),
+            "title": title,
             "xml": self.xml,
-            "comment": opts.get("comment"),
+            "comment": comment,
             "last_frag_id": self.highest_fragment_id
         }
         names = sorted(fields)
@@ -2542,8 +2636,14 @@ class Doc(object):
             if self.doctype.name == "schema":
                 insert = "INSERT INTO good_schemas (id, xml) VALUES (?, ?)"
                 self.cursor.execute(insert, (self.id, self.xml))
+            elif self.doctype.name == "Filter":
+                insert = "INSERT INTO good_filters (id, xml) VALUES (?, ?)"
+                self.cursor.execute(insert, (self.id, self.xml))
         elif self.doctype.name == "schema":
             update = "UPDATE good_schemas SET xml = ? WHERE id = ?"
+            self.cursor.execute(update, (self.xml, self.id))
+        elif self.doctype.name == "Filter":
+            update = "UPDATE good_filters SET xml = ? WHERE id = ?"
             self.cursor.execute(update, (self.xml, self.id))
             # XXX TODO END OF CODE BLOCK THAT NEEDS TO GO AWAY
 
@@ -3739,6 +3839,7 @@ class Schema:
     ENUMERATION = Doc.qname("enumeration", NS)
     NESTED_ATTRIBUTE = "/".join([SIMPLE_CONTENT, EXTENSION, ATTRIBUTE])
 
+
 class Doctype:
     """
     Class of CDR documents controlled by a schema
@@ -4717,6 +4818,37 @@ class LinkType:
                     self._name = None
         return self._name
 
+    def search(self, **opts):
+        """
+        Collect documents eligible to be linked with this link type
+
+        Keyword arguments:
+          pattern - titles of candidate target docs must match this pattern
+          limit - optional integer restricting the size of the result set
+
+        Return:
+          possibly empty sequence of `Doc` objects
+        """
+
+        pattern = opts.get("pattern")
+        limit = opts.get("limit")
+        query = Query("document d", "d.id", "d.title").order("d.title")
+        query.join("doc_type t", "t.id = d.doc_type")
+        targets = list(self.targets)
+        if len(targets) == 1:
+            query.where(query.Condition("t.id", targets[0]))
+        else:
+            query.where(query.Condition("t.id", targets, "IN"))
+        if pattern:
+            query.where(query.Condition("d.title", pattern, "LIKE"))
+        if limit:
+            query.limit(int(limit))
+        for property in self.properties:
+            for condition in property.conditions:
+                query.where(condition)
+        rows = query.execute(self.cursor).fetchall()
+        return [Doc(self.session, id=row.id, title=row.title) for row in rows]
+
     def save(self):
         action = "MODIFY LINKTYPE" if self.id else "ADD LINKTYPE"
         if not self.session.can_do(action):
@@ -4888,6 +5020,7 @@ class LinkType:
             self.name = name
             self.value = value
             self.comment = comment
+
         @property
         def id(self):
             if hasattr(self, "_id"):
@@ -5026,29 +5159,28 @@ class LinkType:
                 error = "Failed link target rule: {}".format(self.value)
                 link.add_error(error)
 
-        def validation_sql(self):
+        #def refine_query(self, query):
+        @property
+        def conditions(self):
             """
-            Assemble SQL clauses used for link validation
+            Add clauses needed to find link targets satisfying this property
+
+            Passes on the work to the `Assertions` object.
+
+            Pass:
+              query - `db.Query` object to be refined with new conditions
             """
 
-            lines = []
-            path = operator = value = None
-            for token in self.tokens:
-                if token.startswith('"'):
-                    if not operator or not path:
-                        error = "malformed link property {!r}"
-                        raise Exception(error.format(self.value))
-                    if operator[0] in "+-":
-                        if lines and lines[-1] in ("AND", "OR"):
-                            lines.pop()
-                    else:
-                        lines.append(self.x)
-                    value = token.strip('"')
+            return self.assertions.conditions
+            for condition in self.assertions.conditions:
+                query.where(condition)
+
 
         class Testable:
             """
             Base class for assertions which can be tested
             """
+
 
         class Assertions(Testable):
             """
@@ -5107,6 +5239,213 @@ class LinkType:
                     valid = not valid
                 return valid
 
+            @property
+            def conditions(self):
+                """
+                Assemble the list of conditions needed to satisfy this property
+
+                Complicated! Be sure to include this in the code walkthrough!
+
+                Because this is complicated enough, it's not wrapped in
+                caching code. That's OK, because the way the code for the
+                class is currently written, any given object's `conditions`
+                property is only hit once. Be aware of this, though, and
+                try to preserve that approach. If in the future you need
+                to evaluate the value of this property more than one place
+                in the code, be sure to store that value in your own local
+                variable.
+
+                Return:
+                  sequence of `Query.Condition` objects
+                """
+
+                # At least one of these will be empty each time we hit the
+                # top of the loop.
+                ands = []
+                ors = []
+
+                # We haven't seen a connector yet.
+                connector = None
+
+                # Each node is a connector, assertion set, or assertion.
+                for node in self.nodes:
+
+                    # If the node is a string, it's a Boolean connector.
+                    if isinstance(node, basestring):
+                        connector = node
+
+                        # If this is an "AND" and there's a sequence of "OR"
+                        # conditions assembled on the left, fold them into
+                        # the ANDed sequence.
+                        if ors and connector == "AND":
+                            ands = [Query.Or(*ors)]
+                            ors = []
+
+                        # Similarly, if this is the beginning of a new "OR"
+                        # chain, start the chain by making the ANDed nodes
+                        # the first node in the chain.
+                        elif not ors and connector == "OR":
+
+                            # If there's just one node on the left, enclosing
+                            # it in parentheses as a group is unnecessary.
+                            ors = [ands[0]] if len(ands) == 1 else [ands]
+
+                            # These have been folded into the ORs; don't
+                            # need them here any more.
+                            ands = []
+
+                    # Is this a nested set of assertions?
+                    elif isinstance(node, self.__class__):
+
+                        # If this set goes in the ORs pile, it goes as
+                        # a single group.
+                        if connector == "OR":
+                            ors.append(node.conditions)
+
+                        # Otherwise, each condition goes into the
+                        # sequence of ANDed conditions
+                        else:
+                            ands += node.conditions
+
+                    # The remaining possibility is a single assertion.
+                    else:
+
+                        # Find out which sequence it goes in.
+                        sequence = ors if connector == "OR" else ands
+                        sequence.append(node.condition)
+
+                # If the last thing we saw was a condition preceded by "OR"
+                # then the whole sequence of conditions is bundled as a single
+                # set of (possibly nested) conditions joined by OR.
+                if ors:
+                    ands = [Query.Or(*ors)]
+
+                # Return the results, but don't cache them.
+                #print(ands)
+                return ands
+
+
+
+
+
+                # At least one of these will be empty each time we hit the
+                # top of the loop.
+                ands = []
+                ors = []
+
+                # We haven't seen a connector yet.
+                connector = None
+
+                # Each node is a connector, assertion, or assertion set.
+                for node in self.nodes:
+
+                    # The connector nodes are easy.
+                    if isinstance(node, basestring):
+                        connector = node
+
+                    # The current node will be folded into a Query.Or object.
+                    elif connector == "OR":
+
+                        # Treat sequences of conditions as a unit for an OR.
+                        if isinstance(node, self.__class__):
+                            more = node.conditions
+                        else:
+                            more = node.condition
+
+                        # If we've already started a chain of ORs, add to it.
+                        if ors:
+                            ors.append(more)
+
+                        # Otherwise, start a new chain, folding in ANDed nodes.
+                        else:
+
+                            # If there's just one node on the left, enclosing
+                            # it in parentheses as a group is unnecessary.
+                            if len(ands) == 1:
+                                ors = [ands[0], more]
+                            else:
+                                ors = [ands, more]
+
+                            # These have been folded into the ORs; don't
+                            # need them here any more.
+                            ands = []
+
+                    # If we got here, we're either on the right side of
+                    # an AND connector, or we're at the beginning of the
+                    # sequence of nodes. Is the current node a nested
+                    # set of assertions?
+                    elif isinstance(node, self.__class__):
+
+                        # If we have a chain of nodes connected by OR,
+                        # make that a unit as the first in a sequence
+                        # of ANDed conditions.
+                        if ors:
+                            ands = [Query.Or(ors)] + node.conditions
+
+                        # Otherwise, add the conditions to the sequence
+                        # of nodes which must all be true
+                        else:
+                            ands += node.conditions
+
+                    # This must be a node for a single assertion.
+                    elif ors:
+
+                        # We have a chain of nodes connected by OR,
+                        # so make that a unit as the left side of an
+                        # ANDed pair of conditions.
+                        ands = [Query.Or(ors), node.condition]
+                        ors = []
+
+                    # Otherwise (no ORs hanging around), just pop the
+                    # new condition on the end of the chain of conditions
+                    # which must all be true.
+                    else:
+                        ands.append(node.condition)
+
+                    """
+                    if isinstance(node, LinkType.LinkTargetContains.Assertion):
+                        if connector == "OR":
+                            if ands:
+                                if len(ands) == 1:
+                                    ors = ands[0], node.condition
+                                else:
+                                    ors = ands, node.condition
+                            else:
+                                ors.append(node.condition)
+                        else:
+                            if ors:
+                                ands = Query.Or(ors), node.condition
+                                ors = []
+                            else:
+                                ands.append(node.condition)
+                    elif isinstance(node, self.__class__):
+                        if connector == "OR":
+                            if ands:
+                                if len(ands) == 1:
+                                    ors = ands[0], node.conditions
+                                else:
+                                    ors = ands, node.conditions
+                                ands = []
+                            else:
+                                ors.append(node.conditions)
+                        else:
+                            if ors:
+                                ands = [Query.Or(ors)] + node.conditions
+                            else:
+                                ands += node.conditions
+                    else:
+                        connector = node
+                    """
+
+                # If the last thing we saw was a condition preceded by "OR"
+                # then the whole sequence of conditions is bundled as a single
+                # set of (possibly nested) conditions joined by OR.
+                if ors:
+                    ands = [Query.Or(ors)]
+
+                # Return the results, but don't cache them.
+                return ands
+
         class Assertion(Testable):
             def __init__(self, path, operator, value, negative=False):
                 if not path or not operator:
@@ -5136,6 +5475,19 @@ class LinkType:
                         result = not result
                 return result
 
+            @property
+            def condition(self):
+                query = Query("query_term", "doc_id")
+                query.where(query.Condition("path", self.path))
+                if self.value:
+                    query.where(query.Condition("value", self.value))
+                negative = self.negative
+                if self.operator[0] in "!-":
+                    negative = not negative
+                operator = "NOT IN" if negative else "IN"
+                return query.Condition("d.id", query, operator)
+
+            """
             def __repr__(self):
                 return str(self)
             def __str__(self):
@@ -5148,6 +5500,7 @@ class LinkType:
                     value = self.value.replace("'", "''")
                     query.append("AND value = '{}'".format(value))
                 return " ".join(query)
+            """
 
 class Link:
     """
@@ -5269,7 +5622,7 @@ class Link:
         target_doc_id = target_doc.id if target_doc else None
         fields = dict(
             source_doc=self.doc.id,
-            linktype=self.linktype.id,
+            link_type=self.linktype.id,
             source_elem=self.element,
             target_doc=target_doc_id,
             target_frag=self.fragment_id,

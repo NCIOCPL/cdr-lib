@@ -216,6 +216,72 @@ class Tier:
     def get_logdir(self):
         return self.drive + ":/cdr/Log"
 
+    @staticmethod
+    def set_control_value(session, group, name, value, **opts):
+
+        # Make sure the user is allowed to create rows in the ctl table.
+        if not session.can_do("SET_SYS_VALUE"):
+            raise Exception("set_control() not authorized for this user")
+
+        # Collect and validate the parameters.
+        comment = opts.get("comment")
+        now = datetime.datetime.now().replace(microsecond=0)
+        if not group:
+            raise Exception("Missing required group parameter")
+        if not name:
+            raise Exception("Missing name parameter")
+        if not value:
+            raise Exception("Missing value parameter")
+
+        # Inactivate any existing rows for this group/name combination.
+        assignments = "inactivated = ?"
+        conditions = "grp = ? AND name = ? AND inactivated IS NULL"
+        update = "UPDATE ctl SET {} WHERE {}".format(assignments, conditions)
+        session.cursor.execute(update, (now, group, name))
+
+        # Add the new value's row.
+        fields = dict(
+            grp=group,
+            name=name,
+            val=value,
+            comment=comment,
+            created=now
+        )
+        names = sorted(fields)
+        values = [fields[name] for name in names]
+        args = ", ".join(names), ", ".join(["?"] * len(fields))
+        insert = "INSERT INTO ctl ({}) VALUES ({})".format(*args)
+        try:
+            session.cursor.execute(insert, values)
+            session.conn.commit()
+        except:
+            session.logger.exception("settings.set_control() failure")
+            session.cursor.execute("SELECT @@TRANCOUNT AS tc")
+            if session.cursor.fetchone().tc:
+                session.cursor.execute("ROLLBACK TRANSACTION")
+            raise
+
+    @staticmethod
+    def inactivate_control_value(session, group, name):
+
+        # Make sure the user is allowed to update rows in the ctl table.
+        if not session.can_do("SET_SYS_VALUE"):
+            raise Exception("set_control() not authorized for this user")
+
+        # Validate the parameters.
+        if not group:
+            raise Exception("Missing required group parameter")
+        if not name:
+            raise Exception("Missing name parameter")
+
+        # Inactivate all existing rows for this group/name combination.
+        now = datetime.datetime.now().replace(microsecond=0)
+        conditions = "grp = ? AND name = ? AND inactivated IS NULL"
+        assignments = "inactivated = ?"
+        update = "UPDATE ctl SET {} WHERE {}".format(assignments, conditions)
+        session.cursor.execute(update, (now, group, name))
+        session.conn.commit()
+
     @classmethod
     def find_cdr(cls):
         """
