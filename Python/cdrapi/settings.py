@@ -1,5 +1,11 @@
 """
 Collect tier-specific CDR settings.
+
+The CDR current has four tiers:
+  DEV - where active development is done
+  QA - where testing of new/modified software happens
+  STAGE - where CBIIT practices release deployments (a.k.a. "TEST")
+  PROD - the system used for actual production work
 """
 
 import datetime
@@ -14,9 +20,11 @@ class Tier:
       Pattern strings for the paths to files where the values are stored.
       LOG_FORMAT - pattern for entries in our log files
 
-    Attributes:
-      drive - letter where the CDR is installed (D on the CDR servers)
+    Attribute:
       name - string containing the name of the tier represented by the values
+
+    Properties:
+      drive - letter where the CDR is installed (D on the CDR servers)
       passwords - dictionary of passwords keyed by a tuple of a lowercase
                   database name and user name for database accounts, or
                   keyed by the lowercase user name string for all other
@@ -24,87 +32,77 @@ class Tier:
       hosts - dictionary of this tier's fully qualified DNS names, keyed
               by the uppercase role name
       ports - dictionary of TCP/IP port integers, keyed by database name
+      logdir - location where we record what happens
+      sql_server - FQDN for the database server
     """
 
+    # Patterns for finding settings files once we know which drive
+    # the CDR lives on.
     APPHOSTS = "{}:/etc/cdrapphosts.rc"
     TIER = "{}:/etc/cdrtier.rc"
     PASSWORDS = "{}:/etc/cdrpw"
     DBPW = "{}:/etc/cdrdbpw"
     PORTS = "{}:/etc/cdrdbports"
+
+    # Custom logging format.
     LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 
     def __init__(self, tier=None):
         """
-        Load the values for this tier
+        Save or look up the name of this tier
 
         Pass:
           tier - optional string naming a specific tier; if not provided
                  the value in /etc/cdrtier.rc will be used
         """
 
-        self.drive = self.find_cdr()
-        self.name = self.get_tier_name(tier)
-        self.passwords = self.load_passwords()
-        self.hosts = self.load_hosts()
-        self.ports = self.load_ports()
+        self.name = self.__get_tier_name(tier)
 
-    def password(self, user, database=None):
+    @property
+    def drive(self):
         """
-        Look up the password for a database or CDR user account
+        Letter for the drive where the CDR lives
+        """
 
-        Pass:
-          user - required string for the account name
-          database - name of the database if this is a DB account
+        if not hasattr(self, "_drive"):
+            self._drive = Tier.find_cdr()
+        return self._drive
+
+    @property
+    def hosts(self):
+        """
+        Parse the /etc/cdrapphosts.rc file to get the host names for this tier
 
         Return:
-          string for the matching password value
+          dictionary of fully-qualified DNS names indexed by uppercase role
+          names
         """
 
-        if database is not None:
-            return self.passwords.get((database.lower(), user.lower()))
-        return self.passwords.get(user.lower())
+        if hasattr(self, "_hosts"):
+            return self._hosts
+        hosts = {}
+        prefix = "CBIIT:" + self.name
+        with open(self.APPHOSTS.format(self.drive)) as fp:
+            for line in fp:
+                line = line.strip()
+                if line.startswith(prefix):
+                    fields = line.split(":", 4)
+                    if len(fields) == 5:
+                        hosting, tier, role, local, domain = fields
+                        hosts[role.upper()] = ".".join((local, domain))
+        self._hosts = hosts
+        return hosts
 
-    def port(self, database):
+    @property
+    def logdir(self):
         """
-        Look up the TCP/IP port for connecting to a database
-
-        Pass:
-          string for the name of the database
-
-        Return:
-          integer for the port used for connecting to the database
-        """
-
-        return self.ports.get(database.lower())
-
-    def sql_server(self):
-        """
-        Look up the FQDN for the SQL Server database for this tier
-        """
-
-        return self.hosts.get("DBWIN")
-
-    def get_tier_name(self, name=None):
-        """
-        Determine which tier this object will be constructed for
-
-        Pass:
-          name - optional tier name
-
-        Return:
-          name if passed; otherwise the contents of the /etc/cdrtier.rc file
-          (falling back on the DEV tier if that file does not exist)
+        Where should we write our logging information?
         """
 
-        if name:
-            return name.upper()
-        try:
-            with open(self.TIER.format(self.drive)) as fp:
-                return fp.read().strip()
-        except:
-            return "DEV"
+        return self.drive + ":/cdr/Log"
 
-    def load_passwords(self):
+    @property
+    def passwords(self):
         """
         Load the database and CDR user account passwords
 
@@ -114,6 +112,8 @@ class Tier:
           all other passwords
         """
 
+        if hasattr(self, "_passwords"):
+            return self._passwords
         passwords = {}
         with open(self.PASSWORDS.format(self.drive)) as fp:
             for line in fp:
@@ -128,30 +128,11 @@ class Tier:
                     if len(fields) == 5:
                         hosting, tier, database, user, password = fields
                         passwords[(database.lower(), user.lower())] = password
+        self._passwords = passwords
         return passwords
 
-    def load_hosts(self):
-        """
-        Parse the /etc/cdrapphosts.rc file to get the host names for this tier
-
-        Return:
-          dictionary of fully-qualified DNS names indexed by uppercase role
-          names
-        """
-
-        hosts = {}
-        prefix = "CBIIT:" + self.name
-        with open(self.APPHOSTS.format(self.drive)) as fp:
-            for line in fp:
-                line = line.strip()
-                if line.startswith(prefix):
-                    fields = line.split(":", 4)
-                    if len(fields) == 5:
-                        hosting, tier, role, local, domain = fields
-                        hosts[role.upper()] = ".".join((local, domain))
-        return hosts
-
-    def load_ports(self):
+    @property
+    def ports(self):
         """
         Load the TCP/IP ports for database connections from /etc/cdrdbports
 
@@ -159,6 +140,8 @@ class Tier:
           dictionary of port integers keyed by lowercase database names
         """
 
+        if hasattr(self, "_ports"):
+            return self._ports
         ports = {}
         prefix = self.name + ":"
         with open(self.PORTS.format(self.drive)) as fp:
@@ -169,7 +152,16 @@ class Tier:
                     if len(fields) == 3:
                         tier, database, port = fields
                         ports[database.lower()] = int(port)
+        self._ports = ports
         return ports
+
+    @property
+    def sql_server(self):
+        """
+        Look up the FQDN for the SQL Server database for this tier
+        """
+
+        return self.hosts.get("DBWIN")
 
     def get_logger(self, name, **opts):
         """
@@ -201,7 +193,7 @@ class Tier:
             if "path" not in opts or opts.get("path"):
                 path = opts.get("path")
                 if not path:
-                    path = "{}/{}.log".format(self.get_logdir(), name)
+                    path = "{}/{}.log".format(self.logdir, name)
                 handler = logging.FileHandler(path)
                 handler.setFormatter(formatter)
                 logger.addHandler(handler)
@@ -213,11 +205,76 @@ class Tier:
             raise Exception("logger has no handlers")
         return logger
 
-    def get_logdir(self):
-        return self.drive + ":/cdr/Log"
+    def password(self, user, database=None):
+        """
+        Look up the password for a database or CDR user account
+
+        Pass:
+          user - required string for the account name
+          database - name of the database if this is a DB account
+
+        Return:
+          string for the matching password value
+        """
+
+        if database is not None:
+            return self.passwords.get((database.lower(), user.lower()))
+        return self.passwords.get(user.lower())
+
+    def port(self, database):
+        """
+        Look up the TCP/IP port for connecting to a database
+
+        Pass:
+          string for the name of the database
+
+        Return:
+          integer for the port used for connecting to the database
+        """
+
+        return self.ports.get(database.lower())
+
+    def __get_tier_name(self, name=None):
+        """
+        Determine which tier this object will be constructed for
+
+        Pass:
+          name - optional tier name
+
+        Return:
+          name if passed; otherwise the contents of the /etc/cdrtier.rc file
+          (falling back on the DEV tier if that file does not exist)
+        """
+
+        if name:
+            return name.upper()
+        try:
+            with open(self.TIER.format(self.drive)) as fp:
+                return fp.read().strip()
+        except:
+            return "DEV"
 
     @staticmethod
     def set_control_value(session, group, name, value, **opts):
+        """
+        Add or update a row in the `ctl` table
+
+        Called by:
+          cdr.updateCtl()
+          client XML wrapper command CdrSetCtl
+
+        Required positional arguments
+          session - object representing current login
+          group - string naming group for which value is being installed
+          name - string for value's key within the group
+          value - non-empty string for the value to be stored
+
+        Optional keyword argument:
+          comment - string describing the new value
+
+        Return:
+          None
+        """
 
         # Make sure the user is allowed to create rows in the ctl table.
         if not session.can_do("SET_SYS_VALUE"):
@@ -263,6 +320,21 @@ class Tier:
 
     @staticmethod
     def inactivate_control_value(session, group, name):
+        """
+        Mark a row in the `clt` table as no longer valid
+
+        Called by:
+          cdr.updateCtl()
+          client XML wrapper command CdrSetCtl
+
+        Required positional arguments
+          session - object representing current login
+          group - string naming group for which value is being installed
+          name - string for value's key within the group
+
+        Return:
+          None
+        """
 
         # Make sure the user is allowed to update rows in the ctl table.
         if not session.can_do("SET_SYS_VALUE"):
@@ -298,6 +370,7 @@ class Tier:
             if os.path.exists(cls.APPHOSTS.format(letter)):
                 return letter
         raise Exception("CDR host file not found")
+
 
     class Formatter(logging.Formatter):
         """

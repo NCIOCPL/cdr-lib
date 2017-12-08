@@ -15,6 +15,7 @@ try:
 except:
     basestring = str
 
+
 class TimeConverter(adodbapi.apibase.pythonDateTimeConverter):
 
     def DateObjectToIsoFormatString(self, obj):
@@ -34,14 +35,18 @@ class TimeConverter(adodbapi.apibase.pythonDateTimeConverter):
         return dt + str(round(float("." + us), 3))[1:5]
 
 
-#adodbapi.apibase.typeMap[datetime.datetime] = adodbapi.apibase.adc.adBSTR
-#adodbapi.adodbapi.dateconverter = TimeConverter()
+# Don't plug this in yet, as we're working around the bug further upstream
+# for now. If I get time I'll see if I can fix the bug and get the package
+# maintainer to accept a patch (which he has indicated he would).
+# adodbapi.apibase.typeMap[datetime.datetime] = adodbapi.apibase.adc.adBSTR
+# adodbapi.adodbapi.dateconverter = TimeConverter()
+
 
 def connect(**opts):
     """
     Connect to the CDR database using known login account.
 
-    Pass:
+    Optional keyword arguments:
       user - string for database account name (default Query.CDRSQLACCOUNT)
       tier - tier name string (e.g., 'PROD') or Tier object
       database - initial db for the connection (default Query.DB)
@@ -59,7 +64,7 @@ def connect(**opts):
         raise Exception("user {!r} unknown on {!r}".format(user, tier.name))
     parms = {
         "Provider": "SQLOLEDB",
-        "Data Source": "{},{}".format(tier.sql_server(), tier.port(Query.DB)),
+        "Data Source": "{},{}".format(tier.sql_server, tier.port(Query.DB)),
         "Initial Catalog": opts.get("database", Query.DB),
         "User ID": user,
         "Password": password,
@@ -67,6 +72,7 @@ def connect(**opts):
     }
     connection_string = ";".join(["{}={}".format(*p) for p in parms.items()])
     return adodbapi.connect(connection_string, timeout=parms["Timeout"])
+
 
 class Query:
 
@@ -606,6 +612,7 @@ class Query:
         else:
             collection.append(to_be_added)
 
+
     class Condition:
         """
         Test of a value (typically, but not necessarily a column; could
@@ -620,6 +627,7 @@ class Query:
             self.value = val
             self.test = test
     C = Condition
+
 
     class Or:
         """
@@ -649,6 +657,7 @@ class Query:
             """
             self.conditions = conditions
 
+
     class Join:
         """
         Used internally to represent a SQL JOIN clause
@@ -660,6 +669,7 @@ class Query:
             self.conditions = []
             for condition in conditions:
                 Query._add_sequence_or_value(condition, self.conditions)
+
 
 class QueryTests(unittest.TestCase):
     """
@@ -768,6 +778,7 @@ class QueryTests(unittest.TestCase):
         q.where(self.C("i", self.Q("#t2", "i").unique(), "NOT IN"))
         r = self.D(q.execute(c).fetchall(), c)
         self.assertTrue(r == [{"n": "Elmer"}])
+
 
 if __name__ == "__main__":
     unittest.main()

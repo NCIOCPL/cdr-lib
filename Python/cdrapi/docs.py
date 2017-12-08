@@ -12,12 +12,11 @@ import time
 from adodbapi import Binary
 import dateutil.parser
 from lxml import etree
-#from cdrapi import db
 from cdrapi.db import Query
 
 
 # ----------------------------------------------------------------------
-# Try to make the module compatible with Python 2 and 3.
+# Try to make the module compatible with both Python 2 and 3.
 # ----------------------------------------------------------------------
 from six import itervalues
 try:
@@ -40,11 +39,6 @@ except ImportError:
 class Doc(object):
     """
     Information about an XML document in the CDR repository
-
-    All of the attributes for the object are implemented as properties,
-    fetched as needed to optimize away potentially expensive unnecessary
-    processing. We have to be careful not to leave cached values lying
-    around after they are no longer correct. (TODO: check this)
 
     Read-only attributes:
       active_status - 'A' if the document is active; 'I' if inactive
@@ -86,19 +80,24 @@ class Doc(object):
       doctype - `Doctype` object
     """
 
+    # The XML namespace used by CDR documents for links and fragment IDs
     NS = "cips.nci.nih.gov/cdr"
     NSMAP = {"cdr": NS}
-    NOT_VERSIONED = "document not versioned"
-    NO_PUBLISHABLE_VERSIONS = "no publishable version found"
+
+    # Validation status codes (stored in `val_status` columns)
     UNVALIDATED = "U"
     VALID = "V"
     INVALID = "I"
     MALFORMED = "M"
+
+    # Status codes indicating whether a document is blocked or deleted
     ACTIVE = "A"
     BLOCKED = INACTIVE = "I"
     DELETED = "D"
     VALIDATION_TEMPLATE = None
     VALIDATION = "validation"
+
+    # Type and level values for error messages
     LINK = "link"
     OTHER = "other"
     LEVEL_OTHER = "other"
@@ -106,23 +105,39 @@ class Doc(object):
     LEVEL_WARNING = "warning"
     LEVEL_ERROR = "error"
     LEVEL_FATAL = "fatal"
+
+    # Value size constraints
     MAX_TITLE_LEN = 255
     MAX_COMMENT_LEN = 255
     MAX_SQLSERVER_INDEX_SIZE = 800
     MAX_INDEX_ELEMENT_DEPTH = 40
     INDEX_POSITION_WIDTH = 4
     MAX_LOCATION_LENGTH = INDEX_POSITION_WIDTH * MAX_INDEX_ELEMENT_DEPTH
+
+    # Patterns for generating the values for columns in the query term tables
     HEX_INDEX = "{{:0{}X}}".format(INDEX_POSITION_WIDTH)
     INTEGERS = re.compile(r"\d+")
+
+    # Codes indicating which markup revision should be applied
     REVISION_LEVEL_PUBLISHED = 3
     REVISION_LEVEL_PUBLISHED_OR_APPROVED = 2
     REVISION_LEVEL_PUBLISHED_OR_APPROVED_OR_PROPOSED = 1
     DEFAULT_REVISION_LEVEL = REVISION_LEVEL_PUBLISHED
+
+    # Optimization for mailer cleanup, avoiding mailers from the Oracle system
     LEGACY_MAILER_CUTOFF = 390000
+
+    # Error messages for exceptions raised when a version can't be found
+    NOT_VERSIONED = "document not versioned"
+    NO_PUBLISHABLE_VERSIONS = "no publishable version found"
 
     def __init__(self, session, **opts):
         """
         Capture the session and options passed by the caller
+
+        Called by:
+          cdr.getDoc()
+          client XML wrapper command CdrGetDoc
 
         Two typical scenarios for invoking this constructor would be
           * pass in the XML for a new document we will then save
@@ -809,6 +824,10 @@ class Doc(object):
         register a variant phrase found in the document being edited
         for a glossary term.
 
+        Called by:
+          cdr.addExternalMapping()
+          client XML wrapper command CdrAddExternalMapping
+
         Required positional arguments:
           usage - string representing the context for the mapping
                   (for example, 'Spanish GlossaryTerm Phrases')
@@ -903,6 +922,10 @@ class Doc(object):
 
         Public wrapper for __check_in(), committing changes to the database
 
+        Called by:
+          cdr.unlock()
+          client XML wrapper command CdrCheckIn
+
         Optional keyword arguments:
           force - if True, try to check in even if locked by another account
           comment - optional string to update comment (to NULL if empty)
@@ -921,6 +944,10 @@ class Doc(object):
 
         Public wrapper for __check_out(), commiting changes to the database
 
+        Called by:
+          cdr.checkOutDoc()
+          client XML wrapper command CdrCheckOut
+
         Optional keyword arguments:
           force - if True, steal the lock if necessary (and allowed)
           comment - optional string for the `checkout.comment` column
@@ -936,6 +963,12 @@ class Doc(object):
         We don't actually remove the document or any of its versions
         from the repository. We just set the `active_status` column
         to 'D' so it drops out of the `document` view.
+
+        Called by:
+          cdr.delDoc()
+          cdr.lastVersions()
+          client XML wrapper command CdrDelDoc
+          client XML wrapper command CdrLastVersions
 
         Optional keyword arguments:
           validate - if True, make sure nothing links to the document
@@ -1002,6 +1035,9 @@ class Doc(object):
         """
         Apply one or more filters to the XML for the document
 
+        Called by:
+          cdr.filterDoc()
+          client XML wrapper command CdrFilter
         Positional arguments:
           filters - each positional argument represents a named
                     filter ("name:..."), a named filter set ("set:...")
@@ -1102,6 +1138,7 @@ class Doc(object):
                 f = self.session.filters.get(key)
                 if f is not None:
                     return f
+
         # TODO - REMOVE FOLLOWING CODE; USE root = doc.root INSTEAD
         query = Query("good_filters", "xml")
         query.where(query.Condition("id", doc.id))
@@ -1110,6 +1147,7 @@ class Doc(object):
             raise Exception("filter {} not found".format(doc.cdr_id))
         root = etree.fromstring(row.xml.encode("utf-8"))
         # TODO - END TEMPORARY CODE
+
         for name in ("import", "include"):
             qname = Doc.qname(name, Filter.NS)
             for node in root.iter(qname):
@@ -1127,6 +1165,10 @@ class Doc(object):
     def get_tree(self, depth=1):
         """
         Fetch parents and children of this Term document
+
+        Called by:
+          cdr.getTree()
+          client XML wrapper command CdrGetTree
 
         Pass:
           depth - number of levels to descend for children (default=1)
@@ -1156,6 +1198,10 @@ class Doc(object):
     def label(self, label):
         """
         Apply a label to a specific version of this document
+
+        Called by:
+          cdr.label_doc()
+          client XML wrapper command CdrLabelDocument
 
         Pass:
           label - string for this label's name
@@ -1296,6 +1342,17 @@ class Doc(object):
         return response
 
     def link_report(self):
+        """
+        Find out which documents link to this one
+
+        Called by:
+          cdr.get_links()
+          client XML wrapper command CdrGetLinks
+
+        Return:
+          sequence of strings describing each inbound link
+        """
+
         query = Query("link_net n", "n.source_doc", "d.title", "n.target_frag")
         query.join("document d", "d.id = n.source_doc")
         query.where(query.Condition("n.target_doc", self.id))
@@ -1309,6 +1366,20 @@ class Doc(object):
         return links
 
     def list_versions(self, limit=None):
+        """
+        Find information about the latest versions of this document
+
+        Called by:
+          cdr.listVersions()
+          client XML wrapper command CdrListVersions
+
+        Return:
+          sequence of tuples, latest versions first, each tuple containing:
+            * integer for the version number
+            * date/time the version was saved
+            * comment for the version, if any (otherwise None)
+        """
+
         fields = "num AS number", "dt AS saved", "comment"
         query = Query("doc_version", *fields).order("num DESC")
         query.where(query.Condition("id", self.id))
@@ -1319,6 +1390,13 @@ class Doc(object):
     def reindex(self):
         """
         Repopulate the search support tables for this document
+
+        Called by:
+          cdr.reindex()
+          client XML wrapper command CdrReindexDoc
+
+        Return:
+          None
         """
 
         # Make sure the document is in the repository.
@@ -1361,6 +1439,12 @@ class Doc(object):
 
         Make sure the transaction is rolled back if anything goes wrong.
 
+        Called by:
+          cdr.addDoc()
+          cdr.repDoc()
+          client XML wrapper command CdrAddDoc
+          client XML wrapper command CdrRepDoc
+
         Optional keyword arguments:
           version - if True, create a version
           publishable - if True, create a publishable version
@@ -1376,6 +1460,9 @@ class Doc(object):
           title - fallback document title if no title filter exists for
                   this document type; if a title filter does exist, and
                   it produces a non-empty string, this option is ignored
+
+        Return:
+          None
         """
 
         try:
@@ -1395,9 +1482,16 @@ class Doc(object):
         """
         Modify the `all_docs.active_status` value for the document
 
+        Called by:
+          cdr.setDocStatus()
+          client XML wrapper command CdrSetDocStatus
+
         Pass:
           status - "A" (active) or "I" (inactive); required
           comment - optional keyword argument for string describing the change
+
+        Return:
+          None
         """
 
         if not self.doctype:
@@ -1428,6 +1522,10 @@ class Doc(object):
         """
         Apply a label to a specific version of this document
 
+        Called by:
+          cdr.unlabel_doc()
+          client XML wrapper command CdrUnlabelDocument
+
         Pass:
           label - string for this label's name
         """
@@ -1441,25 +1539,6 @@ class Doc(object):
         delete = "DELETE FROM {} WHERE document = ? AND label = ?"
         self.cursor.execute(delete.format(table), (self.id, row.id))
         self.session.conn.commit()
-
-    def update_title(self):
-        """
-        Regenerate the document's title using the document type's title filter
-
-        Return:
-          True if the document's title was changed; otherwise False
-        """
-
-        if self.id and self.title is not None:
-            title = self.__create_title()
-            #print("created title is {} existing title is {}".format(title, self.title))
-            if title is not None and self.title != title:
-                update = "UPDATE all_docs SET title = ? WHERE id = ?"
-                self.cursor.execute(update, (title, self.id))
-                self.session.conn.commit()
-                self._title = title
-                return True
-        return False
 
     def update_query_terms(self, **opts):
         """
@@ -1498,11 +1577,37 @@ class Doc(object):
         for table in tables:
             self.__store_query_terms(terms, table=table)
 
+    def update_title(self):
+        """
+        Regenerate the document's title using the document type's title filter
+
+        Called by:
+          cdr.updateTitle()
+          client XML wrapper command CdrUpdateTitle
+
+        Return:
+          True if the document's title was changed; otherwise False
+        """
+
+        if self.id and self.title is not None:
+            title = self.__create_title()
+            if title is not None and self.title != title:
+                update = "UPDATE all_docs SET title = ? WHERE id = ?"
+                self.cursor.execute(update, (title, self.id))
+                self.session.conn.commit()
+                self._title = title
+                return True
+        return False
+
     def validate(self, **opts):
         """
         Determine whether the document conforms to the rules for its type
 
         External wrapper for __validate(), committing changes to database.
+
+        Called by:
+          cdr.valDoc()
+          client XML wrapper command CdrValidateDoc
 
         Optional keyword arguments:
           types - sequence of strings indication which validations
@@ -1676,6 +1781,26 @@ class Doc(object):
         self.cursor.execute(insert, values)
 
     def __audit_trail_delay(self):
+        """
+        Make sure we don't hit a primary key constraint for the audit table
+
+        Mike made the audit trail's primary key a composite including
+        a date/time field, and he used that field to connect rows in this
+        table with rows in the doc_version table (it's a view now, but
+        it was a table back then). That worked almost all of the time
+        because SQL Server stores times down to a few milliseconds of
+        granularity. However, there's a bug in the adodbapi package we're
+        using now, which causes INSERTs to fail if a DATETIME value has
+        too much precision. I may try and tackle that bug and possibly
+        come up with a patch at some point in the future, but for now
+        I'm working around the bug by stripping down the granularity
+        for the `audit_trail.dt` column values to whole seconds. As a
+        result, we sometimes (generally when we're testing the API,
+        and not so much in real world usage) need to introduce a delay
+        to make sure we don't try to insert a row into the table
+        for the same document ID/date-time combination.
+        """
+
         if self.id:
             query = Query("audit_trail", "MAX(dt) AS dt")
             query.where(query.Condition("document", self.id))
@@ -2005,7 +2130,7 @@ class Doc(object):
 
     def __create_version(self, **opts):
         """
-        Add a row to the all_doc_versions table
+        Add a row to the `all_doc_versions` table
 
         Note that we're storing two datetime values in the table row.
         One (`dt`) represents when the row was created. The other
@@ -2014,7 +2139,8 @@ class Doc(object):
         table (or created the row, for a new document). I realize
         that's a squirrelly way to link rows from two tables, but
         that's how Mike did it, and a bunch of software assumes that's
-        how it works.
+        how it works. We grind the value down to whole-second granularity
+        to work around a bug in the adodbapi package.
 
         Optional keyword argument:
           publishable - if True, mark the version publishable
@@ -2085,7 +2211,9 @@ class Doc(object):
         This is special-case code to allow the users to remove all
         copies of board meeting recordings after they have outlived
         their usefulness (to avoid retaining potentially sensitive
-        information indefinitely).
+        information indefinitely), an exception to the general
+        principle that we don't discard versioned document information
+        from the repository once we've accepted and stored it.
         """
 
         # Prevent any disastrous mistakes.
@@ -2161,6 +2289,9 @@ class Doc(object):
         Pass:
           schema - reference to the parsed XML schema document
           sets - dictionary of rules sets to be populated
+
+        Return:
+          nothing (side effect is population of `sets`)
         """
 
         for node in schema:
@@ -2294,6 +2425,15 @@ class Doc(object):
         This feature has never been used in all the years the CDR
         has been in existence, but CIAT has requested that we preserve
         the functionality.
+
+        Pass:
+          label - string for the name of the labeled version to find
+
+        Return:
+          integer version number matching the label
+
+        Raise:
+          Exception if the version doesn't exist
         """
 
         query = Query("doc_version v", "MAX(v.num) AS n")
@@ -2380,7 +2520,7 @@ class Doc(object):
         if root is not None:
             eid = 1
             for node in root.iter("*"):
-                node.set("cdr-eid", "_%d" % eid)
+                node.set("cdr-eid", "_{:d}".format(eid))
                 eid += 1
 
     def __namespaces_off(self):
@@ -2456,21 +2596,6 @@ class Doc(object):
 
         This might not fit in a single window, but it was a 500-line
         method in the C++ code!
-        """
-
-        """
-        # Make sure we can detect unversioned changes.
-        if not opts.get("version") and not opts.get("publishable"):
-            last_versioned = self.last_version_date
-            if last_versioned is not None:
-                now = datetime.datetime.now().replace(microsecond=0)
-                logged = False
-                while now == last_versioned:
-                    if not logged:
-                        self.session.logger.info("delay for document save")
-                        logged = True
-                    time.sleep(.1)
-                    now = datetime.datetime.now().replace(microsecond=0)
         """
 
         # Set the stage for validation.
@@ -2926,6 +3051,16 @@ class Doc(object):
                   "never": don't touch the database
                   "valid": only update val_status if full validation passes
                   (only applicable if the document exists in the repository);
+
+        Return:
+          None
+
+        Side effects:
+          set `val_status` property to one of the valid codes
+          populate the `errors` property
+          set `eids` property to a parsed document with cdr-eid attributes
+              for finding errors
+          optionally update the `all_docs.val_status` column for the document
         """
 
         # Make sure the user is authorized to validate this document.
@@ -2998,6 +3133,8 @@ class Doc(object):
     def __validate_against_schema(self):
         """
         Check the XML document against the requirements for its doctype
+
+        Populates the `errors` property by calling `add_error()`.
         """
 
         # Don't bother to validate control documents. Shouldn't happen.
@@ -3042,7 +3179,7 @@ class Doc(object):
                 if not name:
                     name = "anonymous"
                 for rule_set in rule_sets:
-                    filter_xml = etree.tostring(rule_set.get_xslt())
+                    filter_xml = etree.tostring(rule_set.xslt)
                     parser = Doc.Parser()
                     result = self.__apply_filter(filter_xml, doc, parser)
                     for node in result.result_tree.findall("Err"):
@@ -3059,6 +3196,8 @@ class Doc(object):
     def __validate_links(self, store="always"):
         """
         Collect and check all of the document's links for validity
+
+        Populates the `errors` property by calling `add_error()`.
 
         Pass:
           store - control's whether we also populate the linking tables
@@ -3088,6 +3227,10 @@ class Doc(object):
         """
         Create a name which can be used for tagging one or more doc versions
 
+        Called by:
+          cdr.create_label()
+          client XML wrapper command CdrCreateLabel
+
         Pass:
           session - reference to object representing user's login
           label - string used to tag document versions
@@ -3107,6 +3250,20 @@ class Doc(object):
 
     @staticmethod
     def delete_label(session, label):
+        """
+        Remove a name previously created for tagging document versions
+
+        Called by:
+          cdr.delete_label()
+          client XML wrapper command CdrDeleteLabel
+
+        Also removes any uses of the label.
+
+        Pass:
+          session - reference to object representing user's login
+          label - string name for label to be removed
+        """
+
         assert label, "Missing label name"
         cursor = session.conn.cursor()
         query = Query("version_label", "id")
@@ -3162,6 +3319,8 @@ class Doc(object):
     @classmethod
     def get_schema_xml(cls, name, cursor):
         """
+        Fetch the XML for a schema document by nane
+
         TODO: fix schemas in all_docs table and use them
         """
 
@@ -3202,7 +3361,7 @@ class Doc(object):
         query.where(query.Condition("title", title))
         rows = query.execute(cursor).fetchall()
         if len(rows) > 1:
-            raise Exception("Multiple documents with title %s" % title)
+            raise Exception("Multiple documents with title {}".format(title))
         for row in rows:
             return row.id
         return None
@@ -3212,8 +3371,12 @@ class Doc(object):
         """
         Mark tracking documents for failed mailer jobs as deleted
 
-        Invoked by the CdrMailerCleanup command. We skip past mailers
+        Invoked when a new mailer is created. We skip past mailers
         converted from the legacy Oracle PDQ system as an optimization.
+
+        Called by:
+          cdr.mailerCleanup()
+          client XML wrapper command CdrMailerCleanup
 
         Pass:
           session - reference to object representing user's login
@@ -3259,6 +3422,18 @@ class Doc(object):
 
     @staticmethod
     def normalize_id(doc_id):
+        """
+        Create a string version of the document's ID
+
+        Pass:
+          integer ID; or
+          string for integer ID; or
+          string for normalized ID
+
+        Return:
+          string version of ID in the form "CDR9999999999"
+        """
+
         if doc_id is None:
             return None
         if isinstance(doc_id, basestring):
@@ -3343,6 +3518,7 @@ class Doc(object):
             etree.SubElement(call, WITH, name="msg", select=message)
             return test
 
+
     class Error:
         """
         Problem found when processing (unsually validating) a CDR document
@@ -3392,6 +3568,7 @@ class Doc(object):
             args = self.location, self.type, self.level, self.message
             return "{} [{} {}] {}".format(*args)
 
+
     class FilterResult:
         """
         Results of passing an XML document through one or more XSL/T filters
@@ -3410,33 +3587,112 @@ class Doc(object):
             self.error_log = opts.get("error_log")
             self.messages = opts.get("messages")
 
+
     class LineMap:
-        class Line:
-            def __init__(self):
-                self.tags = dict()
-                self.first = None
-            def add_node(self, node):
-                if not self.first:
-                    self.first = node.get("cdr-eid")
-                if not self.tags.get(node.tag):
-                    self.tags[node.tag] = node.get("cdr-eid")
-            def get_error_location(self, error):
-                match = re.match("Element '([^']+)'", error.message)
-                if not match:
-                    return None
-                tag = match.group(1) or None
-                location = self.tags.get(tag)
-                return location or self.first
+        """
+        Map of lines in the source XML to elements starting on those lines
+
+        Takes advantage of the fact that we have added unique `cdr-eid`
+        attribute values to every element in the document being validated.
+
+        Attribute:
+          lines - dictionary of `Doc.LineMap.Line` objects indexed by line #
+        """
+
         def __init__(self, root):
+            """
+            Walk through the parsed document and build the line map
+
+            Pass:
+              root - parsed XML document to be mapped
+            """
+
             self.lines = dict()
             for node in root.iter("*"):
                 line = self.lines.get(node.sourceline)
                 if not line:
                     line = self.lines[node.sourceline] = self.Line()
                 line.add_node(node)
+
         def get_error_location(self, error):
+            """
+            Find the cdr-eid attribute for an element containing an error
+
+            Pass:
+              error - string in which error was described
+
+            Return:
+              cdr-eid attribute value of the element in which the error
+              occurred (or our best guess)
+            """
+
             line = self.lines.get(error.line)
             return line and line.get_error_location(error) or None
+
+
+        class Line:
+            """
+            Map of `cdr-eid` attribute values for nodes in an XML source line
+
+            Attributes:
+              tags - dictionary of `cdr-eid` attribute values indexed by
+                     element names; if multiple occurrences of the same
+                     element appear on the line, only the `cdr-eid` value
+                     for the first occurrence is recorded
+              first - `cdr-eid` attribute value for the first node found
+                      for this line in the XML source
+            """
+
+            def __init__(self):
+                """
+                Create an object with attribute initialized as having no values
+
+                Values will be filled in later
+                """
+
+                self.tags = dict()
+                self.first = None
+
+            def add_node(self, node):
+                """
+                Record a node's `cdr-eid` attribute value
+
+                If this is the line's first node, remember the location ID
+                in the `first` attribute. If this is the first occurrence
+                of elements with this name for this line, add the location
+                ID to the `tags` dictionary.
+
+                Pass:
+                  node - reference to element in the XML document
+                """
+
+                if not self.first:
+                    self.first = node.get("cdr-eid")
+                if not self.tags.get(node.tag):
+                    self.tags[node.tag] = node.get("cdr-eid")
+
+            def get_error_location(self, error):
+                """
+                Find the location ID of a validation error found in the doc
+
+                This code relies on the format of the error string, which
+                we have determined to be consistently:
+                   "Element 'ELEMENT-TAG' ...."
+
+                Pass:
+                  error - string in which error was described
+
+                Return:
+                  best guess (if any) as to the location ID for the error
+                """
+
+                match = re.match("Element '([^']+)'", error.message)
+                if not match:
+                    return None
+                tag = match.group(1) or None
+                location = self.tags.get(tag)
+                return location or self.first
+
 
     class Lock:
         """
@@ -3467,47 +3723,146 @@ class Doc(object):
             args = self.locker.name, self.locker.fullname, self.locked
             return "Document checked out to {} ({}) {}".format(*args)
 
+
     class Parser(etree.XMLParser):
+        """
+        Create a custom parser for filtering which can resolve our URIs
+        """
+
         def __init__(self):
+            """
+            Register resolvers for the URI schemes we support
+            """
+
             etree.XMLParser.__init__(self)
             self.resolvers.add(Resolver("cdrutil"))
             self.resolvers.add(Resolver("cdr"))
             self.resolvers.add(Resolver("cdrx"))
 
+
     class Rule:
+        """
+        Custom validation rule embedded in our XML schema documents
+
+        Attributes:
+          assertions - sequence of `Doc.Assertion` objects
+          context - path identifying which elements in the document to test
+
+        Property:
+          template - XSL/T template element used for applying the rule's test
+        """
+
         def __init__(self, node):
+            """
+            Remember the parts of the document we test and what the tests are
+
+            Pass:
+              `appinfo/pattern/rule` node found in the schema document
+            """
+
             self.assertions = []
             self.context = node.get("context")
             for child in node.findall("assert"):
                 self.assertions.append(Doc.Assertion(child))
+
+        @property
         def template(self):
+            """
+            Assemble the XSL/T node for applying the test for this rule
+            """
+
             TEMPLATE = Doc.qname("template", Filter.NS)
             template = etree.Element(TEMPLATE, match=self.context)
             for assertion in self.assertions:
                 template.append(assertion.make_test())
             return template
 
+
     class RuleSet:
+        """
+        Set of custom validation rules embedded in a XML schema document
+
+        Attributes:
+          name - name of the rule set
+          value - never been used, AFAIK
+          rules - sequence of `Doc.Rule` objects
+
+        Property:
+          xslt - filtering document used to generate error messages for
+                 custom document validation rules
+        """
+
         def __init__(self, node):
+            """
+            Collect the `Rule` objects for the set
+            """
+
             self.name = node.get("name")
-            self.value = node.get("value") # never been used, AFAIK
+            self.value = node.get("value")
             self.rules = [Doc.Rule(r) for r in node.findall("rule")]
-        def get_xslt(self):
+
+        @property
+        def xslt(self):
+            """
+            Build the `xsl:transform` filter document for custom validation
+
+            Return:
+              parsed `xsl:transform` node
+            """
+
             root = self.make_base()
             for rule in self.rules:
-                root.append(rule.template())
+                root.append(rule.template)
             return root
+
         @classmethod
         def make_base(cls):
+            """
+            Create a parsed tree for the XSL/T validation template
+
+            The XML utf-8 bytes for the template have already been
+            retrieved into `Doc.VALIDATION_TEMPLATE` by the Doc
+            class's `__validate_against_schema()` method, which is
+            higher up in the call stack.
+
+            Return:
+              parsed `xsl:transform` node
+            """
+
             return etree.fromstring(Doc.VALIDATION_TEMPLATE)
 
 
     class SchemaResolver(etree.Resolver):
+        """
+        Glue for fetching nested schema documents
+        """
+
         def __init__(self, cursor):
+            """
+            Stash away a database cursor so we can retrieve schema documents
+
+            Pass:
+              reference to database cursor object
+            """
+
             etree.Resolver.__init__(self)
             self.__cdr_cursor = cursor
+
         def resolve(self, url, id, context):
-            #sys.stderr.write("SchemaResolver url={}\n".format(url))
+            """
+            Fetch the serialized XML for a nested schema document
+
+            Pass:
+              url - string for title of the schema document (e.g.,
+                    "CdrCommonSchema.xml")
+              id - unused positional argument
+              context - opaque information, passed through to the
+                        `resolve_string` method of the base class
+
+            Return:
+              return value from `resolve_string` method of the base class
+            """
+
             xml = Doc.get_schema_xml(url, self.__cdr_cursor)
             return self.resolve_string(xml, context)
 
@@ -3515,6 +3870,10 @@ class Doc(object):
     class User:
         """
         Information about a user who did something with the document
+
+        This class is used to carry information about users who have
+        added, modified, or locked a CDR document. This is a lighter-
+        weight class than the one in the `cdrapi.users` module.
 
         Attributes:
           id - primary key integer for the `usr` table
@@ -3525,6 +3884,12 @@ class Doc(object):
         def __init__(self, id, name, fullname):
             """
             Capture the attributes (no validation)
+
+            Pass:
+              id - unique integer for the row in the `usr` table
+              name - short account name (e.g., "klem")
+              fullname - optional real name of the user (for example,
+                         "Klem Kadiddlehopper")
             """
 
             self.id = id
@@ -3533,97 +3898,282 @@ class Doc(object):
 
 
 class Local(threading.local):
+    """
+    Thread-specific storage for XSL/T filtering
+
+    Attribute:
+      docs - stack of documents, the one currently being processed on top
+             (this is the only way we can get to information we need from
+             the documents within the XSL/T callbacks, as the maintainer
+             of the lxml package didn't seem to understand why anyone would
+             need to have user-specific storage passed on the stack, and
+             I couldn't convince him otherwise; as tempting as the name of
+             the `context` argument to `Resolver.resolve()` might look, we
+             don't own it, and we don't have access to its internals).
+    """
+
     def __init__(self, **kw):
         self.docs = []
         self.__dict__.update(kw)
 
 
 class Resolver(etree.Resolver):
+    """
+    Callback support for XSL/T filtering
+    """
+
+    # Strings which might represent SQL injection attacks. We reject these.
     UNSAFE = re.compile(r"insert\s|update\s|delete\s|create\s|alter\s"
                         r"exec[(\s]|execute[(\s]")
+
+    # Expression for normalizing protocol IDs for eliminating duplicates.
     ID_KEY_STRIP = re.compile("[^A-Z0-9]+")
+
+    # Thread-specific storage.
     local = Local()
 
     def resolve(self, url, pubid, context):
-        #sys.stderr.write("url={}\n".format(url))
+        """
+        Handle a callback from an XSL/T filter
+
+        Callback requests are received in the form of a URL in the syntax
+        SCHEME:/PARAMETERS, where SCHEME is one of:
+           "cdr" or "cdrx"
+              request for a document; these two scheme prefixes are
+              synonymous; the original developer may have intended two
+              different uses, but if so the knowledge of what they were
+              has been lost in the sands of time; cdr:/1234 retrieves
+              the current working document for CDR0000001234; see the
+              `__get_doc()` method below for specifics on the syntax
+           "cdrutil"
+              invokes a named custom function; e.g., cdrutil:/date
+              to get the current date and time in XML format; see the
+              `__run_function()` method below for a list of supported
+              callback functions
+
+        Pass:
+          url - string for the callback request
+          pubid - ignored
+          context - opaque information, passed through to the method of the
+                    base class used to package the return value
+
+        Return:
+          result packaged by the base class
+        """
+
+        # Get the document being filtered from the top of the stack
         self.doc = self.local.docs[-1]
         self.session = self.doc.session
         self.cursor = self.session.conn.cursor()
+
+        # Remove the escaping imposed on the URL to elude syntax constraints.
         self.url = url_unquote(url.replace("+", " "))
         self.url = self.url.replace("@@PLUS@@", "+")
+
+        # If a document request slipped through without an ID, we know
+        # we're not goint to find the document.
         if url == "cdrx:/last":
             return self.resolve_string("<empty/>", context)
+
+        # Parse the request and route it to the appropriate handler.
         scheme, parms = self.url.split(":", 1)
         parms = parms.strip("/")
         if scheme in ("cdr", "cdrx"):
-            return self.get_doc(parms, context)
+            return self.__get_doc(parms, context)
         elif scheme == "cdrutil":
-            return self.run_function(parms, context)
+            return self.__run_function(parms, context)
         raise Exception("unsupported url {!r}".format(self.url))
 
-    def run_function(self, parms, context):
+    def __get_doc(self, parms, context):
+        """
+        Fetch information from another CDR document
+
+        Pass:
+          args - string specifying what to retrieve for which document
+          context - opaque information echoed back to the caller
+
+        Return:
+          varies; see logic below
+        """
+
+        # An asterisk is used to request control information from the
+        # document being filtered.
+        if parms.startswith("*"):
+
+            # Return a `CdrDocCtl` block element node for `*/CdrCtl`.
+            if "/CdrCtl" in parms:
+                element = self.doc.legacy_doc_control(filtering=True)
+                return self.__package_result(element, context)
+
+            # Return a `CdrDocTitle` element node for `*/DocTitle`.
+            elif "/DocTitle" in parms:
+                element = etree.Element("CdrDocTitle")
+                element.text = self.doc.title
+                return self.__package_result(element, context)
+            else:
+                raise Exception("unsupported url {!r}".format(self.url))
+
+        # Capture the original `parms` value for later error reporting.
+        uri = parms
+
+        # Fetch a document by name if so requested.
+        if parms.startswith("name:"):
+            parms = parms[5:]
+            if "/" in parms:
+                title, version = parms.split("/", 1)
+            else:
+                title, version = parms, None
+            doc_id = Doc.id_from_title(title, self.cursor)
+            if not doc_id:
+                return None
+            doc = Doc(self.session, id=doc_id, version=version)
+            if doc.doctype.name == "Filter":
+                doc_xml = doc.get_filter(doc_id, version=version).xml
+                return self.resolve_string(doc_xml, context)
+            parms = str(doc.id)
+            if version:
+                parms = "{:d}/{}".format(doc_id, version)
+
+        # Otherwise, the document ID (and possibly version) are specified.
+        else:
+            doc_id, version = parms, None
+            if "/" in parms:
+                doc_id, version = parms.split("/", 1)
+            if not doc_id:
+                raise Exception("no document specified")
+
+        # Wrap up the document XML and return it.
+        doc = Doc(self.session, id=doc_id, version=version)
+        try:
+            xml = doc.xml
+        except:
+            raise Exception("Unable to resolve uri {}".format(uri))
+        return self.resolve_string(doc.xml, context)
+
+    def __run_function(self, parms, context):
+        """
+        Handle a custom callback function
+
+        Functions currently implemented are:
+          "date" - get current date/time in XML standard format
+          "dedup-ids" - collapse protocol IDs to a unique set
+          "denormalizeTerm" - get a term document, possibly with upcoding
+          "docid" - get the ID of the current document
+          "get-pv-num" - fetch the number of the doc's last publishable version
+          "sql-query" - run a SQL query and return XML-wrapped results
+          "valid-zip" - look up a ZIP code and return its first 5 digits
+
+        Pass:
+          parms - right side of the URL, following scheme plus ":/"
+          context - opaque information, passed through to the method of the
+                    base class used to package the return value
+
+        Return:
+          wrapped result of the function
+        """
+
         function, args = parms, None
         if "/" in parms:
             function, args = parms.split("/", 1)
-        if function == "docid":
-            return self.get_doc_id(context)
-        elif function == "sql-query":
-            return self.run_sql_query(args, context)
-        elif function == "get-pv-num":
-            return self.get_pv_num(args, context)
-        elif function == "denormalizeTerm":
-            return self.get_term(args, context)
-        elif function == "dedup-ids":
-            return self.dedup_ids(args, context)
-        elif function == "valid-zip":
-            return self.valid_zip(args, context)
+        method_name = "_{}".format(function.lower().replace("-", "_"))
+        handler = getattr(self, method_name)
+        if handler is not None:
+            return handler(args, context)
         error = "unsupported function {!r} in {!r}".format(function, self.url)
         raise Exception(error)
 
-    @classmethod
-    def make_id_key(cls, id):
-        return cls.ID_KEY_STRIP.sub("", id.upper())
-
-    def valid_zip(self, args, context):
+    def _date(self, args, context):
         """
-        Look up a string in the `zipcode` table
+        Get the current date/time
 
-        Return the base (first 5 digits) for the ZIP code, or an empty
-        element if the zip code is not found
+        Pass:
+          args - ignored for this function
+          context - opaque information echoed back to the caller
+
+        Return:
+          string for the current date/time to the nearest microsecond,
+          in the form YYYY-MM-DDTHH:MM:SS.MMM
         """
 
-        result = etree.Element("ValidZip")
-        query = Query("zipcode", "zip")
-        query.where(query.Condition("zip", args))
-        row = query.execute(self.cursor).fetchone()
-        if row and row.zip:
-            result.text = str(row.zip)[:5]
-        return self.package_result(result, context)
+        result = etree.Element("Date")
+        now = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")
+        if "." in now:
+            front, back = now.split(".", 1)
+        else:
+            front, back = now, ""
+        back = "{}000".format(back)[:3]
+        result.text = "{}.{}".format(front, back)
+        return self.__package_result(result, context)
 
-    def dedup_ids(self, args, context):
+    def _dedup_ids(self, args, context):
+        """
+        Squash a list of protocol IDs into a unique list
+
+        Pass:
+          args - string containing primary and secondary protocol IDs;
+                 the set of primary IDs is separated from the set of
+                 secondary IDs with the delimiter string "~~" and within
+                 each set individual protocol IDs are separated from each
+                 other by a single "~" character
+          context - opaque information echoed back to the caller
+
+        Return:
+          `result` element wrapping a sequence of `id` child elements
+        """
+
         ids = []
         skip = set()
         if "~~" in args:
             primary, secondary = [i.split("~") for i in args.split("~~", 1)]
             for p in primary:
-                skip.add(self.make_id_key(p))
+                skip.add(self.__make_id_key(p))
             for s in secondary:
-                key = self.make_id_key(s)
+                key = self.__make_id_key(s)
                 if key and key not in skip:
                     ids.append(s)
                     skip.add(key)
         result = etree.Element("result")
         for i in ids:
             etree.SubElement(result, "id").text = i
-        return self.package_result(result, context)
+        return self.__package_result(result, context)
 
-    def get_term(self, args, context):
-        if "/" in args:
-            doc_id = Doc.extract_id(args.split("/")[0])
-            upcode = False
-        else:
-            doc_id = Doc.extract_id(args)
-            upcode = True
+    def _docid(self, args, context):
+        """
+        Get the normalized CDR ID for the current document
+
+        Pass:
+          args - ignored for this function
+          context - opaque information echoed back to the caller
+
+        Return:
+          a `DocId` element node containing the doc's normalized CDR ID
+        """
+
+        element = etree.Element("DocId")
+        element.text = self.doc.cdr_id
+        return self.__package_result(element, context)
+
+    def _denormalizeterm(self, args, context):
+        """
+        Build a custom XML document for the specified term
+
+        It's unclear whether we still need this function, as it's
+        only used by the protocol denormalization filters, and protocols
+        are so last year!
+
+        Pass:
+          args - term document ID string, optionally followed by a slash
+                 character to suppress upcoding
+          context - opaque information echoed back to the caller
+
+        Return:
+          a `Term` block element node, possibly containing upcoding;
+          information (or an `empty` element node, if the term document
+          is not found)
+        """
+
+        doc_id = Doc.extract_id(args.split("/")[0])
+        upcode = False if "/" in args else True
         term = Term.get_term(self.session, doc_id)
         if term is None:
             term_xml = "<empty/>"
@@ -3631,13 +4181,39 @@ class Resolver(etree.Resolver):
             term_xml = term.get_xml(upcode)
         return self.resolve_string(term_xml, context)
 
-    def get_pv_num(self, args, context):
-        doc = Doc(self.session, id=args)
+    def _get_pv_num(self, doc_id, context):
+        """
+        Find the version number for a document's latest publishable version
+
+        Pass:
+          doc_id - unique identifier for the document
+          context - opaque information echoed back to the caller
+
+        Return:
+          a `PubVerNumber` element with text content of the version number
+          (or "0" if no version if found)
+        """
+
+        doc = Doc(self.session, id=doc_id)
         answer = etree.Element("PubVerNumber")
         answer.text = str(doc.last_publishable_version or 0)
-        return self.package_result(answer, context)
+        return self.__package_result(answer, context)
 
-    def run_sql_query(self, args, context):
+    def _sql_query(self, args, context):
+        """
+        Run a database query and return the results as XML
+
+        We screen the query for possibly dangerous keywords, and refuse
+        to run the query if we find any.
+
+        Pass:
+          args - SQL query string, possibly with parameters delimited by "~"
+          context - opaque information echoed back to the caller
+
+        Return:
+          a `SqlResult` block element node
+        """
+
         if "~" in args:
             query, values = args.split("~", 1)
             values = values.split("~")
@@ -3662,60 +4238,131 @@ class Resolver(etree.Resolver):
                 else:
                     col.text = str(v)
             r += 1
-        return self.package_result(result, context)
+        return self.__package_result(result, context)
 
-    def get_doc_id(self, context):
-        element = etree.Element("DocId")
-        element.text = self.doc.cdr_id
-        return self.package_result(element, context)
+    def _valid_zip(self, args, context):
+        """
+        Look up a ZIP code string and return its first five digits
 
-    def get_doc(self, parms, context):
-        if parms.startswith("*"):
-            if "/CdrCtl" in parms:
-                element = self.doc.legacy_doc_control(filtering=True)
-                return self.package_result(element, context)
-            elif "/DocTitle" in parms:
-                element = etree.Element("CdrDocTitle")
-                element.text = self.doc.title
-                return self.package_result(element, context)
-            else:
-                raise Exception("unsupported url {!r}".format(self.url))
-        uri = parms
-        if parms.startswith("name:"):
-            parms = parms[5:]
-            if "/" in parms:
-                title, version = parms.split("/", 1)
-            else:
-                title, version = parms, None
-            doc_id = Doc.id_from_title(title, self.cursor)
-            if not doc_id:
-                return None
-            doc = Doc(self.session, id=doc_id, version=version)
-            if doc.doctype.name == "Filter":
-                doc_xml = doc.get_filter(doc_id, version=version).xml
-                return self.resolve_string(doc_xml, context)
-            parms = str(doc.id)
-            if version:
-                parms = "%d/%s" % (doc_id, version)
-        else:
-            doc_id, version = parms, None
-            if "/" in parms:
-                doc_id, version = parms.split("/", 1)
-            if not doc_id:
-                raise Exception("no document specified")
-        doc = Doc(self.session, id=doc_id, version=version)
-        try:
-            xml = doc.xml
-        except:
-            raise Exception("Unable to resolve uri {}".format(uri))
-        return self.resolve_string(doc.xml, context)
+        Pass:
+          args - string for zip code to be verified
+          context - opaque information echoed back to the caller
 
-    def package_result(self, result, context):
+        Return:
+          `ValidZip` element containing the first five digits of the
+                     ZIP code if it is found in the database (otherwise
+                     empty)
+        """
+
+        result = etree.Element("ValidZip")
+        query = Query("zipcode", "zip")
+        query.where(query.Condition("zip", args))
+        row = query.execute(self.cursor).fetchone()
+        if row and row.zip:
+            result.text = str(row.zip)[:5]
+        return self.__package_result(result, context)
+
+    def _extern_map(self, args, context):
+        """
+        Look up a value in the external_map table
+
+        Creates a row in the table with a NULL documnet ID if the value
+        isn't found.
+
+        Probably won't implement this, as it is only invoked by the
+        Import CTGovProtocol filter, and we don't do those imports
+        any more.
+
+        Pass:
+          args - extra information passed to the function, if any
+          context - opaque information echoed back to the caller
+
+        Return:
+          `DocId` element Node (empty if value not found)
+        """
+
+        raise Exception("obsolete command")
+
+    def _pretty_url(self, args, context):
+        """
+        Swap a GUID for a user-friendly URL
+
+        Probably won't implement this, as it uses a defunct web service
+
+        Pass:
+          args - string for URL's GUID
+          context - opaque information echoed back to the caller
+
+        Return:
+          `PrettyUrl` element node
+        """
+
+        raise Exception("obsolete command")
+
+    def _verification_date(self, args, context):
+        """
+        Get the date a protocol was last verified by a mailer response
+
+        Probably won't implement this, as it is only used by the
+        InScopeProtocol denormalization filter, and we don't do
+        InScopeProtocol documents any more
+
+        Pass:
+          args - extra information passed to the function, if any
+          context - opaque information echoed back to the caller
+
+        Return:
+          `VerificationDate` element node
+        """
+
+        raise Exception("obsolete command")
+
+    def __package_result(self, result, context):
+        """
+        Use `resolve_string()` method of the base class to wrap return string
+
+        Pass:
+          result - parsed XML document node
+          context - opaque information echoed back to the caller
+
+        Return:
+          wrapped string result
+        """
+
         result = etree.tostring(result, encoding="utf-8")
         return self.resolve_string(result, context)
 
+    @classmethod
+    def __make_id_key(cls, id):
+        """
+        Normalize a protocol ID for de-duplication of ID lists
+
+        Pass:
+          id - string for protocol ID to be normalized
+
+        Return:
+          uppercase string with non-alphanumerics stripped
+        """
+
+        return cls.ID_KEY_STRIP.sub("", id.upper())
+
     @staticmethod
     def escape_uri(context, arg=""):
+        """
+        Prepare a URI string so that it makes it through the lxml gauntlet
+
+        This is a custom function to be made available to XSL/T code so
+        that URI values containing non-conforming characters won't cause
+        filter processing to fail.
+
+        Pass:
+          context - ignored
+          arg - string or sequence of strings to be escaped
+
+        Return:
+          single (possibly concatenated) escaped string
+        """
+
         if isinstance(arg, (list, tuple)):
             arg = "".join(arg)
         try:
@@ -3723,6 +4370,7 @@ class Resolver(etree.Resolver):
         except:
             raise
 
+# Register our custom extension function for XSL/T filters to use.
 etree.FunctionNamespace(Doc.NS).update({"escape-uri": Resolver.escape_uri})
 
 class Term:
@@ -3733,9 +4381,18 @@ class Term:
     """
 
     def __init__(self, session, doc_id, depth=0):
+        """
+        Recursively fetch a term's names and parents
+
+        Pass:
+          session - reference to object representing current login
+          doc_id - unique ID of the CDR `Term` document
+          depth - integer representing level of recursion
+        """
+
         self.session = session
         self.doc_id = doc_id
-        self.cdr_id = "CDR%010d" % doc_id
+        self.cdr_id = Doc.normalize_id(doc_id)
         self.include = True
         self.parents = dict()
         self.name = self.pdq_key = self.xml = self.full_xml = None
@@ -3755,13 +4412,40 @@ class Term:
             if Doc.NO_PUBLISHABLE_VERSIONS in str(e):
                 return
             raise
+
     def get_xml(self, with_upcoding=True):
+        """
+        Return one of the serialized versions of the Term document
+
+        Pass:
+          with_upcoding - return the version which includes parent terms
+                          if `True`
+
+        Return:
+          utf-8 bytes for serialized document
+        """
+
         with self.session.cache.term_lock:
             if self.xml and self.full_xml:
                 return with_upcoding and self.full_xml or self.xml
         self.serialize(need_locking=True)
         return with_upcoding and self.full_xml or self.xml
+
     def serialize(self, need_locking=False):
+        """
+        Generate two string representations of the term
+
+        One serialization is for the bare Term information, and the
+        other includes upcoding.
+
+        Pass:
+          need_locking - if True, take precautions to avoid cross-thread
+                         collisions with use of the cache
+
+        Return:
+          None (side effect is population of `self.xml` and `self.full_xml`)
+        """
+
         term = etree.Element("Term", nsmap=Doc.NSMAP)
         term.set(Link.CDR_REF, self.cdr_id)
         if self.pdq_key:
@@ -3783,7 +4467,20 @@ class Term:
                     self.xml, self.full_xml = xml, full_xml
         else:
             self.xml, self.full_xml = xml, full_xml
+
     def get_parent(self, node, depth):
+        """
+        Fetch the parent document from the cache or the database
+
+        Pass:
+          node - document node containing the link to the parent term document
+          depth - integer for how far we've crawled in the stack (preventing
+                  out-of-control recursion)
+
+        Return:
+          None (side effect is population of cache and `self.parents`)
+        """
+
         try:
             doc_id = Doc.extract_id(node.get(Link.CDR_REF))
         except:
@@ -3794,14 +4491,29 @@ class Term:
             if parent:
                 self.parents.update(parent.parents)
                 self.parents[doc_id] = parent
+
     @classmethod
     def get_term(cls, session, doc_id, depth=0):
+        """
+        Pull a Term document from the cache or the database
+
+        Pass:
+          session - reference to object representing the current login
+          doc_id - unique ID of the CDR Term document
+          depth - keeps track of level of recursion
+        """
+
+        # Stop if recursion has gotten out of hand.
         if depth > cls.MAX_DEPTH:
             error = "term hierarchy depth exceeded at CDR()".format(doc_id)
             raise Exception(error)
+
+        # Pull the Term object from the cache if we already have it.
         with session.cache.term_lock:
             if doc_id in session.terms:
                 return session.cache.terms[doc_id]
+
+        # Fetch the term information from the database, cache and return it.
         term = cls(session, doc_id, depth)
         if not term.name:
             term = None
@@ -3812,16 +4524,45 @@ class Term:
 
 
 class Filter:
+    """
+    Lightweight object for a cacheable XSL/T filter document
+
+    Attributes:
+      doc_id - unique ID of the CDR Filter document
+      xml - utf-8 bytes for the serialized filter document
+      now - was originally used to track how long the filter has sat in
+            the cache unused; drop?
+    """
+
+    # Keep recursion from getting out of hand.
     MAX_FILTER_SET_DEPTH = 20
+
+    # Namespace for XSL/T documents
     NS = "http://www.w3.org/1999/XSL/Transform"
+
     def __init__(self, doc_id, xml):
+        """
+        Capture the filter ID and xml, forcing the xml to bytes
+
+        Pass:
+          doc_id - unique ID for the CDR Filter document
+          xml - utf-8 bytes or Unicode serialization of the Filter document
+        """
+
         self.doc_id = doc_id
         self.xml = xml.encode("utf-8") if isinstance(xml, unicode) else xml
         self.now = time.time()
 
 
 class Schema:
+    """
+    Values used for parsing schema validation documents
+    """
+
+    # Standard namespace for schema documents
     NS = "http://www.w3.org/2001/XMLSchema"
+
+    # Fully qualified names for elements in schema documents
     ANNOTATION = Doc.qname("annotation", NS)
     APPINFO = Doc.qname("appinfo", NS)
     SCHEMA = Doc.qname("schema", NS)
@@ -3830,13 +4571,15 @@ class Schema:
     SIMPLE_TYPE = Doc.qname("simpleType", NS)
     SIMPLE_CONTENT = Doc.qname("simpleContent", NS)
     GROUP = Doc.qname("group", NS)
-    INCLUDE = "{%s}include" % NS
+    INCLUDE = Doc.qname("include", NS)
     ATTRIBUTE = Doc.qname("attribute", NS)
     SEQUENCE = Doc.qname("sequence", NS)
     CHOICE = Doc.qname("choice", NS)
     RESTRICTION = Doc.qname("restriction", NS)
     EXTENSION = Doc.qname("extension", NS)
     ENUMERATION = Doc.qname("enumeration", NS)
+
+    # Path to attribute definitions enclosed in `simpleContent` blocks.
     NESTED_ATTRIBUTE = "/".join([SIMPLE_CONTENT, EXTENSION, ATTRIBUTE])
 
 
@@ -3846,11 +4589,39 @@ class Doctype:
     """
 
     def __init__(self, session, **opts):
+        """
+        Construct a new `Doctype` argument
+
+        Called by:
+          cdr.getDoctype()
+          client XML wrapper command CdrGetDocType
+
+        Required positional argument:
+          session - object representing login session
+
+        Optional keyword arguments:
+          id - primary key for the `doc_type` row
+          name - string by which the document type is known
+          active - "Y" or "N"
+          comment - string describing the document type's use
+          format - e.g., "xml" (the default) or "css"
+          schema - string for the title of the schema document used to
+                   validate documents of this type
+          versioning - "Y" (the default, meaning documents of this type
+                       have separate versions created) or "N"
+        """
+
         self.__session = session
         self.__opts = opts
 
     @property
     def active(self):
+        """
+        Flag indicating whether the document type is available for use
+
+        Valid values are "Y" (the default) or "N"
+        """
+
         if not hasattr(self, "_active"):
             self._active = self.__opts.get("active")
             if not self._active:
@@ -3871,6 +4642,10 @@ class Doctype:
 
     @property
     def comment(self):
+        """
+        Description of the documents created for this type
+        """
+
         if not hasattr(self, "_comment"):
             if "comment" in self.__opts:
                 self._comment = self.__opts["comment"]
@@ -3893,18 +4668,30 @@ class Doctype:
 
     @property
     def created(self):
+        """
+        When the document type was first defined
+        """
+
         if not hasattr(self, "_created"):
             self.__fetch_dates()
         return self._created
 
     @property
     def cursor(self):
+        """
+        Give the document type object its own database cursor
+        """
+
         if not hasattr(self, "_cursor"):
             self._cursor = self.session.conn.cursor()
         return self._cursor
 
     @property
     def dtd(self):
+        """
+        DTD string generated from the schema (including its included schemas)
+        """
+
         if not hasattr(self, "_dtd_string"):
             self._dtd = DTD(self.session, name=self.schema)
             self._dtd_string = str(self._dtd)
@@ -3912,6 +4699,13 @@ class Doctype:
 
     @property
     def format(self):
+        """
+        String for the name of the file format for documents of this type
+
+        Valid values are controlled by the `format` lookup table. Most are
+        "xml" (the default).
+        """
+
         if not hasattr(self, "_format"):
             self._format = self.__opts.get("format")
             if not self._format and self.id:
@@ -3937,6 +4731,10 @@ class Doctype:
 
     @property
     def format_id(self):
+        """
+        Primary key for the link to this type's row in the `format` table
+        """
+
         if not hasattr(self, "_format_id"):
             if self.format:
                 if not hasattr(self, "_format_id"):
@@ -3945,6 +4743,10 @@ class Doctype:
 
     @property
     def id(self):
+        """
+        Primary key for the `doc_type` table
+        """
+
         if not hasattr(self, "_id"):
             self._id = self.__opts.get("id")
             if not self._id:
@@ -3963,6 +4765,10 @@ class Doctype:
 
     @property
     def name(self):
+        """
+        String for the name by which this document type is know
+        """
+
         if not hasattr(self, "_name"):
             self._name = self.__opts.get("name")
             if not self._name and self.id:
@@ -3988,6 +4794,10 @@ class Doctype:
 
     @property
     def schema(self):
+        """
+        String for the title of this document type's schema document
+        """
+
         if not hasattr(self, "_schema"):
             if "schema" in self.__opts:
                 self._schema = self.__opts["schema"]
@@ -4017,6 +4827,10 @@ class Doctype:
 
     @property
     def schema_id(self):
+        """
+        Integer for the schema's row in the `all_docs` table
+        """
+
         if not hasattr(self, "_schema_id"):
             if self.schema and not hasattr(self, "_schema_id"):
                 schema_id = Doc.id_from_title(self.schema, self.cursor)
@@ -4029,16 +4843,34 @@ class Doctype:
 
     @property
     def schema_mod(self):
+        """
+        Date/time the document type was last modified
+
+        This is an odd name for the column (and property) of a value
+        which is updated every time the row in the `doc_type` table
+        is modified, regardless of whether the schema itself is changed
+        (or even exists), but that's the way the original developer
+        set it up.
+        """
+
         if not hasattr(self, "_schema_date"):
             self.__fetch_dates()
         return self._schema_date
 
     @property
     def session(self):
+        """
+        Reference to the object representing the current login
+        """
+
         return self.__session
 
     @property
     def versioning(self):
+        """
+        Flag (Y/N) indicating whether documents of this type are versioned
+        """
+
         if not hasattr(self, "_versioning"):
             self._versioning = self.__opts.get("versioning")
             if not self._versioning:
@@ -4059,12 +4891,23 @@ class Doctype:
 
     @property
     def vv_lists(self):
+        """
+        Dictionary of valid values for this document type
+
+        Each item in the dictionary is a sequence of strings, indexed
+        by the element-name or element-name/@attribute-name string.
+        """
+
         if not hasattr(self, "_vv_lists"):
             self._vv_lists = self._dtd.values if self.dtd else None
         return self._vv_lists
 
     @property
     def linking_elements(self):
+        """
+        Set of string for elements which can have a `cdr:ref` attribute
+        """
+
         if not hasattr(self, "_linking_elements"):
             if self.dtd:
                 self._linking_elements = self._dtd.linking_elements
@@ -4073,6 +4916,14 @@ class Doctype:
         return self._linking_elements
 
     def delete(self):
+        """
+        Drop the document type's row from the `doc_type` table
+
+        Called by:
+          cdr.delDoctype()
+          client XML wrapper command CdrDelDocType
+        """
+
         if not self.session.can_do("DELETE DOCTYPE"):
             raise Exception("User not authorized to delete document types")
         if not self.id:
@@ -4123,6 +4974,24 @@ class Doctype:
         return names
 
     def save(self, **opts):
+        """
+        Write the document type information to the `doc_type` row
+
+        Called by:
+          cdr.addDoctype()
+          cdr.modDoctype()
+          client XML wrapper command CdrAddDocType
+          client XML wrapper command CdrModDocType
+
+        Optional keyword arguments:
+          name - string by which the document type is known
+          active - "Y" or "N"
+          comment - string describing the document type's use
+          format - e.g., "xml" (the default) or "css"
+          versioning - "Y" (the default, meaning documents of this type
+                       have separate versions created) or "N"
+        """
+
         self.session.logger.info("Doctype.save(%s)", opts)
         now = datetime.datetime.now().replace(microsecond=0)
         try:
@@ -4167,12 +5036,33 @@ class Doctype:
         return self.id
 
     def __format_id_from_name(self, name):
+        """
+        Find the row in the `format` table for a format name
+
+        Pass:
+          name - string naming the format (e.g., "xml")
+
+        Return:
+          integer for the row's primary key
+        """
+
         query = Query("format", "id")
         query.where(query.Condition("name", name))
         row = query.execute(self.cursor).fetchone()
         return row.id if row else None
 
     def __fetch_dates(self):
+        """
+        Fetch the datetime values from the `doc_type` table
+
+        The column "schema_date" is misnamed; it actually represents
+        the date/time the row in the `doc_type` table was modified.
+
+        Return:
+          None (side effect is population of `self._schema_date` and
+          `self._created` attributes)
+        """
+
         self._created = self._schema_date = None
         if self.id:
             query = Query("doc_type", "created", "schema_date")
@@ -4242,6 +5132,10 @@ class Doctype:
         the CSS as binary, as it seems to be a proprietary format
         previously used by XMetaL (we use standard CSS text files now).
 
+        Called by:
+          cdr.get_css_files()
+          client XML wrapper command CdrGetCssFiles
+
         Pass:
           session - reference to object representing user's login
 
@@ -4261,6 +5155,10 @@ class Doctype:
         """
         Assemble the list of active document types names
 
+        Called by:
+          cdr.getDoctypes()
+          client XML wrapper command CdrListDocTypes
+
         Pass:
           session - reference to object representing user's login
 
@@ -4279,6 +5177,10 @@ class Doctype:
         """
         Assemble the list of schema documents currently stored in the CDR
 
+        Called by:
+          cdr.getSchemaDocs()
+          client XML wrapper command CdrListSchemaDocs
+
         Pass:
           session - reference to object representing user's login
 
@@ -4293,16 +5195,52 @@ class Doctype:
 
 
 class DTD:
+    """
+    Document Type Definition (DTD) for validating XML documents
+
+    Within the CDR we use Schema validation, but XMetaL did not
+    originally support Schema validation, so we generate DTDs
+    from our schemas and ship them to the client for use by XMetaL
+    to control document validation. The more recent versions of
+    XMetaL have added support for Schema validation, but switching
+    will take some non-trivial work which has not been done yet.
+
+    Attributes:
+      session - reference to object representing current CDR login
+      cursor - object for database queries
+      types - dictionary of simple and complex types found in the schema
+      groups - dictionary of named sequences of elements
+      top - reference to the top node of the schema document
+      name - string for the schema title
+      defined - set of names for types which have already been serialized
+      linking_elements - elements which can have `cdr:ref` attributes
+      values - dictionary of valid values sequences indexed by element
+               or element/@attribute name strings
+    """
+
+    # Unicode categories used for recognizing NMTOKEN strings.
     NAME_START_CATEGORIES = { "Ll", "Lu", "Lo", "Lt", "Nl" }
     OTHER_NAME_CATEGORIES = { "Mc", "Me", "Mn", "Lm", "Nd" }
     NAME_CHAR_CATEGORIES = NAME_START_CATEGORIES | OTHER_NAME_CATEGORIES
+
+    # Names of element types
     EMPTY = "empty"
     MIXED = "mixed"
     TEXT_ONLY = "text-only"
     ELEMENT_ONLY = "element-only"
+
+    # Special value for maxOccurs attribute to mean 'unlimited'.
     UNBOUNDED = "unbounded"
 
     def __init__(self, session, **opts):
+        """
+        Initialize the attributes and parse the document type's schema
+
+        Pass:
+          session - reference to object representing the current CDR login
+          name - required keyword argument for name of the schema document
+        """
+
         self.session = session
         self.cursor = session.conn.cursor()
         self.types = dict()
@@ -4312,11 +5250,18 @@ class DTD:
         self.parse_schema(self.name)
 
     def parse_schema(self, name):
+        """
+        Pull out the schema information we need for generating the DTD
+        """
+
+        # Fetch the CDR schema document.
         assert name, "how can we parse something we can't find?"
         schema_xml = Doc.get_schema_xml(name, self.cursor)
         root = etree.fromstring(schema_xml.encode("utf-8"))
         if root.tag != Schema.SCHEMA:
             raise Exception("Top-level element must be schema")
+
+        # Walk through the top-level children of the root element
         for node in root:
             if node.tag == Schema.ELEMENT:
                 assert not self.top, "only one top-level element allowed"
@@ -4331,19 +5276,44 @@ class DTD:
                 self.parse_schema(node.get("schemaLocation"))
                 self.session.logger.debug("resume parsing %s", name)
         self.session.logger.debug("finished parsing %s", name)
+
     def __str__(self):
+        """
+        Generate the DTD document string
+        """
+
         self.values = dict()
         self.linking_elements = set()
-        lines = ["<!-- Generated from %s -->" % self.name, ""]
+        lines = ["<!-- Generated from {} -->".format(self.name), ""]
         self.defined = set()
         self.top.define(lines)
         return "\n".join(lines) + "\n"
+
     def add_type(self, t):
-        assert t not in self.types, "duplicate type %s" % t.name
+        """
+        Insert the type object into the `types` dictionary attribute
+        """
+
+        assert t not in self.types, "duplicate type {}".format(t.name)
         self.types[t.name] = t
 
+
     class CountedNode:
+        """
+        Base class for `Element` and `ChoiceOrSequence` classes
+
+        Attributes:
+          dtd - reference to the object for the DTD we're building
+          min_occurs - integer specifying lowest allowed number of occurrences
+          max_occurs - integer for highest number of occurrences allowed
+          count_char - "?", "*", "+" or an empty string
+        """
+
         def __init__(self, dtd, node):
+            """
+            Pull out the common information about allowed occurrences
+            """
+
             self.dtd = dtd
             self.min_occurs = self.max_occurs = 1
             min_occurs = node.get("minOccurs")
@@ -4358,8 +5328,22 @@ class DTD:
                 self.count_char = self.max_occurs == 1 and "?" or "*"
             else:
                 self.count_char = self.max_occurs > 1 and "+" or ""
+
+
     class Element(CountedNode):
+        """
+        One of the elements allowed for documents of this type
+
+        Attributes:
+          name - string for the element's XML tag
+          type_name - string for key to dtd's `types` attribute
+        """
+
         def __init__(self, dtd, node):
+            """
+            Fetch the attributes and confirm that we got them
+            """
+
             DTD.CountedNode.__init__(self, dtd, node)
             self.name = node.get("name")
             self.type_name = node.get("type")
@@ -4367,24 +5351,71 @@ class DTD:
             assert self.type_name, "element type required"
             debug = dtd.session.logger.debug
             debug("Element %s of type %s", self.name, self.type_name)
+
         def lookup_type(self):
+            """
+            Find the custom or builtin type object for this element
+
+            This only works after the entire schema has been parsed.
+            It is invoked during the serialization of the DTD.
+            """
+
+            # If the element uses one of our own types, return it.
             element_type = self.dtd.types.get(self.type_name)
             if element_type:
                 return element_type
+
+            # Otherwise, should be a built-in type; make/return the object.
             if "xsd:" not in self.type_name:
-                vals = self.name, self.type_name
-                raise Exception("element %s: type %s not found" % vals)
+                args = self.name, self.type_name
+                raise Exception("element {}: type {} not found".format(*args))
             return DTD.Type(self.dtd, self.type_name)
+
         def define(self, lines):
+            """
+            Add the lines for this element to the DTD
+
+            Recursively handles children of this element. The actual
+            generation of the string for the element's lines is handed
+            off to the object for the element's type.
+
+            Pass:
+              lines - object for sequence of strings for the DTD
+
+            Return:
+              None (side effect is recursive population of `lines`)
+            """
+
+            # Start with an empty `children` attribute.
             self.children = []
+
+            # Add our own lines; populates the `children` attribute.
             lines += self.lookup_type().define(self)
+
+            # If this is the top-level element, add definitions for
+            # elements which are injected into the copy of the document
+            # given to XMetaL.
             if not self.dtd.defined:
                 self.add_control_definitions(lines)
+
+            # Recursively add definitions for children which haven't
+            # already been handled.
             for child in self.children:
                 if child.name not in self.dtd.defined:
                     self.dtd.defined.add(child.name)
                     child.define(lines)
+
         def add_control_definitions(self, lines):
+            """
+            Append lines for elements carrying metadata about the documents
+
+            Pass:
+              lines - object for sequence of strings for the DTD
+
+            Return:
+              None (side effect is recursive population of `lines`)
+            """
+
             lines.append("<!ELEMENT CdrDocCtl (DocId, DocTitle)>")
             lines.append("<!ATTLIST CdrDocCtl readyForReview CDATA #IMPLIED>")
             lines.append("<!ELEMENT DocId (#PCDATA)>")
@@ -4393,18 +5424,68 @@ class DTD:
             lines.append("<!ATTLIST DocTitle readonly (yes|no) #IMPLIED>")
             for name in (self.name, "CdrDocCtl", "DocId", "DocTitle"):
                 self.dtd.defined.add(name)
+
         def get_node(self, elements, serialize=False):
+            """
+            Insert the element's name into the sequence passed in
+
+            This queues up the element to be processed recursively, and is
+            invoked when we're serializing the parent. Optionally we
+            also return the string used to show this element's appearance
+            in the sequence of a compound element's content.
+
+            Pass:
+              elements - sequence to which we append this element if it's
+                         not already there
+              serialize - flag indicating whether we should return a
+                          serialized version of this element as content
+                          of a wrapper element
+
+            Return:
+              serialized string if requested, else None
+            """
+
             if self.name not in [element.name for element in elements]:
                 elements.append(self)
             if serialize:
-                return "%s%s" % (self.name, self.count_char)
+                return "{}{}".format(self.name, self.count_char)
+
+
     class Type:
+        """
+        Base class for element and attribute types
+
+        Attributes:
+          dtd - reference to the object for the DTD we're building
+          name string by which the element or attribute type is identified
+          values - sequence of string values allowed for the type
+        """
+
         def __init__(self, dtd, name):
+            """
+            Capture and verify the object's attributes
+
+            Pass:
+              dtd - reference to the object for the DTD we're building
+              name - string by which the element or attribute type is known
+            """
+
             self.dtd = dtd
             self.name = name
             self.values = []
             assert self.name, "type must have a name"
+
         def define(self, element):
+            """
+            Default method for assembling definitions for an element
+
+            Pass:
+              element - object for element to be serialized to the DTD
+
+            Return:
+              sequence of definition strings to be included in the DTD
+            """
+
             if self.values:
                 self.dtd.values[element.name] = self.values
             definitions = [self.define_element(element)]
@@ -4412,19 +5493,69 @@ class DTD:
             if attributes:
                 definitions.append(attributes)
             return definitions
+
         def define_element(self, element):
-            return "<!ELEMENT %s (#PCDATA)>" % element.name
+            """
+            Create string for DTD definition of simple text-only element
+
+            Pass:
+              element - object for element to be serialized to the DTD
+
+            Return:
+              DTD definition string for element
+            """
+
+            return "<!ELEMENT {} (#PCDATA)>".format(element.name)
+
         def define_attributes(self, element):
+            """
+            Default type has no attributes
+            Pass:
+              element - object for element to be serialized to the DTD
+
+            Return:
+              None
+            """
             return None
+
         @staticmethod
         def map_type(schema_type):
+            """
+            Convert schema name for attribute type to DTD name
+
+            Pass:
+              schema_type - string for schema type (e.g. "xsd:id")
+
+            Return:
+              DTD equivalent for schema type if found; otherwise "CDATA"
+            """
+
             for n in ("ID", "IDREFS", "NMTOKEN", "NMTOKENS"):
-                if schema_type == "xsd:%s" % n:
+                if schema_type == "xsd:{}".format(n):
                     return n
             return "CDATA"
 
+
     class SimpleType(Type):
+        """
+        Schema type for attributes or plain elements
+
+        `SimpleType` elements can have no attributes or child elements
+
+        Attributes not inherited from `Type` class:
+          base - base type if this type is derived
+          nmtokens - valid values for an attribute of this type
+        """
+
         def __init__(self, dtd, node):
+            """
+            Extract the base type and valid values (if any) and register it
+
+            Pass:
+              dtd - reference to the object for the DTD we're building
+              node - definition for this type in the schema
+            """
+
             DTD.Type.__init__(self, dtd, node.get("name"))
             self.base = None
             self.nmtokens = []
@@ -4440,20 +5571,46 @@ class DTD:
                         else:
                             self.nmtokens = None
             dtd.add_type(self)
+
         def dtd_type(self):
+            """
+            Get the string used to define an attribute in the DTD
+            """
+
             if self.nmtokens:
-                return "(%s)" % "|".join(sorted(self.nmtokens))
+                return "({})".format("|".join(sorted(self.nmtokens)))
             if "xsd:" in self.base:
                 return DTD.Type.map_type(self.base)
             base = self.dtd.types.get(self.base)
-            assert base, "%s: base type %s not found" % (self.name, self.base)
+            args = self.name, self.base
+            assert base, "{}: base type {} not found".format(*args)
             return base.dtd_type()
 
+
     class ComplexType(Type):
+        """
+        Schema type for elements which can have attributes and/or child nodes
+
+        Attributes not inherited from `Type` class:
+          attributes - dictionary of attributes allowed or required
+          content - `DTD.Sequence`, `DTD.Choice`, `DTD.Group`, or None
+          model - DTD.EMPTY, DTD.MIXED, DTD.TEXT_ONLY, DTD.ELEMENT_ONLY
+        """
+
+        # Prepared error message for multiple content definitions
         CONTENT = "sequence", "choice", "simpleContent", "group"
-        CNAMES = ", ".join(["xsd:%s" % c for c in CONTENT])
-        ERROR = "complex type may only contain one of %s" % CNAMES
+        CNAMES = ", ".join(["xsd:{}".format(c) for c in CONTENT])
+        ERROR = "complex type may only contain one of {}".format(CNAMES)
+
         def __init__(self, dtd, node):
+            """
+            Detmine the content and model for this type
+
+            Pass:
+              dtd - reference to the object for the DTD we're building
+              node - definition for this type in the schema
+            """
+
             DTD.Type.__init__(self, dtd, node.get("name"))
             dtd.session.logger.debug("ComplexType %s", self.name)
             self.attributes = dict()
@@ -4465,11 +5622,12 @@ class DTD:
                 if child.tag == Schema.ATTRIBUTE:
                     self.add_attribute(dtd, child)
                 elif self.content:
-                    raise Exception("%s: %s" % (self.name, self.ERROR))
+                    raise Exception("{}: {}".format(self.name, self.ERROR))
                 elif child.tag == Schema.SIMPLE_CONTENT:
                     self.model = DTD.TEXT_ONLY
                     extension = child.find(Schema.EXTENSION)
-                    assert len(extension), "%s: missing extension" % self.name
+                    message = "{}: missing extension".format(self.name)
+                    assert len(extension), message
                     for child in extension.findall(Schema.ATTRIBUTE):
                         self.add_attribute(dtd, child)
                     break
@@ -4483,41 +5641,72 @@ class DTD:
                     elif child.tag == Schema.GROUP:
                         self.content = DTD.Group(dtd, child)
                     else:
-                        raise Exception("%s: %s" % (self.name, self.ERROR))
+                        raise Exception("{}: {}".format(self.name, self.ERROR))
             dtd.add_type(self)
+
         def add_attribute(self, dtd, child):
+            """
+            Insert an attribute into the `attributes` dictionary
+
+            Pass:
+              dtd - reference to the object for the DTD we're building
+              node - definition for this attribute in the schema
+            """
+
             attribute = DTD.Attribute(dtd, child)
             if attribute.name in self.attributes:
-                values =  (self.name, attribute.name)
-                error = "Duplicate attribute %s/@%s" % values
+                values =  self.name, attribute.name
+                error = "Duplicate attribute {}/@{}".format(*values)
                 raise Exception(error)
             self.attributes[attribute.name] = attribute
+
         def define_element(self, element):
+            """
+            Create the string defining an element of this type for the DTD
+
+            Pass:
+              element - reference to a `DTD.Element` object
+
+            Return:
+              string beginning "<!ELEMENT {element.name} ..."
+            """
+
             if self.model == DTD.TEXT_ONLY:
-                return "<!ELEMENT %s (#PCDATA)>" % element.name
+                return "<!ELEMENT {} (#PCDATA)>".format(element.name)
             elif self.model == DTD.EMPTY:
-                return "<!ELEMENT %s EMPTY>" % element.name
+                return "<!ELEMENT {} EMPTY>".format(element.name)
             elif self.model == DTD.MIXED:
                 self.content.get_node(element.children)
                 children = "|".join([c.name for c in element.children])
-                names = (element.name, children)
-                return "<!ELEMENT %s (#PCDATA|%s)*>" % names
+                names = element.name, children
+                return "<!ELEMENT {} (#PCDATA|{})*>".format(*names)
             elif self.model == DTD.ELEMENT_ONLY:
                 content = self.content.get_node(element.children, True)
                 assert content, "Elements required for elementOnly content"
                 if not self.dtd.defined:
-                    content = "(CdrDocCtl,%s)" % content
+                    content = "(CdrDocCtl,{})".format(content)
                 elif not content.startswith("("):
-                    content = "(%s)" % content
-                return "<!ELEMENT %s %s>" % (element.name, content)
-            raise Exception("%s: unrecognized content model" % self.name)
+                    content = "({})".format(content)
+                return "<!ELEMENT {} {}>".format(element.name, content)
+            raise Exception("{}: unrecognized content model".format(self.name))
+
         def define_attributes(self, element):
+            """
+            Make definition for attributes of an element of this type
+
+            Pass:
+              element - reference to a `DTD.Element` object
+
+            Return:
+              string beginning "<!ATTLIST {element.name} ..."
+            """
+
             attributes = []
             for attribute in self.attributes.values():
                 if attribute.name == "cdr:ref":
                     self.dtd.linking_elements.add(element.name)
                 attributes.append(str(attribute))
-                values = attribute.values()
+                values = attribute.values
                 if values:
                     key = "{}@{}".format(element.name, attribute.name)
                     self.dtd.values[key] = values
@@ -4528,12 +5717,27 @@ class DTD:
                 if not self.dtd.defined:
                     attributes = ["xmlns:cdr CDATA #IMPLIED"] + attributes
                 attributes = " ".join(attributes)
-                return "<!ATTLIST %s %s>" % (element.name, attributes)
+                return "<!ATTLIST {} {}>".format(element.name, attributes)
+
 
     class ChoiceOrSequence(CountedNode):
+        """
+        Base class for `Choice` and `Sequence` classes
+
+        Attributes:
+          nodes - sequence of content allowed for elements of this type
+        """
+
         def __init__(self, dtd, node):
+            """
+            Populate and validate the `nodes` attribute
+
+            Pass:
+              dtd - reference to the object for the DTD we're building
+              node - definition for this choice or sequence in the schema
+            """
+
             DTD.CountedNode.__init__(self, dtd, node)
-            self.dtd = dtd
             self.nodes = []
             for child in node:
                 if child.tag == Schema.ELEMENT:
@@ -4545,25 +5749,101 @@ class DTD:
                 elif child.tag == Schema.GROUP:
                     self.nodes.append(DTD.Group(dtd, child))
             assert self.nodes, "choice or sequence cannot be empty"
+
         def get_node(self, elements, serialize=False):
+            """
+            Invoke `get_node()` for each of the objects nodes
+
+            Also, if requested, we return the serialized DTD definition
+            string for the choice or sequence. The side effect of this
+            method is to queue up the elements represented by `nodes`
+            to have their own definitions build and added to the DTD.
+
+            Pass:
+              elements - sequence to which we append elements
+              serialize - flag indicating whether we should return a
+                          serialized version of this object as content
+                          of a wrapper element
+
+            Return:
+              serialized string if requested, else None
+            """
+
             nodes = [node.get_node(elements, serialize) for node in self.nodes]
             if serialize:
                 string = self.separator.join(nodes)
                 if len(self.nodes) > 1:
-                    string = "(%s)" % string
-                return "%s%s" % (string, self.count_char)
+                    string = "({})".format(string)
+                return "{}{}".format(string, self.count_char)
+
+
     class Choice(ChoiceOrSequence):
+        """
+        Set of elements of which one is allowed or required
+        """
+
+        # This is the only difference between a `Choice` and a `Sequence`
         separator = "|"
+
         def __init__(self, dtd, node):
+            """
+            Hand off construction work to the base class
+
+            Pass:
+              dtd - reference to the object for the DTD we're building
+              node - definition for this choice in the schema
+            """
+
             DTD.ChoiceOrSequence.__init__(self, dtd, node)
             dtd.session.logger.debug("Choice with %d nodes", len(self.nodes))
+
+
     class Sequence(ChoiceOrSequence):
+        """
+        Ordered sequence of allowed/required elements
+        """
+
+        # This is the only difference between a `Choice` and a `Sequence`
         separator = ","
+
         def __init__(self, dtd, node):
+            """
+            Hand off construction work to the base class
+
+            Pass:
+              dtd - reference to the object for the DTD we're building
+              node - definition for this sequence in the schema
+            """
+
             DTD.ChoiceOrSequence.__init__(self, dtd, node)
             dtd.session.logger.debug("Sequence with %d nodes", len(self.nodes))
+
+
     class Group:
+        """
+        Named choice or sequence
+
+        This construct is used to avoid code duplication within a schema,
+        so the same list of choices and/or sequence can be used in more
+        than one place with copying and pasting the entire definitions.
+
+        Attributes:
+          dtd - reference to the object for the DTD we're building
+          ref - if set, this object represents a pointer to another
+                `Group` object holding the `name` and `node` attributes
+          name - string for name by which this choice or sequence is known
+          node - reference to `DTD.Choice` or `DTD.Sequence` object
+        """
+
         def __init__(self, dtd, node):
+            """
+            Extract values from the schema node and register the name
+
+            Pass:
+              dtd - reference to the object for the DTD we're building
+              node - definition for this group in the schema
+            """
+
             self.dtd = dtd
             self.ref = node.get("ref")
             if self.ref:
@@ -4577,19 +5857,74 @@ class DTD:
             nodes = []
             for child in node:
                 if child.tag == Schema.CHOICE:
-                    nodes.append(DTD.Choice(dtd, node))
+                    nodes.append(DTD.Choice(dtd, child))
                 elif child.tag == Schema.SEQUENCE:
-                    nodes.append(DTD.Sequence(dtd, node))
-            assert len(nodes) == 1, "%s: %d nodes" % (self.name, len(nodes))
+                    nodes.append(DTD.Sequence(dtd, child))
+            args = self.name, len(nodes)
+            assert len(nodes) == 1, "group {} has {:d} nodes".format(*args)
             self.node = nodes[0]
             dtd.groups[self.name] = self
+
         def get_node(self, elements, serialize=False):
+            """
+            Pass through the `get_node()` call to the named choice or sequence
+
+            Pass:
+              elements - sequence to which we append elements
+              serialize - flag indicating whether we should return a
+                          serialized version of this object as content
+                          of a wrapper element
+
+            Return:
+              serialized string if requested, else None
+            """
+
             if self.ref:
                 return self.dtd.groups[self.ref].get_node(elements, serialize)
             else:
                 return self.node.get_node(elements, serialize)
+
+
     class Attribute:
+        """
+        Definition for an XML attribute which can attached to an XML element
+
+        Attributes:
+          dtd - reference to the object for the DTD we're building
+          name - string naming the attribute
+          type_name - string identifying the type of the attribute
+          required - True if the attribute must be present for its element
+                     to be valid
+
+        Property:
+          values - sequence of valid value strings for this attribute, if any
+        """
+
         def __init__(self, dtd, node):
+            """
+            Extract the name and type from the schema node
+
+            Because of a quirk in the way the XSD standard handles namespaces
+            in included schema documents, our schemas are unable to use
+            namespaces for the attribute names. So we're using attribute
+            names without namespaces in the schemas, replacing the colon
+            which would have separated the namespace prefix from the local
+            name ("non-colonized name" in XML jargon) with a hyphen. Then
+            when we pass a document to the schema validation engine, we
+            munge the attribute names of the documents to match what we've
+            done to the schemas. DTDs don't have this problem, so the DTDs
+            we give to XMetaL for validation of the CDR documents have the
+            attribute names which actually correspond to what's stored in
+            the repository. If we had it to do all over again, knowing what
+            we know about the final XSD standard (which hadn't been finished
+            at the point when the CDR project was launched), we'd probably
+            avoid using namespaces in the CDR documents altogether.
+
+            Pass:
+              dtd - reference to the object for the DTD we're building
+              node - definition for this attribute in the schema
+            """
+
             self.dtd = dtd
             self.name = node.get("name")
             self.type_name = node.get("type")
@@ -4598,25 +5933,58 @@ class DTD:
             self.required = node.get("use") == "required"
             if self.name.startswith("cdr-"):
                 self.name = self.name.replace("cdr-", "cdr:")
+
         def __str__(self):
+            """
+            Serialize the attribute definition for the DTD
+
+            Return:
+              string for this attribute's DTD definition
+            """
+
             required = self.required and "REQUIRED" or "IMPLIED"
-            return "%s %s #%s" % (self.name, self.dtd_type(), required)
+            return "{} {} #{}".format(self.name, self.dtd_type(), required)
+
         def dtd_type(self):
+            """
+            Get the string used to define an attribute in the DTD
+
+            Return:
+              DTD version of the string used by the schema to represent
+              the attribute's base type (e.g., "NMTOKEN", "CDATA", etc.)
+            """
+
             if "xsd:" in self.type_name:
                 return DTD.Type.map_type(self.type_name)
             simple_type = self.dtd.types.get(self.type_name)
             if not simple_type:
                 vals = self.type_name, self.name
-                error = "unrecognized type %s for @%s" % vals
+                error = "unrecognized type {} for @{}".format(*vals)
                 raise Exception(error)
             return simple_type.dtd_type()
+
+        @property
         def values(self):
+            """
+            Sequence of valid value strings for this attribute, if any
+
+            Return:
+              sequence of string values, or None
+            """
+
             if "xsd:" in self.type_name:
                 return None
             simple_type = self.dtd.types.get(self.type_name)
             return simple_type.values
+
     @classmethod
     def alternate_is_nmtoken(cls, string):
+        """
+        Original method for determining if a string is an NMTOKEN
+
+        Drop this after the code review.
+        """
+
         for c in string:
             o = ord(c)
             if 0x20DD < o <= 0x20E0:
@@ -4628,6 +5996,8 @@ class DTD:
                     return False
         return True
 
+    # Regular-expression pattern used to determine whether a string
+    # matches the specification for an NMTOKEN value.
     NMTOKEN_PATTERN = re.compile(
         r"[-:_."
         r"\xB7"
@@ -4647,19 +6017,38 @@ class DTD:
         r"\U0000FDF0-\U0000FFFD"
         r"\U00010000-\U000EFFFF]+"
     )
+
     @classmethod
-    def is_nmtoken(cls, string):
+    def is_nmtoken(cls, value):
         """
+        Test a string to see if it is an NMTOKEN
+
+        Optimize by checking for a space in the string first.
+
         See https://www.w3.org/TR/REC-xml/#sec-common-syn
+
+        Pass:
+          value - string that we're testing
+
+        Return:
+          True if the value is an NMTOKEN string; otherwise False
         """
-        if " " in string:
+        if " " in value:
             return False
-        return cls.NMTOKEN_PATTERN.match(string) and True or False
+        return cls.NMTOKEN_PATTERN.match(value) and True or False
+
 
 class LinkType:
+    """
+    Named specification of which links are allowed from a given element
+    """
+
+    # Caching of the link types.
     TYPES = dict()
     TYPE_IDS = dict()
     LOCK = threading.Lock()
+
+    # Codes for limitations on the link target's version.
     CHECK_TYPES = {
         "C": "current document",
         "P": "publishable document",
@@ -4667,21 +6056,63 @@ class LinkType:
     }
 
     def __init__(self, session, **opts):
+        """
+        Instantiate `LinkType` object
+
+        Called by:
+          cdr.getLinkType()
+          client XML wrapper command CdrGetLinkType
+
+        Required positional argument:
+          session - reference to object representing the current login
+
+        Optional keyword arguments:
+          id - primary key into the `link_type` table
+          name - string by which the link type is known
+          sources - sequence of `LinkSource` objects representing
+                    combinations of document type/element name
+                    allowed to link to other CDR documents for this
+                    link type
+          targets - dictionary of `Doctype` objects indexed by
+                    doctype ID, representing the types of documents
+                    to which links of this type can be made
+          comment - string describing the usage of the link type
+          properties - sequence of `Property` objects representing custom
+                       selection logic for eligible link targets
+          chk_type - "C", "P", or "V" (see `LinkType.CHECK_TYPES` above);
+                     oddly, the custom logic in the properties does not
+                     use this flag; I have not changed this behavior,
+                     not knowing what such a change might break, but
+                     I susspect such a change would be a good idea
+        """
+
         self.__session = session
         self.__opts = opts
 
     @property
     def cursor(self):
+        """
+        Give the link type object its own database cursor
+        """
+
         if not hasattr(self, "_cursor"):
             self._cursor = self.session.conn.cursor()
         return self._cursor
 
     @property
     def session(self):
+        """
+        Reference to `users.Session` object representing the current login
+        """
+
         return self.__session
 
     @property
     def properties(self):
+        """
+        Sequence of `Property` object for custom validation rules
+        """
+
         if not hasattr(self, "_properties"):
             if "properties" in self.__opts:
                 self._properties = self.__opts["properties"]
@@ -4707,12 +6138,20 @@ class LinkType:
         return self._properties
 
     class LinkSource:
+        """
+        Combination of document type and element for linking documents
+        """
+
         def __init__(self, doctype, element):
             self.doctype = doctype
             self.element = element
 
     @property
     def sources(self):
+        """
+        Sequence of `LinkSource` object for allowable linker for this type
+        """
+
         if not hasattr(self, "_sources"):
             if "sources" in self.__opts:
                 self._sources = self.__opts["sources"]
@@ -4732,6 +6171,10 @@ class LinkType:
 
     @property
     def comment(self):
+        """
+        Description of this link types usage
+        """
+
         if not hasattr(self, "_comment"):
             if "comment" in self.__opts:
                 self._comment = self.__opts["comment"]
@@ -4750,6 +6193,12 @@ class LinkType:
 
     @property
     def targets(self):
+        """
+        Dictionary of `Doctype` object allowed as target for link type
+
+        The dictionary is indexed by the `doc_type` table primary keys.
+        """
+
         if not hasattr(self, "_targets"):
             if "targets" in self.__opts:
                 self._targets = self.__opts["targets"]
@@ -4769,6 +6218,12 @@ class LinkType:
 
     @property
     def chk_type(self):
+        """
+        Code for the version requirements imposed on valid link targets
+
+        One of `LinkType.CHECK_TYPES`.
+        """
+
         if not hasattr(self, "_chk_type"):
             if "chk_type" in self.__opts:
                 self._chk_type = self.__opts["chk_type"]
@@ -4786,6 +6241,10 @@ class LinkType:
 
     @property
     def id(self):
+        """
+        Primary key into the `link_type` table for this object
+        """
+
         if not hasattr(self, "_id"):
             if "id" in self.__opts:
                 self._id = self.__opts["id"]
@@ -4800,6 +6259,10 @@ class LinkType:
 
     @property
     def name(self):
+        """
+        Human-readable name for this link type
+        """
+
         if not hasattr(self, "_name"):
             if "name" in self.__opts:
                 self._name = self.__opts["name"]
@@ -4821,6 +6284,14 @@ class LinkType:
     def search(self, **opts):
         """
         Collect documents eligible to be linked with this link type
+
+        Useful for populating picklists in the user interface when
+        the user is trying to create a valid link from the document
+        being edited to another CDR document.
+
+        Called by:
+          cdr.search_links()
+          client XML wrapper command CdrSearchLinks
 
         Keyword arguments:
           pattern - titles of candidate target docs must match this pattern
@@ -4850,6 +6321,15 @@ class LinkType:
         return [Doc(self.session, id=row.id, title=row.title) for row in rows]
 
     def save(self):
+        """
+        Store a new or modified link type's information
+
+        Called by:
+          cdr.pubLinkType()
+          client XML wrapper command CdrAddLinkType
+          client XML wrapper command CdrModLinkType
+        """
+
         action = "MODIFY LINKTYPE" if self.id else "ADD LINKTYPE"
         if not self.session.can_do(action):
             raise Exception("User not authorized to perform {}".format(action))
@@ -4867,15 +6347,17 @@ class LinkType:
                 self.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
-    def __drop_related_rows(self):
-        for table in ("link_xml", "link_target", "link_properties"):
-            column = "link_id"
-            if table == "link_target":
-                column = "source_link_type"
-            delete = "DELETE FROM {} WHERE {} = ?".format(table, column)
-            self.cursor.execute(delete, (self.id,))
-
     def delete(self):
+        """
+        Remove the type's row from the `link_type` table
+
+        Also drops related rows.
+
+        Called by:
+          cdr.delLinkType()
+          client XML wrapper command CdrDelLinkType
+        """
+
         if not self.session.can_do("DELETE LINKTYPE"):
             raise Exception("User not authorized to delete link types")
         if not self.id:
@@ -4891,11 +6373,41 @@ class LinkType:
             raise
 
     def __delete(self):
+        """
+        Delete database rows for the link type
+
+        Drop related rows first so database relational integrity doesn't
+        block dropping the primary row.
+
+        Wrapped in a helper function to facilitate rollback in the event
+        of failure.
+        """
+
         self.__drop_related_rows()
         delete = "DELETE FROM link_type WHERE id = ?"
         self.cursor.execute(delete, (self.id,))
 
+    def __drop_related_rows(self):
+        """
+        Delete rows linking to this type's `link_type` row
+
+        This done in preparation for deleting the link type altogether.
+        Called (indirectly) by `LinkType.delete()`.
+        """
+
+        for table in ("link_xml", "link_target", "link_properties"):
+            column = "link_id"
+            if table == "link_target":
+                column = "source_link_type"
+            delete = "DELETE FROM {} WHERE {} = ?".format(table, column)
+            self.cursor.execute(delete, (self.id,))
+
     def __save(self):
+        """
+        Separate out the database writes so rollback from failures is easier
+        """
+
+        # Create or update the row in the `link_type` table.
         fields = dict(
             name=self.name,
             chk_type=self.chk_type,
@@ -4916,6 +6428,9 @@ class LinkType:
         else:
             self.cursor.execute("SELECT @@IDENTITY as id")
             self._id = self.cursor.fetchone().id
+
+        # Create the rows identifying which elements in which document
+        # types can contain links of this type.
         for source in self.sources:
             args = self.session, source.doctype, source.element
             linktype = self.lookup(*args)
@@ -4927,6 +6442,9 @@ class LinkType:
             values = self.id, source.doctype.id, source.element
             insert = "INSERT INTO link_xml ({}) VALUES (?, ?, ?)".format(names)
             self.cursor.execute(insert, values)
+
+        # Create the rows identifying which document types can be targets
+        # for this link type.
         for target in itervalues(self.targets):
             assert target.id, "doc type {} not found".format(target.name)
             names = "source_link_type, target_doc_type"
@@ -4937,18 +6455,25 @@ class LinkType:
             except:
                 self.session.logger.info("targets=%s", self.targets)
                 raise
+
+        # Save the custom validation/filtering logic for the link type.
         for prop in (self.properties or []):
             names = "link_id, property_id, value, comment"
             values = self.id, prop.id, prop.value, prop.comment
             insert = "INSERT INTO link_properties ({}) VALUES (?, ?, ?, ?)"
             insert = insert.format(names)
             self.cursor.execute(insert, values)
+
     @classmethod
     def get_linktype_names(cls, session):
         """
         Fetch the list of all link type names
 
         Bypass the cache for this.
+
+        Called by:
+          cdr.getLinkTypes()
+          client XML wrapper command CdrListLinkTypes
         """
 
         query = Query("link_type", "name").order("name")
@@ -4956,6 +6481,19 @@ class LinkType:
 
     @classmethod
     def get(cls, session, id):
+        """
+        Get or create the `LinkType` object for this linking type
+
+        Cache the type so we don't have to create it multiple times.
+
+        Pass:
+          session - reference to object representing the current login
+          id - primary key for the `link_type` table
+
+        Return:
+          reference to a `LinkType` object
+        """
+
         if id not in cls.TYPES:
             cls.TYPES[id] = cls(session, id)
         return cls.TYPES[id]
@@ -4964,6 +6502,11 @@ class LinkType:
     def lookup(cls, session, doctype, element_tag):
         """
         Find the `LinkType` object for this linking source
+
+        Called by:
+          cdr.check_proposed_link()
+          client XML wrapper command CdrPasteLink
+          internal link validation code
 
         Pass:
           session - logged-in sesion of CDR account
@@ -4986,6 +6529,17 @@ class LinkType:
     def get_property_types(cls, session):
         """
         Fetch information from the link_prop_type table
+
+        These are all of the flavors of custom link properties which
+        can be assigned to a link type. Currently there is only one,
+        but more could be added in the future.
+
+        Called by:
+          cdr.getLinkProps()
+          client XML wrapper command CdrListLinkProps
+
+        Required positional argument:
+          session - reference to object representing the current login
         """
 
         cursor = session.conn.cursor()
@@ -4999,11 +6553,6 @@ class LinkType:
         cursor.close()
         return types
 
-    class TargetType:
-        def __init__(self, id, name):
-            self.id = id
-            self.name = name
-
     class Property:
         """
         Base class for link type properties
@@ -5012,9 +6561,26 @@ class LinkType:
         can link to which documents. At present we only have one such
         flavor of `Property`, for determining whether the target document
         contains specific values.
+
+        Attributes:
+          session - reference to object representing current login
+          cursor - the property object gets its own database cursor
+          name - string telling us what category of property we have
+          value - string holding logic for custom filtering/validation
+          comment - optional string describing the custom property
         """
 
         def __init__(self, session, name, value, comment):
+            """
+            Wrap the custom rule attributes in an object
+
+            Pass:
+              session - reference to object representing current login
+              name - string telling us what category of property we have
+              value - string holding logic for custom filtering/validation
+              comment - optional string describing the custom property
+            """
+
             self.session = session
             self.cursor = session.conn.cursor()
             self.name = name
@@ -5023,6 +6589,10 @@ class LinkType:
 
         @property
         def id(self):
+            """
+            Primary key into the `link_prop_type` table
+            """
+
             if hasattr(self, "_id"):
                 return self._id
             query = Query("link_prop_type", "id")
@@ -5061,7 +6631,6 @@ class LinkType:
             /Term/TermType/TermTypeName == "Semantic type" &
             /Term/TermType/TermTypeName -= "Obsolete term"
 
-
             /Term/TermType/TermTypeName -= "Obsolete term" AND
             (/Term/TermType/TermTypeName=="Index term" OR
              /Term/TermType/TermTypeName=="Header term" OR
@@ -5069,10 +6638,11 @@ class LinkType:
 
         Note that the order of the token tests in `PATTERN` is significant.
         In particular, the match for double-quoted values has to come first,
-        because there no limit (other than disallowing the double-quote
+        because there's no limit (other than disallowing the double-quote
         mark itself) on when can show up between the double-quote marks.
         """
 
+        # Regular expression used to pull out tokens from the property string.
         PATTERN = re.compile(r"""
             "[^"]*"          # double-quoted string for value to test for
           | /[^\s()|&=!+*-]+ # path value for query_term[_pub] table tests
@@ -5082,17 +6652,41 @@ class LinkType:
           | \bOR\b           # alias for | operator
           | \bNOT\b          # negation of assertion
         """, re.VERBOSE | re.IGNORECASE)
+
+        # Aliases for Boolean keywords.
         CONNECTORS = {"|": "OR", "&": "AND"}
+
+        # See notes above for description of 'picklist-only' alternates.
         OPERATORS = {"==", "!=", "+=", "-="}
 
         def __init__(self, session, name, value, comment):
+            """
+            Extract the logic for the custom validation/filtering
+
+            The base class constructor captures most of the object's
+            attributes.
+
+            Pass:
+              session - reference to object representing current login
+              name - string telling us what category of property we have
+              value - string holding logic for custom filtering/validation
+              comment - optional string describing the custom property
+            """
+
             LinkType.Property.__init__(self, session, name, value, comment)
             self.assertions = self.parse(value)
 
         @classmethod
         def parse(cls, property_string):
             """
-            Extract the tokens from the property string (see class docs)
+            Extract the tokens from the property string
+
+            Refer to the class documentation above for specifics on the
+            logic.
+
+            Pass:
+              property_string - string containing the custom test(s)
+                                for filtering/validating links
             """
 
             top = []
@@ -5155,25 +6749,39 @@ class LinkType:
             return cls.Assertions(top)
 
         def validate(self, link):
+            """
+            Determine whether a specific link is allowed
+
+            Pass:
+              link - reference to `Link` object being evaluated
+
+            Return:
+              None
+
+            Side effects:
+              population of the link's document's `errors` property
+              if the custom validation rules are not satisfied
+            """
+
             if not self.assertions.test(link):
                 error = "Failed link target rule: {}".format(self.value)
                 link.add_error(error)
 
-        #def refine_query(self, query):
         @property
         def conditions(self):
             """
             Add clauses needed to find link targets satisfying this property
 
-            Passes on the work to the `Assertions` object.
+            Passes on the work to the `Assertions` object. This is used
+            when we are constructing SQL queries for picklists containing
+            link target candidates. It is not used for validation of an
+            existing link, which is somewhat more straightforward.
 
             Pass:
               query - `db.Query` object to be refined with new conditions
             """
 
             return self.assertions.conditions
-            for condition in self.assertions.conditions:
-                query.where(condition)
 
 
         class Testable:
@@ -5243,6 +6851,10 @@ class LinkType:
             def conditions(self):
                 """
                 Assemble the list of conditions needed to satisfy this property
+
+                Used for building picklists of candidate link targets (not
+                for validating an existing link, which is more
+                straightforward).
 
                 Complicated! Be sure to include this in the code walkthrough!
 
@@ -5321,133 +6933,42 @@ class LinkType:
                     ands = [Query.Or(*ors)]
 
                 # Return the results, but don't cache them.
-                #print(ands)
                 return ands
 
-
-
-
-
-                # At least one of these will be empty each time we hit the
-                # top of the loop.
-                ands = []
-                ors = []
-
-                # We haven't seen a connector yet.
-                connector = None
-
-                # Each node is a connector, assertion, or assertion set.
-                for node in self.nodes:
-
-                    # The connector nodes are easy.
-                    if isinstance(node, basestring):
-                        connector = node
-
-                    # The current node will be folded into a Query.Or object.
-                    elif connector == "OR":
-
-                        # Treat sequences of conditions as a unit for an OR.
-                        if isinstance(node, self.__class__):
-                            more = node.conditions
-                        else:
-                            more = node.condition
-
-                        # If we've already started a chain of ORs, add to it.
-                        if ors:
-                            ors.append(more)
-
-                        # Otherwise, start a new chain, folding in ANDed nodes.
-                        else:
-
-                            # If there's just one node on the left, enclosing
-                            # it in parentheses as a group is unnecessary.
-                            if len(ands) == 1:
-                                ors = [ands[0], more]
-                            else:
-                                ors = [ands, more]
-
-                            # These have been folded into the ORs; don't
-                            # need them here any more.
-                            ands = []
-
-                    # If we got here, we're either on the right side of
-                    # an AND connector, or we're at the beginning of the
-                    # sequence of nodes. Is the current node a nested
-                    # set of assertions?
-                    elif isinstance(node, self.__class__):
-
-                        # If we have a chain of nodes connected by OR,
-                        # make that a unit as the first in a sequence
-                        # of ANDed conditions.
-                        if ors:
-                            ands = [Query.Or(ors)] + node.conditions
-
-                        # Otherwise, add the conditions to the sequence
-                        # of nodes which must all be true
-                        else:
-                            ands += node.conditions
-
-                    # This must be a node for a single assertion.
-                    elif ors:
-
-                        # We have a chain of nodes connected by OR,
-                        # so make that a unit as the left side of an
-                        # ANDed pair of conditions.
-                        ands = [Query.Or(ors), node.condition]
-                        ors = []
-
-                    # Otherwise (no ORs hanging around), just pop the
-                    # new condition on the end of the chain of conditions
-                    # which must all be true.
-                    else:
-                        ands.append(node.condition)
-
-                    """
-                    if isinstance(node, LinkType.LinkTargetContains.Assertion):
-                        if connector == "OR":
-                            if ands:
-                                if len(ands) == 1:
-                                    ors = ands[0], node.condition
-                                else:
-                                    ors = ands, node.condition
-                            else:
-                                ors.append(node.condition)
-                        else:
-                            if ors:
-                                ands = Query.Or(ors), node.condition
-                                ors = []
-                            else:
-                                ands.append(node.condition)
-                    elif isinstance(node, self.__class__):
-                        if connector == "OR":
-                            if ands:
-                                if len(ands) == 1:
-                                    ors = ands[0], node.conditions
-                                else:
-                                    ors = ands, node.conditions
-                                ands = []
-                            else:
-                                ors.append(node.conditions)
-                        else:
-                            if ors:
-                                ands = [Query.Or(ors)] + node.conditions
-                            else:
-                                ands += node.conditions
-                    else:
-                        connector = node
-                    """
-
-                # If the last thing we saw was a condition preceded by "OR"
-                # then the whole sequence of conditions is bundled as a single
-                # set of (possibly nested) conditions joined by OR.
-                if ors:
-                    ands = [Query.Or(ors)]
-
-                # Return the results, but don't cache them.
-                return ands
 
         class Assertion(Testable):
+            """
+            Single test for values found in link target candidates
+
+            Attributes:
+              path - location of value in the link target candidate document
+              operator - describes the relationship the document's value
+                         should have to the value specified for the assertion;
+                         (equal to or not equal to); see class documentation
+                         above for the `LinkTargetContains` class
+              value - string being compared to what is found in the link
+                      target candidate document
+              negative - True if assertion was preceded by "NOT"
+              picklist_only - True if the assertion should be ignored
+                              when we are validating an existing link
+                              (rather than collecting candidate link targets
+                              for a picklist)
+            """
+
             def __init__(self, path, operator, value, negative=False):
+                """
+                Package the attributes into in `Assertion` instance
+
+                Pass:
+                  path - e.g., "/Term/TermType/TermTypeName"
+                  operator - e.g., "!="
+                  value - e.g., "Obsolete term"
+                  negative - True if "NOT" preceded the assertion in the
+                             property's string value; not that this is
+                             different from the negation contained in
+                             the "!= (not equal to) operator
+                """
+
                 if not path or not operator:
                     raise Exception("malformed link property assertion")
                 self.path = path
@@ -5455,28 +6976,62 @@ class LinkType:
                 self.value = value
                 self.negative = negative
                 self.picklist_only = operator[0] in "+-"
+
             def test(self, link):
+                """
+                Apply the assertion to an existing link to see if it is valid
+
+                Pass:
+                  link - reference to `Link` object
+
+                Return:
+                  `True` if the assertion is satisfied, or is not used for
+                  validation (`picklist_only`); otherwise `False`
+                """
+
+                # If this assertion's operator indicates that it should
+                # only be used for constructing picklists of link target
+                # candidates, don't use it to declare an existing link
+                # invalid.
                 if self.picklist_only:
                     result = True
+
                 else:
+                    # See if the document has the value in the specified
+                    # location at least once. Note that (unlike the search
+                    # module) we don't support relationships other than
+                    # equality (no CONTAINS or similar operators).
                     doc_id = link.target_doc.id
                     cursor = link.doc.session.conn.cursor()
                     query = Query("query_term", "COUNT(*)")
                     query.where(query.Condition("doc_id", doc_id))
                     query.where(query.Condition("path", self.path))
+
+                    # The assertion can test for the presence of an
+                    # element within the document without regard to
+                    # what the value is.
                     if self.value:
                         query.where(query.Condition("value", self.value))
+
+                    # If the document should have the value, but doesn't,
+                    # the link is invalid; same if it shouldn't but does.
                     count = query.execute(cursor).fetchone()[0]
                     if self.operator == "==":
                         result = count > 0
                     else:
                         result = count == 0
+
+                    # If the assertion was preceded by "NOT" flip the result.
                     if self.negative:
                         result = not result
+
                 return result
 
             @property
             def condition(self):
+                """
+                Database `Query.Condition` object for picklist queries
+                """
                 query = Query("query_term", "doc_id")
                 query.where(query.Condition("path", self.path))
                 if self.value:
@@ -5487,20 +7042,6 @@ class LinkType:
                 operator = "NOT IN" if negative else "IN"
                 return query.Condition("d.id", query, operator)
 
-            """
-            def __repr__(self):
-                return str(self)
-            def __str__(self):
-                query = [
-                    "SELECT doc_id",
-                    "FROM query_term",
-                    "WHERE path = '{}'".format(self.path.replace("'", "''"))
-                ]
-                if self.value:
-                    value = self.value.replace("'", "''")
-                    query.append("AND value = '{}'".format(value))
-                return " ".join(query)
-            """
 
 class Link:
     """
@@ -5566,6 +7107,10 @@ class Link:
     def __init__(self, doc, node):
         """
         Collect the linking information for this element node (if any)
+
+        Pass:
+          doc - reference to `Doc` object for linking document
+          node - reference to `etree._Element` object containing the link
         """
 
         # Start with a clean slate
@@ -5645,9 +7190,15 @@ class Link:
 
         self.doc.add_error(message, self.eid, type=self.doc.LINK)
 
-    def validate(self, **opts):
+    def validate(self):
         """
         Find out whether this link meets its requirements
+
+        Return:
+          None
+
+        Side effects:
+          population of the linking document's error log
         """
 
         # Make sure the document we're linking to actually exists.
@@ -5695,21 +7246,57 @@ class Link:
         for property in self.linktype.properties:
             property.validate(self)
 
+
 class FilterSet:
+    """
+    Named set of CDR filters
+
+    Properties:
+      id - primary key into the `filter_set` table
+      name - unique string by which the set is known
+      description - brief description of the set, used for UI
+      notes - more extensive optional notes on the use of the filter set
+      members - sequence of `Doc` and/or nested `FilterSet` objects
+    """
+
     def __init__(self, session, **opts):
         """
+        Construct an object for a named set of CDR filters
+
+        Required positional argument:
+          session - reference to object representing the current login
+
+        Optional positional arguments:
+          id - primary key into the `filter_set` table
+          name - string by which the set is known
+          desc - brief description of the set, used for UI
+          notes - more extensive optional notes on the use of the filter set
+          members - sequence of `Doc` and/or nested `FilterSet` objects
+
+        Called by:
+          cdr.getFilterSet()
+          client XML wrapper command CdrGetFilterSet
         """
         self.__session = session
         self.__opts = opts
         self.session.logger.info("FilterSet(opts=%s)", opts)
+
     @property
     def cursor(self):
+        """
+        Give the set object its own database cursor
+        """
+
         if not hasattr(self, "_cursor"):
             self._cursor = self.session.conn.cursor()
         return self._cursor
 
     @property
     def id(self):
+        """
+        Primary key integer into the `filter_set` table
+        """
+
         if not hasattr(self, "_id"):
             self._id = int(self.__opts.get("id", 0)) or None
             if not self._id and self.name:
@@ -5718,8 +7305,13 @@ class FilterSet:
                 row = query.execute(self.cursor).fetchone()
                 self._id = row.id if row else None
         return self._id
+
     @property
     def name(self):
+        """
+        Unique string by which the filter set is known
+        """
+
         if not hasattr(self, "_name"):
             self._name = self.__opts.get("name")
             if not self._name:
@@ -5731,8 +7323,13 @@ class FilterSet:
                     row = query.execute(self.cursor).fetchone()
                     self._name = row.name if row else None
         return self._name
+
     @property
     def description(self):
+        """
+        Brief description of the set, used for UI
+        """
+
         if not hasattr(self, "_description"):
             if "description" in self.__opts:
                 self._description = self.__opts["description"]
@@ -5747,6 +7344,10 @@ class FilterSet:
 
     @property
     def members(self):
+        """
+        Sequence of `Doc` and/or nested `FilterSet` objects
+        """
+
         if not hasattr(self, "_members"):
             if "members" in self.__opts:
                 self._members = self.__opts["members"]
@@ -5768,6 +7369,10 @@ class FilterSet:
 
     @property
     def notes(self):
+        """
+        More extensive optional notes on the use of the filter set
+        """
+
         if not hasattr(self, "_notes"):
             if "notes" in self.__opts:
                 self._notes = self.__opts["notes"]
@@ -5782,9 +7387,24 @@ class FilterSet:
 
     @property
     def session(self):
+        """
+        Reference to `users.Session` object representing current login
+        """
+
         return self.__session
 
     def delete(self):
+        """
+        Remove an existing named set of CDR filter
+
+        Does not remove the filters themselves, just the set and its
+        membership.
+
+        Called by:
+          cdr.delFilterSet()
+          client XML wrapper command CdrDelFilterSet
+        """
+
         if not self.session.can_do("DELETE FILTER SET"):
             raise Exception("User not authorized to delete filter sets.")
         if not self.id:
@@ -5806,6 +7426,10 @@ class FilterSet:
             raise
 
     def __delete(self):
+        """
+        Database DELETE requests, separated out for easier failure recovery
+        """
+
         tables = [
             ("filter_set_member", "filter_set"),
             ("filter_set", "id")
@@ -5816,6 +7440,19 @@ class FilterSet:
         self.session.conn.commit()
 
     def save(self):
+        """
+        Store the new or updated information for a named set of CDR filters
+
+        Called by:
+          cdr.addFilterSet()
+          cdr.repFilterSet()
+          client XML wrapper command CdrAddFilterSet
+          client XML wrapper command CdrRepFilterSet
+
+        Return:
+          None
+        """
+
         action = "MODIFY FILTER SET" if self.id else "ADD FILTER SET"
         if not self.session.can_do(action):
             what = "modify" if self.id else "add"
@@ -5831,6 +7468,20 @@ class FilterSet:
             raise
 
     def __save(self):
+        """
+        Database writes, separated out for easier failure recovery
+
+        There's a bug in the `adodbapi` package, which blows up when
+        `None` is passed for a placeholder for a nullable `NTEXT` column.
+        So we have to use "= NULL" in the code for NULL values.
+
+        Return:
+          integer for the number of members in the set (this is the
+          number of direct members, not the number of (possibly nested)
+          filters in the set)
+        """
+
+        # Assemble the values for the database INSERT or UPDATE.
         fields = dict(
             name=self.name,
             description=self.description,
@@ -5839,6 +7490,8 @@ class FilterSet:
         names = sorted(fields)
         values = [] #fields[name] for name in names]
         # BUG IN ADODBAPI WHEN TRYING TO INSERT NULL INTO NTEXT WITH NONE
+
+        # Update the existing row if this is not a new filter set.
         if self.id:
             assignments = []
             for name in names:
@@ -5851,6 +7504,8 @@ class FilterSet:
             assignments = ", ".join(assignments)
             values.append(self.id)
             sql = "UPDATE filter_set SET {} WHERE id = ?".format(assignments)
+
+        # Otherwise, create a new row in the `filter_set` table.
         else:
             placeholders = []
             for name in names:
@@ -5865,12 +7520,16 @@ class FilterSet:
             sql = "INSERT INTO filter_set ({}) VALUES ({})".format(names, ph)
         self.session.logger.info("sql=%s values=%s", sql, tuple(values))
         self.cursor.execute(sql, values)
-        if not self.id:
-            self.cursor.execute("SELECT @@IDENTITY AS id")
-            self._id = self.cursor.fetchone().id
-        else:
+
+        # Clear out the `filter_set_member` for an existing set.
+        if self.id:
             delete = "DELETE FROM filter_set_member WHERE filter_set = ?"
             self.cursor.execute(delete, (self.id,))
+        else:
+            self.cursor.execute("SELECT @@IDENTITY AS id")
+            self._id = self.cursor.fetchone().id
+
+        # Add the related rows for the set's members.
         names = "filter_set", "position", "filter", "subset"
         args = ", ".join(names), ", ".join(["?"] * len(names))
         insert = "INSERT INTO filter_set_member ({}) VALUES ({})".format(*args)
@@ -5883,14 +7542,45 @@ class FilterSet:
             self.cursor.execute(insert, values)
             position += 1
         self.session.conn.commit()
+
+        # Tell how many direct children the set has (not total filters).
         return len(self.members)
 
     @classmethod
     def get_filter_sets(cls, session):
+        """
+        Fetch the list of filter sets in the CDR
+
+        Called by:
+          cdr.getFilterSets()
+          client XML wrapper command CdrGetFilterSets
+
+        Pass:
+          session - reference to object for current login
+
+        Return:
+          sequence of id, name tuples for filter sets
+        """
+
         query = Query("filter_set", "id", "name").order("name")
         return [tuple(row) for row in query.execute(session.cursor).fetchall()]
+
     @classmethod
     def get_filters(cls, session):
+        """
+        Fetch the list of filter documents in the CDR
+
+        Called by:
+          cdr.getFilters()
+          client XML wrapper command CdrGetFilters
+
+        Pass:
+          session - reference to object for current login
+
+        Return:
+          sequence of `Doc` objects for Filter documents
+        """
+
         query = Query("document d", "d.id", "d.title").order("d.title")
         query.join("doc_type t", "t.id = d.doc_type")
         query.where("t.name = 'Filter'")
@@ -5899,16 +7589,55 @@ class FilterSet:
 
 
 class GlossaryTermName:
+    """
+    Dictionary term with its aliases
 
+    We collect the aliases from within the documents (the other names fields)
+    as well as from the external mapping table, where variants of the name
+    for the term have been recorded manually.
+
+    Attributes:
+      id - primary key for the CDR `GlossaryTermName` document
+      name - primary name for the string in the language being mapped
+      phrases - set of alternate strings representing the same glossary
+                concept
+    """
+
+    # Regular expressions uses to normalize the phrases for matching.
     UNWANTED = re.compile(u"""['".,?!:;()[\]{}<>\u201C\u201D\u00A1\u00BF]+""")
     TOKEN_SEP = re.compile(r"[\n\r\t -]+")
 
     def __init__(self, id, name):
+        """
+        Capture name and ID for document and start with an empty phrase set
+
+        Pass:
+          id - integer for unique CDR document indentifier
+          name - primary name for string in the language being mapped
+        """
+
         self.id = id
         self.name = name or None
         self.phrases = set()
+
     @classmethod
     def get_mappings(cls, session, language="en"):
+        """
+        Fetch the mappings of phrases to English or Spanish glossary term names
+
+        Called by:
+          cdr.get_glossary_map()
+          client XML wrapper command CdrGetGlossaryMap
+          client XML wrapper command CdrGetSpanishGlossaryMap
+
+        Pass:
+          session - reference to object for current login
+          language - "en" (the default) or "es"
+
+        Return:
+          sequence of `GlossaryTermName` objects
+        """
+
         names = dict()
         phrases = set()
         name_tag = "TermName" if language == "en" else "TranslatedName"
@@ -5947,5 +7676,20 @@ class GlossaryTermName:
 
     @classmethod
     def normalize(cls, phrase):
+        """
+        Make it easier to match phrases in running text
+
+        Strip unwanted characters and replace punctuation and other
+        inter-word separators with a single space, collapsing multiple
+        spaces into one. Trim leading and trailing whitespace and fold
+        case together.
+
+        Pass:
+          phrase - string for phrase to be matched
+
+        Return:
+          normalized version of string
+        """
+
         phrase = cls.UNWANTED.sub(u"", cls.TOKEN_SEP.sub(u" ", phrase)).upper()
         return phrase.strip()

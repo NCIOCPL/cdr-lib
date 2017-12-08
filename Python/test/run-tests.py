@@ -5,6 +5,10 @@ Run these tests whenever changes are made to the API code or client wrapper
 
 The numbers in the names guarantee the order in which the tests will be run.
 The extra underscores in the names make the verbose output much easier to read.
+
+For details about what's being tested, read the documentation of the
+individual functions in `cdr.py` being invoked here. For a deeper dive,
+read the documentation in the `cdrapi` package.
 """
 
 import datetime
@@ -988,7 +992,7 @@ if FULL:
             row = query.execute().fetchone()
             self.assertEqual(description, row.event_desc)
             delta = datetime.datetime.now() - row.event_time
-            self.assertTrue(abs(delta.total_seconds()) < 2)
+            self.assertTrue(abs(delta.total_seconds()) < 5)
         def test_72_save_trcelog(self):
             opts = dict(tier=self.TIER)
             args = datetime.datetime.now(), self.session

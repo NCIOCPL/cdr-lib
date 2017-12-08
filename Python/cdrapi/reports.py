@@ -1,3 +1,7 @@
+"""
+Canned reports for the CDR system
+"""
+
 from datetime import datetime
 import re
 from dateutil.relativedelta import relativedelta
@@ -6,6 +10,19 @@ from cdrapi.db import Query, connect as db_connect
 from cdrapi.docs import Doc
 
 class Report:
+    """
+    Canned report which can be invoked through the HTTPS tunneling API
+
+    Reports are returned as XML documents, the top element of which is
+    always `ReportBody` with inner structure depending on which report
+    was requested (see documentation for the individual report methods
+    below).
+
+    Properties:
+      session - reference object representing the current login
+      cursor - database cursor from freshly created database connection
+      name - unique string representing this report
+    """
 
     def __init__(self, session, name, **opts):
         """
@@ -26,19 +43,35 @@ class Report:
 
     @property
     def cursor(self):
+        """
+        Create and cache a new database connection/cursor for this report
+        """
+
         if not hasattr(self, "_cursor"):
             self._cursor = db_connect().cursor()
         return self._cursor
 
     @property
     def name(self):
+        """
+        Unique string identifying which report is being requested
+        """
+
         return self.__name
 
     @property
     def session(self):
+        """
+        Reference to object reprsenting the current login
+        """
+
         return self.__session
 
     def __start_body(self):
+        """
+        Helper method to get the wrapper for the XML report started
+        """
+
         body = etree.Element("ReportBody")
         etree.SubElement(body, "ReportName").text = self.name
         return body
@@ -47,8 +80,15 @@ class Report:
         """
         Generate a report and return it to the caller
 
+        The handler method for the report is derived from a normalized
+        version of the report name.
+
+        Called by:
+          cdr.report()
+          client XML wrapper command CdrReport
+
         Return:
-          string for the report body
+          reference to top-level `etree._Element` node for the report
         """
 
         stripper = re.compile("[^a-z0-9 ]+")
@@ -58,6 +98,7 @@ class Report:
             raise Exception("Report {!r} not implemented".format(self.name))
         self.session.logger.info("Running report {!r}".format(self.name))
         return handler()
+
 
     # ------------------------------------------------------------------
     # INDIVIDUAL REPORT METHODS START HERE.

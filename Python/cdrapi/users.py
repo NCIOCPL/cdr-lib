@@ -13,6 +13,9 @@ from cdrapi import db
 from cdrapi.settings import Tier
 
 
+# ----------------------------------------------------------------------
+# Try to make the module compatible with both Python 2 and 3.
+# ----------------------------------------------------------------------
 try:
     basestring
 except:
@@ -61,13 +64,10 @@ class Session:
         self.logger = self.tier.get_logger("session")
         self.conn = db.connect(tier=self.tier.name)
         self.cursor = self.conn.cursor()
-        update = """\
-                UPDATE session
-                   SET ended = GETDATE()
-                 WHERE ended IS NULL
-                   AND name <> 'guest'
-                   AND DATEDIFF(hour, last_act, GETDATE()) > 24"""
-        self.cursor.execute(update)
+        inactive = "DATEDIFF(hour, last_act, GETDATE()) > 24"
+        conditions = "ended IS NULL", "name <> 'guest'", inactive
+        update = "UPDATE session SET ended = GETDATE() WHERE {}"
+        self.cursor.execute(update.format(" AND ".join(conditions)))
         self.conn.commit()
         query = db.Query("session s", "s.id", "u.id", "u.name")
         query.join("open_usr u", "u.id = s.usr")
@@ -93,6 +93,13 @@ class Session:
     def logout(self):
         """
         Close the current session on request
+
+        Called by:
+          cdr.logout()
+          client XML wrapper command CdrLogoff
+
+        Return:
+          None
         """
 
         if not self.active:
@@ -110,6 +117,10 @@ class Session:
         Useful when a long-running job is requested by a user who
         might log out from the session from which the request was
         submitted before the job had completed.
+
+        Called by:
+          cdr.dupSession()
+          client XML wrapper command CdrDupSession
 
         Return:
           `Session` object
@@ -131,6 +142,11 @@ class Session:
     def can_do(self, action, doctype=None):
         """
         Determine whether the account can perform a specific action
+
+        Called by:
+          cdr.canDo()
+          client XML wrapper command CdrCanDo
+          numerous internal API methods
 
         Pass:
           action - string for the name of the action
@@ -185,6 +201,25 @@ class Session:
     def check_permissions(self, pairs):
         """
         Filter the results of `get_permissions()` for requested subset
+
+        Called by:
+          cdr.checkAuth()
+          client XML wrapper command CdrCheckAuth
+
+        Pass:
+          pairs - sequence of action, doctype tuples; the wildcard string
+                  "*" can be given for the action to ask for information
+                  about all allowed actions; similarly "*" can be given
+                  the doctype member of a tuple to ask for all doctypes
+                  which are allowed to be operated on for a doctype-specific
+                  action (or as a placeholder for actions which are not
+                  doctype specific)
+
+        Return:
+          dictionary indexed by names of allowed actions, with values being
+          sets of document type names on which the action can be performed
+          (for doctype-specific actions), or the empty set (for actions which
+          are not doctype specific)
         """
 
         result = dict()
@@ -210,6 +245,15 @@ class Session:
     def list_actions(self):
         """
         Return a sorted sequence of the names of CDR actions
+
+        Called by:
+          cdr.getActions()
+          client XML wrapper command CdrListActions
+
+        Return:
+          dictionary of authorizable actions, indexed by action name, with
+          the value of a flag ("Y" or "N") indicating whether the action
+          must be authorized on a per-doctype basis
         """
 
         if not self.can_do("LIST ACTIONS"):
@@ -222,6 +266,10 @@ class Session:
     def get_action(self, name):
         """
         Fetch the information stored in a row of the `action` table
+
+        Called by:
+          cdr.getAction()
+          client XML wrapper command CdrGetAction
 
         Return:
           `Session.Action` object
@@ -242,6 +290,10 @@ class Session:
     def get_group(self, name):
         """
         Fetch information about a CDR group
+
+        Called by:
+          cdr.getGroup()
+          client XML wrapper command CdrGetGrp
 
         Pass:
           session - `Session` object requesting the operation
@@ -279,6 +331,13 @@ class Session:
     def list_groups(self):
         """
         Return a sorted sequence of the names of CDR groups
+
+        Called by:
+          cdr.getGroups()
+          client XML wrapper command CdrListGrps
+
+        Return:
+          sorted sequence of CDR group name strings
         """
 
         if not self.can_do("LIST GROUPS"):
@@ -290,18 +349,54 @@ class Session:
     def list_users(self):
         """
         Fetch the names for the active CDR user accounts
+
+        Called by:
+          cdr.getUsers()
+          client XML wrapper command CdrListUsrs
+
+        Return:
+          sequence of strings for user account names
         """
 
         query = db.Query("usr", "name").where("expired is NULL").order("name")
         return [row.name for row in query.execute(self.cursor).fetchall()]
 
     def log_client_event(self, description):
+        """
+        Record client action (typically local save of a document)
+
+        Useful for (among other things) assisting users find backup copies
+        of their work in the event of a computer failure, as well as for
+        verify their accounts of what happened during troubleshooting
+        exercises.
+
+        Called by:
+          cdr.log_client_event()
+          client XML wrapper command CdrLogClientEvent
+
+        Pass:
+          description - required string capturing the details of a local
+                        save action
+        """
+
         fields = "event_time, event_desc, session"
         insert = "INSERT INTO client_log ({}) VALUES (GETDATE(), ?, ?)"
         self.cursor.execute(insert.format(fields), (description, self.id))
         self.conn.commit()
 
     def save_client_trace_log(self, log_data):
+        """
+        Allows the CDR client software to post a copy of the local log
+
+        Called by:
+          cdr.save_client_trace_log()
+          client XML wrapper command CdrSaveClientTraceLog
+
+        Pass:
+          log_data - required string containing contents of log file
+                     populated by the CDR client loader program
+        """
+
         user = session = None
         match = re.search(r"logon\(([^,]+), ([^)]+)\)", log_data)
         if match:
@@ -434,6 +529,10 @@ class Session:
             """
             Create a row in the `action` database table
 
+            Called by:
+              cdr.putAction()
+              client XML wrapper command CdrAddAction
+
             Pass:
               session - `Session` object requesting the operation
             """
@@ -460,6 +559,10 @@ class Session:
         def modify(self, session):
             """
             Update a row in the `action` database table
+
+            Called by:
+              cdr.putAction()
+              client XML wrapper command CdrRepAction
 
             Pass:
               session - `Session` object requesting the operation
@@ -498,6 +601,10 @@ class Session:
         def delete(self, session):
             """
             Remove a row from the `action` database table
+
+            Called by:
+              cdr.delAction()
+              client XML wrapper command CdrDelAction
 
             Database relational integrity will prevent the deletion
             if there are foreign key constraint violations.
@@ -558,6 +665,10 @@ class Session:
 
             Also populates the `grp_action` and `grp_usr` tables.
 
+            Called by:
+              cdr.putGroup()
+              client XML wrapper command CdrAddGrp
+
             Pass:
               session - `Session` object requesting the operation
             """
@@ -588,6 +699,10 @@ class Session:
 
             Also re-populates the `grp_action` and `grp_usr` tables.
 
+            Called by:
+              cdr.putGroup()
+              client XML wrapper command CdrModGrp
+
             Pass:
               session - `Session` object requesting the operation
             """
@@ -613,6 +728,10 @@ class Session:
         def delete(self, session):
             """
             Drop database rows representing a CDR group
+
+            Called by:
+              cdr.DelGroup()
+              client XML wrapper command CdrDelGrp
 
             Pass:
               session - `Session` object requesting the operation
@@ -684,17 +803,70 @@ class Session:
 
 
     class User:
+        """
+        Login account for a CDR user
 
+        Properties:
+          id - primary key into the `usr` table
+          name - string for short account name; e.g., "klem"
+          fullname - e.g., "Klem Kadiddlehopper"
+          office - optional string indicating where the user works
+          email - optional string for user's email address
+          phone - optional string for the user's telephone number
+          comment - optional string describing the user's rule in the CDR
+          groups - sequence of strings naming groups of which the user
+                   is a member (supporting, among other things, determining
+                   which actions the user is authorized to perform)
+          authmode - "local" for machine account which run on localhost, or
+                     "network" for users authenticated using their NIH
+                     domain credentials
+        """
+
+        # Used by 'network' accounts, which are authenticated outside
+        # the CDR by the NIH Active Directory.
         EMPTY_PW = hashlib.sha1(b"").hexdigest().upper()
 
         def __init__(self, session, **opts):
+            """
+            Construct an object for a CDR user account
+
+            Called by:
+              cdr.getUser()
+              client XML wrapper command CdrGetUsr
+
+            Required positional argument:
+              session - object representing current login
+
+            Optional keyword arguments:
+              id - primary key into the `usr` table
+              name - string for the short account name (e.g., 'klem')
+              fullname - longer string for the account name (e.g.,
+                         'Klem Kadiddlehopper')
+              authmode - 'network' or 'local'
+              office - string identifying where the user works
+              email - string for the user's email address
+              phone - string for the user's telephone number
+              groups - sequence of strings naming groups of which the
+                       user is a member
+            """
+
             self.__session = session
             self.__opts = opts
+
         @property
         def session(self):
+            """
+            Reference to `Session` object representing the current login
+            """
+
             return self.__session
+
         @property
         def id(self):
+            """
+            Primary key for the user's row in the `usr` table
+            """
+
             if not hasattr(self, "_id"):
                 if "id" in self.__opts:
                     self._id = self.__opts["id"]
@@ -715,6 +887,10 @@ class Session:
 
         @property
         def name(self):
+            """
+            Short login name string for the accout (e.g., "klem")
+            """
+
             if not hasattr(self, "_name"):
                 self._name = self.__opts.get("name")
                 if not self._name and self.id:
@@ -726,6 +902,14 @@ class Session:
 
         @property
         def authmode(self):
+            """
+            How the account is authenticated ("local" or "network")
+
+            Local accounts have a hashed password stored in the database.
+            The other accounts have a dummy password stored in the database,
+            and are authenticated by the NIH domain.
+            """
+
             if not hasattr(self, "_authmode"):
                 if "authmode" in self.__opts:
                     self._authmode = self.__opts["authmode"]
@@ -745,6 +929,10 @@ class Session:
 
         @property
         def fullname(self):
+            """
+            User's real name (e.g., "Klem Kadiddlehopper")
+            """
+
             if not hasattr(self, "_fullname"):
                 if "fullname" in self.__opts:
                     self._fullname = self.__opts["fullname"]
@@ -759,6 +947,10 @@ class Session:
 
         @property
         def office(self):
+            """
+            Optional string for the location where the user works
+            """
+
             if not hasattr(self, "_office"):
                 if "office" in self.__opts:
                     self._office = self.__opts["office"]
@@ -773,6 +965,10 @@ class Session:
 
         @property
         def email(self):
+            """
+            Optional string for the user's email address
+            """
+
             if not hasattr(self, "_email"):
                 if "email" in self.__opts:
                     self._email = self.__opts["email"]
@@ -787,6 +983,10 @@ class Session:
 
         @property
         def phone(self):
+            """
+            Optional string for the user's telephone number
+            """
+
             if not hasattr(self, "_phone"):
                 if "phone" in self.__opts:
                     self._phone = self.__opts["phone"]
@@ -801,6 +1001,10 @@ class Session:
 
         @property
         def comment(self):
+            """
+            Optional string describing the account's role in the CDR
+            """
+
             if not hasattr(self, "_comment"):
                 if "comment" in self.__opts:
                     self._comment = self.__opts["comment"]
@@ -815,6 +1019,10 @@ class Session:
 
         @property
         def groups(self):
+            """
+            Sequence of string for the names of groups user belongs to
+            """
+
             if not hasattr(self, "_groups"):
                 if "groups" in self.__opts:
                     self._groups = self.__opts["groups"]
@@ -829,6 +1037,19 @@ class Session:
             return self._groups
 
         def save(self, password=None):
+            """
+            Add or update the user's row in the `usr` table
+
+            Called by:
+              cdr.putUser()
+              client XML wrapper command CdrAddUsr
+              client XML wrapper command CdrModUsr
+
+            Pass:
+              password - optional string for changing the password
+                         of a machine ("local") account
+            """
+
             action = "MODIFY USER" if self.id else "CREATE USER"
             if not self.session.can_do(action):
                 message = "{} action not authorized for this user"
@@ -837,7 +1058,10 @@ class Session:
                 raise Exception("Missing user name")
             if self.authmode == "local":
                 if not password:
-                    raise Exception("Missing password")
+                    if not cdr.id:
+                        raise Exception("Missing password")
+                    else:
+                        password = None
             else:
                 password = ""
             if isinstance(password, unicode):
@@ -859,6 +1083,21 @@ class Session:
                 raise
 
         def __save(self, password):
+            """
+            Do the actual database writes for the `usr` row
+
+            This is siphoned off separately to make it easier to
+            wrap it in a try block and roll back in the case of failure.
+
+            Pass:
+              password - string for login password; will be empty for
+                         non-local users, who are authenticated separately
+                         using their NIH domain credentials; can be set to
+                         None for updates of local user accounts to leave
+                         the password unchanged, but must be a non-empty
+                         string for a new local account
+            """
+
             fields = dict(
                 name=self.name,
                 fullname=self.fullname,
@@ -868,14 +1107,17 @@ class Session:
                 comment=self.comment
             )
             names = sorted(fields)
-            values = [fields[name] for name in names] + [password]
-            hashbytes = "HASHBYTES('SHA1', ?)"
+            values = [fields[name] for name in names]
+            if password is not None:
+                values.append(password)
+                hashbytes = "HASHBYTES('SHA1', ?)"
             if self.id:
                 user_id = self.id
                 delete = "DELETE FROM grp_usr WHERE usr = ?"
                 self.session.cursor.execute(delete, (self.id,))
                 assignments = ["{} = ?".format(name) for name in names]
-                assignments.append("hashedpw = {}".format(hashbytes))
+                if password is not None:
+                    assignments.append("hashedpw = {}".format(hashbytes))
                 assignments = ", ".join(assignments)
                 values.append(self.id)
                 sql = "UPDATE usr SET {} WHERE id = ?".format(assignments)
@@ -903,6 +1145,14 @@ class Session:
             self._id = user_id
 
         def delete(self):
+            """
+            Mark the user's account as expired
+
+            Called by:
+              cdr.delUser()
+              client XML wrapper command CdrDelUsr
+            """
+
             if not self.session.can_do("DELETE USER"):
                 raise Exception("DELETE USER action not allowed for this user")
             delete = "UPDATE usr SET expired = GETDATE() WHERE id = ?"
@@ -910,14 +1160,32 @@ class Session:
             self.session.conn.commit()
 
     class Cache:
+        """
+        Optimization for retrieval of filters, filter sets, and terms
+
+        The fetching and caching of terms (which is complicated) seems
+        to be obsolete, as the users just told us that the denormalization
+        filters for protocol documents, which are the only users of this
+        term caching, are no longer actively invoked.
+        """
+
         def __init__(self):
+            """
+            Initialize caching dictionaries and locks protecting the cache
+            """
+
             self.terms = {}
             self.filters = {}
             self.filter_sets = {}
             self.term_lock = threading.Lock()
             self.filter_lock = threading.Lock()
             self.filter_set_lock = threading.Lock()
+
         def clear(self):
+            """
+            Empty the cache dictionaries.
+            """
+
             with self.term_lock:
                 self.terms = {}
             with self.filter_lock:

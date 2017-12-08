@@ -223,7 +223,7 @@ def dupSession(session, **opts):
     else:
         command = etree.Element("CdrDupSession")
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrDupSessionResp":
+            if response.node.tag == command.tag + "Resp":
                 return get_text(response.node.find("NewSessionId"))
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
@@ -310,7 +310,7 @@ def getUser(credentials, name, **opts):
     command = etree.Element("CdrGetUsr")
     etree.SubElement(command, "UserName").text = name
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrGetUsrResp":
+        if response.node.tag == command.tag + "Resp":
             opts = dict(
                 fullname=get_text(response.node.find("FullName")),
                 office=get_text(response.node.find("Office")),
@@ -411,7 +411,7 @@ def delUser(credentials, name, **opts):
         command = etree.Element("CdrDelUsr")
         etree.SubElement(command, "UserName").text = name
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrDelUsrResp":
+            if response.node.tag == command.tag + "Resp":
                 return
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
@@ -440,7 +440,7 @@ def getUsers(credentials, **opts):
         return session.list_users()
     command = etree.Element("CdrListUsrs")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrListUsrsResp":
+        if response.node.tag == command.tag + "Resp":
             node = response.node
             return [get_text(child) for child in node.findall("UserName")]
         raise Exception(";".join(response.errors) or "missing response")
@@ -469,7 +469,7 @@ def canDo(session, action, doctype="", **opts):
         if doctype:
             etree.SubElement(command, "DocType").text = doctype
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrCanDoResp":
+            if response.node.tag == command.tag + "Resp":
                 return response.node.text == "Y"
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
@@ -506,7 +506,7 @@ def checkAuth(session, pairs, **opts):
         if doctype.strip():
             etree.SubElement(wrapper, "DocType").text = doctype
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrCheckAuthResp":
+        if response.node.tag == command.tag + "Resp":
             auth = dict()
             for wrapper in response.node.findall("Auth"):
                 action = get_text(wrapper.find("Action"))
@@ -543,7 +543,7 @@ def getActions(credentials, **opts):
         return actions
     command = etree.Element("CdrListActions")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrListActionsResp":
+        if response.node.tag == command.tag + "Resp":
             for action in response.node.findall("Action"):
                 name = get_text(action.find("Name"))
                 flag = get_text(action.find("NeedDoctype"))
@@ -575,7 +575,7 @@ def getAction(credentials, name, **opts):
     command = etree.Element("CdrGetAction")
     etree.SubElement(command, "Name").text = name
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrGetActionResp":
+        if response.node.tag == command.tag + "Resp":
             name = get_text(response.node.find("Name"))
             flag = get_text(response.node.find("DoctypeSpecific"))
             comment = get_text(response.node.find("Comment"))
@@ -647,7 +647,7 @@ def delAction(credentials, name, **opts):
         command = etree.Element("CdrDelAction")
         etree.SubElement(command, "Name").text = name
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrDelActionResp":
+            if response.node.tag == command.tag + "Resp":
                 return
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
@@ -672,7 +672,7 @@ def getGroups(credentials, **opts):
         return session.list_groups()
     command = etree.Element("CdrListGrps")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrListGrpsResp":
+        if response.node.tag == command.tag + "Resp":
             groups = [g.text for g in response.node.findall("GrpName")]
             return sorted(groups)
         raise Exception(";".join(response.errors) or "missing response")
@@ -700,7 +700,7 @@ def getGroup(credentials, name, **opts):
     command = etree.Element("CdrGetGrp")
     etree.SubElement(command, "GrpName").text = name
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrGetGrpResp":
+        if response.node.tag == command.tag + "Resp":
             group = Session.Group()
             for child in response.node.findall("*"):
                 if child.tag == "GrpName":
@@ -791,7 +791,7 @@ def delGroup(credentials, name, **opts):
         command = etree.Element("CdrDelGrp")
         etree.SubElement(command, "GrpName").text = name
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrDelGrpResp":
+            if response.node.tag == command.tag + "Resp":
                 return
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
@@ -905,7 +905,7 @@ def getDoctype(credentials, name, **opts):
         return dtinfo(**args)
     command = etree.Element("CdrGetDocType", Type=name, GetEnumValues="Y")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrGetDocTypeResp":
+        if response.node.tag == command.tag + "Resp":
             args = dict(
                 name=response.node.get("Type"),
                 format=response.node.get("Format"),
@@ -978,7 +978,7 @@ def addDoctype(credentials, info, **opts):
 
     # Submit the request.
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrAddDocTypeResp":
+        if response.node.tag == command.tag + "Resp":
             return getDoctype(credentials, info.name, tier=tier)
         else:
             print(response.node.tag)
@@ -1029,7 +1029,7 @@ def modDoctype(credentials, info, **opts):
 
     # Submit the request.
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrModDocTypeResp":
+        if response.node.tag == command.tag + "Resp":
             return getDoctype(credentials, info.name, tier=tier)
         else:
             raise Exception(";".join(response.errors) or "missing response")
@@ -1060,7 +1060,7 @@ def delDoctype(credentials, name, **opts):
     else:
         command = etree.Element("CdrDelDocType", Type=name)
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrDelDocTypeResp":
+            if response.node.tag == command.tag + "Resp":
                 return
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
@@ -1134,7 +1134,7 @@ def getDoctypes(credentials, **opts):
         return Doctype.list_doc_types(session)
     command = etree.Element("CdrListDocTypes")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrListDocTypesResp":
+        if response.node.tag == command.tag + "Resp":
             return [get_text(t) for t in response.node.findall("DocType")]
         else:
             raise Exception(";".join(response.errors) or "missing response")
@@ -1159,7 +1159,7 @@ def getSchemaDocs(credentials, **opts):
         return Doctype.list_schema_docs(session)
     command = etree.Element("CdrListSchemaDocs")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrListSchemaDocsResp":
+        if response.node.tag == command.tag + "Resp":
             return [get_text(t) for t in response.node.findall("DocTitle")]
         else:
             raise Exception(";".join(response.errors) or "missing response")
@@ -1341,7 +1341,7 @@ def _put_doc(session, command_name, **opts):
     """
     Create and submit the XML command node for adding or replacing a CDR doc
 
-    Factored tunneling code used by `addDoc()` and `modDoc()`.
+    Factored tunneling code used by `addDoc()` and `repDoc()`.
 
     Pass:
       session - string for the user's current login session
@@ -1557,7 +1557,7 @@ def repDoc(credentials, **opts):
     try:
         return _put_doc(session, "CdrRepDoc", **opts)
     except:
-        LOGGER.exception("CdrAddDoc")
+        LOGGER.exception("CdrRepDoc")
         raise
 
 
@@ -1604,7 +1604,7 @@ def getDoc(credentials, docId, *args, **opts):
         etree.SubElement(command, "Lock").text = checkout
         etree.SubElement(command, "DocVersion").text = str(version)
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrGetDocResp":
+            if response.node.tag == command.tag + "Resp":
                 doc = response.node.find("CdrDoc")
             else:
                 error = ";".join(response.errors) or "missing response"
@@ -1650,7 +1650,7 @@ def delDoc(credentials, doc_id, **opts):
     if reason:
         etree.SubElement(command, "Reason").text = reason
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrDelDocResp":
+        if response.node.tag == command.tag + "Resp":
             if response.errors:
                 return response.errors
             return cdr_id
@@ -1692,7 +1692,7 @@ def lastVersions(credentials, doc_id, **opts):
     command = etree.Element("CdrLastVersions")
     etree.SubElement(command, "DocId").text = normalize(doc_id)
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrLastVersionsResp":
+        if response.node.tag == command.tag + "Resp":
             return (
                 int(get_text(response.node.find("LastVersionNum"))),
                 int(get_text(response.node.find("LastPubVersionNum"))),
@@ -1733,7 +1733,7 @@ def listVersions(credentials, doc_id, **opts):
     if limit:
         etree.SubElement(command, "NumVersions").text = str(limit)
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrListVersionsResp":
+        if response.node.tag == command.tag + "Resp":
             versions = []
             for wrapper in response.node.findall("Version"):
                 number = int(get_text(wrapper.find("Num")))
@@ -1873,7 +1873,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
         etree.SubElement(parm, "Value").text = str(parms[name] or "")
 
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrFilterResp":
+        if response.node.tag == command.tag + "Resp":
             document = get_text(response.node.find("Document"))
             messages = response.node.find("Messages")
             if messages is not None:
@@ -1890,7 +1890,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
 
 def create_label(credentials, label, **opts):
     """
-    Create a name which can be used to tag a set of document version
+    Create a name which can be used to tag a set of document versions
 
     Pass:
       credentials - results of login
@@ -1914,7 +1914,7 @@ def create_label(credentials, label, **opts):
         if comment:
             etree.SubElement(command, "Comment").text = comment
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrCreateLabelResp":
+            if response.node.tag == command.tag + "Resp":
                 return
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
@@ -1922,7 +1922,7 @@ def create_label(credentials, label, **opts):
 
 def delete_label(credentials, label, **opts):
     """
-    Create a name which can be used to tag a set of document version
+    Remove a name previously made available for tagging document versions
 
     Pass:
       credentials - results of login
@@ -1942,7 +1942,7 @@ def delete_label(credentials, label, **opts):
         command = etree.Element("CdrDeleteLabel")
         etree.SubElement(command, "Name").text = label
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrDeleteLabelResp":
+            if response.node.tag == command.tag + "Resp":
                 return
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
@@ -1975,7 +1975,7 @@ def label_doc(credentials, doc_id, version, label, **opts):
         etree.SubElement(command, "DocumentVersion").text = str(version)
         etree.SubElement(command, "LabelName").text = label
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrLabelDocumentResp":
+            if response.node.tag == command.tag + "Resp":
                 return
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
@@ -2006,7 +2006,7 @@ def unlabel_doc(credentials, doc_id, label, **opts):
         etree.SubElement(command, "DocumentId").text = normalize(doc_id)
         etree.SubElement(command, "LabelName").text = label
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrUnlabelDocumentResp":
+            if response.node.tag == command.tag + "Resp":
                 return
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
@@ -2230,7 +2230,7 @@ def valDoc(credentials, doctype, **opts):
     else:
         command.append(doc)
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrValidateDocResp":
+        if response.node.tag == command.tag + "Resp":
             parent = response.node.getparent()
             return etree.tostring(parent, encoding="utf-8")
         error = ";".join(response.errors) or "missing response"
@@ -2300,7 +2300,7 @@ def checkOutDoc(credentials, doc_id, **opts):
         if comment:
             etree.SubElement("Comment").text = comment
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrCheckOutResp":
+            if response.node.tag == command.tag + "Resp":
                 return int(get_text(response.node.find("Version")) or "0")
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
@@ -2343,7 +2343,7 @@ def unlock(credentials, doc_id, **opts):
         if comment:
             etree.SubElement(command, "Comment").text = comment
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrCheckInResp":
+            if response.node.tag == command.tag + "Resp":
                 return
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
@@ -2459,7 +2459,7 @@ def get_links(credentials, doc_id, **opts):
     command = etree.Element("CdrGetLinks")
     etree.SubElement(command, "DocId").text = normalize(doc_id)
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrGetLinksResp":
+        if response.node.tag == command.tag + "Resp":
             nodes = response.node.findall("LnkList/LnkItem")
             return [get_text(node) for node in nodes]
         error = ";".join(response.errors) or "missing response"
@@ -2523,7 +2523,7 @@ def getTree(credentials, doc_id, **opts):
     etree.SubElement(command, "DocId").text = normalize(doc_id)
     etree.SubElement(command, "ChildDepth").text = str(depth)
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrGetTreeResp":
+        if response.node.tag == command.tag + "Resp":
             for wrapper in response.node.findall("Terms/Term"):
                 term_id = get_text(wrapper.find("Id"))
                 term_name = get_text(wrapper.find("Name"))
@@ -2569,7 +2569,7 @@ def getCssFiles(credentials, **opts):
         return [CssFile(name, files[name]) for name in sorted(files)]
     command = etree.Element("CdrGetCssFiles")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrGetCssFilesResp":
+        if response.node.tag == command.tag + "Resp":
             files = []
             for node in response.node.findall("File"):
                 name = get_text(node.find("Name"))
@@ -2624,7 +2624,7 @@ def addExternalMapping(credentials, usage, value, **opts):
     if doc_id:
         etree.SubElement(command, "CdrId").text = normalize(doc_id)
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrAddExternalMappingResp":
+        if response.node.tag == command.tag + "Resp":
             return int(response.node.get("MappingId"))
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
@@ -2695,7 +2695,7 @@ def getFilters(credentials, **opts):
         return [IdAndName(doc.cdr_id, doc.title) for doc in filters]
     command = etree.Element("CdrGetFilters")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrGetFiltersResp":
+        if response.node.tag == command.tag + "Resp":
             filters = []
             for node in response.node.findall("Filter"):
                 doc_id = node.get("DocId")
@@ -2727,7 +2727,7 @@ def getFilterSets(credentials, **opts):
         return [IdAndName(*s) for s in APIFilterSet.get_filter_sets(session)]
     command = etree.Element("CdrGetFilterSets")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrGetFilterSetsResp":
+        if response.node.tag == command.tag + "Resp":
             sets = []
             for node in response.node.findall("FilterSet"):
                 set_id = int(node.get("SetId"))
@@ -2900,7 +2900,7 @@ def getFilterSet(credentials, name, **opts):
     command = etree.Element("CdrGetFilterSet")
     etree.SubElement(command, "FilterSetName").text = name
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrGetFilterSetResp":
+        if response.node.tag == command.tag + "Resp":
             name = description = notes = None
             for node in response.node:
                 if node.tag == "FilterSetName":
@@ -2996,7 +2996,7 @@ def delFilterSet(credentials, name, **opts):
     command = etree.Element("CdrDelFilterSet")
     etree.SubElement(command, "FilterSetName").text = name
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrDelFilterSetResp":
+        if response.node.tag == command.tag + "Resp":
             return
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
@@ -3067,7 +3067,7 @@ def getLinkTypes(credentials, **opts):
         return APILinkType.get_linktype_names(session)
     command = etree.Element("CdrListLinkTypes")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrListLinkTypesResp":
+        if response.node.tag == command.tag + "Resp":
             return [get_text(node) for node in response.node.findall("Name")]
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
@@ -3105,7 +3105,7 @@ def getLinkType(credentials, name, **opts):
     command = etree.Element("CdrGetLinkType")
     etree.SubElement(command, "Name").text = name
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrGetLinkTypeResp":
+        if response.node.tag == command.tag + "Resp":
             name = get_text(response.node.find("Name"))
             opts = dict(
                 linkTargets=[],
@@ -3205,7 +3205,7 @@ def putLinkType(credentials, name, linktype, action, **opts):
             etree.SubElement(wrapper, "PropertyValue").text = value
             etree.SubElement(wrapper, "Comment").text = comment or u""
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == tag + u"Resp":
+            if response.node.tag == tag + "Resp":
                 return
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
@@ -3235,7 +3235,7 @@ def delLinkType(credentials, name, **opts):
         command = etree.Element("CdrDelLinkType")
         etree.SubElement(command, "Name").text = name
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrDelLinkTypeResp":
+            if response.node.tag == command.tag + "Resp":
                 return
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
@@ -3263,7 +3263,7 @@ def getLinkProps(credentials, **opts):
         return [LinkPropType(p.name, p.comment) for p in prop_types]
     command = etree.Element("CdrListLinkProps")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrListLinkPropsResp":
+        if response.node.tag == command.tag + "Resp":
             prop_types = []
             for wrapper in response.node.findall("LinkProperty"):
                 name = get_text(wrapper.find("Name"))
@@ -3331,7 +3331,7 @@ def search_links(credentials, source_type, element, **opts):
 
 def check_proposed_link(credentials, source_type, element, target, **opts):
     """
-    Verify that proposed link is allowed
+    Verify that proposed link is allowed and fetch its denormalized text
 
     Pass:
       credentials - result of login
@@ -3666,7 +3666,7 @@ def listQueryTermRules(credentials, **opts):
         return QueryTermDef.get_rules(session)
     command = etree.Element("CdrListQueryTermRules")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrListQueryTermRulesResp":
+        if response.node.tag == command.tag + "Resp":
             return [get_text(n) for n in response.node.findall("Rule")]
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
@@ -3694,7 +3694,7 @@ def listQueryTermDefs(credentials, **opts):
         return [(d.path, d.rule) for d in definitions]
     command = etree.Element("CdrListQueryTermDefs")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrListQueryTermDefsResp":
+        if response.node.tag == command.tag + "Resp":
             definitions = []
             for wrapper in response.node.findall("Definition"):
                 path = get_text(wrapper.find("Path"))
@@ -3734,7 +3734,7 @@ def addQueryTermDef(credentials, path, rule=None, **opts):
         if rule is not None:
             etree.SubElement(command, "Rule").text = rule
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrAddQueryTermDefResp":
+            if response.node.tag == command.tag + "Resp":
                 return
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
@@ -3769,7 +3769,7 @@ def delQueryTermDef(credentials, path, rule=None, **opts):
         if rule is not None:
             etree.SubElement(command, "Rule").text = rule
         for response in _Control.send_command(session, command, tier):
-            if response.node.tag == "CdrDelQueryTermDefResp":
+            if response.node.tag == command.tag + "Resp":
                 return
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
@@ -3822,7 +3822,7 @@ def mailerCleanup(credentials, **opts):
         return (report.deleted, report.errors)
     command = etree.Element("CdrMailerCleanup")
     for response in _Control.send_command(session, command, tier):
-        if response.node.tag == "CdrMailerCleanupResp":
+        if response.node.tag == command.tag + "Resp":
             doc_ids = []
             errors = []
             for node in response.node.findall("DeletedDoc"):

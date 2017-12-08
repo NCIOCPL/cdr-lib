@@ -7,6 +7,7 @@ from six import iteritems
 from cdrapi.db import Query
 from cdrapi.docs import Doc
 
+
 class Job:
     """
     """
@@ -35,6 +36,10 @@ class Job:
 
     @property
     def completed(self):
+        """
+        Date/time when the job finished
+        """
+
         if not hasattr(self, "_completed"):
             if self.id:
                 query = Query("pub_proc", "completed")
@@ -51,10 +56,27 @@ class Job:
 
     @property
     def cursor(self):
+        """
+        Use the `Session` object's database cursor
+        """
+
         return self.__session.cursor
 
     @property
     def docs(self):
+        """
+        List of documents requested or published for this job
+
+        For a job which is being created, this will be populated from the
+        `docs` argument passed into the constructor. For a job which is
+        already in the database and which has been published, the list
+        will be pulled from the `pub_proc_doc` table. For a job which is
+        in the database, queued but not yet run, the list will have
+        the documents explicitly requested at job creation time, but will
+        not yet have the documents which will be picked up by the control
+        document's query logic for this job type.
+        """
+
         if not hasattr(self, "_docs"):
             docs = []
             if self.id:
@@ -91,6 +113,10 @@ class Job:
 
     @property
     def email(self):
+        """
+        String for the email address to which processing notifications go
+        """
+
         if not hasattr(self, "_email"):
             if "email" in self.__opts:
                 self._email = self.__opts["email"]
@@ -107,18 +133,30 @@ class Job:
 
     @property
     def force(self):
+        """
+        If true, this is a hotfix/remove, so bypass version checks
+        """
+
         if not hasattr(self, "_force"):
             self._force = self.__opts.get("force", False)
         return self._force
 
     @property
     def id(self):
+        """
+        Primary key into the `pub_proc` database table
+        """
+
         if not hasattr(self, "_id"):
             self._id = self.__opts.get("id")
         return self._id
 
     @property
     def no_output(self):
+        """
+        Flag indicating that document output won't be written to disk
+        """
+
         if not hasattr(self, "_no_output"):
             if "no_output" in self.__opts:
                 self._no_output = self.__opts["no_output"]
@@ -135,6 +173,10 @@ class Job:
 
     @property
     def output_dir(self):
+        """
+        Destination location for the exported documents
+        """
+
         if not hasattr(self, "_output_dir"):
             if self.id:
                 query = Query("pub_proc", "output_dir")
@@ -149,6 +191,10 @@ class Job:
 
     @property
     def parms(self):
+        """
+        Name/value pairs overriding the control doc's parameters
+        """
+
         if not hasattr(self, "_parms"):
             if self.id:
                 query = Query("pub_proc_parm", "parm_name", "parm_value")
@@ -171,16 +217,28 @@ class Job:
 
     @property
     def permissive(self):
+        """
+        Flag to suppress the requirement for publishable doc versions
+        """
+
         if not hasattr(self, "_permissive"):
             self._permissive = self.__opts.get("permissive", False)
         return self._permissive
 
     @property
     def session(self):
+        """
+        Reference to object representing the current login
+        """
+
         return self.__session
 
     @property
     def started(self):
+        """
+        When the job was created (so a bit of a misnomer)
+        """
+
         if not hasattr(self, "_started"):
             if self.id:
                 query = Query("pub_proc", "started")
@@ -197,6 +255,10 @@ class Job:
 
     @property
     def subsystem(self):
+        """
+        Reference to the `Job.Subsystem` object controlling this job
+        """
+
         if not hasattr(self, "_subsystem"):
             self._subsystem = None
             if self.system:
@@ -224,6 +286,10 @@ class Job:
 
     @property
     def system(self):
+        """
+        Reference to `Doc` object for job's publishing control document
+        """
+
         if not hasattr(self, "_system"):
             opts = dict(id=None, before=self.started)
             if self.id:
@@ -259,6 +325,18 @@ class Job:
 
     def create(self):
         """
+        Queue up a CDR publishing job
+
+        Called by:
+          cdr.publish()
+          client XML wrapper command CdrPublish
+
+        Return:
+          None
+
+        Side effects:
+          inserted row in `pub_proc` database table, as well as inserted
+          related rows in the `pub_proc_doc` and `pub_proc_parm` tables
         """
 
         # Make sure there are no roadblocks preventing the job creation.
@@ -299,6 +377,16 @@ class Job:
     # ------------------------------------------------------------------
 
     def __create(self):
+        """
+        Job creation database writes, separated out for easier error recovery
+
+        Return:
+          None
+
+        Side effects:
+          inserted row in `pub_proc` database table, as well as inserted
+          related rows in the `pub_proc_doc` and `pub_proc_parm` tables
+        """
 
         # Create the `pub_proc` row for the new job.
         fields = dict(
@@ -348,6 +436,16 @@ class Job:
         return job_id
 
     def __find_pending_job(self):
+        """
+        See if we've already got a job of this type in progress
+
+        Used to prevent having two or more of the same publishing job
+        type in flight at the same time.
+
+        Return:
+          True if there's already another job of this type in progress
+        """
+
         query = Query("pub_proc", "id").limit(1)
         query.where(query.Condition("pub_system", self.system.id))
         query.where(query.Condition("pub_subset", self.subsystem.name))
@@ -362,16 +460,57 @@ class Job:
     # ------------------------------------------------------------------
 
     class Subsystem:
+        """
+        Control information for a specific job type
+
+        A subsystem has two types of setting values for controlling
+        runtime processing logic. The `options` settings are values
+        which are set in the control document, and cannot be overridden
+        for specific jobs. The `parms` settings specified in the control
+        document have default values which can be overridden by the
+        request to create a publishing job. An attempt to specify a
+        parm setting which is unrecognized for this subsystem will
+        cause the job creation request to fail.
+
+        Consult the publishing control document in which this
+        subsystem is specified for documentation of the options
+        and parms supported for the subsystem.
+
+        Properties:
+          name - string for the publishing subsystem's name
+          options - dictionary of settings indexed by name
+          parms - dictionary of settings which can be overridden for a job
+          action - string for permission-controlled action, used to
+                   determine whether the current user can create this job
+        """
+
         def __init__(self, node, name):
+            """
+            Capture the name and control document node for this subsystem
+
+            Pass:
+              node - section of the control document defining this subsystem
+              name - value stored in the `pub_subset` column of the `pub_proc`
+                     table
+            """
+
             self.__node = node
             self.__name = name
 
         @property
         def name(self):
+            """
+            String for the name by which the subsystem is identified
+            """
+
             return self.__name
 
         @property
         def options(self):
+            """
+            Dictionary of fixed settings for this job type
+            """
+
             if not hasattr(self, "_options"):
                 self._options = dict(
                     AbortOnError="Yes",
@@ -386,6 +525,10 @@ class Job:
 
         @property
         def parms(self):
+            """
+            Dictionary of user-controllable settings with defaults
+            """
+
             if not hasattr(self, "_parms"):
                 self._parms = {}
                 path = "SubsetParameters/SubsetParameter"
@@ -399,6 +542,10 @@ class Job:
 
         @property
         def action(self):
+            """
+            Used to determine whether the current user can create this job
+            """
+
             if not hasattr(self, "_action"):
                 path = "SubsetActionName"
                 self._action = Doc.get_text(self.__node.find(path))

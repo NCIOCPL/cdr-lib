@@ -96,29 +96,22 @@ class Search:
         self.__tests = tests
         self.__opts = opts
 
-        """
-        self.__query = query
-        if "request" in args:
-            self.parse_request(args["request"])
-        else:
-            self.doc_types = args.get("doc_type") or []
-            self.max_docs = args.get("max_docs")
-            tests = args.get("test") or []
-            if not isinstance(self.doc_types, list):
-                self.doc_types = [self.doc_types]
-            if not isinstance(tests, list):
-                tests = [tests]
-            self.tests = [self.Test(test) for test in tests]
-        """
-
     @property
     def cursor(self):
+        """
+        Give the `Search` object its own cursor
+        """
+
         if not hasattr(self, "_cursor"):
             self._cursor = self.session.conn.cursor()
         return self._cursor
 
     @property
     def limit(self):
+        """
+        Optional throttle on the number of documents to return for the search
+        """
+
         if not hasattr(self, "_limit"):
             self._limit = self.__opts.get("limit")
             if self._limit:
@@ -130,6 +123,10 @@ class Search:
 
     @property
     def doctypes(self):
+        """
+        Optional sequence of document type names for restricting the search
+        """
+
         if not hasattr(self, "_doctypes"):
             self._doctypes = self.__opts.get("doctypes") or []
             if not isinstance(self._doctypes, (list, tuple)):
@@ -138,6 +135,10 @@ class Search:
 
     @property
     def tests(self):
+        """
+        Sequence of `Search.Test` objects containing the search logic
+        """
+
         if not hasattr(self, "_tests"):
             tests = self.__tests or []
             if not isinstance(tests, (list, tuple)):
@@ -155,7 +156,7 @@ class Search:
     @property
     def logger(self):
         """
-        Object for recording what we do
+        Object for recording what we do, borrowed from the `Session` object
         """
 
         return self.session.logger
@@ -163,10 +164,50 @@ class Search:
     @property
     def query(self):
         """
-        Query string for the search request
+        Assemble the database query object for performing the search
         """
 
-        return self.__query
+        # Use cached `Query` object if we've already done this.
+        if hasattr(self, "_query"):
+            return self._query
+
+        # Create a new `Query` object and apply any doctype filters.
+        query = Query("document d", "d.id").order("d.title")
+        if self.doctypes:
+            query.join("doc_type t", "t.id = d.doc_type")
+            if len(self.doctypes) == 1:
+                query.where(query.Condition("t.name", self.doctypes[0]))
+            else:
+                query.where(query.Condition("t.name", self.doctypes, "IN"))
+
+        # Apply the conditions for each of the `Test` objects.
+        n = 1
+        for test in self.tests:
+
+            # If the `Test` object specifies a column use the `query_term`
+            # table.
+            if test.column:
+                alias = "qt{:d}".format(n)
+                n += 1
+                query.join("query_term " + alias, alias + ".doc_id = d.id")
+                query.where(query.Condition(alias + ".path", test.path))
+                column = "{}.{}".format(alias, test.column)
+
+            # Otherwise, the test is looking for matching title strings.
+            else:
+                column = "d.title"
+
+            # Construct and add a new `Condition` object to the query.
+            query.where(query.Condition(column, test.value, test.operator))
+
+        # If the caller doesn't want all the matching documents, apply the
+        # limit requested.
+        if self.limit:
+            query.limit(self.limit)
+
+        # Cache and return the `Query` object.
+        self._query = query
+        return query
 
     @property
     def session(self):
@@ -176,71 +217,52 @@ class Search:
 
         return self.__session
 
-    """
-    def parse_request(self, request):
-        self.logger.debug("parsing request")
-        query = request.find("Query")
-        assert len(query), "Query node missing"
-        self.max_docs = query.get("MaxDocs")
-        self.logger.debug("max_docs: %r", self.max_docs)
-        for node in query:
-            if node.tag == "DocType":
-                self.doc_types.append(node.text)
-            elif node.tag == "Test":
-                test = util.Doc.get_text(node)
-                self.logger.debug("test %r", test)
-                self.tests.append(self.Test(test))
-    """
-
     def run(self):
+        """
+        Perform the search
+
+        Called by:
+          cdr.search()
+          client XML wrapper command CdrSearch
+
+        Return:
+          possibly empty sequence of `Doc` objects
+        """
+
+        # All the heavy lifting is done in the `query` property.
         rows = self.query.execute(self.cursor).fetchall()
         return [Doc(self.session, id=row.id) for row in rows]
-        class QueryResult:
-            def __init__(self, doc_id, doc_title, doc_type):
-                self.doc_id = doc_id
-                self.doc_title = doc_title
-                self.doc_type = doc_type
-            @property
-            def cdr_id(self):
-                return "CDR{:010d}".format(int(self.doc_id))
-        return [self.QueryResult(*row) for row in rows]
-
-    @property
-    def query(self):
-        if hasattr(self, "_query"):
-            return self._query
-        #fields = "d.id", "d.title", "t.name"
-        query = Query("document d", "d.id").order("d.title")
-        if self.doctypes:
-            query.join("doc_type t", "t.id = d.doc_type")
-            if len(self.doctypes) == 1:
-                query.where(query.Condition("t.name", self.doctypes[0]))
-            else:
-                query.where(query.Condition("t.name", self.doctypes, "IN"))
-        n = 1
-        for test in self.tests:
-            if test.column:
-                alias = "qt{:d}".format(n)
-                n += 1
-                query.join("query_term " + alias, alias + ".doc_id = d.id")
-                query.where(query.Condition(alias + ".path", test.path))
-                column = "{}.{}".format(alias, test.column)
-            else:
-                column = "d.title"
-            query.where(query.Condition(column, test.value, test.operator))
-        if self.limit:
-            query.limit(self.limit)
-        return query
 
 
     class Test:
+        """
+        Assertion to be tested while looking for matching documents
+
+        Attributes:
+          path - location of what we're looking for in the documents
+          operator - SQL operator to be applied for the assertion's test
+          value - string we're looking for
+        """
+
+        # We support a number of aliases for the operators for backward
+        # compatibility.
         OPS = {
             "eq": "=", "=": "=",
             "ne": "<>", "<>": "<>", "!=": "<>",
             "lt": "<", "<": "<", "lte": "<=", "<=": "<=",
             "gt": ">", ">": ">", "gte": ">=", ">=": ">="
-            }
+        }
+
         def __init__(self, assertion):
+            """
+            Parse the test's assertion string
+
+            Pass:
+              assertion - string in the form PATH OPERATOR VALUE
+                          (see `Search` class documentation above
+                          for more details)
+            """
+
             try:
                 path, operator, value = assertion.split(None, 2)
             except:
@@ -271,13 +293,61 @@ class Search:
 
 
 class QueryTermDef:
+    """
+    Identification of a portion of documents to be indexed for searching
+
+    Attributes:
+      session - reference to object representing current login
+      path - string indicating a part of documents to be indexed;
+             paths beginning with a single forward slash character
+             are absolute paths (e.g., "/Summary/SummaryTitle");
+             paths beginning with a double forward slash are relative
+             (e.g., "//@cdr:ref")
+      rule - string naming custom rule to be applied (if any) or None;
+             as far as I know the only context in which this has been
+             specified is for unit testing, and even that has not
+             extended to the actual implementation of a custom rule,
+             but only population of and linking to the `query_term_rule`
+             table; from the documentation in tables.sql:
+                 "Allows for future customization of the query support
+                  mechanism, using more sophisticated index logic than
+                  simply the text content of a single element. Syntax TBD."
+             From the original documentation in CdrSearch.cpp:
+                 "Rules cannot be created through the CDR command interface.
+                  They are inserted by the programmer implementing the
+                  custom software behind the rule."
+             I don't really know (beyond these quotes) what the original
+             programmer had in mind, or what use cases were envisioned.
+
+    Property:
+      rule_id - integer for primary key into the `query_term_rule` table
+                if this definition has a custom rule to be applied;
+                otherwise None
+    """
+
     def __init__(self, session, path, rule=None):
+        """
+        Wrap the caller's arguments as attributes of the object
+
+        Pass:
+          session - reference to object representing current login
+          path - document location of values to be indexed
+          rule - name of custom indexing rule to be applied (see notes above)
+        """
+
         self.session = session
         self.path = path
         self.rule = rule
 
     @property
     def rule_id(self):
+        """
+        Primary key of row in the `query_term_rule` table (or None)
+
+        See notes above about the custom rule mechanism, which AFAIK
+        has never been used.
+        """
+
         if not hasattr(self, "_rule_id"):
             if not self.rule:
                 self._rule_id = None
@@ -292,6 +362,14 @@ class QueryTermDef:
         return self._rule_id
 
     def add(self):
+        """
+        Store the new query term definition
+
+        Called by:
+          cdr.addQueryTermDef()
+          client XML wrapper command CdrAddQueryTermDef
+        """
+
         if not self.session.can_do("ADD QUERY TERM DEF"):
             message = "User not authorized to add query term definitions"
             raise Exception(message)
@@ -308,6 +386,14 @@ class QueryTermDef:
         self.session.conn.commit()
 
     def delete(self):
+        """
+        Drop the query term definition
+
+        Called by:
+          cdr.delQueryTermDef()
+          client XML wrapper command CdrDelQueryTermDef
+        """
+
         if not self.session.can_do("DELETE QUERY TERM DEF"):
             message = "User not authorized to delete query term definitions"
             raise Exception(message)
@@ -322,11 +408,41 @@ class QueryTermDef:
 
     @classmethod
     def get_rules(cls, session):
+        """
+        Find the available query term rules
+
+        Used by the user interface for managing search path definitions.
+
+        See notes above in the documentation for the `QueryTermDef` class
+        on the custom rule mechanism, which AFAIK has never been used.
+
+        Required positional argument:
+          session - reference to object for current login
+
+        Called by:
+          cdr.listQueryTermRules()
+          client XML wrapper command CdrListQueryTermRules
+        """
+
         query = Query("query_term_rule", "name").order("name")
         return [row.name for row in query.execute(session.cursor).fetchall()]
 
     @classmethod
     def get_definitions(cls, session):
+        """
+        Fetch the list of CDR query term definitions
+
+        Required positional argument:
+          session - reference to object for current login
+
+        Called by:
+          cdr.listQueryTermDefs()
+          client XML wrapper command CdrListQueryTermDefs
+
+        Return:
+          sequence of `QueryTermDef` objects
+        """
+
         query = Query("query_term_def d", "d.path", "r.name")
         query.outer("query_term_rule r", "r.id = d.term_rule")
         query.order("d.path", "r.name")
