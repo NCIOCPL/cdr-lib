@@ -73,3 +73,8 @@ as various properties indicating the job's type, when it was created and
 
 The `reports` provides support for common reports, via the
 `Report` class.
+
+## Architectural overview
+Here is how the new CDR API fits into the CDR server's architecture.
+
+![Overview](https://github.com/NCIOCPL/cdr-lib/raw/gauss/Python/cdrapi/CDR.jpg)
