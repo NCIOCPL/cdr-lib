@@ -10,6 +10,25 @@ from cdrapi.docs import Doc
 
 class Job:
     """
+    Request to publish a set of CDR documents for outside consumption
+
+    Properties:
+      session - reference to object representing current login
+      id - primary key into the `pub_proc` database table
+      system - reference to `Doc` object for job's publishing control document
+      subsystem - reference to the `Job.Subsystem` object controlling this job
+      started - When the job was created (not the best name)
+      completed - date/time when the job finished (if applicable)
+      cursor - reference to the `Session`'s cursor object
+      parms - name/value pairs overriding the control doc's parameters
+      docs - list of documents requested or published for this job
+      email - string for the email address to which processing notifications
+              are sent
+      force - If true, this is a hotfix/remove, so bypass version checks
+      permissive - flag to suppress the requirement for publishable doc
+                   versions
+      no_output - Flag indicating that document output won't be written to disk
+      output_dir - destination location for the exported documents
     """
 
     def __init__(self, session, **opts):

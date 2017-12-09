@@ -7594,7 +7594,8 @@ class GlossaryTermName:
 
     We collect the aliases from within the documents (the other names fields)
     as well as from the external mapping table, where variants of the name
-    for the term have been recorded manually.
+    for the term have been recorded manually. Used for glossification of
+    running text in CDR documents.
 
     Attributes:
       id - primary key for the CDR `GlossaryTermName` document
