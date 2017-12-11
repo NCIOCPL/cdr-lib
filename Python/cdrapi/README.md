@@ -26,7 +26,7 @@ do direct SQL string manipulation.
 ## The `users` module
 
 The `users` module implements the `Session` class, as well as a number of
-nested classes for caching and account and permissions management.
+nested classes for account and permissions management.
 A `Session` object is present for all API requests, and manages database
 connections, logging, and user accounts, authentication, and authorization.
 
