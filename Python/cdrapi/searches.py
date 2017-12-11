@@ -230,6 +230,8 @@ class Search:
         """
 
         # All the heavy lifting is done in the `query` property.
+        args = self.__tests, self.__opts
+        self.session.log("Search.run({!r}, {!r})".format(*args))
         rows = self.query.execute(self.cursor).fetchall()
         return [Doc(self.session, id=row.id) for row in rows]
 
@@ -370,6 +372,8 @@ class QueryTermDef:
           client XML wrapper command CdrAddQueryTermDef
         """
 
+        args = self.path, self.rule
+        self.session.log("QueryTermDef.add({!r}, {!r})".format(*args))
         if not self.session.can_do("ADD QUERY TERM DEF"):
             message = "User not authorized to add query term definitions"
             raise Exception(message)
@@ -394,6 +398,7 @@ class QueryTermDef:
           client XML wrapper command CdrDelQueryTermDef
         """
 
+        self.session.log("QueryTermDef.delete{!r})".format(self.path))
         if not self.session.can_do("DELETE QUERY TERM DEF"):
             message = "User not authorized to delete query term definitions"
             raise Exception(message)
@@ -424,6 +429,7 @@ class QueryTermDef:
           client XML wrapper command CdrListQueryTermRules
         """
 
+        session.log("QueryTermDef.get_rules()")
         query = Query("query_term_rule", "name").order("name")
         return [row.name for row in query.execute(session.cursor).fetchall()]
 
@@ -443,6 +449,7 @@ class QueryTermDef:
           sequence of `QueryTermDef` objects
         """
 
+        session.log("QueryTermDef.get_definitions()")
         query = Query("query_term_def d", "d.path", "r.name")
         query.outer("query_term_rule r", "r.id = d.term_rule")
         query.order("d.path", "r.name")

@@ -91,12 +91,13 @@ class Report:
           reference to top-level `etree._Element` node for the report
         """
 
+        args = self.name, self.__opts
+        self.session.log("Report.run({!r}, {!r})".format(*args))
         stripper = re.compile("[^a-z0-9 ]+")
         normalized = stripper.sub("", self.name.lower()).replace(" ", "_")
         handler = getattr(self, "_" + normalized)
         if handler is None:
             raise Exception("Report {!r} not implemented".format(self.name))
-        self.session.logger.info("Running report {!r}".format(self.name))
         return handler()
 
 

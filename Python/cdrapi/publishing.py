@@ -358,6 +358,7 @@ class Job:
           related rows in the `pub_proc_doc` and `pub_proc_parm` tables
         """
 
+        self.session.log("Job.create()")
         # Make sure there are no roadblocks preventing the job creation.
         name = self.__opts.get("subsystem")
         if self.subsystem is None:

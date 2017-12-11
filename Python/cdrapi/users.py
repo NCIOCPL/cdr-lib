@@ -39,7 +39,7 @@ class Session:
       cache - session-specific cache of filtering objects
     """
 
-    def __init__(self, name, tier=None):
+    def __init__(self, name, tier=None, loglevel="INFO"):
         """
         Populate the attributes for the object if the session is active
 
@@ -54,6 +54,7 @@ class Session:
           name - unique (for this tier) string identifier for the session
           tier - optional string or `Tier` object identifying which server
                  the session lives on
+          loglevel - logging level to use (default "INFO")
 
         Raise
           `Exception` if the session does not exist or is expired
@@ -61,7 +62,8 @@ class Session:
 
         self.name = name
         self.tier = tier if isinstance(tier, Tier) else Tier(tier)
-        self.logger = self.tier.get_logger("session")
+        opts = dict(level=loglevel, rolling=True)
+        self.logger = self.tier.get_logger("session", **opts)
         self.conn = db.connect(tier=self.tier.name)
         self.cursor = self.conn.cursor()
         inactive = "DATEDIFF(hour, last_act, GETDATE()) > 24"
@@ -88,7 +90,7 @@ class Session:
         Record what we're doing
         """
 
-        self.logger.info("%s running command %s", self.name, what)
+        self.logger.info("%s calling %s", self.name, what)
 
     def logout(self):
         """
@@ -108,7 +110,7 @@ class Session:
         self.cursor.execute(update, (self.id,))
         self.conn.commit()
         self.active = False
-        self.log("logout({})".format(self.name))
+        self.log("Session.logout({})".format(self.name))
 
     def duplicate(self):
         """
@@ -126,7 +128,7 @@ class Session:
           `Session` object
         """
 
-        self.log("duplicate()")
+        self.log("Session.duplicate()")
         query = db.Query("usr u", "u.id", "u.name")
         query.join("session s", "s.usr = u.id")
         query.where("s.ended IS NULL")
@@ -161,9 +163,9 @@ class Session:
             self.logger.warning("session {} expired".format(self.name))
             raise Exception("session expired")
         if doctype:
-            self.log("can_do({}, {})".format(action, doctype))
+            self.log("Session.can_do({}, {})".format(action, doctype))
         else:
-            self.log("can_do({})".format(action))
+            self.log("Session.can_do({})".format(action))
         query = db.Query("grp_usr", "COUNT(*)")
         query.join("grp_action", "grp_action.grp = grp_usr.grp")
         query.join("action", "action.id = grp_action.action")
@@ -222,6 +224,7 @@ class Session:
           are not doctype specific)
         """
 
+        self.log("Session.check_permissions({!r})".format(pairs))
         result = dict()
         permissions = self.get_permissions()
         for action, doctype in pairs:
@@ -258,7 +261,7 @@ class Session:
 
         if not self.can_do("LIST ACTIONS"):
             raise Exception("LIST ACTIONS action not authorized for this user")
-        self.log("list_actions()")
+        self.log("Session.list_actions()")
         query = db.Query("action", "name", "doctype_specific").order("name")
         rows = query.execute(self.cursor).fetchall()
         return [self.Action(*row) for row in rows]
@@ -277,7 +280,7 @@ class Session:
 
         if not self.can_do("GET ACTION"):
             raise Exception("GET ACTION action not authorized for this user")
-        self.log("get_action({})".format(name))
+        self.log("Session.get_action({})".format(name))
         query = db.Query("action", "id", "name", "doctype_specific", "comment")
         query.where(query.Condition("name", name))
         row = query.execute(self.cursor).fetchone()
@@ -304,7 +307,7 @@ class Session:
 
         if not self.can_do("GET GROUP"):
             raise Exception("GET GROUP action not authorized for this user")
-        self.log("get_group({})".format(name))
+        self.log("Session.get_group({})".format(name))
         query = db.Query("grp", "id", "name", "comment")
         query.where(query.Condition("name", name))
         row = query.execute(self.cursor).fetchone()
@@ -342,7 +345,7 @@ class Session:
 
         if not self.can_do("LIST GROUPS"):
             raise Exception("LIST GROUPS action not authorized for this user")
-        self.log("list_groups()")
+        self.log("Session.list_groups()")
         query = db.Query("grp", "name").order("name")
         return [row.name for row in query.execute(self.cursor).fetchall()]
 
@@ -358,6 +361,7 @@ class Session:
           sequence of strings for user account names
         """
 
+        self.log("Session.list_users()")
         query = db.Query("usr", "name").where("expired is NULL").order("name")
         return [row.name for row in query.execute(self.cursor).fetchall()]
 
@@ -379,6 +383,7 @@ class Session:
                         save action
         """
 
+        self.log("Session.log_client_event()")
         fields = "event_time, event_desc, session"
         insert = "INSERT INTO client_log ({}) VALUES (GETDATE(), ?, ?)"
         self.cursor.execute(insert.format(fields), (description, self.id))
@@ -397,6 +402,7 @@ class Session:
                      populated by the CDR client loader program
         """
 
+        self.log("Session.save_client_trace_log()")
         user = session = None
         match = re.search(r"logon\(([^,]+), ([^)]+)\)", log_data)
         if match:
@@ -446,7 +452,7 @@ class Session:
         """
 
         tier = opts.get("tier")
-        logger = Tier(tier).get_logger("session")
+        logger = Tier(tier).get_logger("session", rolling=True)
         conn = db.connect(tier=tier)
         cursor = conn.cursor()
         query = db.Query("usr", "id", "hashedpw")
@@ -537,7 +543,7 @@ class Session:
               session - `Session` object requesting the operation
             """
 
-            session.log("add action {}".format(self.name))
+            session.log("Action.add({!r})".format(self.name))
             if not session.can_do("ADD ACTION"):
                 message = "ADD ACTION action not authorized for this user"
                 raise Exception(message)
@@ -568,6 +574,7 @@ class Session:
               session - `Session` object requesting the operation
             """
 
+            session.log("Action.modify({!r})".format(self.name))
             if not session.can_do("MODIFY ACTION"):
                 message = "MODIFY ACTION action not authorized for this user"
                 raise Exception(message)
@@ -616,7 +623,7 @@ class Session:
             if not session.can_do("DELETE ACTION"):
                 message = "DELETE ACTION action not authorized for this user"
                 raise Exception(message)
-            session.log("delete action {}".format(self.name))
+            session.log("Action.delete({!r})".format(self.name))
             cursor = session.cursor
             delete = "DELETE FROM action WHERE name = '{}'".format(self.name)
             cursor.execute(delete)
@@ -676,7 +683,7 @@ class Session:
             if not session.can_do("ADD GROUP"):
                 message = "ADD GROUP action not authorized for this user"
                 raise Exception(message)
-            session.log("add group {}".format(self.name))
+            session.log("Group.add({!r})".format(self.name))
             if self.id:
                 raise Exception("group already in database")
             query = db.Query("grp", "COUNT(*)")
@@ -715,7 +722,7 @@ class Session:
             name = self.name.strip()
             if not name:
                 raise Exception("Missing group name")
-            session.log("modify group {}".format(name))
+            session.log("Group.modify({!r})".format(self.name))
             cursor = session.cursor
             update = "UPDATE grp SET name = ?, comment = ? WHERE id = ?"
             cursor.execute(update, (name, self.comment, self.id))
@@ -740,7 +747,7 @@ class Session:
             if not session.can_do("DELETE GROUP"):
                 message = "DELETE GROUP action not authorized for this user"
                 raise Exception(message)
-            session.log("delete group {}".format(self.name))
+            session.log("Group.delete({!r})".format(self.name))
             cursor = session.cursor
             cursor.execute("DELETE grp_usr WHERE grp = ?", (self.id,))
             cursor.execute("DELETE grp_action WHERE grp = ?", (self.id,))
@@ -1050,6 +1057,7 @@ class Session:
                          of a machine ("local") account
             """
 
+            self.session.log("User.save({!r})".format(self.name))
             action = "MODIFY USER" if self.id else "CREATE USER"
             if not self.session.can_do(action):
                 message = "{} action not authorized for this user"
@@ -1153,6 +1161,7 @@ class Session:
               client XML wrapper command CdrDelUsr
             """
 
+            self.session.log("User.delete({!r})".format(self.name))
             if not self.session.can_do("DELETE USER"):
                 raise Exception("DELETE USER action not allowed for this user")
             delete = "UPDATE usr SET expired = GETDATE() WHERE id = ?"

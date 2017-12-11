@@ -701,8 +701,8 @@ class Doc(object):
         Integer for specific version for all_doc_versions row (or None)
         """
 
-        #self.session.logger.info("@version: __opts = %s", self.__opts)
         # Pull out the version-related options passed into the constructor.
+        self.session.logger.debug("@version: __opts = %s", self.__opts)
         version = self.__opts.get("version")
         cutoff = self.__opts.get("before")
 
@@ -846,6 +846,7 @@ class Doc(object):
         """
 
         # Make sure we have the required arguments.
+        self.session.log("add_external_usage({!r}, {!r})".format(usage, value))
         if not usage:
             raise Exception("Missing usage name")
         if not value:
@@ -933,10 +934,9 @@ class Doc(object):
           publishable - if True, mark version publishable if we create one
         """
 
-        self.session.logger.info("checking in %s", self.cdr_id)
+        self.session.log("Doc.check_in({!r}, {!r})".format(self.cdr_id, opts))
         self.__check_in(**opts)
         self.session.conn.commit()
-        self.session.logger.info("checked in %s", self.cdr_id)
 
     def check_out(self, **opts):
         """
@@ -953,6 +953,7 @@ class Doc(object):
           comment - optional string for the `checkout.comment` column
         """
 
+        self.session.log("Doc.check_out({!r}, {!r})".format(self.cdr_id, opts))
         self.__check_out(**opts)
         self.session.conn.commit()
 
@@ -976,6 +977,7 @@ class Doc(object):
         """
 
         # Make sure the audit trail records don't step on each other.
+        self.session.log("Doc.delete({!r}, {!r})".format(self.cdr_id, opts))
         self.__audit_trail_delay()
 
         # Start with a clean slate.
@@ -1067,6 +1069,8 @@ class Doc(object):
           by the XSL/T engine
         """
 
+        args = self.id, filters, opts
+        self.session.log("Doc.filter({!r}, {!r}, {!r})".format(*args))
         message = "ctl option not supported by filter(); use doc instead"
         assert not opts.get("ctl"), message
         parms = opts.get("parms") or {}
@@ -1186,6 +1190,8 @@ class Doc(object):
                 def __init__(self, parent, child):
                     self.parent, self.child = parent, child
         tree = Tree()
+        args = self.id, depth
+        self.session.log("Doc.get_tree({!r}, depth={!r})".format(*args))
         self.cursor.callproc("cdr_get_term_tree", (self.id, depth))
         for child, parent in self.cursor.fetchall():
             tree.relationships.append(Tree.Relationship(parent, child))
@@ -1207,6 +1213,7 @@ class Doc(object):
           label - string for this label's name
         """
 
+        self.session.log("Doc.label({!r}, {!r})".format(self.id, label))
         assert self.version, "Missing version for label"
         query = Query("version_label", "id")
         query.where(query.Condition("name", label))
@@ -1353,6 +1360,7 @@ class Doc(object):
           sequence of strings describing each inbound link
         """
 
+        self.session.log("Doc.link_report({})".format(self.id))
         query = Query("link_net n", "n.source_doc", "d.title", "n.target_frag")
         query.join("document d", "d.id = n.source_doc")
         query.where(query.Condition("n.target_doc", self.id))
@@ -1380,6 +1388,7 @@ class Doc(object):
             * comment for the version, if any (otherwise None)
         """
 
+        self.session.log("Doc.list_versions({}, {!r})".format(self.id, limit))
         fields = "num AS number", "dt AS saved", "comment"
         query = Query("doc_version", *fields).order("num DESC")
         query.where(query.Condition("id", self.id))
@@ -1404,6 +1413,7 @@ class Doc(object):
             raise Exception("reindex(): missing document id")
 
         # Make sure the object we have represents the latest XML.
+        self.session.log("Doc.reindex({})".format(self.id))
         doc = self
         last_pub_ver = doc.last_publishable_version
         last_saved = doc.last_saved
@@ -1465,6 +1475,7 @@ class Doc(object):
           None
         """
 
+        self.session.log("Doc.save({}, {!r})".format(self.id, opts))
         try:
             self.__audit_trail_delay()
             self.__save(**opts)
@@ -1494,6 +1505,8 @@ class Doc(object):
           None
         """
 
+        args = self.id, status, opts
+        self.session.log("Doc.set_status({}, {!r}, {!r})".format(*args))
         if not self.doctype:
             raise Exception("Document not found")
         if not self.session.can_do("PUBLISH DOCUMENT", self.doctype.name):
@@ -1503,14 +1516,14 @@ class Doc(object):
         if status not in valid:
             raise Exception("Status must be {} or {}".format(*valid))
         args = self.active_status, status
-        self.session.logger.info("Old status=%r new status=%r", *args)
+        self.session.logger.debug("Old status=%r new status=%r", *args)
         if status != self.active_status:
             try:
                 self.__audit_trail_delay()
                 self.__set_status(status, **opts)
                 self.session.conn.commit()
                 self._active_status = status
-                self.session.logger.info("New status committed")
+                self.session.logger.debug("New status committed")
             except:
                 self.session.logger.exception("Doc.set_status() failure")
                 self.cursor.execute("SELECT @@TRANCOUNT AS tc")
@@ -1530,6 +1543,7 @@ class Doc(object):
           label - string for this label's name
         """
 
+        self.session.log("Doc.unlabel({}, {!r})".format(self.id, label))
         query = Query("version_label", "id")
         query.where(query.Condition("name", label))
         row = query.execute(self.cursor).fetchone()
@@ -1589,6 +1603,7 @@ class Doc(object):
           True if the document's title was changed; otherwise False
         """
 
+        self.session.log("Doc.update_title({})".format(self.id))
         if self.id and self.title is not None:
             title = self.__create_title()
             if title is not None and self.title != title:
@@ -1624,6 +1639,7 @@ class Doc(object):
         """
 
         # Hand off the work to the private validation method.
+        self.session.log("Doc.validate({}, {!r})".format(self.id, opts))
         self._errors = []
         try:
             self.__validate(**opts)
@@ -3237,6 +3253,8 @@ class Doc(object):
           comment - optional string describing the label's usage
         """
 
+        args = label, comment
+        session.log("Doc.create_label({!r}, comment={!r})".format(*args))
         assert label, "Missing label name"
         cursor = session.conn.cursor()
         query = Query("version_label", "COUNT(*) AS n")
@@ -3264,6 +3282,7 @@ class Doc(object):
           label - string name for label to be removed
         """
 
+        session.log("Doc.delete_label({!r})".format(label))
         assert label, "Missing label name"
         cursor = session.conn.cursor()
         query = Query("version_label", "id")
@@ -3385,6 +3404,7 @@ class Doc(object):
           object carrying IDs for deleted documents and error strings
         """
 
+        session.log("Doc.delete_failed_mailers()")
         class CleanupReport:
             def __init__(self): self.deleted, self.errors = [],[]
         reason = "Deleting tracking document for failed mailer job"
@@ -4924,6 +4944,7 @@ class Doctype:
           client XML wrapper command CdrDelDocType
         """
 
+        self.session.log("Doctype.delete({!r})".format(self.name))
         if not self.session.can_do("DELETE DOCTYPE"):
             raise Exception("User not authorized to delete document types")
         if not self.id:
@@ -4992,7 +5013,7 @@ class Doctype:
                        have separate versions created) or "N"
         """
 
-        self.session.logger.info("Doctype.save(%s)", opts)
+        self.session.log("Doctype.save({!r}, {!r})".format(self.name, opts))
         now = datetime.datetime.now().replace(microsecond=0)
         try:
             fields = {
@@ -5009,7 +5030,7 @@ class Doctype:
         except:
             self.session.logger.exception("can't set fields")
             raise
-        self.session.logger.info("fields=%s", fields)
+        self.session.logger.debug("fields=%s", fields)
         if not self.id:
             fields["created"] = now
             names = sorted(fields)
@@ -5023,8 +5044,8 @@ class Doctype:
             assignments = ["{} = ?".format(name) for name in names]
             pattern = "UPDATE doc_type SET {} WHERE id = ?"
             sql = pattern.format(", ".join(assignments))
-        self.session.logger.info("sql=%s", sql)
-        self.session.logger.info("values=%s", values)
+        self.session.logger.debug("sql=%s", sql)
+        self.session.logger.debug("values=%s", values)
         self.cursor.execute(sql, values)
         self._schema_date = now
         if not self.id:
@@ -5032,7 +5053,7 @@ class Doctype:
             self.cursor.execute("SELECT @@IDENTITY AS id")
             self._id = self.cursor.fetchone().id
         self.session.conn.commit()
-        self.session.logger.info("committed doctype %s", self.id)
+        self.session.logger.debug("committed doctype %s", self.id)
         return self.id
 
     def __format_id_from_name(self, name):
@@ -5143,6 +5164,7 @@ class Doctype:
           dictionary of CSS files, indexed by their document names
         """
 
+        session.log("Doctype.get_css_files()")
         query = Query("doc_blob b", "d.title", "b.data")
         query.join("document d", "d.id = b.id")
         query.join("doc_type t", "t.id = d.doc_type")
@@ -5166,6 +5188,7 @@ class Doctype:
           sequence of document type names, sorted alphabetically
         """
 
+        session.log("Doctype.list_doc_types()")
         if not session.can_do("LIST DOCTYPES"):
             raise Exception("User not authorized to list document types")
         query = Query("doc_type", "name").order("name").where("active = 'Y'")
@@ -5188,6 +5211,7 @@ class Doctype:
           sequence of document type names, sorted alphabetically
         """
 
+        session.log("Doctype.list_schema_docs()")
         query = Query("document d", "d.title").order("d.title")
         query.join("doc_type t", "t.id = d.doc_type")
         query.where("t.name = 'schema'")
@@ -6301,6 +6325,7 @@ class LinkType:
           possibly empty sequence of `Doc` objects
         """
 
+        self.session.log("LinkType.search({!r}, {!r})".format(self.name, opts))
         pattern = opts.get("pattern")
         limit = opts.get("limit")
         query = Query("document d", "d.id", "d.title").order("d.title")
@@ -6330,6 +6355,7 @@ class LinkType:
           client XML wrapper command CdrModLinkType
         """
 
+        self.session.log("LinkType.save({!r})".format(self.name))
         action = "MODIFY LINKTYPE" if self.id else "ADD LINKTYPE"
         if not self.session.can_do(action):
             raise Exception("User not authorized to perform {}".format(action))
@@ -6358,6 +6384,7 @@ class LinkType:
           client XML wrapper command CdrDelLinkType
         """
 
+        self.session.log("LinkType.delete({!r})".format(self.name))
         if not self.session.can_do("DELETE LINKTYPE"):
             raise Exception("User not authorized to delete link types")
         if not self.id:
@@ -6453,7 +6480,7 @@ class LinkType:
             try:
                 self.cursor.execute(insert, values)
             except:
-                self.session.logger.info("targets=%s", self.targets)
+                self.session.logger.exception("targets=%s", self.targets)
                 raise
 
         # Save the custom validation/filtering logic for the link type.
@@ -6476,6 +6503,7 @@ class LinkType:
           client XML wrapper command CdrListLinkTypes
         """
 
+        session.log("LinkType.get_linktype_names()")
         query = Query("link_type", "name").order("name")
         return [row.name for row in query.execute(session.cursor).fetchall()]
 
@@ -6542,6 +6570,7 @@ class LinkType:
           session - reference to object representing the current login
         """
 
+        session.log("LinkType.get_property_types()")
         cursor = session.conn.cursor()
         query = Query("link_prop_type", "name", "comment")
         rows = query.execute(cursor).fetchall()
@@ -7279,7 +7308,7 @@ class FilterSet:
         """
         self.__session = session
         self.__opts = opts
-        self.session.logger.info("FilterSet(opts=%s)", opts)
+        self.session.logger.debug("FilterSet(opts=%s)", opts)
 
     @property
     def cursor(self):
@@ -7405,6 +7434,7 @@ class FilterSet:
           client XML wrapper command CdrDelFilterSet
         """
 
+        self.session.log("FilterSet.delete({!r})".format(self.name))
         if not self.session.can_do("DELETE FILTER SET"):
             raise Exception("User not authorized to delete filter sets.")
         if not self.id:
@@ -7453,6 +7483,7 @@ class FilterSet:
           None
         """
 
+        self.session.log("FilterSet.save({!r})".format(self.name))
         action = "MODIFY FILTER SET" if self.id else "ADD FILTER SET"
         if not self.session.can_do(action):
             what = "modify" if self.id else "add"
@@ -7518,7 +7549,7 @@ class FilterSet:
             names = ", ".join(names)
             ph = ", ".join(placeholders)
             sql = "INSERT INTO filter_set ({}) VALUES ({})".format(names, ph)
-        self.session.logger.info("sql=%s values=%s", sql, tuple(values))
+        self.session.logger.debug("sql=%s values=%s", sql, tuple(values))
         self.cursor.execute(sql, values)
 
         # Clear out the `filter_set_member` for an existing set.
@@ -7562,6 +7593,7 @@ class FilterSet:
           sequence of id, name tuples for filter sets
         """
 
+        session.log("FilterSet.get_filter_sets()")
         query = Query("filter_set", "id", "name").order("name")
         return [tuple(row) for row in query.execute(session.cursor).fetchall()]
 
@@ -7581,6 +7613,7 @@ class FilterSet:
           sequence of `Doc` objects for Filter documents
         """
 
+        session.log("FilterSet.get_filters()")
         query = Query("document d", "d.id", "d.title").order("d.title")
         query.join("doc_type t", "t.id = d.doc_type")
         query.where("t.name = 'Filter'")
@@ -7639,6 +7672,7 @@ class GlossaryTermName:
           sequence of `GlossaryTermName` objects
         """
 
+        session.log("GlossaryTermName.get_mappings({})".format(language))
         names = dict()
         phrases = set()
         name_tag = "TermName" if language == "en" else "TranslatedName"

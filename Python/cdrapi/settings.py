@@ -11,6 +11,8 @@ The CDR current has four tiers:
 import datetime
 import logging
 import os
+import re
+import subprocess
 
 class Tier:
     """
@@ -167,6 +169,8 @@ class Tier:
         """
         Create an object for recording what we do in a disk file
 
+        The logger leaves the log file closed between writes.
+
         Pass:
           name - required name for the logger
           path - optional path for the log file (default self.logdir/name.log)
@@ -175,6 +179,9 @@ class Tier:
           propagate - if True, the base handler also writes our entries
           multiplex - if True, add new handler even if there already is one
           console - if True, add stram handler to write to stderr
+          rolling - if True, roll over to a new log each day at midnight;
+                    won't work if `path` is also passed, unless the
+                    `path` value ends in a YYYY-MM-DD.log pattern.
 
         Return:
           logging object
@@ -193,8 +200,16 @@ class Tier:
             if "path" not in opts or opts.get("path"):
                 path = opts.get("path")
                 if not path:
-                    path = "{}/{}.log".format(self.logdir, name)
-                handler = logging.FileHandler(path)
+                    if opts.get("rolling"):
+                        now = datetime.datetime.now()
+                        month = now.strftime("%Y-%m-%d")
+                        path = "{}/{}-{}.log".format(self.logdir, name, month)
+                    else:
+                        path = "{}/{}.log".format(self.logdir, name)
+                if opts.get("rolling"):
+                    handler = self.RollingLogHandler(path, delay=True)
+                else:
+                    handler = self.ReleasingLogHandler(path, delay=True)
                 handler.setFormatter(formatter)
                 logger.addHandler(handler)
             if opts.get("console"):
@@ -276,6 +291,9 @@ class Tier:
           None
         """
 
+        message = "Session.set_control_value({!r}, {!r})".format(group, name)
+        session.log(message)
+
         # Make sure the user is allowed to create rows in the ctl table.
         if not session.can_do("SET_SYS_VALUE"):
             raise Exception("set_control() not authorized for this user")
@@ -336,6 +354,10 @@ class Tier:
           None
         """
 
+        args = group, name
+        message = "Session.inactivate_control_value({!r}, {!r})".format(*args)
+        session.log(message)
+
         # Make sure the user is allowed to update rows in the ctl table.
         if not session.can_do("SET_SYS_VALUE"):
             raise Exception("set_control() not authorized for this user")
@@ -383,3 +405,77 @@ class Tier:
         def formatTime(self, record, datefmt=None):
             ct = self.converter(record.created)
             return ct.strftime(datefmt or self.DATEFORMAT)
+
+
+    class ReleasingLogHandler(logging.FileHandler):
+        """
+        Logging file handler which leaves the file closed between writes
+        """
+
+        def emit(self, record):
+            """
+            Emit a record and close the file"
+
+            Pass:
+              record - assembled string to be written to the log
+            """
+
+            logging.FileHandler.emit(self, record)
+            self.close()
+
+
+    class RollingLogHandler(ReleasingLogHandler):
+        """
+        Logging file handler which rolls over at midnight
+
+        Also leaves the file closed between writes. Decided to do
+        our own customization rather than use the standard library's
+        `TimedRotatingFileHandler` class, but it wasn't clear how
+        our customization to close the file after each write would
+        interact with that class.
+        """
+
+        # The part of the log file name we change at midnight.
+        PATTERN = re.compile(r"-\d\d\d\d-\d\d\-\d\d.log")
+
+        def emit(self, record):
+            """
+            Emit a record and close the file
+
+            Also, rename the file if we've moved into the next month,
+            and make sure other processes can write to the file.
+
+            Pass:
+              record - assembled string to be written to the log
+            """
+
+            now = datetime.datetime.now()
+            suffix = now.strftime("-%Y-%m-%d.log")
+            path = self.PATTERN.sub(suffix, self.baseFilename)
+            new = not os.path.exists(path)
+            self.baseFilename = path
+            Tier.ReleasingLogHandler.emit(self, record)
+
+            # If we've rolled over to a new file, make it world-writable.
+            if new:
+                opts = dict(
+                    stderr=subprocess.PIPE,
+                    stdout=subprocess.PIPE
+                )
+                path = path.replace("/", "\\")
+                command = 'icacls "{}" /grant Everyone:(M)'.format(path)
+                try:
+                    stream = subprocess.Popen(command, **opts) #shell=True,
+                    output, error = stream.communicate()
+                    code = stream.returncode
+                    if code:
+                        logger = logging.get_logger("session")
+                        logger.warning("%r returned code %s", command, code)
+                        logger.warning("command output: %r", output)
+                        logger.warning("command error output: %r", error)
+                except:
+                    try:
+                        logger = logging.get_logger("session")
+                        logger.exception("rolling logfile to %r", path)
+                    except:
+                        pass
