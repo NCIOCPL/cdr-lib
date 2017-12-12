@@ -3927,14 +3927,19 @@ class _Control:
     TIER = Tier()
 
     try:
-        CONN = cdrdb.connect(timeout=2)
-    except Exception as e:
-        print(e)
-        CONN = None
+        # This isn't actually used to talk to the database. We're only
+        # trying to find out if we have local database access. If we
+        # don't we'll be using tunneling over HTTPS for CDR commands.
+        conn = cdrdb.connect(timeout=2)
+        HAVE_LOCAL_DB_ACCESS = True
+        conn.close()
+        del conn
+    except:
+        HAVE_LOCAL_DB_ACCESS = False
 
     @classmethod
     def tunneling(cls, tier=None):
-        return tier or not cls.CONN
+        return tier or not cls.HAVE_LOCAL_DB_ACCESS
 
     @classmethod
     def get_session(cls, credentials, tier=None, comment=None):
