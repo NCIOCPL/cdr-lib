@@ -779,10 +779,10 @@ class TermDoc:
         except:
             Concept.fail("invalid CDR ID %r" % cdr_id)
         self.concept.logger.info("updating %s", self.cdr_id)
-        doc = cdr.getDoc(self.session, self.cdr_id, "Y", getObject=True)
-        error = cdr.checkErr(doc)
-        if error:
-            Concept.fail("failure retrieving %s: %s" % (self.cdr_id, error))
+        try:
+            doc = cdr.getDoc(self.session, self.cdr_id, "Y", getObject=True)
+        except Exception as e:
+            Concept.fail("failure retrieving %s: %s" % (self.cdr_id, e))
         try:
             self.root = self.parse(doc.xml)
             doc.xml = self.update()

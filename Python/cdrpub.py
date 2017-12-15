@@ -33,6 +33,7 @@ import cdr
 import cdrdb
 import cdr2gk
 import AssignGroupNums
+from cdrapi.settings import Tier
 
 #-----------------------------------------------------------------------
 # Value for controlling debugging output.  None means no debugging
@@ -41,6 +42,9 @@ import AssignGroupNums
 # the pathname of the logfile to which to write debugging output.
 #-----------------------------------------------------------------------
 LOG = cdr.PUBLOG
+
+# Where are we running?
+TIER = Tier()
 
 # Default number of publishing threads to use
 PUB_THREADS = 4
@@ -154,15 +158,9 @@ class Publish:
 
     # class private variables.
     __timeOut  = 3000
-    # __cdrEmail = "cdr@%s" % cdr.getHostName()[1]
-    # __cdrEmail = "cdr@%s.%s" % (cdr.h.host['APPC'][0], cdr.h.host['APPC'][1])
     __cdrEmail = "NCIPDQoperator@mail.nih.gov"
     __pd2cg    = "Push_Documents_To_Cancer.Gov"
-    if cdr.h.org == 'OCE':
-        __cdrHttp  = "%s/cgi-bin/cdr" % cdr.getHostName()[2]
-    else:
-        __cdrHttp  = "https://%s.%s/cgi-bin/cdr" % (cdr.h.host['APPC'][0],
-                                                    cdr.h.host['APPC'][1])
+    __cdrHttp  = "https://%s/cgi-bin/cdr" % TIER.hosts['APPC']
     __interactiveMode   = 0
     __pushAllDocs       = False
     ## __includeLinkedDocs = 0
@@ -1192,11 +1190,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             CG_PUB_TARGET = self.__params['GKPubTarget']
 
             # Override the GK Server value if specified
-            if self.__params['GKServer']:
-                cdr2gk.host = self.__params['GKServer']
+            opts = dict(host=self.__params.get("GKServer"))
 
             # See if the GateKeeper is awake.
-            response = cdr2gk.initiateRequest(pubTypeCG, CG_PUB_TARGET)
+            response = cdr2gk.initiateRequest(pubTypeCG, CG_PUB_TARGET, **opts)
 
             if response.type != "OK":
                 # Construct messages for the pub_proc database record
@@ -1212,8 +1209,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
                 # Hint for the operator
                 if response.message.startswith("Error (-4)"):
-                    msg += \
-                        'Operator may need to run "cdr2gk.py abort={jobnum}"'
+                    abort = "cdr2gk.py abort --job-id JOB-ID"
+                    msg += "Operator may need to run {}".format(abort)
 
                 # Can't continue
                 raise Exception(msg)
@@ -1267,15 +1264,16 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                self.__jobId, pubTypeCG, lastJobId, numDocs)
 
             # Tell cancer.gov GateKeeper what's coming
-            response = cdr2gk.sendDataProlog(cgJobDesc, self.__jobId,
-                                 pubTypeCG, CG_PUB_TARGET, lastJobId)
+            args = cgJobDesc, self.__jobId, pubTypeCG, CG_PUB_TARGET, lastJobId
+            opts = dict(host=self.__params.get("GKServer"))
+            response = cdr2gk.sendDataProlog(*args, **opts)
             if response.type != "OK":
                 msg += "%s: %s<BR>" % (response.type, response.message)
 
                 # Hint for the operator
                 if response.message.startswith("Error (-4)"):
-                    msg += \
-                        'Operator may need to run "cdr2gk.py abort={jobnum}"'
+                    abort = "cdr2gk.py abort --job-id JOB-ID"
+                    msg += "Operator may need to run {}".format(abort)
 
                 raise Exception(msg)
 
@@ -1336,8 +1334,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 # grpNum = groupNums.genNewUniqueNum()
 
                 #self.__debugLog("DocType: %s  DocId: %d" % (docType, docId))
-                response = cdr2gk.sendDocument(self.__jobId, docNum,
-                            "Export", docType, docId, version, grpNum, xml)
+                args = [self.__jobId, docNum, "Export", docType, docId,
+                        version, grpNum, xml]
+                opts = dict(host=self.__params.get("GKServer"))
+                response = cdr2gk.sendDocument(*args, **opts)
 
                 # DEBUG
                 self.__debugLog("Pushed %s: %d group=%d" % (docType,
@@ -1385,10 +1385,10 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     docType = "GlossaryTerm"
                 elif docType == "Person":
                     docType = "GeneticsProfessional"
-                response = cdr2gk.sendDocument(self.__jobId, docNum, "Remove",
-                                               docType, docId, version,
-                                               groupNums.genNewUniqueNum())
-
+                args = [self.__jobId, docNum, "Remove", docType, docId,
+                        version, groupNums.genNewUniqueNum()]
+                opts = dict(host=self.__params.get("GKServer"))
+                response = cdr2gk.sendDocument(*args, **opts)
                 if response.type != "OK":
                     msg += "deleting document %d failed. %s: %s<BR>" % (docId,
                             response.type, response.message)
@@ -1407,8 +1407,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
 
             # We're done with cancer.gov Gatekeeper link
             # Complete and close the connection
-            response = cdr2gk.sendJobComplete(self.__jobId, pubTypeCG,
-                        addCount + removeCount, "complete")
+            args = self.__jobId, pubTypeCG, addCount + removeCount, "complete"
+            opts = dict(host=self.__params.get("GKServer"))
+            response = cdr2gk.sendJobComplete(*args, **opts)
             if response.type != "OK":
                 msg = "Error response from job completion:<BR>" + \
                        str(response.message)
@@ -2553,9 +2554,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 name = cdrDoc.getPublicationFilename()
                 self.__saveDoc(cdrDoc.blob, destDir + '/' + subDir, name, "wb")
                 self.__lockDb.acquire(1)
-                lastChange = cdr.getVersionedBlobChangeDate('guest', docId,
-                                                            doc.getVersion(),
-                                                            self.__conn)
+                args = "guest", docId, doc.getVersion()
+                opts = dict(conn=self.__conn)
+                lastChange = cdr.getVersionedBlobChangeDate(*args, **opts)
                 self.__lockDb.release()
                 title = cdrDoc.ctrl.get('DocTitle', '').strip()
                 title = title.replace('\r', '').replace('\n', ' ')
@@ -3019,9 +3020,8 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
         try:
             if self.__email and self.__email != "Do not notify":
                 self.__debugLog("Sending mail to %s." % self.__email)
-                sender    = self.__cdrEmail
-                subject   = "%s-%s: CDR Publishing Job Status" % (cdr.h.org,
-                                                                  cdr.h.tier)
+                sender = self.__cdrEmail
+                subject = "CBIIT-%s: CDR Publishing Job Status" % TIER.name
                 if isinstance(self.__email, basestring):
                     receivers = self.__email.replace(";", ",").split(",")
                 elif type(self.__email) is list:
@@ -3769,7 +3769,7 @@ if __name__ == "__main__":
         sys.stderr.write("usage: cdrpub.py job-id {--debug}\n")
         sys.exit(1)
     if len(sys.argv) > 2 and sys.argv[2] == "--debug":
-        cdr2gk.debuglevel = 1
+        cdr2gk.DEBUGLEVEL = 1
     LOG = ""
     p = Publish(int(sys.argv[1]))
     p.publish()

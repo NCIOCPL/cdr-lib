@@ -366,13 +366,6 @@ class CdrBatch:
 
         self.__jobName = None
 
-        # Setting up the propper database source
-        # --------------------------------------
-        if cdr.h.org == 'OCE':
-            host = 'localhost'
-        else:
-            host = cdr.h.host['DBWIN'][0]
-
         # Set job id to None or passed value
         self.__jobId = jobId and int(jobId) or None
 
@@ -382,7 +375,7 @@ class CdrBatch:
         # Need access to the database for anything we do
         self.__conn = None
         try:
-            self.__conn   = cdrdb.connect(dataSource = host)
+            self.__conn   = cdrdb.connect()
             self.__cursor = self.__conn.cursor()
         except Exception as e:
             # Job must not try to run itself

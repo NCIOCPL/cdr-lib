@@ -128,9 +128,6 @@ class Job:
         else:
             # Caller passed a session id instead of a user id
             self.session = uid
-        error = cdr.checkErr(self.session)
-        if error:
-            raise Exception("Failure logging into CDR: %s" % error)
 
         self.noStdErr  = False
         _testMode      = testMode
@@ -493,7 +490,7 @@ class Job:
             self.log("Running in real mode.  Updating the database")
 
         # For reporting time
-        startTime = time.time()
+        startTime = datetime.datetime.now()
 
         # Get docs
         ids = self.filter.getDocIds()
@@ -621,10 +618,10 @@ class Job:
    Versions changed = %d
    Could not lock   = %d
    Errors           = %d
-   Time (hh:mm:ss)  = %s
+   Time             = %s
  %s""" % (self.getCountDocsProcessed(), self.getCountDocsSaved(),
           self.getCountVersionsSaved(), self.getCountDocsLocked(),
-          self.getCountErrors(), cdr.getElapsed(startTime),
+          self.getCountErrors(), datetime.datetime.now() - startTime,
           "".join(msgReport)))
 
 
@@ -736,7 +733,7 @@ class Doc(object):
         self.cwdVals      = None
         self.lastvVals    = None
         self.lastpVals    = None
-        (lastAny, lastPub, changedYN) = self.versions
+        lastAny, lastPub, changedYN = self.versions
 
         # We only need to checkout the docs in live runs
         # Test mode won't save anything, so we don't need checkouts
@@ -746,11 +743,12 @@ class Doc(object):
             checkout = 'Y'
 
         # Checkout current working document to get doc and lock
-        self.cwd = cdr.getDoc(self.session, self.id, checkout, getObject = True)
-        if type(self.cwd) in (str, unicode):
-            err = cdr.checkErr(self.cwd) or self.cwd
-            raise DocumentLocked("Unable to check out CWD for CDR%010d: %s" %
-                                 (self.id, err))
+        opts = dict(checkout=checkout, getObject=True)
+        try:
+            self.cwd = cdr.getDoc(self.session, self.id, **opts)
+        except Exception as e:
+            message = "Unable to check out CWD for CDR%010d: %s" % (self.id, e)
+            raise DocumentLocked(message)
 
         # If the cwd is not the same as the last version, or there is no
         #   saved version, we'll save the cwd and store it as a version
@@ -779,14 +777,12 @@ class Doc(object):
 
                 # And it's not the same as the CWD
                 if changedYN == 'Y':
-                    self.lastv = cdr.getDoc(self.session, self.id, checkout,
-                                            str(lastAny),
-                                            getObject = 1)
-                    if type(self.lastv) in (type(""), type(u"")):
-                        err = cdr.checkErr(self.lastv) or self.lastv
-                        raise Exception("Failure retrieving lastv (%d) "
-                                        "for CDR%010d: %s" % (lastAny,
-                                                           self.id, err))
+                    opts["version"] = lastAny
+                    try:
+                        self.lastv = cdr.getDoc(self.session, self.id, **opts)
+                    except Exception as e:
+                        msg = "Failure retrieving lastv (%d) for CDR%010d: %s"
+                        raise Exception(msg % (lastAny, self.id, e))
 
                     # Transform
                     self.newLastvXml = self.transform.run(self.lastv)
@@ -807,14 +803,12 @@ class Doc(object):
 
                 # If it's not the same as the last version
                 if lastPub != lastAny:
-                    self.lastp = cdr.getDoc(self.session, self.id, checkout,
-                                            str(lastPub),
-                                            getObject = 1)
-                    if type(self.lastp) in (type(""), type(u"")):
-                        err = cdr.checkErr(self.lastp) or self.lastp
-                        raise Exception("Failure retrieving lastp (%d) "
-                                        "for CDR%010d: %s" % (lastPub,
-                                                           self.id, err))
+                    opts["version"] = lastPub
+                    try:
+                        self.lastp = cdr.getDoc(self.session, self.id, **opts)
+                    except Exception as e:
+                        msg = "Failure retrieving lastp (%d) for CDR%010d: %s"
+                        raise Exception(msg % (lastPub, self.id, e))
 
                     # Transform
                     self.newLastpXml = self.transform.run(self.lastp)

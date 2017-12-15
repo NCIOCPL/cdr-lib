@@ -41,7 +41,6 @@ import cdrbatch
 import cdrcgi
 import cdrdb2 as cdrdb
 
-
 class BatchReport:
     """
     Base class for individual long-running reports.
@@ -62,6 +61,7 @@ class BatchReport:
       STAMP - YYYYMMDDHHMMSS timestamp string
       LOGNAME - default name for the log (".log" will be added to the filename)
       LOGLEVEL - default verbosity for logging
+      TIER - where we're running
 
     Instance attributes:
 
@@ -81,6 +81,9 @@ class BatchReport:
     """
 
     import lxml.html.builder as B
+    from cdrapi.settings import Tier
+
+    TIER = Tier()
     SUMMARY_LANGUAGE = "/Summary/SummaryMetaData/SummaryLanguage"
     SUMMARY_AUDIENCE = "/Summary/SummaryMetaData/SummaryAudience"
     SUMMARY_BOARD = "/Summary/SummaryMetaData/PDQBoard/Board/@cdr:ref"
@@ -243,10 +246,10 @@ class BatchReport:
 
         url = self.create_report_url(filename)
         self.logger.info("url: %s", url)
-        subject = "[CDR %s] Report results - %s Report" % (cdr.h.tier,
-                                                           self.name)
-        body = ("The %s report you requested can be viewed at\n%s\n" %
-                (self.name, url))
+        args = self.TIER.name, self.name
+        subject = "[CDR %s] Report results - %s Report" % args
+        args = self.name, url
+        body = "The %s report you requested can be viewed at\n%s\n" % args
         self.send_mail(subject, body)
         link = "<a href='%s'><u>%s</u></a>" % (url, url)
         message = "%s<br>Report available at %s" % (self.activity(), link)

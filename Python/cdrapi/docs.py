@@ -1299,7 +1299,11 @@ class Doc(object):
         for tag, value in control_info:
             if value:
                 child = etree.SubElement(doc_control, tag)
-                child.text = str(value)
+                try:
+                    child.text = unicode(value)
+                except:
+                    print(repr((tag, value)))
+                    raise
                 if not filtering:
                     child.set("readonly", "yes")
                 if tag == "DocVersion":
@@ -3352,7 +3356,7 @@ class Doc(object):
         query.where("t.name = 'schema'")
         query.where(query.Condition("d.title", names, "IN"))
         try:
-            return query.execute(cursor).fetchone()[0]
+            return query.execute(cursor).fetchone().xml
         except:
             raise Exception("schema {!r} not found".format(name))
 

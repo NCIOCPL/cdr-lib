@@ -57,7 +57,7 @@ class Settings:
             md5 = hashlib.md5()
             md5.update(bytes)
             md5 = md5.hexdigest().lower()
-        except Exception, e:
+        except Exception as e:
             md5 = "unreadable"
         files[name] = md5
     def get_system_info(self):
@@ -67,7 +67,7 @@ class Settings:
             try:
                 value = runCommand(command).output.strip()
                 info[name] = value
-            except Exception, e:
+            except Exception as e:
                 log("%s: %s" % (command, e))
         return info
     def get_hosts(self):
@@ -83,7 +83,7 @@ class Settings:
                     hosts[org][tier] = {}
                 hosts[org][tier][use] = host
             return hosts
-        except Exception, e:
+        except Exception as e:
             log("Settings.get_hosts(): %s" % e)
             return {}
     def get_python_settings(self):
@@ -100,7 +100,7 @@ class Settings:
             cursor = getConnection(self.db).cursor()
             cursor.execute("SHOW VARIABLES")
             return dict(cursor.fetchall())
-        except Exception, e:
+        except Exception as e:
             log("Settings.get_mysql_settings(): %s" % e)
             return {}
     def serialize(self, indent=None):
@@ -145,7 +145,7 @@ def can_do(session, action, doctype="", tier=None):
     try:
         response = urllib2.urlopen(url, parms)
         return response.read().strip() == "Y"
-    except Exception, e:
+    except Exception as e:
         log("can_do(%s, %s, %s): %s" % (repr(session), repr(action),
                                         repr(doctype), e))
         log("url=%s" % repr(url))
@@ -231,9 +231,8 @@ class AppHost:
     because Environment and Tier are independent of this config file, but
     it's hard to see a use case for multiple instances.
 
-    Importing cdr.py will automatically instantiate it.  If cdr is imported,
-    reference the instance using the module object "cdr.h".  Otherwise,
-    instantiate it separately.
+    As new software is developed, use the cdrapi.settings.Tier class
+    for this functionality.
     """
 
     # Static dictionary, only loaded once, with all name config info

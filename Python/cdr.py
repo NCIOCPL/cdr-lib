@@ -14,16 +14,17 @@ This module is now compatible with Python 3 and Python 2.
 import base64
 import datetime
 import logging
-import random
+import os
 import re
-import dateutil.parser
+import sys
+import traceback
 import requests
 from lxml import etree
 from cdrapi import db as cdrdb
 from cdrapi.settings import Tier
 from cdrapi.users import Session
 from cdrapi.docs import Doc as APIDoc
-from cdrapi.docs import Doctype, GlossaryTermName
+from cdrapi.docs import Doctype, GlossaryTermName, Schema
 from cdrapi.docs import LinkType as APILinkType
 from cdrapi.docs import FilterSet as APIFilterSet
 from cdrapi.publishing import Job as PublishingJob
@@ -3996,6 +3997,7 @@ class _Control:
 
     class ResponseSet:
         def __init__(self, node):
+            import dateutil.parser
             self.node = node
             self.time = dateutil.parser.parse(node.get("Time"))
             self.responses = [self.Response(r) for r in node.findall("*")]
@@ -4010,6 +4012,7 @@ class _Control:
 
     @classmethod
     def wrap_command(cls, node, command_id=None):
+        import random
         if not command_id:
             command_id = "{:X}".format(random.randint(cls.MIN_ID, cls.MAX_ID))
         wrapper = etree.Element("CdrCommand", CmdId=command_id)
@@ -4139,6 +4142,13 @@ class _Control:
         else:
             return doc.cdr_id
 
+
+
+# ======================================================================
+# Legacy functions, classes, and module-level values
+# The stuff below here was cleaned up a little bit, but is essentially
+# what it was before Gauss.
+# ======================================================================
 
 def isDevHost():
     """
@@ -4365,11 +4375,6 @@ PUBTYPES = {
     'Hotfix (Export)': 'Send individual documents to Cancer.gov'
 }
 
-
-# ======================================================================
-# Legacy functions
-# ======================================================================
-
 def logwrite(msgs, logfile=DEFAULT_LOGFILE, tback=False, stackTrace=False):
     """
     Append one or messages to a log file - closing the file when done.
@@ -4401,7 +4406,8 @@ def logwrite(msgs, logfile=DEFAULT_LOGFILE, tback=False, stackTrace=False):
         f = open(logfile, "a", 0)
 
         # Write process id and timestamp
-        f.write("!%d %s: " % (os.getpid(), time.ctime()))
+        now = datetime.datetime.now()
+        f.write("!%d %s: " % (os.getpid(), now.ctime()))
 
         # Sequence of messages or single message
         if isinstance(msgs, (tuple, list)):
@@ -4497,7 +4503,7 @@ class Log:
 
         # Find the tier once and format it
         if logTier:
-            self.__logTier = cdrutil.getTier(WORK_DRIVE + ":") + ':'
+            self.__logTier = _Control.TIER.name + ':'
         else:
             self.__logTier = False
 
@@ -4507,9 +4513,9 @@ class Log:
 
         # If there's a banner, write it with stamps
         if banner:
-            self.writeRaw("\n%s\nTIER: %s  DATETIME: %s\n" %
-                          (banner, cdrutil.getTier(WORK_DRIVE + ":"),
-                           time.ctime()))
+            now = datetime.datetime.now()
+            args = banner, _Control.TIER.name, now.ctime()
+            self.writeRaw("\n%s\nTIER: %s  DATETIME: %s\n" % args)
 
     def write(self, msgs, level=DEFAULT_LOGLVL, tback=False,
               stdout=False, stderr=False):
@@ -4539,7 +4545,8 @@ class Log:
         if self.__logPID:
             self.__fp.write(self.__pid)
         if self.__logTime:
-            self.__fp.write("%s: " % time.ctime())
+            now = datetime.datetime.now()
+            self.__fp.write("%s: " % now.ctime())
 
         # Sequence of messages or single message
         if type(msgs) == type(()) or type(msgs) == type([]):
@@ -4597,7 +4604,8 @@ class Log:
             self.__logPID   = True
             self.__level    = DEFAULT_LOGLVL
             if isinstance(self.__fp, file):
-                self.writeRaw("\n%s\n" % time.ctime())
+                now = datetime.datetime.now()
+                self.writeRaw("\n%s\n" % now.ctime())
                 self.writeRaw("=========== Closing Log ===========\n\n")
 
         # Can only close the file if we were able to open it earlier.
@@ -4675,16 +4683,6 @@ FILTERS = {
 }
 
 
-'''
-REPLACE/REWRITE ALL OF THIS
-# ---------------------------------------------------------------------
-# The file cdrapphosts knows about the different server names in the
-# CBIIT and OCE environments based on the tier
-# ---------------------------------------------------------------------
-h = cdrutil.AppHost(cdrutil.getEnvironment(),
-                    cdrutil.getTier(WORK_DRIVE + ":"),
-                    filename=WORK_DRIVE + ':/etc/cdrapphosts.rc')
-
 #----------------------------------------------------------------------
 # If we're not actually running on the CDR server machine, then
 # "localhost" won't work.
@@ -4706,7 +4704,14 @@ except:
 # of ascii, which makes it safe to interpolate such objects into
 # unicode strings, even when the Exception object was created with
 # a unicode string containing non-ascii characters.
+#
+# 2017-12-13: This was a mistake, because it masked our ability
+#             to catch standard Exception objects. Export the
+#             name as part of the cdr module so we don't break
+#             existing code more than we have to.
 #----------------------------------------------------------------------
+Exception = Exception
+"""
 _baseException = Exception
 class Exception(_baseException):
     __baseException = _baseException
@@ -4716,6 +4721,7 @@ class Exception(_baseException):
         else:
             return Exception.__baseException.__str__(self)
 del _baseException
+"""
 
 #----------------------------------------------------------------------
 # Validate date/time strings using strptime.
@@ -4723,7 +4729,7 @@ del _baseException
 #----------------------------------------------------------------------
 def strptime(str, format):
     """
-    Wrap time.strptime() in a function that performs the exception
+    Wrap datetime.strptime() in a function that performs the exception
     handling and just returns None if an exception was generated.
 
     The actual ValueError message from Python may not always be
@@ -4735,7 +4741,7 @@ def strptime(str, format):
     """
     tm = None
     try:
-        tm = time.strptime(str, format)
+        tm = datetime.datetime.strptime(str, format)
     except ValueError:
         tm = None
     return tm
@@ -4776,34 +4782,6 @@ def valFromToDates(format, fromDate, toDate, minFrom=None, maxTo=None):
     return True
 
 #----------------------------------------------------------------------
-# Report elapsed time.
-#----------------------------------------------------------------------
-def getElapsed(startSecs, endSecs=None):
-    """
-    Human readable report of time between two points.
-    This is taken from Bob's original in CdrLongReports.py.
-
-    Pass:
-        startSecs - Starting time from time.time().
-        endSecs   - Ending time, use now if None.
-
-    Return:
-        String of "HH:MM:SS"
-    """
-    if endSecs is None:
-        endSecs = time.time()
-
-    # Convert to hours, minutes, seconds
-    delta = endSecs - startSecs
-    secs  = delta % 60
-    delta /= 60
-    mins  = delta % 60
-    hours = delta / 60
-
-    return "%02d:%02d:%02d" % (hours, mins, secs)
-
-
-#----------------------------------------------------------------------
 # Information about an error returned by the CDR server API.  Provides
 # access to the new attributes attached to some Err elements.  As of
 # this writing, only the CDR commands involving validation assign
@@ -4818,11 +4796,11 @@ def getElapsed(startSecs, endSecs=None):
 #----------------------------------------------------------------------
 class Error:
     def __init__(self, node):
-        self.message = getTextContent(node)
-        self.etype   = node.getAttribute('etype') or 'other'
-        self.elevel  = node.getAttribute('elevel') or 'fatal'
-        self.eref    = node.getAttribute('eref') or None
-    def getMessage(self, asUtf8 = False):
+        self.message = get_test(node)
+        self.etype   = node.get('etype', 'other')
+        self.elevel  = node.get('elevel', 'fatal')
+        self.eref    = node.get('eref')
+    def getMessage(self, asUtf8=False):
         if asUtf8:
             return self.message.encode('utf-8')
         return self.message
@@ -4857,8 +4835,9 @@ class Error:
 #                value of the asObject parameter) for the first
 #                Err element found, if any; otherwise, None
 #----------------------------------------------------------------------
-def checkErr(resp, asObject = False):
-    errors = getErrors(resp, False, True, asObjects = asObject)
+def checkErr(resp, asObject=False):
+    opts = dict(errorsExpected=False, asSequence=True, asObjects=asObject)
+    errors = getErrors(resp, **opts)
     return errors and errors[0] or None
 
 #----------------------------------------------------------------------
@@ -4866,7 +4845,7 @@ def checkErr(resp, asObject = False):
 #
 # Pass:
 #    xmlFragment   - string in which to look for serialized Err elements
-#    errorExpected - if True (the default), then return a generic error
+#    errorsExpected - if True (the default), then return a generic error
 #                    string when no Err elements are found; otherwise
 #                    return an empty string or list if no Err elements
 #                    are found
@@ -4902,73 +4881,66 @@ def checkErr(resp, asObject = False):
 #                    a sequence (again, to preserve the original
 #                    behavior of the function)
 #----------------------------------------------------------------------
-def getErrors(xmlFragment, errorsExpected = True, asSequence = False,
-              asObjects = False, useDom = True, asUtf8 = True):
+def getErrors(xmlFragment, **opts):
 
-    if asSequence or asObjects:
+    # Pull out the options.
+    expected = opts.get("errorsExpected", True)
+    as_objects = opts("asObjects", False)
+    as_utf8 = opts.get("asUtf8", True)
+    use_dom = as_objects or opts.get("useDom", True)
+    as_sequence = opts.get("asSequence", False)
+
+    # Try get a parsed node for the fragment if appropriate.
+    if use_dom:
+        root = None
+        if isinstance(xmlFragment, unicode):
+            xmlFragment = xmlFragment.encode("utf-8")
+        try:
+            root = etree.fromstring(xmlFragment)
+        except Exception as e:
+            if as_objects:
+                raise Exception(u"getErrors(): %s" % e)
+
+    if as_sequence or as_objects:
 
         # Safety check.
-        if type(xmlFragment) not in (str, unicode):
+        if not isinstance(xmlFragment, basestring):
             return []
 
-        if useDom or asObjects:
-            if type(xmlFragment) == unicode:
-                xmlFragment = xmlFragment.encode('utf-8')
-            try:
-                dom = xml.dom.minidom.parseString(xmlFragment)
-                errors = [Error(node)
-                          for node in dom.getElementsByTagName('Err')]
-                if errorsExpected and not errors:
-                    return ["Internal failure"]
-                return asObjects and errors or [e.getMessage(asUtf8)
-                                                for e in errors]
-            except Exception, e:
-                if asObjects:
-                    raise Exception(u"getErrors(): %s" % e)
-            except:
-                if asObjects:
-                    raise Exception(u"getErrors() failure")
-        if asUtf8 and type(xmlFragment) == unicode:
-            xmlFragment = xmlFragment.encode('utf-8')
+        if use_dom and root is not None:
+            errors = [Error(node) for node in root.iter("Err")]
+            if expected and not errors:
+                return ["Internal failure"]
+            if as_objects:
+                return errors
+            return [e.getMessage(as_utf8) for e in errors]
+        if as_utf8 and isinstance(xmlFragment, unicode):
+            xmlFragment = xmlFragment.encode("utf-8")
         errors = Error.getPattern().findall(xmlFragment)
-        if not errors and errorsExpected:
+        if not errors and expected:
             return ["Internal failure"]
         return errors
 
-    # Compile the pattern for the regular expression.
-    pattern = re.compile("<Errors[>\s].*</Errors>", re.DOTALL)
+    elif use_dom and root is not None:
+        for node in root.iter("Errors"):
+            return etree.tostring(node, encoding="utf-8")
+        if expected:
+            return "<Errors><Err>Internal failure</Err></Errors>"
+        else:
+            return ""
 
-    # Search for the <Errors> element.
-    errors  =  pattern.search(xmlFragment)
-    if errors:           return errors.group()
-    elif errorsExpected: return "<Errors><Err>Internal failure</Err></Errors>"
-    else:                return ""
+    else:
+        # Compile the pattern for the regular expression.
+        pattern = re.compile("<Errors[>\s].*</Errors>", re.DOTALL)
 
-#----------------------------------------------------------------------
-# Extract a piece of the CDR Server's response.
-#----------------------------------------------------------------------
-def extract(pattern, response):
-
-    # Compile the regular expression.
-    expr = re.compile(pattern, re.DOTALL)
-
-    # Search for the piece we want.
-    piece = expr.search(response)
-    if piece: return piece.group(1)
-    else:     return getErrors(response)
-
-#----------------------------------------------------------------------
-# Extract several pieces of the CDR Server's response.
-#----------------------------------------------------------------------
-def extract_multiple(pattern, response):
-
-    # Compile the regular expression.
-    expr = re.compile(pattern, re.DOTALL)
-
-    # Search for the piece we want.
-    piece = expr.search(response)
-    if piece: return piece.groups()
-    else:     return getErrors(response)
+        # Search for the <Errors> element.
+        errors = pattern.search(xmlFragment)
+        if errors:
+            return errors.group()
+        elif expected:
+            return "<Errors><Err>Internal failure</Err></Errors>"
+        else:
+            return ""
 
 #----------------------------------------------------------------------
 # Identify the user associated with a session.
@@ -4993,36 +4965,23 @@ def extract_multiple(pattern, response):
 #----------------------------------------------------------------------
 def idSessionUser(mySession, getSession):
 
-    # Direct access to db.  May replace later with secure server function.
+    query = cdrdb.Query("usr u", "u.name")
+    query.join("session s", "s.usr = u.id")
+    query.where(query.Condition("s.name", getSession))
     try:
-        conn   = cdrdb.connect()
-        cursor = conn.cursor()
-    except cdrdb.Error, info:
-        return "Unable to connect to database to get session info: %s" %\
-                info[1][0]
-
-    # Search user/session tables
-    try:
-        cursor.execute (
-            "SELECT u.name, '' AS pw"
-            "  FROM usr u, session s "
-            " WHERE u.id = s.usr "
-            "   AND s.name = ?", getSession)
-        usrRow = cursor.fetchone()
-        if type(usrRow)==type(()) or type(usrRow)==type([]):
-            return tuple(usrRow)
-        else:
-            return usrRow
-    except cdrdb.Error, info:
-        return "Error selecting usr for session: %s - %s" % \
-                (repr(getSession), info[1][0])
+        row = query.execute().fetchone()
+    except Exception as e:
+        return "Failure selection user for %r: %s".format(getSession, e)
+    if not row:
+        return None
+    return row.name, ""
 
 #----------------------------------------------------------------------
 # Find out if the user for a session is a member of the specified group.
 #----------------------------------------------------------------------
 def member_of_group(session, group):
     try:
-        name = idSessionUser(session, session)[0]
+        name, _ = idSessionUser(session, session)
         user = getUser(session, name)
         return group in user.groups
     except:
@@ -5037,38 +4996,24 @@ def member_of_group(session, group):
 #   Email address
 #   Or single error string.
 #----------------------------------------------------------------------
-def getEmail(mySession):
+def getEmail(session):
+    query = cdrdb.Query("usr u", "u.email")
+    query.join("session s", "s.usr = u.id")
+    query.where(query.Condition("s.name", session))
+    query.where("s.ended IS NULL")
+    query.where("u.expired IS NULL")
     try:
-        conn   = cdrdb.connect()
-        cursor = conn.cursor()
-    except cdrdb.Error, info:
-        return "Unable to connect to database to get email info: %s" %\
-                info[1][0]
-
-    # Search user/session tables
-    try:
-        query = """\
-           SELECT u.email
-             FROM session s
-             JOIN usr u
-               ON u.id   = s.usr
-            WHERE s.name = '%s'
-              AND ended   IS NULL
-              AND expired IS NULL""" % mySession
-        cursor.execute (query)
-        rows = cursor.fetchall()
-        if len(rows) < 1:
-           return("ERROR: User not authorized to run this report!")
-        elif len(rows) > 1:
-           return("ERROR: User session not unique!")
-        else:
-           return rows[0][0]
-    except cdrdb.Error, info:
-        return "Error selecting email for session: %s - %s" % \
-                (mySession, info[1][0])
+        row = query.execute().fetchone()
+    except Exception as e:
+        return "Error selecting email for session %r: %s".format(session, e)
+    if not row:
+        return "Session not found or unauthorized"
+    return row.email
 
 #----------------------------------------------------------------------
 # Find the date that a current working document was created or modified.
+# [Only used by obsolete module CTGovUpdateReportBatch.py; retire?]
+# New code should use `last_saved` property of `cdrapi.Doc` object.
 #----------------------------------------------------------------------
 def getCWDDate(docId, conn=None):
     """
@@ -5083,32 +5028,10 @@ def getCWDDate(docId, conn=None):
         Audit_trail date_time as a string.
 
     Raises:
-        cdrdb.Error if database error.
-        Exception if doc ID not found.
+        Exception if database error or doc ID not found.
     """
-    # If no connection, create one
-    if not conn:
-        conn = cdrdb.connect('CdrGuest')
-    cursor = conn.cursor()
 
-    # Normalize passed docId to a plain integer
-    idNum = exNormalize(docId)[1]
-
-    # Get date from audit trail
-    cursor.execute("""
-        SELECT max(at.dt)
-          FROM audit_trail at, action act
-         WHERE act.name in ('ADD DOCUMENT', 'MODIFY DOCUMENT')
-           AND at.action = act.id
-           AND at.document = %d""" % idNum)
-    row = cursor.fetchone()
-    cursor.close()
-
-    # Caller should only pass docId for a real document
-    if not row:
-        raise Exception("cdr.getCWDDate: No document found for id=%d" % idNum)
-
-    return row[0]
+    return APIDoc(Session("guest"), docId).last_saved
 
 #----------------------------------------------------------------------
 # Search the query term table for values
@@ -5126,40 +5049,23 @@ def getQueryTermValueForId(path, docId, conn=None):
     Raises:
         Exception if any failure.
     """
-    # Create connection if none available
-    if not conn:
-        try:
-            conn = cdrdb.connect ("CdrGuest")
-        except cdrdb.Error, info:
-            raise Exception("getQueryTermValueForId: can't connect to DB: %s" %
-                            info[1][0])
 
-    # Normalize id to integer
-    did = exNormalize(docId)[1]
-
-    # Search table
-    try:
-        # Using % substitution because it should be completely safe and faster
+    query = cdrdb.Query("query_term", "value")
+    query.where(query.Condition("path", path))
+    query.where(query.Condition("doc_id", exNormalize(docId)[1]))
+    if conn is not None:
         cursor = conn.cursor()
-        cursor.execute (
-          "SELECT value FROM query_term WHERE path = '%s' AND doc_id = %d" %
-          (path, did))
-        rows = cursor.fetchall()
-        if len(rows) == 0:
-            return None
-
-        # Convert sequence of sequences to simple sequence
-        retRows = []
-        for row in rows:
-            retRows.append (row[0])
-        return retRows
-
-    except cdrdb.Error, info:
-        raise Exception("getQueryTermValueForId: database error: %s" %
-                        info[1][0])
+        rows = query.execute(cursor).fetchall()
+        cursor.close()
+    else:
+        rows = query.execute().fetchall()
+    return [row.value for row in rows]
 
 #----------------------------------------------------------------------
 # Extract the text content of a DOM element.
+# For nodes parsed by the ancient dom.minidom package; we don't use
+# that package any more for new code, but there's still code out there
+# which does. At least we don't have to import the old package here.
 #----------------------------------------------------------------------
 def getTextContent(node, recurse=False, separator=''):
     """
@@ -5187,8 +5093,7 @@ def getTextContent(node, recurse=False, separator=''):
 #----------------------------------------------------------------------
 # Validate new and old docs
 #----------------------------------------------------------------------
-def valPair(session, docType, oldDoc, newDoc, host=DEFAULT_HOST,
-            port=DEFAULT_PORT):
+def valPair(session, docType, oldDoc, newDoc, **opts):
     """
     Validate the old and new versions of a document.
     If the old version is invalid, don't bother with the new.
@@ -5201,8 +5106,7 @@ def valPair(session, docType, oldDoc, newDoc, host=DEFAULT_HOST,
         Document type.
         Old version of doc.
         New version of doc.
-        Host.
-        Connection port.
+        Optional tier
 
     Return:
         If oldDoc is valid and newDoc is not:
@@ -5210,12 +5114,16 @@ def valPair(session, docType, oldDoc, newDoc, host=DEFAULT_HOST,
         Else:
             Return None.
     """
+
+    # Find out where we are running.
+    ter = opts.get("tier")
+
     # Validate first document
-    result = valDoc(session, docType, doc=oldDoc, host=host, port=port)
+    result = valDoc(session, docType, doc=oldDoc, tier=tier)
 
     # If no errors, check the new version
-    if not getErrors(result, errorsExpected=0):
-        result = valDoc(session, docType, doc=newDoc, host=host, port=port)
+    if not getErrors(result, errorsExpected=False):
+        result = valDoc(session, docType, doc=newDoc, tier=tier)
         return deDupErrs(result)
 
     # Else return empty list
@@ -5246,14 +5154,14 @@ def deDupErrs(errXml):
 
     # De-dup any errors
     errs = {}
-    dom = xml.dom.minidom.parseString(errXml)
-    for err in dom.getElementsByTagName('Err'):
-        errString = getTextContent(err)
+    root = etree.fromstring(errXml)
+    for err in root.iter("Err"):
+        errString = get_text(err)
         errs[errString] = errs.get(errString, 0) + 1
 
     # Prepare results list
     result = []
-    for err in errs.keys():
+    for err in sorted(errs):
         errString = err
         if errs[err] > 1:
             errString += " (%d times)" % errs[err]
@@ -5281,49 +5189,41 @@ def getAllDocsRow(docId, conn=None):
     # Convert to integer, raise exception if error
     idNum = exNormalize(docId)[1]
 
-    # Fields of interest
-    qry = """
-SELECT d.title, t.name, d.active_status,
-       d.val_status, d.val_date, d.first_pub
-  FROM all_docs d
-  JOIN doc_type t
-    ON d.doc_type = t.id
- WHERE d.id = ?
- """
-    # Connection
-    if not conn:
-        try:
-            conn = cdrdb.connect()
-        except cdrdb.Error, info:
-            raise Exception("Error getting connection in getAllDocsRow(%s): %s"
-                             % (docId, str(info)))
+    # Create the query
+    fields = (
+        "d.title",
+        "t.name",
+        "d.active_status",
+        "d.val_status",
+        "d.val_date",
+        "d.first_pub"
+    )
+    query = cdrdb.Query("all_docs d", *fields)
+    query.join("doc_type t", "t.id = d.doc_type")
+    query.where(query.Condition("d.id", idNum))
 
-    # Get all the data
-    try:
+    # Run the query
+    if conn is None:
+        row = query.execute().fetchone()
+    else:
         cursor = conn.cursor()
-        cursor.execute(qry, idNum)
-        row    = cursor.fetchone()
+        row = query.execute(cursor).fetchone()
         cursor.close()
-    except cdrdb.Error, info:
-        raise Exception("Database error in getAllDocsRow(%s): %s" %
-                        (docId, str(info)))
 
     # Doc not found?
     if not row:
         raise Exception("getAllDocsRow() found no match for doc %s" % docId)
 
-    # Parse the results for the caller
-    docData = {}
-    docData["id"]            = idNum
-    docData["title"]         = row[0]
-    docData["doc_type"]      = row[1]
-    docData["active_status"] = row[2]
-    docData["val_status"]    = row[3]
-    docData["val_date"]      = row[4]
-    docData["first_pub"]     = row[5]
-
-    return docData
-
+    # Package the results for the caller
+    return dict(
+        id=idNum,
+        title=row.title,
+        doc_type=row.name,
+        active_status=row.active_status,
+        val_status=row.val_status,
+        val_date=row.val_date,
+        first_pub=row.first_pub
+    )
 
 #----------------------------------------------------------------------
 # Gets the list of currently known CDR document formats.
@@ -5341,25 +5241,20 @@ def getDocFormats(conn=None):
     Raises:
         Database exception if unable to get connection.
     """
+
+    query = cdrdb.Query("format", "name").order("name")
     if conn is None:
-        # Get a connection, raising exception if failed
-        conn = cdrdb.connect()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT name FROM format ORDER BY name")
-    rows = cursor.fetchall()
-    cursor.close()
-
-    if not rows:
-        raise Exception("Unable to select document format names")
-
-    formats = [row[0] for row in rows]
-    return formats
+        rows = query.execute().fetchall()
+    else:
+        cursor = conn.cursor()
+        rows = query.execute(cursor).fetchall()
+        cursor.close()
+    return [row.name for row in rows]
 
 #----------------------------------------------------------------------
 # Get a list of enumerated values for a CDR schema simpleType.
 #----------------------------------------------------------------------
-def getSchemaEnumVals(schemaTitle, typeName, sorted=False):
+def getSchemaEnumVals(schemaTitle, typeName, **opts):
     """
     Read in a schema from the database.  Parse it.  Extract the enumerated
     values from a simpleType element.  Return them to the caller.
@@ -5373,7 +5268,7 @@ def getSchemaEnumVals(schemaTitle, typeName, sorted=False):
         typeName    - Value of the name attribute for the simpleType.  Only
                       simpleTypes are supported.
         sorted      - True = sort values by value.  Else return in order
-                      found in the schema.
+                      found in the schema (optional keyword argument)
 
     Return:
         Array of string values.
@@ -5381,57 +5276,26 @@ def getSchemaEnumVals(schemaTitle, typeName, sorted=False):
     Raises:
         cdr.Exception if schemaTitle or simpleName not found.
     """
-    from lxml import etree as lx
 
-    # Get the schema
-    qry = """
-     SELECT d.xml
-       FROM document d
-       JOIN doc_type t
-         ON d.doc_type = t.id
-      WHERE t.name = 'schema'
-        AND d.title = ?
-    """
-    try:
-        conn   = cdrdb.connect()
-        cursor = conn.cursor()
-    except cdrdb.Error, info:
-        raise Exception(
-            "Unable to connect to database in cdr.getSchemaEnumVals(): %s" %
-             str(info))
-    try:
-        cursor.execute(qry, schemaTitle)
-        row = cursor.fetchone()
-        cursor.close()
-    except cdrdb.Error, info:
-        raise Exception(
-            "Database error fetching schema in cdr.getSchemaEnumVals(): %s" %
-             str(info))
-    if not row:
-        raise Exception("Schema %s not found in cdr.getSchemaEnumVals()" %
-                         schemaTitle)
-
-    # Parse it
-    tree = lx.fromstring(row[0].encode('utf-8'))
+    # Fetch and parse the schema
+    cursor = cdrdb.connect().cursor()
+    xml = APIDoc.get_schema_xml(schemaTitle, cursor)
+    root = etree.fromstring(xml.encode('utf-8'))
 
     # Search for enumerations of the simple type
     # Note what we have to do with namespaces - won't work without that
-    xmlns = {"xmlns": "http://www.w3.org/2001/XMLSchema"}
-    path  = "//xmlns:simpleType[@name='%s']//xmlns:enumeration" % typeName
-    nodes = tree.xpath(path, namespaces=xmlns)
+    path  = "//xsd:simpleType[@name='%s']//xsd:enumeration" % typeName
+    nodes = root.xpath(path, namespaces=dict(xsd=Schema.NS))
     if not nodes:
-        raise Exception(
-            "simpleType %s not found in schema %s in cdr.getSchemaEnumVals()" %
-            (typeName, schemaTitle))
+        message = "type %r not found in %r" % (typeName, schemaTitle)
+        raise Exception(message)
 
-    # Cumulate the values in a list
-    valList = []
-    for node in nodes:
-        valList.append(node.get("value"))
+    # Pull the values into a string sequence
+    valList = [node.get("value") for node in nodes]
 
     # Return in desired order
-    if sorted:
-        valList.sort()
+    if opts.get("sorted"):
+        return sorted(valList)
     return valList
 
 #----------------------------------------------------------------------
@@ -5448,15 +5312,14 @@ def exceptionInfo():
     return eMsg
 
 #----------------------------------------------------------------------
-# Gets the email addresses for members of a group. Use cdrdb2 so
-# we can work in a multi-threaded environment.
+# Gets the email addresses for members of a group.
 #----------------------------------------------------------------------
-def getEmailList(groupName, tier=None):
-    query = cdrdb2.Query("usr u", "u.email")
+def getEmailList(groupName):
+    query = cdrdb.Query("usr u", "u.email")
     query.join("grp_usr gu", "gu.usr = u.id")
     query.join("grp g", "g.id = gu.grp")
     query.where(query.Condition("g.name", groupName))
-    return [row[0] for row in query.execute(tier=tier).fetchall()]
+    return [row.email for row in query.execute().fetchall() if row.email]
 
 #----------------------------------------------------------------------
 # Object for a mime attachment.
@@ -5538,6 +5401,7 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
         bodyType   - subtype for MIMEText object (e.g., 'plain', 'html')
         attachments - optional sequence of EmailAttachment objects
     """
+    import smtplib
     if not recips:
         raise Exception("sendMail: no recipients specified")
     if type(recips) not in (tuple, list):
@@ -5593,7 +5457,7 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
         server.sendmail(sender, recips, message.as_string())
         server.quit()
 
-    except Exception, e:
+    except Exception as e:
 
         # Log the error before re-throwing an exception.
         msg = "sendMail failure: %s" % e
@@ -5602,9 +5466,11 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
 
 #----------------------------------------------------------------------
 # Send email to a list of recipients.
+# Doesn't handle Unicode well. Use sendMailMime() above for new code.
 #----------------------------------------------------------------------
 def sendMail(sender, recips, subject="", body="", html=False, mime=False,
              attachments=None):
+    import smtplib
     if mime or attachments:
         return sendMailMime(sender, recips, subject, body,
                             attachments=attachments)
@@ -5642,65 +5508,19 @@ Subject: %s
         return msg
 
 #----------------------------------------------------------------------
-# Turn cacheing on or off in the CdrServer
-#----------------------------------------------------------------------
-def cacheInit(credentials, cacheOn, cacheType,
-              host=DEFAULT_HOST, port=DEFAULT_PORT):
-    """
-    Submit a transaction to the server to turn cacheing on or off.
-    At this time, cacheing is only of interest for publishing jobs,
-    and the only type of cacheing we do is term denormalization
-    cacheing - so that a given Term document id used in a protocol
-    need only be looked up once, its document XML only parsed once,
-    and the XML string for the denormalization need only be constructed
-    once.  However the interface supports other types of cacheing if
-    and when we create them.
-
-    Pass:
-        credentials - As usual.
-        cacheOn     - true  = Turn cacheing on.
-                      false = Turn it off.
-        cacheType   - Currently known types are all synonyms of each other,
-                      one of:
-                        "term"
-                        "pub"
-                        "all"
-        host / port - As usual.
-
-    Return:
-        Void.
-
-    Raise:
-        Standard error if error returned by host.  Possible errors
-        are connection oriented, or invalid parameters.
-    """
-    # Attribute tells the server what to do
-    cmdAttr = "off"
-    if cacheOn:
-        cmdAttr = "on"
-
-    # Construct XML transaction
-    cmd = "<CdrCacheing " + cmdAttr + "='" + cacheType + "'/>"
-
-    # Send it
-    resp = sendCommands(wrapCommand(cmd, credentials, host), host, port)
-
-    # If error occurred, raise exception
-    err = checkErr(resp)
-    if err:
-        raise Exception(err)
-
-    return None
-
-#----------------------------------------------------------------------
 # Create an HTML table from a passed data
 #----------------------------------------------------------------------
-def tabularize (rows, tblAttrs=None):
+def tabularize(rows, tblAttrs=None):
     """
     Create an HTML table string from passed data.
     This looks like it should be in cdrcgi, but we also produce
     HTML email in batch programs - which aren't searching the
     cgi path.
+
+    Deprecated. Should use a real XML package for assembling
+    the table as an object, but we can't do that because `tblAttrs`
+    is passed in as a string instead of a dictionary, so we can't.
+    Don't use this for new code.
 
     Pass:
         rows = Sequence of rows for the table, each containing
@@ -5743,37 +5563,21 @@ class CommandResult:
 #----------------------------------------------------------------------
 # Run an external command.
 #----------------------------------------------------------------------
-#def runCommand(command):
-#    commandStream = os.popen('%s 2>&1' % command)
-#    output = commandStream.read()
-#    code = commandStream.close()
-#    return CommandResult(code, output)
-
-#----------------------------------------------------------------------
-# Run an external command.
-# The os.popen is depricated and replaced by the subprocess method.
-# Note:  The return code is now 0 for a process without error and the
-#        stdout and stderr output is split into output and error.
-#----------------------------------------------------------------------
 def runCommand(command, joinErr2Out=True, returnNoneOnSuccess=True):
     """
     Run a shell command
 
-    The deprecated function os.popen() has been replaced with the
-    subprocess method.  This method allows the stdout and stderr to
-    be piped independently.
-
     Pass:
         command     - The string of the shell command to be run
         joinErr2Out - optional value, default TRUE
-                      This parameter, when true (for downward compatibility)
-                      pipes both, stdout and stderr to stdout.
+                      This parameter, when true (for backward compatibility)
+                      pipes both stdout and stderr to stdout.
                       Otherwise stdout and stderr are split.
         returnNoneOnSuccess
                     - optional value, default TRUE
-                      This parameter, when true (for downward compatibility)
-                      returns 'None' as a successful returncode.
-                      Otherwise the returncode for a successful command is 0.
+                      This parameter, when true (for backward compatibility)
+                      returns `None` as a successful returncode.
+                      Otherwise the `code` for a successful command is 0.
                       Note:  This is the return code of the command
                              submitted and not the return code of runCommand()
                              itself!
@@ -5783,8 +5587,11 @@ def runCommand(command, joinErr2Out=True, returnNoneOnSuccess=True):
                       is True)
             error   - output from stderr (or a warning message if joinErr2Out
                       is True)
-            code    - 0 or None (if osPopen is True) for successful completion
+            code    - 0 or None (see notes above) for successful completion
     """
+
+    import subprocess
+
     # Default mode - Pipe stdout and stderr to stdout
     # -----------------------------------------------
     if joinErr2Out:
@@ -5797,13 +5604,14 @@ def runCommand(command, joinErr2Out=True, returnNoneOnSuccess=True):
             code          = commandStream.returncode
             error         = '*** Warning: stderr piped to stdout'
 
-            # For downward compatibility we return None for a successful
+            # For backward compatibility we return None for a successful
             # command return code
             # ----------------------------------------------------------
             if returnNoneOnSuccess and code == 0:
                 return CommandResult(None, output)
-        except Exception, info:
-            logwrite("failure running command: %s\n%s" % (command, str(info)))
+        except Exception as e:
+            logwrite("failure running command: %s\n%s" % (command, e))
+            return None
     else:
         try:
             commandStream = subprocess.Popen(command, shell=True,
@@ -5813,16 +5621,16 @@ def runCommand(command, joinErr2Out=True, returnNoneOnSuccess=True):
             output, error = commandStream.communicate()
             code = commandStream.returncode
 
-            # For downward compatibility we return None for a successful
+            # For backward compatibility we return None for a successful
             # command return code
             # ----------------------------------------------------------
             if returnNoneOnSuccess and code == 0:
                 return CommandResult(None, output, error)
-        except Exception, info:
-            logwrite("failure running command: %s\n%s" % (command, str(info)))
+        except Exception as e:
+            logwrite("failure running command: %s\n%s" % (command, e))
+            return None
 
     return CommandResult(code, output, error)
-
 
 #----------------------------------------------------------------------
 # Create a temporary working area.
@@ -5846,6 +5654,8 @@ def makeTempDir(basename="tmp", chdir=True):
     Caller must delete this directory himself if he wants it deleted
     when he's done.
     """
+
+    import tempfile
     if os.environ.has_key("TMP"):
         tempfile.tempdir = os.environ["TMP"]
     where = tempfile.mktemp(basename)
@@ -5874,7 +5684,7 @@ class StringSink:
     def __getattr__(self, name):
         if name == 's':
             return "".join(self.__pieces)
-        raise AttributeError
+        raise AttributeError()
 
 #----------------------------------------------------------------------
 # Remove all lines from a multi-line string (e.g., an XML doc)
@@ -5882,12 +5692,12 @@ class StringSink:
 #----------------------------------------------------------------------
 def stripBlankLines(s):
     # Make a sequence
-    inSeq = s.split("\n")
+    inSeq = s.replace("\r", "").split("\n")
 
     # Copy non blank lines to new sequence
     outSeq = []
     for line in inSeq:
-        if len(string.lstrip(line)):
+        if line.strip():
             outSeq.append(line)
 
     # Return them as a string with newlines at each line end
@@ -5899,32 +5709,19 @@ def stripBlankLines(s):
 # non-essential differences away.  Used by compareDocs() (below).
 #----------------------------------------------------------------------
 def normalizeDoc(utf8DocString):
-    sFile = StringSink()
-    dom = xml.dom.minidom.parseString(utf8DocString)
-    dom.writexml(sFile)
-    return sFile.__repr__()
-
-#----------------------------------------------------------------------
-# Extract the first CDATA section from a document.
-# Simple version, only gets first CDATA, but we never use
-#  more than one.
-# If no CDATA, then returns None.
-#----------------------------------------------------------------------
-def getCDATA(utf8string):
-    pat = re.compile(r"<!\[CDATA\[(.*?)]]>", re.DOTALL)
-    data = pat.search(utf8string)
-    if data:
-        return data.group(1)
-    return None
+    return etree.tostring(etree.fromstring(utf8DocString))
 
 #----------------------------------------------------------------------
 # Compares two XML documents by normalizing each.  Returns non-zero
 # if documents are different; otherwise zero.  Expects each document
 # to be passed as utf8-encoded documents.
+# 2017-12-13: Python 3 dropped the cmp() function; this is what Guido
+#             recommends as it's replacement.
 #----------------------------------------------------------------------
 def compareXmlDocs(utf8DocString1, utf8DocString2):
     if utf8DocString1 is utf8DocString2: return 0
-    return cmp(normalizeDoc(utf8DocString1), normalizeDoc(utf8DocString2))
+    a, b = normalizeDoc(utf8DocString1), normalizeDoc(utf8DocString2)
+    return (a > b) - (a < b)
 
 #----------------------------------------------------------------------
 # Compare two XML documents by normalizing each.
@@ -5932,31 +5729,27 @@ def compareXmlDocs(utf8DocString1, utf8DocString2):
 # See Python difflib.Differ.compare() for diff format.
 #   Pass:
 #     2 utf8 strings to compare
-#     chgOnly  - True=only show changed lines, else show all.
-#     useCDATA - True=call getCDATA on each string before compare.
+#     chgOnly  - True=only show changed lines, else show all (optional
+#                keyword argument; default is True)
 #   Returns:
 #     Difference, with or without context, as utf-8 string.
 #     Context, if present, is pretty-printed with indentation.
 #----------------------------------------------------------------------
-def diffXmlDocs(utf8DocString1, utf8DocString2, chgOnly=True, useCDATA=False):
-    # Extract data if needed
-    if useCDATA:
-        d1 = getCDATA(utf8DocString1)
-        d2 = getCDATA(utf8DocString2)
-    else:
-        d1 = utf8DocString1
-        d2 = utf8DocString2
+def diffXmlDocs(utf8DocString1, utf8DocString2, **opts):
+
+    import difflib
 
     # Normalize
-    doc1 = stripBlankLines(xml.dom.minidom.parseString(d1).toprettyxml("  "))
-    doc2 = stripBlankLines(xml.dom.minidom.parseString(d2).toprettyxml("  "))
+    etree_opts = dict(pretty_print=True, with_tail=False, with_comments=False)
+    doc1 = etree.tostring(etree.fromstring(utf8DocString1), **etree_opts)
+    doc2 = etree.tostring(etree.fromstring(utf8DocString2), **etree_opts)
 
     # Compare
     diffObj = difflib.Differ()
     diffSeq = diffObj.compare(doc1.splitlines(1),doc2.splitlines(1))
 
     # If caller only wants changed lines, drop all lines with leading space
-    if chgOnly:
+    if opts.get("chgOnly", True):
         chgSeq = []
         for line in diffSeq:
             if line[0] != ' ':
@@ -5968,7 +5761,7 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, chgOnly=True, useCDATA=False):
     else:
         diffText = "".join(diffSeq)
 
-    # Convert output back to utf-8.  toprettyxml made it unicode
+    # Convert output back to utf-8; normalization made it unicode
     if type(diffText) == type(u''):
         diffText = diffText.encode('utf-8')
 
@@ -5977,43 +5770,37 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, chgOnly=True, useCDATA=False):
 #----------------------------------------------------------------------
 # Determine the last date a versioned blob changed.
 #----------------------------------------------------------------------
-def getVersionedBlobChangeDate(credentials, docId, version, conn=None,
-                               tier=None):
-    if not conn:
-        if tier:
-            conn = cdrdb.connect("CdrGuest", tier)
-        else:
-            conn = cdrdb.connect("CdrGuest")
+def getVersionedBlobChangeDate(credentials, doc_id, version, **opts):
+    tier = opts.get("tier")
+    conn = opts.get("conn") or cdrdb.connect(user="CdrGuest", tier=tier)
     cursor = conn.cursor()
-    cursor.execute("""\
-        SELECT blob_id
-          FROM version_blob_usage
-         WHERE doc_id = ?
-           AND doc_version = ?""", (docId, version))
-    rows = cursor.fetchall()
+    query = cdrdb.Query("version_blob_usage", "blob_id")
+    query.where(query.Condition("doc_id", doc_id))
+    query.where(query.Condition("doc_version", version))
+    row = query.execute(cursor).fetchone()
+    if row:
+        blob_id = row.blob_id
+        join_conditions  ="u.doc_id = v.id", "u.doc_version = v.num"
+        query = cdrdb.Query("doc_version v", "v.num", "v.dt")
+        query.join("version_blob_usage u", *join_conditions)
+        query.where(query.Condition("u.blob_id", blob_id))
+        query.where(query.Condition("u.doc_id", doc_id))
+        query.where(query.Condition("u.doc_version", version, "<="))
+        rows = query.order("v.num DESC").execute(cursor).fetchall()
+    cursor.close()
+    if not opts.get("conn"):
+        conn.close()
+    if not row:
+        message = "No blob found for document %s version %s"
+        raise Exception(message % (doc_id, version))
     if not rows:
-        raise Exception(['no blob found for document %s version %s' %
-                         (docId, version)])
-    blobId = rows[0][0]
-    cursor.execute("""\
-        SELECT v.num, v.dt
-          FROM doc_version v
-          JOIN version_blob_usage u
-            ON u.doc_id = v.id
-           AND u.doc_version = v.num
-         WHERE u.blob_id = ?
-           AND u.doc_id = ?
-           AND u.doc_version <= ?
-      ORDER BY v.num DESC""", (blobId, docId, version))
-    rows = cursor.fetchall()
-    if not rows:
-        raise Exception(['failure fetching rows for blob %s' % blobId])
-    lastVersion, lastDate = rows[0]
-    for prevVersion, prevDate in rows[1:]:
-        if prevVersion != lastVersion - 1:
+        raise Exception("No versions for CDR%s blob" % doc_id)
+    last_version, last_date = rows[0]
+    for prev_version, prev_date in rows[1:]:
+        if prev_version != last_version - 1:
             break
-        lastVersion, lastDate = prevVersion, prevDate
-    return lastDate
+        last_version, last_date = prev_version, prev_date
+    return last_date
 
 #----------------------------------------------------------------------
 # Returns the base URL for the current emailer CGI directory.
@@ -6021,17 +5808,15 @@ def getVersionedBlobChangeDate(credentials, docId, version, conn=None,
 #       bastion host but not from the CDR Server (C-Mahler)
 #----------------------------------------------------------------------
 def emailerCgi(cname=True):
-    if cname:
-        return "https://%s.%s/cgi-bin" % h.host['EMAILERSC']
-    else:
-        return "https://%s.%s/cgi-bin" % h.host['EMAILERS']
+    key = "EMAILERSC" if cname else "EMAILERS"
+    return "https://%s/cgi-bin" % _Control.TIER.hosts[key]
 
 #----------------------------------------------------------------------
 # Standardize the email subject prefix used to
 #    Host-Tier: SubjectLine
 #----------------------------------------------------------------------
 def emailSubject(text='No Subject'):
-    return u"%s-%s: %s" % (h.org, h.tier, text)
+    return u"CBIIT-%s: %s" % (_Control.TIER.name, text)
 
 #----------------------------------------------------------------------
 # Create a file to use as an interprocess lockfile.
@@ -6078,10 +5863,12 @@ def createLockFile(fname):
         False = Lock file already exists.  If the process that created it
                 is no longer running, it has to be removed manually.
     """
+    import atexit
+
     # Nested calls are not allowed
-    if _lockedFiles.has_key(fname):
-        raise Exception('File "%s" locked twice without intervening unlock' %
-                        fname)
+    if fname in _lockedFiles:
+        message = 'File "%s" locked twice without intervening unlock' % fname
+        raise Exception(message)
 
     # If another process locked the file, caller loses
     if os.path.exists(fname):
@@ -6130,19 +5917,6 @@ def removeAllLockFiles():
         removeLockFile(fname)
 
 #----------------------------------------------------------------------
-# Wrapper for importing the most complete etree package available.
-#----------------------------------------------------------------------
-def importEtree():
-    try:
-        import lxml.etree as etree
-    except:
-        try:
-            import xml.etree.cElementTree as etree
-        except:
-            import xml.etree.ElementTree as etree
-    return etree
-
-#----------------------------------------------------------------------
 # Find a date a specified number of days in the future (or in the
 # past, if a negative integer is passed).  We do this often enough
 # that it's worth creating a function in this module.  Returns
@@ -6185,7 +5959,6 @@ def calculateDateByOffset(offset, referenceDate=None):
         raise Exception("invalid type for referenceDate")
     return referenceDate + datetime.timedelta(offset)
 
-
 #----------------------------------------------------------------------
 # Gets a list of all board names.
 # This is frequently used to create reports by board.
@@ -6210,48 +5983,36 @@ def getBoardNames(boardType='all', display='full', tier=None):
     Returns:
          Dictionary   {CdrI1:board1, CdrId2:board2, ...}
     """
+
+    n_path = "/Organization/OrganizationNameInformation/OfficialName/Name"
+    query = cdrdb.Query("query_term n", "n.doc_id", "n.value")
+    query.join("query_term t", "t.doc_id = n.doc_id")
+    query.join("document d", "d.id = n.doc_id")
     if boardType.lower() == 'editorial' or boardType.lower()== 'advisory':
-        boardTypes = "('PDQ %s Board')" % boardType.lower()
+        type_string = "PDQ %s Board" % boardType.capitalize()
+        query.where(query.Condition("t.value", type_string))
     else:
-        boardTypes = "('PDQ Editorial Board', 'PDQ Advisory Board')"
-
-    # Get the board names and cdr-ids from the database
-    # -------------------------------------------------
-    if tier:
-        conn = cdrdb.connect("CdrGuest", tier)
-    else:
-        conn = cdrdb.connect("CdrGuest")
+        types = "PDQ Editorial Board", "PDQ Advisory Board"
+        query.where(query.Condition("t.value", types, "IN"))
+    query.where("t.path = '/Organization/OrganizationType'")
+    query.where(query.Condition("n.path", n_path))
+    query.where("d.active_status = 'A'")
+    conn = cdrdb.connect(name="CdrGuest", tier=tier)
     cursor = conn.cursor()
-    cursor.execute("""\
-     SELECT d.id,
-            n.value  AS BoardName,
-            t.value  AS BoardType
-       FROM query_term n
-       JOIN query_term t
-         ON t.doc_id = n.doc_id
-       JOIN document d
-         ON n.doc_id = d.id
-      WHERE t.value in %s
-        AND t.path  = '/Organization/OrganizationType'
-        AND n.path  = '/Organization/OrganizationNameInformation/' +
-                       'OfficialName/Name'
-        AND d.doc_type = 22
-        AND active_status = 'A'
-      ORDER BY t.value, n.value
-""" % boardTypes)
-
-    # Typically the full board name is rarely displayed
-    # We're removing the PDQ prefix and/or modify the display of the CAM
-    # ------------------------------------------------------------------
-    if display == 'short':
-        return dict((row[0], row[1].replace('PDQ ',''))
-                            for row in cursor.fetchall())
-    elif display == 'custom':
-        return dict((row[0], row[1].replace('PDQ ', '').replace(
-                            'Complementary and Alternative Medicine', 'CAM'))
-                            for row in cursor.fetchall())
-
-    return dict((row[0], row[1]) for row in cursor.fetchall())
+    rows = query.execute(cursor).fetchall()
+    cursor.close()
+    conn.close()
+    if display == "short":
+        pairs = [(row.doc_id, row.value.replace("PDQ ", "")) for row in rows]
+    elif display == "custom":
+        pairs = []
+        IACT = "Integrative, Alternative, and Complementary Therapies"
+        for row in rows:
+            name = row.value.replace("PDQ ", "").replace(IACT, "IACT")
+            pairs.append((row.doc_id, name))
+    else:
+        pairs = [tuple(row) for row in rows]
+    return dict(pairs)
 
 #----------------------------------------------------------------------
 # Gets a list of Summary languages.
@@ -6270,7 +6031,8 @@ def getSummaryLanguages():
     If we add more languages, there's one place here to update for all
     scripts that use this function.
     """
-    return ('English','Spanish')
+
+    return 'English', 'Spanish'
 
 #----------------------------------------------------------------------
 # Gets a list of Audience values
@@ -6281,159 +6043,8 @@ def getSummaryAudiences():
 
     See getSummaryLanguages() for query vs. literals discussion.
     """
-    return ('Health professionals', 'Patients')
 
-#----------------------------------------------------------------------
-# Gets a list of Summary CDR document IDs.
-#----------------------------------------------------------------------
-def getSummaryIds(language='all', audience='all', boards=[], status='A',
-                  published=True, titles=False, sortby='title'):
-    """
-    Search the database for the Summary documents by the passed criteria.
-
-    Pass:
-        language - 'all' = Ignore language, get them all.
-                    Else 'English' or 'Spanish' (or 'Klingon' if you want
-                    no hits.)
-        audience - 'all' = Ignore audience.
-                    Else 'Health professionals' or 'Patients'.  Must exactly
-                    match what's in:
-                        '/Summary/SummaryMetaData/SummaryAudience'
-        boards   - [] = Ignore board, get Summaries for any board.
-                    Else a list of one or more board names or doc IDs.
-                    If using names, use names like
-                        'PDQ Adult Treatment Editorial Board'.
-                    Must be an exact match for what's in:
-                        'Summary/SummaryMetaData/PDQBoard/Board'
-                    If using IDs, use integer docIds.
-                    NOTE: I found a case where docIds included a Summary not
-                          found by board name.  Name had not been denormalized
-                          in the stored document.
-        status   - 'A' = Active status for the document.  Else 'I' = Inactive
-                    or 'all' = both.
-        published- True = Only docs with publishable versions.
-                   False = docs with or without publishable versions.
-        titles   - True = return titles with the IDs.
-        sortby   - 'id' = sort by CDR ID.
-                   'title' = sort by title, can be done whether or not
-                    titles are returned.
-                    Can use any column or set of columns from the document
-                    table if desired.
-                    None = No sorting.
-
-    Return:
-        Array of arrays of document identifiers.
-        If titles are not included, these are just CDR IDs of the form:
-            [[docId,], [docId,], ...]
-        Else there is an array of pair sequences of the form:
-            [[docId, title], [docId, title], ...]
-        Returned doc IDs are integers.
-        If titles are returned, they are unicode strings.
-        If there are no hits, an empty array [] is returned, presumably caused
-            by an error in the passed parameters, e.g., invalid board names.
-
-    Throws:
-        cdrdb.Exception if database failure.
-    """
-    # Spanish Summaries have no board information.
-    # If language is Spanish, we need to find the English equivalents,
-    #  then get the Spanish with TranslationOf IDs.
-    if language == 'Spanish' and boards:
-        # Get IDs and flatten the results from [[id1],[id2]...] to [id1,id2...]
-        listOfLists = getSummaryIds('English', audience, boards, status,
-                                     published, titles=False, sortby=None)
-        enSummaries = [item[0] for item in listOfLists]
-
-        # Now find Spanish translations
-        qtable  = published and "query_term_pub" or "query_term"
-        columns = titles and ["d.id", "d.title"] or ["d.id"]
-        spQry   = cdrdb.Query("document d", *columns)
-        spQry.join("%s qlang" % qtable, "qlang.doc_id = d.id")
-        spQry.where(spQry.Condition("qlang.path",
-                                    "/Summary/TranslationOf/@cdr:ref"))
-        spQry.where(spQry.Condition("qlang.int_val", enSummaries, "IN"))
-
-        # It's possible for two English Summaries (e.g., one Active one not)
-        #  to point to one Spanish translation.
-        spQry.unique()
-
-        # Apply same limits to Spanish as to English
-        if status != "all":
-            spQry.where(spQry.Condition("d.active_status" , status))
-        if sortby:
-            spQry.order(sortby)
-
-        # Fetch and return
-        cursor = spQry.execute()
-        rows   = cursor.fetchall()
-        cursor.close()
-        return rows
-
-    # Converted by Bob from my old code in previous version of cdr.py
-    qtable = published and "query_term_pub" or "query_term"
-    columns = titles and ["d.id", "d.title"] or ["d.id"]
-    summary_restriction = False
-    query = cdrdb.Query("document d", *columns)
-    if language != "all":
-        query.join("%s qlang" % qtable, "qlang.doc_id = d.id")
-        query.where(query.Condition("qlang.path",
-                    '/Summary/SummaryMetaData/SummaryLanguage'))
-        query.where(query.Condition("qlang.value", language))
-        summary_restriction = True
-    if audience != "all":
-        query.join("%s quad" % qtable, "quad.doc_id = d.id")
-        query.where(query.Condition("quad.path",
-                    '/Summary/SummaryMetaData/SummaryAudience'))
-        query.where(query.Condition("quad.value", audience))
-        summary_restriction = True
-    if boards:
-        query.join("%s qboard" % qtable, "qboard.doc_id = d.id")
-
-        # Test whether we search by name or doc ID
-        if type(boards[0]) == type(1):
-            query.where(query.Condition("qboard.path",
-                        '/Summary/SummaryMetaData/PDQBoard/Board/@cdr:ref'))
-            query.where(query.Condition("qboard.int_val", boards, "IN"))
-        else:
-            query.where(query.Condition("qboard.path",
-                        '/Summary/SummaryMetaData/PDQBoard/Board'))
-            query.where(query.Condition("qboard.value", boards, "IN"))
-        summary_restriction = True
-    if not summary_restriction:
-        # Summary restriction uses query_term path to get only Summary docs
-        # Without it, we need a doc_type restriction
-        query.join("doc_type t", "d.doc_type = t.id")
-        query.where(query.Condition("t.name", 'Summary'))
-    if status != "all":
-        query.where(query.Condition("d.active_status" , status))
-    if sortby:
-        query.order(sortby)
-
-    # DEBUG
-    # logwrite("getSumaryIds:\n%s" % query, "foo")
-
-    # Fetch and cleanup
-    cursor = query.execute()
-    rows   = cursor.fetchall()
-    cursor.close()
-
-    return rows
-
-#----------------------------------------------------------------------
-# Record an event which happened in a CDR client session.
-#----------------------------------------------------------------------
-def logClientEvent(session, desc, host=DEFAULT_HOST, port=DEFAULT_PORT):
-    cmd = (u"<CdrLogClientEvent>"
-           u"<EventDescription>%s</EventDescription>"
-           u"</CdrLogClientEvent>" % cgi.escape(desc))
-    resp = sendCommands(wrapCommand(cmd, session, host), host, port)
-    errors = getErrors(resp, errorsExpected = False, asSequence = True)
-    if errors:
-        raise Exception(errors)
-    match = re.search("<EventId>(\\d+)</EventId>", resp)
-    if not match:
-        raise Exception(u"malformed response: %s" % resp)
-    return int(match.group(1))
+    return 'Health professionals', 'Patients'
 
 #----------------------------------------------------------------------
 # Pull out the portion of an editorial board name used for menu options.
@@ -6445,6 +6056,3 @@ def extract_board_name(doc_title):
     if board_name.startswith("Cancer Complementary"):
         board_name = board_name.replace("Cancer ", "").strip()
     return board_name
-
-
-'''
