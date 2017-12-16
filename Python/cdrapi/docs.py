@@ -1142,16 +1142,7 @@ class Doc(object):
                 f = self.session.filters.get(key)
                 if f is not None:
                     return f
-
-        # TODO - REMOVE FOLLOWING CODE; USE root = doc.root INSTEAD
-        query = Query("good_filters", "xml")
-        query.where(query.Condition("id", doc.id))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
-            raise Exception("filter {} not found".format(doc.cdr_id))
-        root = etree.fromstring(row.xml.encode("utf-8"))
-        # TODO - END TEMPORARY CODE
-
+        root = doc.root
         for name in ("import", "include"):
             qname = Doc.qname(name, Filter.NS)
             for node in root.iter(qname):
@@ -2777,21 +2768,6 @@ class Doc(object):
                 update = "UPDATE document SET title = ? WHERE id = ?"
                 self.cursor.execute(update, (title, self.id))
 
-            # XXX TODO GET RID OF THIS CODE WHEN WE GO TO PRODUCTION!!!!
-            if self.doctype.name == "schema":
-                insert = "INSERT INTO good_schemas (id, xml) VALUES (?, ?)"
-                self.cursor.execute(insert, (self.id, self.xml))
-            elif self.doctype.name == "Filter":
-                insert = "INSERT INTO good_filters (id, xml) VALUES (?, ?)"
-                self.cursor.execute(insert, (self.id, self.xml))
-        elif self.doctype.name == "schema":
-            update = "UPDATE good_schemas SET xml = ? WHERE id = ?"
-            self.cursor.execute(update, (self.xml, self.id))
-        elif self.doctype.name == "Filter":
-            update = "UPDATE good_filters SET xml = ? WHERE id = ?"
-            self.cursor.execute(update, (self.xml, self.id))
-            # XXX TODO END OF CODE BLOCK THAT NEEDS TO GO AWAY
-
         # If the document has a binary large object (BLOB), save it.
         if self.blob is not None:
             self._blob_id = self.__store_blob()
@@ -3344,17 +3320,18 @@ class Doc(object):
         """
         Fetch the XML for a schema document by nane
 
-        TODO: fix schemas in all_docs table and use them
+        Pass:
+          name - title of the schema document
+          cursor - database access for fetching the xml
+
+        Return:
+          Unicode string for schema XML
         """
 
-        assert name, "can't get a schema without a name"
-        names = name, name.replace(".xsd", ".xml")
         assert name, "get_schema_xml(): no name for schema"
-        query = Query("good_schemas s", "s.xml")
-        query.join("document d", "d.id = s.id")
-        query.join("doc_type t", "t.id = d.doc_type")
-        query.where("t.name = 'schema'")
-        query.where(query.Condition("d.title", names, "IN"))
+        schema_id = cls.id_from_title(name, cursor)
+        query = Query("document", "xml")
+        query.where(query.Condition("id", schema_id))
         try:
             return query.execute(cursor).fetchone().xml
         except:
