@@ -1275,7 +1275,9 @@ class Doc:
                 value = self.ctrl[key].decode(self.encoding)
                 etree.SubElement(control_wrapper, key).text = value
         xml = self.xml.decode("utf-8")
-        etree.SubElement(doc, "CdrDocXml").text = etree.CDATA(xml)
+        if "]]>" not in xml:
+            xml = etree.CDATA(xml)
+        etree.SubElement(doc, "CdrDocXml").text = xml
         if self.blob is not None:
             blob = base64encode(self.blob).decode("ascii")
             etree.SubElement(doc, "CdrDocBlob", encoding="base64").text = blob
@@ -4885,7 +4887,7 @@ def getErrors(xmlFragment, **opts):
 
     # Pull out the options.
     expected = opts.get("errorsExpected", True)
-    as_objects = opts("asObjects", False)
+    as_objects = opts.get("asObjects", False)
     as_utf8 = opts.get("asUtf8", True)
     use_dom = as_objects or opts.get("useDom", True)
     as_sequence = opts.get("asSequence", False)

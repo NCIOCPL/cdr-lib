@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<xsd:schema              xmlns:xsd       = 'http://www.w3.org/2001/XMLSchema'>
+
+  <xsd:element           name            = 'xxtest'
+                         type            = 'xxtest'/>
+  <xsd:complexType       name            = 'xxtest'>
+    <xsd:sequence>
+      <xsd:element       name            = 'a'
+                         type            = 'DataString'
+                         maxOccurs       = 'unbounded'/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:simpleType        name            = 'DataString'>
+    <xsd:restriction     base            = 'xsd:string'>
+    <!--
+    Original test was <minLength value="1"/>, but that was replaced
+    by a regular expression which ensures that the text content has
+    no leading or trailing whitespace, and has no sequences of more
+    than one space character, and no other whitespace characters.
+    -->
+      <xsd:pattern       value           = '[^\s]+( [^\s]+)*'/>
+    </xsd:restriction>
+  </xsd:simpleType>
+
+</xsd:schema>

@@ -105,7 +105,7 @@ class Job:
                     docs.append(Doc(self.session, doc_id, version))
             else:
                 cutoff = self.parms.get("MaxDocUpdatedDate")
-                if not cutoff or cutoff == "LastStartDateTime":
+                if not cutoff or cutoff == "JobStartDateTime":
                     cutoff = self.started
                 opts = dict(before=cutoff)
                 for requested in self.__opts.get("docs", []):

@@ -31,13 +31,13 @@ except:
 
 class Tests(unittest.TestCase):
     USERNAME = "tester"
-    TIER = os.environ.get("TEST_CDR_TIER")
+    TIER = os.environ.get("TEST_MODE") == "remote" and cdr.Tier().name or None
 
     def setUp(self):
         password = cdr.getpw(self.USERNAME)
         opts = dict(comment="unit testing", tier=self.TIER, password=password)
         Tests.session = Session.create_session(self.USERNAME, **opts).name
-
+        Tests.TEST_DIR = os.path.dirname(os.path.realpath(__file__))
     def tearDown(self):
         cdr.logout(self.session, tier=self.TIER)
 
@@ -72,7 +72,6 @@ if FULL:
             self.__class__.session2 = session
             self.assertEqual(len(self.__class__.session2.name), 32)
             self.assertTrue(self.__class__.session2.active)
-
         def test_02_logout______(self):
             self.assertTrue(self.__class__.session2.active)
             opts = dict(tier=self.TIER)
@@ -233,19 +232,37 @@ if FULL:
             opts = dict(tier=self.TIER)
             self.assertIsNone(cdr.delGroup(self.session, self.NEWNAME, **opts))
 
-
     class _04DoctypeTests___(Tests):
 
+        def __fix_xxtest_schema(self):
+            with open("{}/{}".format(self.TEST_DIR, "xxtest.xsd"), "rb") as fp:
+                xsd = fp.read().strip()
+            query = db.Query("document", "id", "xml")
+            query.where("title = 'xxtest.xml'")
+            row = query.execute().fetchone()
+            if row:
+                id, xml = row
+                if xml.strip() == xsd:
+                    return
+                opts = dict(checkout="Y", tier=self.TIER, getObject=True)
+                doc = cdr.getDoc(self.session, id, **opts)
+                doc.xml = xsd
+                opts = dict(tier=self.TIER, doc=str(doc), check_in="Y")
+                cdr.repDoc(self.session, **opts)
+            else:
+                ctrl = {"DocTitle": "xxtest.xml"}
+                doc = cdr.makeCdrDoc(xsd, "schema", None, ctrl)
+                cdr.addDoc(self.session, doc=doc, check_in="Y", tier=self.TIER)
+
         def test_16_add_doctype_(self):
-            directory = os.path.dirname(os.path.realpath(__file__))
-            with open("{}/{}".format(directory, "dada.xsd"), "rb") as fp:
+            with open("{}/{}".format(self.TEST_DIR, "dada.xsd"), "rb") as fp:
                 xsd = fp.read().decode("utf-8")
-            ctrl = {"DocTitle": "dada.xsd"}
+            ctrl = {"DocTitle": "dada.xml"}
             doc = cdr.makeCdrDoc(xsd, "schema", None, ctrl)
             response = cdr.addDoc(self.session, doc=doc, tier=self.TIER)
             self.assertTrue(response.startswith("CDR"))
             comment = "test of CdrAddDocType"
-            opts = {"type": "dada", "schema": "dada.xsd", "comment": comment}
+            opts = {"type": "dada", "schema": "dada.xml", "comment": comment}
             info = cdr.dtinfo(**opts)
             response = cdr.addDoctype(self.session, info, tier=self.TIER)
             self.assertEqual(response.active, "Y")
@@ -266,9 +283,10 @@ if FULL:
 
         def test_19_list_schemas(self):
             titles = cdr.getSchemaDocs(self.session, tier=self.TIER)
-            self.assertIn("dada.xsd", titles)
+            self.assertIn("dada.xml", titles)
 
         def test_20_get_doctype_(self):
+            self.__fix_xxtest_schema()
             doctype = cdr.getDoctype(self.session, "xxtest", tier=self.TIER)
             self.assertIn("Generated from xxtest", doctype.dtd)
             doctype = cdr.getDoctype(self.session, "Summary", tier=self.TIER)
@@ -290,7 +308,7 @@ if FULL:
             finally:
                 query = db.Query("document d", "d.id")
                 query.join("doc_type t", "t.id = d.doc_type")
-                query.where(query.Condition("d.title", "dada.xsd"))
+                query.where(query.Condition("d.title", "dada.xml"))
                 query.where(query.Condition("t.name", "schema"))
                 for row in query.execute().fetchall():
                     cdr.delDoc(self.session, row.id, tier=self.TIER)
@@ -316,8 +334,7 @@ if FULL:
         doc_ids = []
 
         def __make_doc(self, doc_filename, doc_id=None):
-            directory = os.path.dirname(os.path.realpath(__file__))
-            with open("{}/{}".format(directory, doc_filename), "rb") as fp:
+            with open("{}/{}".format(self.TEST_DIR, doc_filename), "rb") as fp:
                 xml = fp.read()
             ctrl = {"DocTitle": "test doc"}
             return cdr.makeCdrDoc(xml, "xxtest", doc_id, ctrl)
@@ -332,6 +349,20 @@ if FULL:
                 "show_warnings": True,
                 "tier": self.TIER
             }
+
+        def __fix_cdr5000(self):
+            path = "{}/{}".format(self.TEST_DIR, "CDR5000.xml")
+            with open(path, "rb") as fp:
+                xml = fp.read().strip()
+            query = db.Query("document", "xml")
+            query.where("id = 5000")
+            row = query.execute().fetchone()
+            if row.xml.strip() != xml:
+                opts = dict(checkout="Y", tier=self.TIER, getObject=True)
+                doc = cdr.getDoc(self.session, 5000, **opts)
+                doc.xml = xml
+                opts = dict(tier=self.TIER, doc=str(doc), check_in="Y")
+                cdr.repDoc(self.session, **opts)
 
         def test_23_add_doc_____(self):
             doc = self.__make_doc("001.xml")
@@ -351,6 +382,7 @@ if FULL:
             self.assertEqual(doc.ctrl.get("DocValStatus"), b"M")
 
         def test_24_get_doc_____(self):
+            self.__fix_cdr5000()
             opts = dict(tier=self.TIER, getObject=True)
             doc = cdr.getDoc(self.session, 5000, **opts)
             self.assertEqual(doc.type, "Person")
@@ -361,8 +393,7 @@ if FULL:
         def test_25_rep_doc_____(self):
             doc = self.__class__.doc
             original_id = doc.id
-            directory = os.path.dirname(os.path.realpath(__file__))
-            with open("{}/{}".format(directory, "002.xml"), "rb") as fp:
+            with open("{}/{}".format(self.TEST_DIR, "002.xml"), "rb") as fp:
                 doc.xml = fp.read()
             opts = self.__get_opts(str(doc))
             opts["blob"] = b"blob"
@@ -404,7 +435,6 @@ if FULL:
             for cdr_id in self.__class__.doc_ids:
                 response = cdr.delDoc(self.session, cdr_id, tier=self.TIER)
                 self.assertTrue(response.startswith("CDR"))
-
         def test_29_add_mapping_(self):
             usage = "GlossaryTerm Phrases"
             value = "test bogus mapping {}".format(datetime.datetime.now())
@@ -506,10 +536,9 @@ if FULL:
             self.assertEqual(query.execute().fetchone().n, 1)
             cdr.delDoc(self.session, doc_id, tier=self.TIER)
         def test_37_update_title(self):
-            directory = os.path.dirname(os.path.realpath(__file__))
-            with open("{}/{}".format(directory, "004.xml"), "rb") as fp:
+            with open("{}/{}".format(self.TEST_DIR, "004.xml"), "rb") as fp:
                 filter1 = fp.read()
-            with open("{}/{}".format(directory, "005.xml"), "rb") as fp:
+            with open("{}/{}".format(self.TEST_DIR, "005.xml"), "rb") as fp:
                 filter2 = fp.read()
             conn = db.connect()
             cursor = conn.cursor()
@@ -1008,8 +1037,7 @@ if FULL:
 
     class _08ReportingTests_(Tests):
         def test_73_report______(self):
-            directory = os.path.dirname(os.path.realpath(__file__))
-            with open("{}/{}".format(directory, "003.xml"), "rb") as fp:
+            with open("{}/{}".format(self.TEST_DIR, "003.xml"), "rb") as fp:
                 xml = fp.read()
             #ctrl = {"DocTitle": "reporting test"}
             doc = cdr.makeCdrDoc(xml, "Person")#, None, ctrl)

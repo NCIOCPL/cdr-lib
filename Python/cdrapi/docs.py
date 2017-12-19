@@ -1070,6 +1070,10 @@ class Doc(object):
         """
 
         args = self.id, filters, opts
+        for spec in filters:
+            if not spec:
+                import traceback
+                traceback.print_stack()
         self.session.log("Doc.filter({!r}, {!r}, {!r})".format(*args))
         message = "ctl option not supported by filter(); use doc instead"
         assert not opts.get("ctl"), message
@@ -1087,6 +1091,7 @@ class Doc(object):
             else:
                 filters = self.__assemble_filters(*filters, **opts)
             for f in filters:
+                self.session.logger.info("applying filter %d", f.doc_id)
                 result = self.__apply_filter(f.xml, doc, parser, **parms)
                 doc = result.result_tree
                 for entry in result.error_log:
@@ -1152,10 +1157,10 @@ class Doc(object):
         if doc.version:
             with self.session.cache.filter_lock:
                 if key not in self.session.cache.filters:
-                    self.session.cache.filters[key] = Filter(doc_id, xml)
+                    self.session.cache.filters[key] = Filter(doc.id, xml)
                 return self.session.cache.filters[key]
         else:
-            return Filter(doc_id, xml)
+            return Filter(doc.id, xml)
 
     def get_tree(self, depth=1):
         """
@@ -1669,7 +1674,9 @@ class Doc(object):
           `Doc.FilterResult` object
         """
 
-        #print("filter_xml={}".format(filter_xml))
+        for name in parms:
+            if isinstance(parms[name], str):
+                parms[name] = etree.XSLT.strparam(parms[name])
         transform = etree.XSLT(etree.fromstring(filter_xml, parser))
         doc = transform(doc, **parms)
         return self.FilterResult(doc, error_log=transform.error_log)
@@ -2132,6 +2139,10 @@ class Doc(object):
         query = Query("doc_type", "title_filter")
         query.where(query.Condition("id", self.doctype.id))
         row = query.execute(self.cursor).fetchone()
+        if not row or not row.title_filter:
+            message = "doctype {} has no title filter"
+            self.session.logger.warning(message.format(self.doctype.name))
+            return None
         try:
             opts = dict(doc=self.resolved)
             return unicode(self.filter(row.title_filter, **opts).result_tree)
@@ -2238,7 +2249,7 @@ class Doc(object):
             query = Query(table, "blob_id")
             query.where(query.Condition("doc_id", self.id))
             rows = query.execute(self.cursor).fetchall()
-            blob_ids += set([row.blog_id for row in rows])
+            blob_ids += set([row.blob_id for row in rows])
             delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
             self.cursor.execute(delete, (self.id,))
 
@@ -2497,7 +2508,8 @@ class Doc(object):
             try:
                 when = dateutil.parser.parse(before)
             except:
-                raise Exception("unrecognized date/time format")
+                message = "unrecognized date/time format: {!r}".format(before)
+                raise Exception(message)
 
         # Fix for bug in adodbapi.
         when = when.replace(microsecond=0)

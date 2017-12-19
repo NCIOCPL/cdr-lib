@@ -193,7 +193,8 @@ class Tier:
         """
 
         logger = logging.getLogger(name)
-        logger.setLevel((opts.get("level") or "INFO").upper())
+        default_level = os.environ.get("CDR_LOGGING_LEVEL", "INFO") or "INFO"
+        logger.setLevel((opts.get("level") or default_level).upper())
         logger.propagate = True if opts.get("propagate") else False
         if not logger.handlers or opts.get("multiplex"):
             formatter = self.Formatter(opts.get("format") or self.LOG_FORMAT)
@@ -414,7 +415,7 @@ class Tier:
 
         def emit(self, record):
             """
-            Emit a record and close the file"
+            Emit a record and close the file
 
             Pass:
               record - assembled string to be written to the log
@@ -452,30 +453,47 @@ class Tier:
             now = datetime.datetime.now()
             suffix = now.strftime("-%Y-%m-%d.log")
             path = self.PATTERN.sub(suffix, self.baseFilename)
-            new = not os.path.exists(path)
             self.baseFilename = path
-            Tier.ReleasingLogHandler.emit(self, record)
 
             # If we've rolled over to a new file, make it world-writable.
-            if new:
+            if not os.path.exists(path):
+                fp = open(path, "w")
+                banner = " Rolling over to new daily session log {} "
+                fp.write("{}\n".format(banner.format(path).center(120, "=")))
+                fp.close()
                 opts = dict(
                     stderr=subprocess.PIPE,
-                    stdout=subprocess.PIPE
+                    stdout=subprocess.PIPE,
+                    stdin=subprocess.PIPE,
+                    shell=True
                 )
                 path = path.replace("/", "\\")
                 command = 'icacls "{}" /grant Everyone:(M)'.format(path)
                 try:
-                    stream = subprocess.Popen(command, **opts) #shell=True,
+                    stream = subprocess.Popen(command, **opts)
                     output, error = stream.communicate()
                     code = stream.returncode
                     if code:
-                        logger = logging.get_logger("session")
-                        logger.warning("%r returned code %s", command, code)
-                        logger.warning("command output: %r", output)
-                        logger.warning("command error output: %r", error)
-                except:
+                        name = now.strftime("logger-%Y%m%d%H%M%S.err")
+                        errpath = "d:/cdr/Log/{}".format(name)
+                        with open(errpath, "a") as fp:
+                            args = command, code
+                            fp.write("{!r} returned code {}\n".format(*args))
+                            fp.write("command output: {!r}\n".format(output))
+                            fp.write("error output: {!r}\n".format(error))
+                except Exception as e:
                     try:
-                        logger = logging.get_logger("session")
-                        logger.exception("rolling logfile to %r", path)
+                        import traceback
+                        message = "rolling logfile to {!r}".format(path)
+                        name = now.strftime("logger-%Y%m%d%H%M%S.err")
+                        errpath = "d:/cdr/Log/{}".format(name)
+                        with open(errpath, "a") as fp:
+                            fp.write("{}\n".format(message))
+                            fp.write("command: {!r}\n".format(command))
+                            fp.write("{}\n".format(e))
+                            traceback.print_exc(None, fp)
                     except:
                         pass
+
+            # Proceed with writing to the log file.
+            Tier.ReleasingLogHandler.emit(self, record)
