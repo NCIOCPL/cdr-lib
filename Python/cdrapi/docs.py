@@ -1070,11 +1070,10 @@ class Doc(object):
         """
 
         args = self.id, filters, opts
+        self.session.log("Doc.filter(%r, %r, %r)", *args)
         for spec in filters:
             if not spec:
-                import traceback
-                traceback.print_stack()
-        self.session.log("Doc.filter({!r}, {!r}, {!r})".format(*args))
+                raise Exception("missing filter spec")
         message = "ctl option not supported by filter(); use doc instead"
         assert not opts.get("ctl"), message
         parms = opts.get("parms") or {}
@@ -1091,9 +1090,13 @@ class Doc(object):
             else:
                 filters = self.__assemble_filters(*filters, **opts)
             for f in filters:
-                self.session.logger.info("applying filter %d", f.doc_id)
+                if f.doc_id:
+                    self.session.logger.info("applying filter %d", f.doc_id)
+                else:
+                    self.session.logger.info("applying in-memory filter")
                 result = self.__apply_filter(f.xml, doc, parser, **parms)
                 doc = result.result_tree
+                self.session.logger.debug("filter result: %r", str(doc))
                 for entry in result.error_log:
                     messages.append(entry.message)
             if opts.get("output", True):
@@ -1142,6 +1145,7 @@ class Doc(object):
 
         doc = Doc(self.session, id=doc_id, **opts)
         key = doc.id, doc.version, self.session.tier.name
+        self.session.logger.debug("get_filter(%s, %r)", doc.id, opts)
         if doc.version:
             with self.session.cache.filter_lock:
                 f = self.session.filters.get(key)
@@ -3978,6 +3982,7 @@ class Resolver(etree.Resolver):
         self.doc = self.local.docs[-1]
         self.session = self.doc.session
         self.cursor = self.session.conn.cursor()
+        self.session.logger.debug("resolve(%r)", url)
 
         # Remove the escaping imposed on the URL to elude syntax constraints.
         self.url = url_unquote(url.replace("+", " "))
@@ -4249,7 +4254,10 @@ class Resolver(etree.Resolver):
                 if v is None:
                     col.set("null", "Y")
                 else:
-                    col.text = str(v)
+                    try:
+                        col.text = unicode(v)
+                    except:
+                        col.text = v.decode("utf-8")
             r += 1
         return self.__package_result(result, context)
 
