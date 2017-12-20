@@ -153,9 +153,6 @@ class Publish:
     DOCTYPE    = 5
     DOC        = 6
 
-    # Server cacheing to speedup publishing
-    CACHETYPE = "pub"
-
     # class private variables.
     __timeOut  = 3000
     __cdrEmail = "NCIPDQoperator@mail.nih.gov"
@@ -227,9 +224,6 @@ class Publish:
     #---------------------------------------------------------------
     def __init__(self, jobId):
 
-        # Make sure a port is available for publising.
-        self.__pubPort = cdr.getPubPort()
-
         # Initialize a few values used for error processing.
         self.__errorCount           = 0
         self.__errorsBeforeAborting = 0
@@ -237,9 +231,6 @@ class Publish:
         self.__publishIfWarnings    = "No"
         self.__perDoctypeErrors     = {}
         self.__perDoctypeMaxErrors  = {}
-
-        # Cacheing not yet turned on
-        self.__cacheingOn = 0
 
         # Keep a copy of the job ID.
         self.__jobId = jobId
@@ -298,8 +289,10 @@ class Publish:
         self.__withOutput  = row[6] == "N"
         self.__userName    = row[7]
         self.__credentials = cdr.login(self.__userName,
-                                       cdr.getpw(self.__userName) or "",
-                                       port = self.__pubPort)
+                                       cdr.getpw(self.__userName) or "")
+
+        # Make sure we have access the latest and greatest filters/filter sets.
+        cdr.clear_cache(self.__credentials)
 
         # Load user-supplied list of document IDs.
         self.__userDocList = []
@@ -482,16 +475,6 @@ class Publish:
             ##    if self.__includeLinkedDocs:
             ##        self.__addLinkedDocsToPPD()
 
-            # Turn on cacheing.
-            # This is an optimization that, at the time of writing
-            # caches Term document upcoding and denormalization.
-            # Other cacheing optimizations might also be used in
-            # the future if experience shows a need and opportunity.
-            # Must turn cacheing off before end, even if exception raised.
-            cdr.cacheInit(self.__credentials,
-                          cacheOn=1, cacheType=Publish.CACHETYPE,
-                          port=self.__pubPort)
-            self.__cacheingOn = 1
 
             # Two passes through the subset specification are required.
             # The first pass publishes documents specified by the user, and
@@ -783,8 +766,7 @@ class Publish:
                             pushSubsetName,
                             parms = parms,
                             email = self.__email,
-                            noOutput = 'Y',
-                            port = self.__pubPort)
+                            noOutput = 'Y')
                         if not resp[0]:
                             msg += "%s: <B>Failed:</B><BR>" % time.ctime()
                             msg += "<I>%s</I><BR>"          % resp[1]
@@ -811,14 +793,6 @@ class Publish:
             # Since we catch all exceptions below, we would catch this one
             #   in the general Except clause and report an
             #   "Unexpected failure", which we don't want to do.
-            # Turn off cacheing before we leave
-            if (self.__cacheingOn):
-                try:
-                    cdr.cacheInit(self.__credentials,
-                                  cacheOn=0, cacheType=Publish.CACHETYPE,
-                                  port=self.__pubPort)
-                except:
-                    pass
             sys.exit(0)
 
         except Exception, arg:
@@ -827,16 +801,6 @@ class Publish:
         except:
             self.__cleanupFailure(dest, dest_base,
                                   "Unexpected failure, unhandled exception. ")
-
-        # Turn cacheing off
-        if (self.__cacheingOn):
-            try:
-                cdr.cacheInit(self.__credentials,
-                              cacheOn=0, cacheType=Publish.CACHETYPE,
-                              port=self.__pubPort)
-            except:
-                pass
-            self.cacheingOn = 0
 
         # Update first_pub in all_docs table.
         self.__updateFirstPub()
@@ -2549,8 +2513,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
             try:
                 cdrDoc = cdr.getDoc('guest', docId,
                                     version = str(doc.getVersion()),
-                                    blob = 'Y', getObject = True,
-                                    port = self.__pubPort)
+                                    blob = 'Y', getObject = True)
                 name = cdrDoc.getPublicationFilename()
                 self.__saveDoc(cdrDoc.blob, destDir + '/' + subDir, name, "wb")
                 self.__lockDb.acquire(1)
@@ -2610,16 +2573,14 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                                            docVer = doc.getVersion(),
                                            parm = paramList,
                                            docDate = maxDocDate,
-                                           filterDate = maxFilterDate,
-                                           port = self.__pubPort)
+                                           filterDate = maxFilterDate)
 
                 # Subsequent filter sets are applied to previous results.
                 else:
                     result = cdr.filterDoc(self.__credentials, filterSet[0],
                                            doc = filteredDoc, parm = paramList,
                                            docDate = maxDocDate,
-                                           filterDate = maxFilterDate,
-                                           port = self.__pubPort)
+                                           filterDate = maxFilterDate)
 
                 if type(result) not in (type([]), type(())):
                     errors = result or "Unspecified failure filtering document"

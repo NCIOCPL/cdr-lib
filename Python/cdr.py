@@ -3499,6 +3499,27 @@ def publish(credentials, pubSystem, pubSubset, **opts):
         return (None, error)
     return (None, "missing response")
 
+def clear_cache(credentials):
+    """
+    Clear the cache for filters, filter sets, and term documents
+
+    Used by the publishing system to make sure publishing jobs have
+    access to the latest documents. Most CDR scripts don't need to
+    worry about the cache, as different processes have their own
+    caches. However, the scheduler runs for long stretches (usually
+    at least days, if not weeks) in the same process, and publishing
+    jobs are processed under the scheduler.
+
+    Pass:
+      credentials - from cdr.login()
+
+    Return:
+      None
+    """
+
+    session = _Control.get_session(credentials)
+    session.cache.clear()
+
 
 class PubStatus:
     def __init__(self, id, pubSystem, pubSubset, parms, userName, outputDir,
