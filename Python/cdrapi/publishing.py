@@ -107,6 +107,7 @@ class Job:
                 cutoff = self.parms.get("MaxDocUpdatedDate")
                 if not cutoff or cutoff == "JobStartDateTime":
                     cutoff = self.started
+                self.session.logger.info("cutoff=%r", cutoff)
                 opts = dict(before=cutoff)
                 for requested in self.__opts.get("docs", []):
                     opts["id"] = requested.id
