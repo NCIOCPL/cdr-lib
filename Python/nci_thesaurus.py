@@ -181,8 +181,8 @@ class Concept:
         cls.logger.info(url)
         response = requests.get(url)
         if response.status_code != 200:
-            raise Exception("fetching concept %s: %d (%s)", code,
-                            response.status_code, response.reason)
+            raise Exception("fetching concept %s: %d (%s)" % (code,
+                            response.status_code, response.reason))
         elif format == "json":
             return json.loads(response.content)
         elif format == "xml":
