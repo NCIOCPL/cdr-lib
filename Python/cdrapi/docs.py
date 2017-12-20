@@ -1987,7 +1987,9 @@ class Doc(object):
                     message = "user not authorized to create first pub version"
                     raise Exception(message)
             if "schema" not in val_types or "links" not in val_types:
-                raise Exception("publishable version requires full validation")
+                if doctype.lower() != "filter":
+                    message = "publishable version requires full validation"
+                    raise Exception(message)
 
         # If this is a control document, make sure it has a unique title.
         if self.is_control_type:
