@@ -193,8 +193,8 @@ class Tier:
         """
 
         logger = logging.getLogger(name)
-        default_level = os.environ.get("CDR_LOGGING_LEVEL", "INFO") or "INFO"
-        logger.setLevel((opts.get("level") or default_level).upper())
+        env_level = os.environ.get("CDR_LOGGING_LEVEL")
+        logger.setLevel((env_level or opts.get("level")).upper())
         logger.propagate = True if opts.get("propagate") else False
         if not logger.handlers or opts.get("multiplex"):
             formatter = self.Formatter(opts.get("format") or self.LOG_FORMAT)
