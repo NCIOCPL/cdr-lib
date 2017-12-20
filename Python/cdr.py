@@ -3423,7 +3423,7 @@ def publish(credentials, pubSystem, pubSubset, **opts):
         else:
             doc_id, version = doc_string, None
         try:
-            docs.append((doc_id, int(version)))
+            docs.append((doc_id, version))
         except:
             return None, "<Errors><Err>Invalid version</Err></Errors>"
 
