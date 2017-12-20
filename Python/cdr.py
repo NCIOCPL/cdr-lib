@@ -4819,7 +4819,7 @@ def valFromToDates(format, fromDate, toDate, minFrom=None, maxTo=None):
 #----------------------------------------------------------------------
 class Error:
     def __init__(self, node):
-        self.message = get_test(node)
+        self.message = get_text(node)
         self.etype   = node.get('etype', 'other')
         self.elevel  = node.get('elevel', 'fatal')
         self.eref    = node.get('eref')
