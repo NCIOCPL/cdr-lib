@@ -1070,7 +1070,7 @@ class Doc(object):
         """
 
         args = self.id, filters, opts
-        self.session.log("Doc.filter(%r, %r, %r)", *args)
+        self.session.log("Doc.filter({!r}, {!r}, {!r})".format(*args))
         for spec in filters:
             if not spec:
                 raise Exception("missing filter spec")
