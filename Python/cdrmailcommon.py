@@ -355,9 +355,8 @@ def fix(me):
 # Create a new mailer document.
 #----------------------------------------------------------------------
 def recordMailer(session, docId, recipId, mode, mailerType, sent,
-                 address = u"", remailerFor = "", jobId = None, recipName = "",
-                 docTitle = "", protOrg = "", deadline = "",
-                 host = cdr.DEFAULT_HOST, port = cdr.DEFAULT_PORT):
+                 address=u"", remailerFor="", jobId=None, recipName="",
+                 docTitle=""):
     docXml = [u"""\
 <CdrDoc Type='Mailer'>
  <CdrDocCtl>
@@ -409,12 +408,17 @@ def recordMailer(session, docId, recipId, mode, mailerType, sent,
  </CdrDocXml>
 </CdrDoc>
 """)
-    rsp = cdr.addDoc(session, doc = u"".join(docXml).encode('utf-8'),
-                     checkIn = "Y", ver = "Y", val = 'Y',
-                     verPublishable = 'N', host = host, port = port)
-    errors = cdr.getErrors(rsp, errorsExpected = False, asSequence = True)
+    opts = dict(
+        doc=u"".join(docXml).encode("utf-8"),
+        checkIn="Y",
+        ver="Y",
+        val="Y",
+        verPublishable="N"
+    )
+    rsp = cdr.addDoc(session, **opts)
+    errors = cdr.getErrors(rsp, errorsExpected=False, asSequence=True)
     if errors:
-        raise Exception("Failure saving mailer tracking document for CDR%d: %s"
-                        % (docId, "; ".join(errors)))
+        message = "Failure saving mailer tracking document for CDR{:d}: {}"
+        raise Exception(message.format(docId, "; ".join(errors)))
     digits = re.sub("[^\d]", "", rsp)
     return int(digits)
