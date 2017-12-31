@@ -1980,12 +1980,12 @@ class Doc(object):
             raise Exception(message)
 
         # Detect contradictory instructions about link table processing
+        val_types = opts.get("val_types") or []
         if opts.get("set_links") == False and "links" in val_types:
             raise Exception("Cannot validate links without setting them")
 
         # Make sure full validation performed if creating a publishable verion.
         if opts.get("publishable"):
-            val_types = opts.get("val_types") or []
             if not self.last_publishable_version:
                 if not self.session.can_do("PUBLISH DOCUMENT", doctype):
                     message = "user not authorized to create first pub version"
