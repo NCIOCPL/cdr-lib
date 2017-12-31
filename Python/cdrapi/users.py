@@ -69,8 +69,11 @@ class Session:
         inactive = "DATEDIFF(hour, last_act, GETDATE()) > 24"
         conditions = "ended IS NULL", "name <> 'guest'", inactive
         update = "UPDATE session SET ended = GETDATE() WHERE {}"
-        self.cursor.execute(update.format(" AND ".join(conditions)))
-        self.conn.commit()
+        try:
+            self.cursor.execute(update.format(" AND ".join(conditions)))
+            self.conn.commit()
+        except:
+            self.logger.warning("Unable to clear stale sessions")
         query = db.Query("session s", "s.id", "u.id", "u.name")
         query.join("open_usr u", "u.id = s.usr")
         query.where(query.Condition("s.name", name))

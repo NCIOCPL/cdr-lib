@@ -4365,7 +4365,6 @@ CBIIT_NAMES = APPC.split(".")[0], APPC, "https://" + APPC
 OPERATOR = "NCIPDQoperator@mail.nih.gov"
 DOMAIN_NAME = FQDN.split(".", 1)[1]
 PUB_NAME = HOST_NAMES[0]
-DEFAULT_HOST = "localhost"
 URDATE = "2002-06-22"
 PYTHON = WORK_DRIVE + ":\\python\\python.exe"
 BASEDIR = WORK_DRIVE + ":/cdr"
@@ -4705,15 +4704,6 @@ FILTERS = {
         ["set:QC Term Set"]
 }
 
-
-#----------------------------------------------------------------------
-# If we're not actually running on the CDR server machine, then
-# "localhost" won't work.
-#----------------------------------------------------------------------
-try:
-    os.stat("d:/cdr/bin/CdrService.exe")
-except:
-    DEFAULT_HOST = CBIIT_NAMES[1]
 
 #----------------------------------------------------------------------
 # Use this class (or a derived class) when raising an exception in

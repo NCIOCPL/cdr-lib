@@ -416,9 +416,9 @@ class Job:
             started=self.started,
             status="Ready",
             usr=self.session.user_id,
-            email=self.email,
+            email=str(self.email),
             output_dir="",
-            messages="just testing",
+            messages=None,
             no_output="Y" if self.no_output else "N"
         )
         names = sorted(fields)
@@ -441,7 +441,11 @@ class Job:
         args = ", ".join(names), ", ".join(["?"] * len(names))
         insert = "INSERT INTO pub_proc_parm ({}) VALUES ({})".format(*args)
         for i, name in enumerate(self.parms):
-            values = job_id, i + 1, name, self.parms[name]
+            try:
+                value = unicode(self.parms[name])
+            except:
+                value = self.parms[name].decode("utf-8")
+            values = job_id, i + 1, name, value
             self.cursor.execute(insert, values)
 
         # Store the documents requested explicitly by ID for this job.

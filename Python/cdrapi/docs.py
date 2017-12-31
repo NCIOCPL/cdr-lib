@@ -1235,6 +1235,10 @@ class Doc(object):
           get_xml - if True, include the CdrDocXml element
           get_blob - if True, include the CdrDocBlob element if there is
                      a BLOB for this version of the document
+          denormalize - if True and including XML, pass through fast
+                        denormalization filter
+          locators - if True and including XML, use the version that has
+                     error location IDs
         """
 
         cdr_doc = etree.Element("CdrDoc")
@@ -2255,7 +2259,7 @@ class Doc(object):
             query = Query(table, "blob_id")
             query.where(query.Condition("doc_id", self.id))
             rows = query.execute(self.cursor).fetchall()
-            blob_ids += set([row.blob_id for row in rows])
+            blob_ids |= set([row.blob_id for row in rows])
             delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
             self.cursor.execute(delete, (self.id,))
 
@@ -2371,7 +2375,7 @@ class Doc(object):
         for node in self.root.iter("*"):
             if node.tag in allowed:
                 if not node.get(Link.CDR_ID):
-                    highes_fragment_id += 1
+                    highest_fragment_id += 1
                     fragment_id = "_{:d}".format(highest_fragment_id)
                     node.set(Link.CDR_ID, fragment_id)
         self._xml = etree.tostring(self.root, encoding="utf-8").decode("utf-8")
