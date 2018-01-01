@@ -242,6 +242,8 @@ class Doc(object):
 
         if not self.id:
             return None
+        if hasattr(self, "_creation"):
+            return self._creation
         query = Query("audit_trail t", "t.dt", "u.id", "u.name", "u.fullname")
         query.join("action a", "a.id = t.action")
         query.join("usr u", "u.id = t.usr")
@@ -249,8 +251,21 @@ class Doc(object):
         query.where("a.name = 'ADD DOCUMENT'")
         row = query.execute(self.cursor).fetchone()
         if not row:
-            raise Exception("No audit trail for document creation")
-        return self.Action(row)
+
+            # A small handful of documents bootstrapped the system without
+            # the audit trail on June 22, 2002.
+            if self.id > 374:
+                raise Exception("No audit trail for document creation")
+            class Action:
+                def __init__(self, when, user):
+                    self.when = when
+                    self.user = user
+            when = datetime.datetime(2002, 6, 22, 7)
+            user = Doc.User(2, "bkline", "Bob Kline")
+            self._creation = Action(when, user)
+        else:
+            self._creation = self.Action(row)
+        return self._creation
 
     @property
     def cursor(self):
