@@ -7,6 +7,12 @@ from six import iteritems
 from cdrapi.db import Query
 from cdrapi.docs import Doc
 
+try:
+    basestring
+except:
+    basestring = str, bytes
+    unicode = str
+
 
 class Job:
     """
@@ -418,7 +424,6 @@ class Job:
             usr=self.session.user_id,
             email=str(self.email),
             output_dir="",
-            messages=None,
             no_output="Y" if self.no_output else "N"
         )
         names = sorted(fields)
