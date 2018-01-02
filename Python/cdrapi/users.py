@@ -1069,7 +1069,7 @@ class Session:
                 raise Exception("Missing user name")
             if self.authmode == "local":
                 if not password:
-                    if not cdr.id:
+                    if not self.id:
                         raise Exception("Missing password")
                     else:
                         password = None
