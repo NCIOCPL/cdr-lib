@@ -3976,14 +3976,17 @@ class Resolver(etree.Resolver):
 
         Callback requests are received in the form of a URL in the syntax
         SCHEME:/PARAMETERS, where SCHEME is one of:
-           "cdr" or "cdrx"
+           'cdr' or 'cdrx'
               request for a document; these two scheme prefixes are
-              synonymous; the original developer may have intended two
-              different uses, but if so the knowledge of what they were
-              has been lost in the sands of time; cdr:/1234 retrieves
+              synonymous, except that the 'cdrx' scheme just returns
+              an empty result when the URL can't be resolved, whereas
+              the 'cdr' scheme raises an exception (yes, it would have
+              made more sense for the 'x' version to be the one which
+              raises the eXception, but that's not how the original
+              programmer implemented the callback; cdr:/1234 retrieves
               the current working document for CDR0000001234; see the
               `__get_doc()` method below for specifics on the syntax
-           "cdrutil"
+           'cdrutil'
               invokes a named custom function; e.g., cdrutil:/date
               to get the current date and time in XML format; see the
               `__run_function()` method below for a list of supported
@@ -4010,7 +4013,7 @@ class Resolver(etree.Resolver):
         self.url = self.url.replace("@@PLUS@@", "+")
 
         # If a document request slipped through without an ID, we know
-        # we're not goint to find the document.
+        # we're not going to find the document.
         if url == "cdrx:/last":
             return self.resolve_string("<empty/>", context)
 
@@ -4018,44 +4021,25 @@ class Resolver(etree.Resolver):
         scheme, parms = self.url.split(":", 1)
         parms = parms.strip("/")
         if scheme in ("cdr", "cdrx"):
-            return self.__get_doc(parms, context)
+            return self.__get_doc(scheme, parms, context)
         elif scheme == "cdrutil":
             return self.__run_function(parms, context)
         raise Exception("unsupported url {!r}".format(self.url))
 
-    def __get_doc(self, parms, context):
+    def __get_doc(self, scheme, parms, context):
         """
         Fetch information from another CDR document
 
         Pass:
-          args - string specifying what to retrieve for which document
+          scheme - 'cdr' or 'cdrx'
+          parms - string specifying what to retrieve for which document
           context - opaque information echoed back to the caller
 
         Return:
           varies; see logic below
         """
 
-        # An asterisk is used to request control information from the
-        # document being filtered.
-        if parms.startswith("*"):
-
-            # Return a `CdrDocCtl` block element node for `*/CdrCtl`.
-            if "/CdrCtl" in parms:
-                element = self.doc.legacy_doc_control(filtering=True)
-                return self.__package_result(element, context)
-
-            # Return a `CdrDocTitle` element node for `*/DocTitle`.
-            elif "/DocTitle" in parms:
-                element = etree.Element("CdrDocTitle")
-                element.text = self.doc.title
-                return self.__package_result(element, context)
-            else:
-                raise Exception("unsupported url {!r}".format(self.url))
-
-        # Capture the original `parms` value for later error reporting.
-        uri = parms
-
-        # Fetch a document by name if so requested.
+        # Filters are fetched by name.
         if parms.startswith("name:"):
             parms = parms[5:]
             if "/" in parms:
@@ -4064,43 +4048,80 @@ class Resolver(etree.Resolver):
                 title, version = parms, None
             doc_id = Doc.id_from_title(title, self.cursor)
             if not doc_id:
-                return None
+                if scheme == "cdrx":
+                    return self.resolve_string("<empty/>", context)
+                raise Exception("Filter {!r} not found".format(title))
             doc = Doc(self.session, id=doc_id, version=version)
-            if doc.doctype.name == "Filter":
-                doc_xml = doc.get_filter(doc_id, version=version).xml
-                return self.resolve_string(doc_xml, context)
-            parms = str(doc.id)
-            if version:
-                parms = "{:d}/{}".format(doc_id, version)
+            if doc.doctype.name != "Filter":
+                raise Exception("{!r} is not a filter document".format(title))
+            doc_xml = doc.get_filter(doc_id, version=version).xml
+            return self.resolve_string(doc_xml, context)
 
-        # Otherwise, the document ID (and possibly version) are specified.
+        # Prepare for failure.
+        message = "Unable to resolve uri {!r}".format(parms)
+
+        # Find the requested document
+        if "/" in parms:
+            doc_id, spec = parms.split("/", 1)
+            if doc_id == "*":
+                doc = self.doc
+            else:
+                if "/" in spec:
+                    version, spec = spec.split("/", 1)
+                elif spec.isdigit() or spec in ("last", "lastp"):
+                    version, spec = spec, None
+                else:
+                    version, spec = None, spec
+                try:
+                    doc = Doc(self.session, id=doc_id, version=version)
+                except:
+                    if scheme == "cdrx":
+                        return self.resolve_string("<empty/>", context)
+                    raise Exception(message)
         else:
-            doc_id, version = parms, None
-            if "/" in parms:
-                doc_id, version = parms.split("/", 1)
-            if not doc_id:
-                raise Exception("no document specified")
+            spec = None
+            try:
+                doc = Doc(self.session, id=parms)
+            except:
+                if scheme == "cdrx":
+                    return self.resolve_string("<empty/>", context)
+                raise Exception(message)
+
+        # Return control information about the doc if requested.
+        if spec == "CdrCtl":
+            element = self.doc.legacy_doc_control(filtering=True)
+            return self.__package_result(element, context)
+
+        # Return the document's title if requested.
+        elif spec == "DocTitle":
+            element = etree.Element("CdrDocTitle")
+            element.text = self.doc.title
+            return self.__package_result(element, context)
+
+        # Guard against unsupported requests.
+        elif spec:
+            raise Exception(message)
 
         # Wrap up the document XML and return it.
-        doc = Doc(self.session, id=doc_id, version=version)
         try:
-            xml = doc.xml
+            return self.resolve_string(doc.xml, context)
         except:
-            raise Exception("Unable to resolve uri {}".format(uri))
-        return self.resolve_string(doc.xml, context)
+            if scheme == "cdrx":
+                return self.resolve_string("<empty/>", context)
+            raise Exception(message)
 
     def __run_function(self, parms, context):
         """
         Handle a custom callback function
 
         Functions currently implemented are:
-          "date" - get current date/time in XML standard format
-          "dedup-ids" - collapse protocol IDs to a unique set
-          "denormalizeTerm" - get a term document, possibly with upcoding
-          "docid" - get the ID of the current document
-          "get-pv-num" - fetch the number of the doc's last publishable version
-          "sql-query" - run a SQL query and return XML-wrapped results
-          "valid-zip" - look up a ZIP code and return its first 5 digits
+          'date' - get current date/time in XML standard format
+          'dedup-ids' - collapse protocol IDs to a unique set
+          'denormalizeTerm' - get a term document, possibly with upcoding
+          'docid' - get the ID of the current document
+          'get-pv-num' - fetch the number of the doc's last publishable version
+          'sql-query' - run a SQL query and return XML-wrapped results
+          'valid-zip' - look up a ZIP code and return its first 5 digits
 
         Pass:
           parms - right side of the URL, following scheme plus ":/"
@@ -5518,8 +5539,21 @@ class DTD:
 
             self.dtd = dtd
             self.name = name
-            self.values = []
+            self._values = []
+            self.base = None
             assert self.name, "type must have a name"
+
+        @property
+        def values(self):
+            if self._values:
+                return self._values
+            if self.base:
+                base = self.dtd.types.get(self.base)
+                if base:
+                    values = base.values
+                    if values:
+                        return values
+            return None
 
         def define(self, element):
             """
@@ -5532,8 +5566,9 @@ class DTD:
               sequence of definition strings to be included in the DTD
             """
 
-            if self.values:
-                self.dtd.values[element.name] = self.values
+            values = self.values
+            if values:
+                self.dtd.values[element.name] = values
             definitions = [self.define_element(element)]
             attributes = self.define_attributes(element)
             if attributes:
@@ -5610,7 +5645,7 @@ class DTD:
                 self.base = restriction.get("base")
                 for enum in restriction.findall(Schema.ENUMERATION):
                     value = enum.get("value")
-                    self.values.append(value)
+                    self._values.append(value)
                     if self.nmtokens is not None:
                         if DTD.is_nmtoken(value):
                             self.nmtokens.append(value)
@@ -5674,6 +5709,7 @@ class DTD:
                     extension = child.find(Schema.EXTENSION)
                     message = "{}: missing extension".format(self.name)
                     assert len(extension), message
+                    self.base = extension.get("base")
                     for child in extension.findall(Schema.ATTRIBUTE):
                         self.add_attribute(dtd, child)
                     break
