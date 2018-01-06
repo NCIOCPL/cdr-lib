@@ -1771,7 +1771,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
               pass different parameters for individual filters in the job)
               (deprecated legacy alias `parm` is also supported for this
               option)
-      no_output - if "Y, retrieve messages but no filtered document
+      no_output - if 'Y', retrieve messages but no filtered document
       ver - version number of document to be filtered, or 'last' or 'lastp'
             (docVer is accepted as a legacy alias for this option)
       date - used in combination with `docVer` to specify last version (or
@@ -1806,6 +1806,8 @@ def filterDoc(credentials, filter, docId=None, **opts):
     parms = dict(parms) if parms else {}
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
+        args = credentials, filter, docId, opts
+        session.logger.debug("filterDoc(%r, %r, %r, %r)", *args)
         doc = APIDoc(session, id=docId, version=ver, before=date, xml=xml)
         options = dict(
             parms=parms,
@@ -1829,7 +1831,12 @@ def filterDoc(credentials, filter, docId=None, **opts):
         else:
             messages = ""
         if output:
-            return unicode(result.result_tree).encode("utf-8"), messages
+            # Don't know why, but lxml isn't consistent in filter results.
+            if isinstance(result.result_tree, etree._Element):
+                result = etree.tostring(result.result_tree, encoding="utf-8")
+            else:
+                result = unicode(result.result_tree).encode("utf-8")
+            return result, messages
         else:
             return messages
     command = etree.Element("CdrFilter")
@@ -1870,10 +1877,12 @@ def filterDoc(credentials, filter, docId=None, **opts):
     else:
         raise Exception("nothing to filter")
 
-    for name in parms:
-        parm = etree.SubElement(command, "Parm")
-        etree.SubElement(parm, "Name").text = str(name)
-        etree.SubElement(parm, "Value").text = str(parms[name] or "")
+    if parms:
+        wrapper = etree.SubElement(command, "Parms")
+        for name in parms:
+            parm = etree.SubElement(wrapper, "Parm")
+            etree.SubElement(parm, "Name").text = str(name)
+            etree.SubElement(parm, "Value").text = str(parms[name] or "")
 
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == command.tag + "Resp":
@@ -3949,6 +3958,7 @@ class _Control:
     MIN_ID = 0x10000000000000000000000000000000
     MAX_ID = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
     TIER = Tier()
+    DUMP = os.environ.get("DUMP_REMOTE_CDR_EXCHANGE")
 
     try:
         # This isn't actually used to talk to the database. We're only
@@ -4056,9 +4066,13 @@ class _Control:
         tier = Tier(tier) if tier else cls.TIER
         url = "https://" + tier.hosts["API"]
         request = etree.tostring(commands, encoding="utf-8")
+        if cls.DUMP:
+            print(request)
         response = requests.post(url, request)
         if not response.ok:
             raise Exception(response.reason)
+        if cls.DUMP:
+            print(response.text)
         root = etree.fromstring(response.content, parser=cls.PARSER)
         for error in root.findall("Errors/Err"):
             raise Exception(error.text)
@@ -5072,7 +5086,7 @@ def getQueryTermValueForId(path, docId, conn=None):
         cursor.close()
     else:
         rows = query.execute().fetchall()
-    return [row.value for row in rows]
+    return [row[0] for row in rows]
 
 #----------------------------------------------------------------------
 # Extract the text content of a DOM element.
@@ -5129,7 +5143,7 @@ def valPair(session, docType, oldDoc, newDoc, **opts):
     """
 
     # Find out where we are running.
-    ter = opts.get("tier")
+    tier = opts.get("tier")
 
     # Validate first document
     result = valDoc(session, docType, doc=oldDoc, tier=tier)
