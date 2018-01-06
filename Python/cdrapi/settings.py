@@ -203,8 +203,8 @@ class Tier:
                 if not path:
                     if opts.get("rolling"):
                         now = datetime.datetime.now()
-                        month = now.strftime("%Y-%m-%d")
-                        path = "{}/{}-{}.log".format(self.logdir, name, month)
+                        day = now.strftime("%Y-%m-%d")
+                        path = "{}/{}-{}.log".format(self.logdir, name, day)
                     else:
                         path = "{}/{}.log".format(self.logdir, name)
                 if opts.get("rolling"):
