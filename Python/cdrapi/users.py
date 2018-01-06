@@ -3,7 +3,9 @@ Control for who can use the CDR and what they can do
 """
 
 import binascii
+import datetime
 import hashlib
+import logging
 import random
 import re
 import string
@@ -62,10 +64,11 @@ class Session:
 
         self.name = name
         self.tier = tier if isinstance(tier, Tier) else Tier(tier)
-        opts = dict(level=loglevel, rolling=True)
-        self.logger = self.tier.get_logger("session", **opts)
-        self.conn = db.connect(tier=self.tier.name)
-        self.cursor = self.conn.cursor()
+        opts = dict(level=loglevel, rolling=True, tier=self.tier)
+        self.local = self.Local(**opts)
+        #self.logger = self.tier.get_logger("session", **opts)
+        #self.conn = db.connect(tier=self.tier.name)
+        #self.cursor = self.conn.cursor()
         inactive = "DATEDIFF(hour, last_act, GETDATE()) > 24"
         conditions = "ended IS NULL", "name <> 'guest'", inactive
         update = "UPDATE session SET ended = GETDATE() WHERE {}"
@@ -80,6 +83,7 @@ class Session:
         query.where("s.ended IS NULL")
         row = query.execute(self.cursor).fetchone()
         if row is None:
+            self.logger.warning("query: %s (%s)", query, name)
             raise Exception("Invalid or expired session: {!r}".format(name))
         self.active = True
         self.id, self.user_id, self.user_name = row
@@ -87,6 +91,18 @@ class Session:
         update = "UPDATE session SET last_act = GETDATE() WHERE id = ?"
         self.cursor.execute(update, (self.id,))
         self.conn.commit()
+
+    @property
+    def logger(self):
+        return self.local.logger
+
+    @property
+    def conn(self):
+        return self.local.conn
+
+    @property
+    def cursor(self):
+        return self.local.cursor
 
     def log(self, what):
         """
@@ -1171,6 +1187,7 @@ class Session:
             self.session.cursor.execute(delete, (self.id,))
             self.session.conn.commit()
 
+
     class Cache:
         """
         Optimization for retrieval of filters, filter sets, and terms
@@ -1204,3 +1221,37 @@ class Session:
                 self.filters = {}
             with self.filter_set_lock:
                 self.filter_sets = {}
+
+
+    class Formatter(logging.Formatter):
+        """
+        The session log rolls over daily, so we don't need the date.
+        """
+
+        DATEFORMAT = "%H:%M:%S.%f"
+
+        converter = datetime.datetime.fromtimestamp
+        def formatTime(self, record, datefmt=None):
+            ct = self.converter(record.created)
+            return ct.strftime(datefmt or self.DATEFORMAT)[:-3]
+
+
+    class Local(threading.local):
+        """
+        Thread-specific storage for session
+
+        Attribute:
+          conn - database connection
+          cursor - database cursor
+        """
+
+        LOG_FORMAT = "%(asctime)s [%(levelname)s-%(thread)04d] %(message)s"
+
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+            self.conn = db.connect(tier=self.tier.name)
+            self.cursor = self.conn.cursor()
+            self.logger = self.tier.get_logger("session", **kw)
+            formatter = Session.Formatter(self.LOG_FORMAT)
+            for handler in self.logger.handlers:
+                handler.setFormatter(formatter)
