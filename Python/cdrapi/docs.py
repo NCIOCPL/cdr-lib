@@ -724,8 +724,12 @@ class Doc(object):
         # If we've done this before, the version integer has been cached
         if not hasattr(self, "_version") or self._version is None:
 
+            # Handle the obvious case first.
+            if str(version).isdigit():
+                self._version = int(version) or None
+
             # If the document hasn't been saved (no ID) it has no version.
-            if not self.id:
+            elif not self.id:
                 self._version = None
 
             # Look up any "before this date" versions.
@@ -736,11 +740,6 @@ class Doc(object):
             # See if this is an object for the current working document.
             elif not version:
                 self._version = None
-
-            # If the constructor already got an integer, our work is done.
-            elif not isinstance(version, basestring):
-                version = int(version)
-                self._version = version if version > 0 else None
 
             # At this point we assume version is a string; normalize it.
             else:
@@ -774,14 +773,11 @@ class Doc(object):
                     prefix, label = tokens
                     self._version = self.__get_labeled_version(label)
 
-                # Last chance: an integer string.
+                # We've run out of valid options.
                 else:
-                    try:
-                        self._version = int(version)
-                    except:
-                        error = "invalid version spec {}".format(version)
-                        self.session.logger.exception(error)
-                        raise Exception(error)
+                    error = "invalid version spec {}".format(version)
+                    self.session.logger.exception(error)
+                    raise Exception(error)
 
         # Return the cached version value.
         return self._version
@@ -1321,7 +1317,7 @@ class Doc(object):
                 try:
                     child.text = unicode(value)
                 except:
-                    print(repr((tag, value)))
+                    #print(repr((tag, value)))
                     raise
                 if not filtering:
                     child.set("readonly", "yes")
@@ -1698,7 +1694,7 @@ class Doc(object):
         """
 
         for name in parms:
-            if isinstance(parms[name], str):
+            if isinstance(parms[name], basestring):
                 parms[name] = etree.XSLT.strparam(parms[name])
         transform = etree.XSLT(etree.fromstring(filter_xml, parser))
         doc = transform(doc, **parms)
@@ -2520,7 +2516,6 @@ class Doc(object):
         Pass:
           before - string or `datetime` object
           publishable - if True only look for publishable versions;
-                        if False only look for unpublishable versions;
                         otherwise ignore the `publishable` column
 
         Return:
@@ -2536,7 +2531,7 @@ class Doc(object):
                 message = "unrecognized date/time format: {!r}".format(before)
                 raise Exception(message)
 
-        # Fix for bug in adodbapi.
+        # Workaround for bug in adodbapi.
         when = when.replace(microsecond=0)
 
         query = Query("doc_version", "MAX(num) AS n")
@@ -2544,8 +2539,6 @@ class Doc(object):
         query.where(query.Condition("dt", when, "<"))
         if publishable is True:
             query.where("publishable = 'Y'")
-        elif publishable is False:
-            query.where("publishable = 'N'")
         row = query.execute(self.cursor).fetchone()
         if not row:
             raise Exception("no version before {}".format(when))
@@ -2571,7 +2564,7 @@ class Doc(object):
                 node.set("cdr-eid", "_{:d}".format(eid))
                 eid += 1
 
-    def __namespaces_off(self):
+    def __namespaces_off(self, root):
         """
         Rename attributes with namespaces to non-colonized names
 
@@ -2582,32 +2575,15 @@ class Doc(object):
         type to another. Basic pattern is:
           1. {CDR-NS}xxx => cdr-xxx for all cdr: attributes
           2. perform schema validation on the document
-          3. cdr-xxx => {CDR-NS}xxx
         """
 
-        if self.resolved is not None:
+        if root is not None:
             NS = "{{{}}}".format(self.NS)
-            for node in self.resolved.iter("*"):
+            for node in root.iter("*"):
                 for name in node.attrib:
                     if name.startswith(NS):
                         ncname = name.replace(NS, "cdr-")
                         node.set(ncname, node.get(name))
-                        del node.attrib[name]
-
-    def __namespaces_on(self):
-        """
-        Restore the namespace-qualified names for attributes
-
-        See comment above in `Doc.__namespaces_off`.
-        """
-
-        if self.resolved is not None:
-            NS = "{{{}}}".format(self.NS)
-            for node in self.resolved.iter("*"):
-                for name in node.attrib:
-                    if name.startswith("cdr-") and name != "cdr-eid":
-                        qname = name.replace("cdr-", NS)
-                        node.set(qname, node.get(name))
                         del node.attrib[name]
 
     def __preprocess_save(self, **opts):
@@ -2864,7 +2840,7 @@ class Doc(object):
             # We have a real BLOB--see if it has changed.
             query = Query("doc_blob", "data")
             query.where(query.Condition("id", blob_id))
-            blob = query.execute(self.cursor.execute).fetchone().data
+            blob = query.execute(self.cursor).fetchone().data
 
             # If the BLOB is unchanged we're done.
             if blob == self.blob:
@@ -3084,6 +3060,8 @@ class Doc(object):
                   "never": don't touch the database
                   "valid": only update val_status if full validation passes
                   (only applicable if the document exists in the repository);
+          level - which level of revision markup to keep for validation
+                  (default is revision marked as ready to be published)
 
         Return:
           None
@@ -3113,8 +3091,9 @@ class Doc(object):
         # Most validation is only done for well-formed non-control documents.
         if self.root is not None and self.is_content_type:
 
-            # Use the filtered document for private use characters.
-            utf8 = etree.tostring(self.resolved, encoding="utf-8")
+            # Use the filtered document for validation.
+            resolved = self.__apply_revision_markup(level=opts.get("level"))
+            utf8 = etree.tostring(resolved, encoding="utf-8")
             validation_xml = utf8.decode("utf-8")
 
             # Find out if we've been asked to do schema and/or link validation.
@@ -3128,13 +3107,14 @@ class Doc(object):
 
                 # Apply schema validation if requested.
                 if "schema" in validation_types:
-                    self.__validate_against_schema()
+                    self.__validate_against_schema(resolved)
                 else:
                     complete = False
 
                 # Apply link validation if requested.
                 if "links" in validation_types:
-                    self.__validate_links(store=opts.get("store", "always"))
+                    store = opts.get("store", "always")
+                    self.__validate_links(resolved, store=store)
                 else:
                     complete = False
 
@@ -3163,9 +3143,12 @@ class Doc(object):
         # Optionally record the results of the validation.
         self.__update_val_status(opts.get("store", "always"))
 
-    def __validate_against_schema(self):
+    def __validate_against_schema(self, resolved):
         """
         Check the XML document against the requirements for its doctype
+
+        Pass:
+          resolved - document with revision markup resolved
 
         Populates the `errors` property by calling `add_error()`.
         """
@@ -3184,7 +3167,8 @@ class Doc(object):
                 Doc.VALIDATION_TEMPLATE = self.get_filter(doc_id).xml
 
         # Get the document node to validate and schema for the document's type.
-        doc = self.resolved
+        doc = copy.deepcopy(resolved)
+        self.__namespaces_off(doc)
         schema_doc = self.__get_schema()
         schema = etree.XMLSchema(schema_doc)
 
@@ -3194,7 +3178,6 @@ class Doc(object):
         try:
 
             # Validate against the schema.
-            self.__namespaces_off()
             if not schema.validate(doc):
                 location = None
                 if self.eids is not None:
@@ -3224,15 +3207,15 @@ class Doc(object):
             # We have to get our reference to ourselves off the stack,
             # even if something goes horribly wrong during the validation.
             Resolver.local.docs.pop()
-            self.__namespaces_on()
 
-    def __validate_links(self, store="always"):
+    def __validate_links(self, resolved, store="always"):
         """
         Collect and check all of the document's links for validity
 
         Populates the `errors` property by calling `add_error()`.
 
         Pass:
+          resolved - document with revision markup resolved
           store - control's whether we also populate the linking tables
                   (assuming the document is in the database)
                   "never": don't touch the database
@@ -3243,7 +3226,7 @@ class Doc(object):
         if not self.doctype or not self.doctype.id:
             problem = "invalid" if self.doctype else "missing"
             raise Exception("__validate_links(): {} doctype".format(problem))
-        links = self.__collect_links(self.resolved)
+        links = self.__collect_links(resolved)
         for link in links:
             if link.internal:
                 link.validate()
@@ -3530,6 +3513,8 @@ class Doc(object):
           message - string for the error to be logged if the test doesn't pass
         """
 
+        PROTECT = re.compile("@@START-PROTECT@@(.*)@@END-PROTECT@@", re.DOTALL)
+
         def __init__(self, node):
             """
             Extract the attributes and verify that they were found
@@ -3550,11 +3535,15 @@ class Doc(object):
             IF = Doc.qname("if", Filter.NS)
             CALL = Doc.qname("call-template", Filter.NS)
             WITH = Doc.qname("with-param", Filter.NS)
-            test = etree.Element(IF, test="not({})".format(self.test))
+            test = self.PROTECT.sub(self.protect, self.test)
+            test = etree.Element(IF, test="not({})".format(test))
             call = etree.SubElement(test, CALL, name="pack-error")
             message = '"{}"'.format(self.message)
             etree.SubElement(call, WITH, name="msg", select=message)
             return test
+
+        def protect(self, match):
+            return re.sub(r"\s+", "+", match.group(1).replace("+", "@@PLUS@@"))
 
 
     class Error:
@@ -4039,7 +4028,10 @@ class Resolver(etree.Resolver):
           varies; see logic below
         """
 
-        # Filters are fetched by name.
+        # Prepare for failure.
+        message = "Unable to resolve uri {!r}".format(parms)
+
+        # Documents (usually, but not always, Filters) can be fetched by name.
         if parms.startswith("name:"):
             parms = parms[5:]
             if "/" in parms:
@@ -4052,16 +4044,13 @@ class Resolver(etree.Resolver):
                     return self.resolve_string("<empty/>", context)
                 raise Exception("Filter {!r} not found".format(title))
             doc = Doc(self.session, id=doc_id, version=version)
-            if doc.doctype.name != "Filter":
-                raise Exception("{!r} is not a filter document".format(title))
-            doc_xml = doc.get_filter(doc_id, version=version).xml
-            return self.resolve_string(doc_xml, context)
+            if doc.doctype.name == "Filter":
+                doc_xml = doc.get_filter(doc_id, version=version).xml
+                return self.resolve_string(doc_xml, context)
+            spec = None
 
-        # Prepare for failure.
-        message = "Unable to resolve uri {!r}".format(parms)
-
-        # Find the requested document
-        if "/" in parms:
+        # Find the requested document by ID
+        elif "/" in parms:
             doc_id, spec = parms.split("/", 1)
             if doc_id == "*":
                 doc = self.doc
@@ -4089,13 +4078,13 @@ class Resolver(etree.Resolver):
 
         # Return control information about the doc if requested.
         if spec == "CdrCtl":
-            element = self.doc.legacy_doc_control(filtering=True)
+            element = doc.legacy_doc_control(filtering=True)
             return self.__package_result(element, context)
 
         # Return the document's title if requested.
         elif spec == "DocTitle":
             element = etree.Element("CdrDocTitle")
-            element.text = self.doc.title
+            element.text = doc.title
             return self.__package_result(element, context)
 
         # Guard against unsupported requests.
@@ -4285,6 +4274,8 @@ class Resolver(etree.Resolver):
             raise Exception("wrong number of sql query placeholder values")
         if Query.PLACEHOLDER != "?":
             query = query.replace("?", Query.PLACEHOLDER)
+        self.session.logger.debug("query: %r", query)
+        self.session.logger.debug("values: %r", values)
         self.cursor.execute(query, tuple(values))
         names = [col[0] for col in self.cursor.description]
         result = etree.Element("SqlResult")
