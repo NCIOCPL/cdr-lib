@@ -113,7 +113,7 @@ class Job:
                 cutoff = self.parms.get("MaxDocUpdatedDate")
                 if not cutoff or cutoff == "JobStartDateTime":
                     cutoff = self.started
-                self.session.logger.info("cutoff=%r", cutoff)
+                #self.session.logger.info("cutoff=%r", cutoff)
                 opts = dict(before=cutoff)
                 for requested in self.__opts.get("docs", []):
                     opts["id"] = requested.id
@@ -238,6 +238,7 @@ class Job:
                     messages = "Paramater(s) {} undefined"
                     raise Exception(message.format(", ".join(undefined)))
                 defined.update(requested)
+                self.session.logger.info("job parms: %r", defined)
                 self._parms = defined
         return self._parms
 
@@ -458,7 +459,10 @@ class Job:
         args = ", ".join(names), ", ".join(["?"] * len(names))
         insert = "INSERT INTO pub_proc_doc ({}) VALUES ({})".format(*args)
         for doc in self.docs:
-            self.cursor.execute(insert, (job_id, doc.id, doc.version))
+            version = doc.version or doc.last_version
+            if not version:
+                raise Exception("{} has no versions".format(doc.cdr_id))
+            self.cursor.execute(insert, (job_id, doc.id, version))
 
         # Commit the new job information and return the job ID.
         self.session.conn.commit()
