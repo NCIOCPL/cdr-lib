@@ -234,7 +234,7 @@ class Report:
         body = self.__start_body()
         for id, title in query.execute(self.cursor).fetchall():
             cdr_id = Doc.normalize_id(id)
-            etree.SubElement(body, "GlossaryTermName", ref=cdr_id)
+            etree.SubElement(body, "GlossaryTermName", ref=cdr_id).text = title
         return body
 
     def _inactive_checked_out_documents(self):
@@ -565,7 +565,7 @@ class Report:
             raise Exception(message)
         body = self.__start_body()
         spanish_id = Doc.normalize_id(row.doc_id)
-        etree.SubElement(body, "PatientSummary").text = spanish_id
+        etree.SubElement(body, "TranslatedSummary").text = spanish_id
         return body
 
     def _values_for_path(self):
