@@ -544,7 +544,7 @@ def sendRequest(body, **opts):
             response = requests.post(url, data=request_bytes, headers=headers)
             tries = 0
         except Exception as e:
-            message = "sendRequest caught exception {}".format(e)
+            message = "sendRequest({!r}) caught exception {}".format(url, e)
             cdr.logwrite(message, LOGFILE, tback=True)
             wait = (MAX_RETRIES + 1 - tries) * RETRY_MULTIPLIER
             args = tries, wait
