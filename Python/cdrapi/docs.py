@@ -3513,8 +3513,6 @@ class Doc(object):
           message - string for the error to be logged if the test doesn't pass
         """
 
-        PROTECT = re.compile("@@START-PROTECT@@(.*)@@END-PROTECT@@", re.DOTALL)
-
         def __init__(self, node):
             """
             Extract the attributes and verify that they were found
@@ -3535,7 +3533,6 @@ class Doc(object):
             IF = Doc.qname("if", Filter.NS)
             CALL = Doc.qname("call-template", Filter.NS)
             WITH = Doc.qname("with-param", Filter.NS)
-            test = self.PROTECT.sub(self.protect, self.test)
             test = etree.Element(IF, test="not({})".format(test))
             call = etree.SubElement(test, CALL, name="pack-error")
             message = '"{}"'.format(self.message)
