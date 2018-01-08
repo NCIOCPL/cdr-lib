@@ -947,7 +947,11 @@ class Doc(object):
 
         self.session.log("Doc.check_in({!r}, {!r})".format(self.cdr_id, opts))
         self.__check_in(**opts)
-        self.session.conn.commit()
+        try:
+            self.session.conn.commit()
+        except:
+            # Might not be anything to commit.
+            pass
 
     def check_out(self, **opts):
         """
@@ -1880,7 +1884,8 @@ class Doc(object):
         # Make sure there's a lock to release.
         lock = self.lock
         if lock is None:
-            raise Exception("Document is not checked out")
+            self.session.logger.warning("Document is not checked out")
+            return
 
         # See if the document is locked by another account.
         lock_broken = False
