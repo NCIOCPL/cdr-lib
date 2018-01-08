@@ -1163,6 +1163,20 @@ class Doc(object):
                 if f is not None:
                     return f
         root = doc.root
+
+        # TODO - REMOVE FOLLOWING CODE WHEN GAUSS LANDS ON DEV
+        if self.session.tier.name == "DEV":
+            query = Query("good_filters", "xml")
+            query.where(query.Condition("id", doc.id))
+            row = query.execute(self.cursor).fetchone()
+            if not row:
+                raise Exception("filter {} not found".format(doc.cdr_id))
+            root = etree.fromstring(row.xml.encode("utf-8"))
+        else:
+        # TODO - END TEMPORARY CODE -- OUTDENT NEXT LINE!!! XXX
+
+            # OUTDENT THIS LINE ONE LEVEL WHEN TEMPORARY CODE ABOVE GOES AWAY!
+            root = doc.root
         for name in ("import", "include"):
             qname = Doc.qname(name, Filter.NS)
             for node in root.iter(qname):
@@ -2781,6 +2795,23 @@ class Doc(object):
                 update = "UPDATE document SET title = ? WHERE id = ?"
                 self.cursor.execute(update, (title, self.id))
 
+            # TODO: ELIMINATE THIS BLOCK OF CODE WHEN GAUSS LANDS ON DEV
+            if self.session.tier.name == "DEV":
+                if self.doctype.name == "schema":
+                    insert = "INSERT INTO good_schemas (id, xml) VALUES (?, ?)"
+                    self.cursor.execute(insert, (self.id, self.xml))
+                elif self.doctype.name == "Filter":
+                    insert = "INSERT INTO good_filters (id, xml) VALUES (?, ?)"
+                    self.cursor.execute(insert, (self.id, self.xml))
+        elif self.session.tier.name == "DEV":
+            if self.doctype.name == "schema":
+                update = "UPDATE good_schemas SET xml = ? WHERE id = ?"
+                self.cursor.execute(update, (self.xml, self.id))
+            elif self.doctype.name == "Filter":
+                update = "UPDATE good_filters SET xml = ? WHERE id = ?"
+                self.cursor.execute(update, (self.xml, self.id))
+                # TODO: END OF TEMPORARY CODE BLOCK
+
         # If the document has a binary large object (BLOB), save it.
         if self.blob is not None:
             self._blob_id = self.__store_blob()
@@ -3340,6 +3371,8 @@ class Doc(object):
         """
         Fetch the XML for a schema document by nane
 
+        TODO: remove special code for DEV tier
+
         Pass:
           name - title of the schema document
           cursor - database access for fetching the xml
@@ -3349,6 +3382,24 @@ class Doc(object):
         """
 
         assert name, "get_schema_xml(): no name for schema"
+
+        # TODO: REMOVE THIS BLOCK WHEN GAUSS LANDS ON DEV
+        if not hasattr(cls, "TIER"):
+            from cdrapi.settings import Tier
+            cls.TIER = Tier().name
+        if cls.TIER == "DEV":
+            names = name, name.replace(".xsd", ".xml")
+            query = Query("good_schemas s", "s.xml")
+            query.join("document d", "d.id = s.id")
+            query.join("doc_type t", "t.id = d.doc_type")
+            query.where("t.name = 'schema'")
+            query.where(query.Condition("d.title", names, "IN"))
+            try:
+                return query.execute(cursor).fetchone().xml
+            except:
+                raise Exception("schema {!r} not found".format(name))
+        # TODO: END TEMPORARY CODE
+
         schema_id = cls.id_from_title(name, cursor)
         query = Query("document", "xml")
         query.where(query.Condition("id", schema_id))
@@ -3533,7 +3584,7 @@ class Doc(object):
             IF = Doc.qname("if", Filter.NS)
             CALL = Doc.qname("call-template", Filter.NS)
             WITH = Doc.qname("with-param", Filter.NS)
-            test = etree.Element(IF, test="not({})".format(test))
+            test = etree.Element(IF, test="not({})".format(self.test))
             call = etree.SubElement(test, CALL, name="pack-error")
             message = '"{}"'.format(self.message)
             etree.SubElement(call, WITH, name="msg", select=message)
