@@ -382,10 +382,6 @@ def recordMailer(session, docId, recipId, mode, mailerType, sent,
         docXml.append(u"""\
    <Recipient cdr:ref='CDR%010d'/>
 """ % recipId)
-    if protOrg:
-        docXml.append(u"""\
-   <ProtocolOrg cdr:ref='CDR%010d'/>
-""" % protOrg)
     if address:
         docXml.append(address)
     if docTitle:
@@ -399,10 +395,6 @@ def recordMailer(session, docId, recipId, mode, mailerType, sent,
     docXml.append(u"""\
    <Sent>%s</Sent>
 """ % sent)
-    if deadline:
-        docXml.append(u"""\
-   <Deadline>%s</Deadline>
-""" % deadline)
     docXml.append(u"""\
   </Mailer>]]>
  </CdrDocXml>
