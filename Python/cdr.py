@@ -5806,7 +5806,7 @@ def getVersionedBlobChangeDate(credentials, doc_id, version, **opts):
     query.where(query.Condition("doc_version", version))
     row = query.execute(cursor).fetchone()
     if row:
-        blob_id = row.blob_id
+        blob_id = row[0]
         join_conditions  ="u.doc_id = v.id", "u.doc_version = v.num"
         query = cdrdb.Query("doc_version v", "v.num", "v.dt")
         query.join("version_blob_usage u", *join_conditions)
