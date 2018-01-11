@@ -13,6 +13,8 @@ import logging
 import os
 import re
 import subprocess
+import threading
+import time
 
 class Tier:
     """
@@ -179,6 +181,7 @@ class Tier:
           propagate - if True, the base handler also writes our entries
           multiplex - if True, add new handler even if there already is one
           console - if True, add stram handler to write to stderr
+          dbconn - optional, for database logging handler
           rolling - if True, roll over to a new log each day at midnight;
                     won't work if `path` is also passed, unless the
                     `path` value ends in a YYYY-MM-DD.log pattern.
@@ -197,7 +200,11 @@ class Tier:
         logger.setLevel((env_level or opts.get("level") or "INFO").upper())
         logger.propagate = True if opts.get("propagate") else False
         if not logger.handlers or opts.get("multiplex"):
-            formatter = self.Formatter(opts.get("format") or self.LOG_FORMAT)
+            if name == "session":
+                formatter = self.SessionLogFormatter()
+            else:
+                format = opts.get("format") or self.LOG_FORMAT
+                formatter = self.Formatter(format)
             if "path" not in opts or opts.get("path"):
                 path = opts.get("path")
                 if not path:
@@ -213,6 +220,9 @@ class Tier:
                     handler = self.ReleasingLogHandler(path, delay=True)
                 handler.setFormatter(formatter)
                 logger.addHandler(handler)
+            if name == "session":
+                dbconn = opts["dbconn"]
+                logger.addHandler(self.SessionDBLogHandler(self.drive, dbconn))
             if opts.get("console"):
                 stream_handler = logging.StreamHandler()
                 stream_handler.setFormatter(formatter)
@@ -408,9 +418,103 @@ class Tier:
             return ct.strftime(datefmt or self.DATEFORMAT)
 
 
+    class SessionLogFormatter(logging.Formatter):
+        """
+        The session log rolls over daily, so we don't need the date.
+        """
+
+        DATEFORMAT = "%H:%M:%S.%f"
+        FORMAT = "%(asctime)s [%(levelname)s-%(thread)04d] %(message)s"
+        converter = datetime.datetime.fromtimestamp
+
+        def __init__(self):
+            logging.Formatter.__init__(self, self.FORMAT)
+
+        def formatTime(self, record, datefmt=None):
+            ct = self.converter(record.created)
+            return ct.strftime(datefmt or self.DATEFORMAT)[:-3]
+
+
+    class SessionDBLogHandler(logging.Handler):
+        """
+        Log Session activity to the database
+
+        Because writing to the file system log does not always succeed,
+        we also write to the database. The hope is that at least one
+        will succeed. We also fall back on a one-off file when we can't
+        write to the database. All exceptions are trapped.
+        """
+
+        FORMAT = "[%(levelname)s] %(message)s"
+        FORMATTER = logging.Formatter(FORMAT)
+        INSERT = ("INSERT INTO session_log (thread_id, recorded, message) "
+                  "VALUES (?, GETDATE(), ?)")
+
+        def __init__(self, drive, local):
+            logging.Handler.__init__(self)
+            self.drive = drive
+            self.local = local
+
+        @property
+        def conn(self):
+            return self.local.conn
+
+        @property
+        def cursor(self):
+            return self.local.cursor
+
+        def emit(self, record):
+            #print("emit()")
+            thread_id = threading.current_thread().ident
+            try:
+                values = thread_id, self.FORMATTER.format(record)
+            except Exception as e:
+                try:
+                    now = datetime.datetime.now()
+                    name = now.strftime("logger-%Y%m%d%H%M%S.err")
+                    errpath = "{}:/cdr/Log/{}".format(self.drive, name)
+                    with open(errpath, "a") as fp:
+                        fp.write("Failure formatting message: {}\n".format(e))
+                except:
+                    raise
+                    return
+                return
+            tries = 5
+            sleep = .1
+            #print("trying ...")
+            while tries > 0:
+                try:
+                    self.cursor.execute(self.INSERT, values)
+                    self.conn.commit()
+                    #print("committed")
+                    return
+                except Exception as e:
+                    tries -= 1
+                    if tries > 0:
+                        #print("sleeping {} seconds".format(sleep))
+                        time.sleep(sleep)
+                        sleep += .1
+                    else:
+                        try:
+                            now = datetime.datetime.now()
+                            name = now.strftime("dblogger-%Y%m%d%H%M%S.err")
+                            errpath = "{}:/cdr/Log/{}".format(self.drive, name)
+                            with open(errpath, "a") as fp:
+                                fp.write("DB logging failure: {}\n".format(e))
+                        except:
+                            raise
+                            return
+                        return
+
+
     class ReleasingLogHandler(logging.FileHandler):
         """
         Logging file handler which leaves the file closed between writes
+
+        This handler is more patient than the standard handler, trying
+        more than once in the face of failure, with a little pause
+        between attempts. If we really fail, fall back on a one-off
+        error file to try and leave a trace behind of what happened.
         """
 
         def emit(self, record):
@@ -421,8 +525,44 @@ class Tier:
               record - assembled string to be written to the log
             """
 
-            logging.FileHandler.emit(self, record)
-            self.close()
+            tries = 5
+            sleep = .1
+            while tries > 0:
+                try:
+                    logging.FileHandler.emit(self, record)
+                    self.close()
+                    return
+                except Exception as e:
+                    tries -= 1
+                    if tries > 0:
+                        #print("sleeping {} seconds".format(sleep))
+                        time.sleep(sleep)
+                        sleep += .1
+                    else:
+                        try:
+                            message = None
+                            try:
+                                message = self.format(message)
+                            except:
+                                pass
+                            now = datetime.datetime.now()
+                            stamp = now.strftime("%Y%m%d%H%M%S")
+                            name = record.name
+                            name = "{}-logger-{}.err".format(name, stamp)
+                            try:
+                                drive = Tier().drive
+                            except:
+                                drive = "d"
+                            path = "{}:/cdr/Log/{}".format(drive, name)
+                            with open(path, "a") as fp:
+                                fp.write("{}\n".format(e))
+                                if message:
+                                    try:
+                                        fp.write("{!r}\n".format(message))
+                                    except:
+                                        pass
+                        except:
+                            pass
 
 
     class RollingLogHandler(ReleasingLogHandler):
@@ -431,7 +571,7 @@ class Tier:
 
         Also leaves the file closed between writes. Decided to do
         our own customization rather than use the standard library's
-        `TimedRotatingFileHandler` class, but it wasn't clear how
+        `TimedRotatingFileHandler` class, because it wasn't clear how
         our customization to close the file after each write would
         interact with that class.
         """

@@ -66,7 +66,8 @@ class Session:
         self.tier = tier if isinstance(tier, Tier) else Tier(tier)
         opts = dict(level=loglevel, rolling=True, tier=self.tier)
         self.local = self.Local(**opts)
-        #self.logger = self.tier.get_logger("session", **opts)
+        opts["dbconn"] = self.LoggingDBConnection()
+        self.logger = self.tier.get_logger("session", **opts)
         #self.conn = db.connect(tier=self.tier.name)
         #self.cursor = self.conn.cursor()
         inactive = "DATEDIFF(hour, last_act, GETDATE()) > 24"
@@ -92,9 +93,9 @@ class Session:
         self.cursor.execute(update, (self.id,))
         self.conn.commit()
 
-    @property
-    def logger(self):
-        return self.local.logger
+    #@property
+    #def logger(self):
+    #    return self.local.logger
 
     @property
     def conn(self):
@@ -471,7 +472,8 @@ class Session:
         """
 
         tier = opts.get("tier")
-        logger = Tier(tier).get_logger("session", rolling=True)
+        conn = cls.LoggingDBConnection()
+        logger = Tier(tier).get_logger("session", rolling=True, dbconn=conn)
         conn = db.connect(tier=tier)
         cursor = conn.cursor()
         query = db.Query("usr", "id", "hashedpw")
@@ -1223,19 +1225,6 @@ class Session:
                 self.filter_sets = {}
 
 
-    class Formatter(logging.Formatter):
-        """
-        The session log rolls over daily, so we don't need the date.
-        """
-
-        DATEFORMAT = "%H:%M:%S.%f"
-
-        converter = datetime.datetime.fromtimestamp
-        def formatTime(self, record, datefmt=None):
-            ct = self.converter(record.created)
-            return ct.strftime(datefmt or self.DATEFORMAT)[:-3]
-
-
     class Local(threading.local):
         """
         Thread-specific storage for session
@@ -1251,7 +1240,13 @@ class Session:
             self.__dict__.update(kw)
             self.conn = db.connect(tier=self.tier.name)
             self.cursor = self.conn.cursor()
-            self.logger = self.tier.get_logger("session", **kw)
-            formatter = Session.Formatter(self.LOG_FORMAT)
-            for handler in self.logger.handlers:
-                handler.setFormatter(formatter)
+            #self.logger = self.tier.get_logger("session", **kw)
+            #formatter = Session.Formatter(self.LOG_FORMAT)
+            #for handler in self.logger.handlers:
+            #    handler.setFormatter(formatter)
+
+
+    class LoggingDBConnection(threading.local):
+        def __init__(self):
+            self.conn = db.connect()
+            self.cursor = self.conn.cursor()
