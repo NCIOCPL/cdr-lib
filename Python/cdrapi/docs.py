@@ -946,7 +946,7 @@ class Doc(object):
         """
 
         self.session.log("Doc.check_in({!r}, {!r})".format(self.cdr_id, opts))
-        self.__check_in(**opts)
+        self.__check_in(audit=True, **opts)
         try:
             self.session.conn.commit()
         except:
@@ -1106,9 +1106,9 @@ class Doc(object):
                 filters = self.__assemble_filters(*filters, **opts)
             for f in filters:
                 if f.doc_id:
-                    self.session.logger.info("applying filter %d", f.doc_id)
+                    self.session.logger.debug("applying filter %d", f.doc_id)
                 else:
-                    self.session.logger.info("applying in-memory filter")
+                    self.session.logger.debug("applying in-memory filter")
                 result = self.__apply_filter(f.xml, doc, parser, **parms)
                 doc = result.result_tree
                 self.session.logger.debug("filter result: %r", str(doc))
@@ -1879,6 +1879,7 @@ class Doc(object):
           comment - optional string to update comment (to NULL if empty)
           abandon - if True, don't save unversioned changes as a new version
           publishable - if True, mark version publishable if we create one
+          audit - if True, audit the unlock action
         """
 
         # Make sure there's a lock to release.
@@ -1888,12 +1889,10 @@ class Doc(object):
             return
 
         # See if the document is locked by another account.
-        lock_broken = False
         if lock.locker.id != self.session.user_id:
             if opts.get("force"):
                 if not self.session.can_do("FORCE CHECKOUT", doctype):
                     raise Exception(str(lock))
-                lock_broken = True
             else:
                 raise Exception(str(lock))
 
@@ -1921,8 +1920,8 @@ class Doc(object):
         if need_new_version:
             self.__create_version(publishable=opts.get("publishable"))
 
-        # If we broke someone else's lock, audit that information.
-        if lock_broken:
+        # If the unlock is a standalone action, log it.
+        if opts.get("audit"):
             self.__audit_action("Doc.check_in", "UNLOCK", comment)
 
     def __check_out(self, **opts):
