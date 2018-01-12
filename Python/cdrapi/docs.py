@@ -1122,6 +1122,7 @@ class Doc(object):
             raise
         finally:
             Resolver.local.docs.pop()
+            self.session.logger.debug("filter() finished")
 
     def get_filter(self, doc_id, **opts):
         """
@@ -2084,6 +2085,7 @@ class Doc(object):
         """
 
         # Start with a clean slate.
+        self.session.logger.debug("top of __collect_links()")
         self._frag_ids = set()
         links = []
         unique_links = set()
@@ -2111,6 +2113,7 @@ class Doc(object):
                     self._frag_ids.add(link.id)
 
         # Return the sequence of `Link` objects we found for 'internal' links.
+        self.session.logger.debug("returning %d links", len(links))
         return links
 
     def __collect_query_terms(self, node, terms, paths, parent="", loc=""):
@@ -2652,6 +2655,7 @@ class Doc(object):
 
         # Prepare the XML for saving.
         self.__preprocess_save(**opts)
+        self.session.logger.debug("__preprocess_save() finished")
 
         # Save the document if it's new so we'll have the document ID now.
         new = self.id is None
@@ -2670,6 +2674,7 @@ class Doc(object):
                     "store": "always"
                 }
                 self.__validate(**val_opts)
+                self.session.logger.debug("__validate() finished")
                 if opts.get("publishable"):
                     opts["version"] = True
                     if self.val_status != self.VALID:
@@ -2681,12 +2686,16 @@ class Doc(object):
                         self.add_error(message, **error_opts)
                         opts["publishable"] = False
             if opts.get("set_links") != False and "links" not in val_types:
-                if self.id and self.resolved is not None:
-                    self.__store_links(self.__collect_links(self.resolved))
+                if self.id:
+                    resolved = self.resolved
+                    if  resolved is not None:
+                        self.__store_links(self.__collect_links(resolved))
+                        self.session.logger.debug("__store_links() finished")
 
         # If the document already existed, we still need to store it.
         if not new:
             self.__store(**opts)
+            self.session.logger.debug("__store() finished")
 
         # Index the document for searching.
         if self.is_content_type:
@@ -2694,21 +2703,26 @@ class Doc(object):
             if opts.get("publishable"):
                 index_tables.append("query_term_pub")
             self.update_query_terms(tables=index_tables)
+            self.session.logger.debug("update_query_terms() finished")
 
         # Remember who performed this save action.
         action = "ADD DOCUMENT" if new else "MODIFY DOCUMENT"
         reason = opts.get("reason") or opts.get("comment")
         when = self.__audit_action("Doc.save", action, reason)
+        self.session.logger.debug("__audit_action() finished")
         if status_action:
             self.__audit_added_action(status_action, when)
+            self.session.logger.debug("__audit_added_action finished")
 
         # Special case processing to eliminate sensitive meeting recordings.
         if opts.get("del_blobs"):
             self.__delete_blobs()
+            self.session.logger.debug("__delete_blobs() finished")
 
         # Create a permanent frozen version of the document if requested.
         if opts.get("version") or opts.get("publishable"):
             self.__create_version(**opts)
+            self.session.logger.debug("__create_version() finished")
 
         # Check the document back in unless caller wants to keep it locked.
         if not new and opts.get("unlock"):
@@ -2718,6 +2732,9 @@ class Doc(object):
             update += "WHERE id = ? AND dt_in IS NULL"
             values = reason, self.id
             self.cursor.execute(update, values)
+            self.session.logger.debug("checkout table updated")
+
+        self.session.logger.debug("__save() finished")
 
 
     def __set_status(self, status, **opts):
@@ -2924,6 +2941,7 @@ class Doc(object):
 
         # Fetch the existing link_net rows and determine the deltas
         # between what we found last time and what we found now.
+        self.session.logger.debug("top of __store_links()")
         query = Query("link_net", "source_elem", "url")
         query.where(query.Condition("source_doc", self.id))
         rows = query.execute(self.cursor).fetchall()
@@ -2931,12 +2949,15 @@ class Doc(object):
         new_links = set([link.key for link in links if link.linktype])
         wanted = new_links - old_links
         unwanted = old_links - new_links
+        args = len(wanted), len(unwanted)
+        self.session.logger.debug("%d wanted links, %d unwanted links", *args)
 
         # If optimizing the update is inefficient, start with a clean slate.
         delete = "DELETE FROM link_net WHERE source_doc = ?"
         if len(unwanted) > 500 and len(unwanted) > len(new_links) / 2:
             wanted = new_links
             self.cursor.execute(delete, (self.id,))
+            self.session.logger.debug("storing all links from scratch")
 
         # Otherwise just delete the rows which are not longer correct.
         else:
@@ -2944,11 +2965,13 @@ class Doc(object):
             for source_element, url in unwanted:
                 args = self.id, source_element, url
                 self.cursor.execute(delete, args)
+            self.session.logger.debug("cleared out unwanted links")
 
         # Insert the rows that aren't already in place.
         for link in links:
             if link.key in wanted:
                 link.save(self.cursor)
+        self.session.logger.debug("stored %d links", len(links))
 
         # Apply the same technique to the `link_fragment` table.
         query = Query("link_fragment", "fragment")
@@ -2958,17 +2981,22 @@ class Doc(object):
         new = self.frag_ids or set()
         wanted = new - old
         unwanted = old - new
+        args = len(wanted), len(unwanted)
+        self.session.logger.debug("%d wanted fragments, %d unwanted", *args)
         delete = "DELETE FROM link_fragment WHERE doc_id = ?"
         if len(unwanted) > 500 and len(unwanted) > len(new) / 2:
             wanted = new
             self.cursor.execute(delete, (self.id))
+            self.session.logger.debug("storing all fragments from scratch")
         else:
             delete += " AND fragment = ?"
             for fragment_id in unwanted:
                 self.cursor.execute(delete, (self.id, fragment_id))
+            self.session.logger.debug("cleared out unwanted fragments")
         insert = "INSERT INTO link_fragment (doc_id, fragment) VALUES (?, ?)"
         for fragment_id in wanted:
             self.cursor.execute(insert, (self.id, fragment_id))
+        self.session.logger.debug("stored %d fragments", len(links))
 
     def __store_query_terms(self, terms, **opts):
         """
