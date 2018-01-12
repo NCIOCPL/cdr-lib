@@ -7272,6 +7272,7 @@ class Link:
         """
 
         # Start with a clean slate
+        doc.session.logger.debug("top of Link() constructor")
         self.link_name = self.url = self.internal = self.store = None
         self.target_doc = self.fragment_id = self.linktype = None
         self.nlink_attrs = 0
@@ -7283,10 +7284,11 @@ class Link:
         self.eid = node.get("cdr-eid")
         self.id = node.get(self.CDR_ID)
 
-        # Check to see if we one (or more) linking attributes
+        # Check to see if we have one (or more) linking attributes
         for name in self.LINK_ATTRS:
             value = node.get(name)
             if value:
+                doc.session.logger.debug("@%r=%r", name, value)
                 self.nlink_attrs += 1
 
                 # We only save the value for the first linking attribute.
@@ -7304,14 +7306,23 @@ class Link:
                 doc_id = self.url
             args = doc.session, doc.doctype, node.tag
             self.linktype = LinkType.lookup(*args)
+            if self.linktype:
+                self.chk_type = self.linktype.chk_type
+                doc.session.logger.debug("link type is %s", self.linktype.name)
+            else:
+                self.chk_type = "C"
+                doc.session.logger.debug("link type not found")
             self.chk_type = self.linktype.chk_type if self.linktype else "C"
             version = self.VERSIONS[self.chk_type]
             try:
                 target_doc = Doc(doc.session, id=doc_id, version=version)
                 assert target_doc.doctype, "version not found"
+                doc.session.logger.debug("target doc is %s", target_doc.cdr_id)
                 self.target_doc = target_doc
-            except:
+            except Exception as e:
+                doc.session.logger.debug("link type not found: %s", e)
                 self.store = False
+        doc.session.logger.debug("bottom of Link() constructor")
 
     def save(self, cursor):
         """
