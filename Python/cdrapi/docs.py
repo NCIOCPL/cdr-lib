@@ -1677,6 +1677,7 @@ class Doc(object):
         """
 
         # Hand off the work to the private validation method.
+        start = datetime.datetime.now()
         self.session.log("Doc.validate({}, {!r})".format(self.id, opts))
         self._errors = []
         try:
@@ -1686,6 +1687,8 @@ class Doc(object):
             self.cursor.execute("SELECT @@TRANCOUNT AS tc")
             if self.cursor.fetchone().tc:
                 self.session.conn.commit()
+            elapsed = (datetime.datetime.now() - start).total_seconds()
+            self.session.logger.info("validated doc in %f seconds", elapsed)
         except:
             self.session.logger.exception("Validation failed")
             self.cursor.execute("SELECT @@TRANCOUNT AS tc")
@@ -2085,35 +2088,38 @@ class Doc(object):
         """
 
         # Start with a clean slate.
+        start = datetime.datetime.now()
         self.session.logger.debug("top of __collect_links()")
         self._frag_ids = set()
         links = []
         unique_links = set()
 
-        # Walk through all of the element nodes in the document.
-        for node in doc.iter("*"):
-            link = Link(self, node)
-
-            # We're only returning links to CDR documents.
-            if link.internal:
+        # Find all the links to CDR documents.
+        namespaces = dict(cdr="cips.nci.nih.gov/cdr")
+        for local_name in ("ref", "href"):
+            xpath = "//*[@cdr:{}]".format(local_name)
+            name = Doc.qname(local_name)
+            for node in doc.xpath(xpath, namespaces=namespaces):
+                link = Link(self, node, name)
                 links.append(link)
                 link.store = link.key not in unique_links
                 if link.store:
                     unique_links.add(link.key)
-                if link.nlink_attrs > 1:
-                    message = "Can only have one link from a single element"
-                    self.add_error(message, link.eid, type=self.LINK)
 
-            # Also populate the `frag_ids` property.
-            if link.id:
-                if link.id in self._frag_ids:
-                    message = "cdr:id {!r} used more than once".format(link.id)
-                    self.add_error(message, link.eid, type=self.LINK)
-                else:
-                    self._frag_ids.add(link.id)
+        # Find all of the target fragment IDs in this document.
+        for node in doc.xpath("//*[@cdr:id]", namespaces=namespaces):
+            cdr_id = node.get(Link.CDR_ID)
+            if cdr_id in self._frag_ids:
+                message = "cdr:id {!r} used more than once".format(cdr_id)
+                self.add_error(message, node.get("cdr-eid"), type=self.LINK)
+            else:
+                self._frag_ids.add(cdr_id)
 
         # Return the sequence of `Link` objects we found for 'internal' links.
-        self.session.logger.debug("returning %d links", len(links))
+        elapsed = (datetime.datetime.now() - start).total_seconds()
+        args = len(links), elapsed
+        self.session.logger.info("collected %d links in %f seconds", *args)
+        self.session.logger.debug("checked %d frag ids", len(self._frag_ids))
         return links
 
     def __collect_query_terms(self, node, terms, paths, parent="", loc=""):
@@ -4144,6 +4150,7 @@ class Resolver(etree.Resolver):
                 try:
                     doc = Doc(self.session, id=doc_id, version=version)
                 except:
+                    self.doc.logger.exception("Doc({}) failure".format(parms))
                     if scheme == "cdrx":
                         return self.resolve_string("<empty/>", context)
                     raise Exception(message)
@@ -4152,6 +4159,7 @@ class Resolver(etree.Resolver):
             try:
                 doc = Doc(self.session, id=parms)
             except:
+                self.doc.logger.exception("Doc({}) failure".format(parms))
                 if scheme == "cdrx":
                     return self.resolve_string("<empty/>", context)
                 raise Exception(message)
@@ -4175,6 +4183,7 @@ class Resolver(etree.Resolver):
         try:
             return self.resolve_string(doc.xml, context)
         except:
+            self.doc.logger.exception("resolve_string() failure")
             if scheme == "cdrx":
                 return self.resolve_string("<empty/>", context)
             raise Exception(message)
@@ -7249,9 +7258,6 @@ class Link:
             if any errors are found (this is an ephemeral identifier)
       id - stable unique identifier for this element node if it can
            be the explicit target of link
-      nlink_attrs - count of the linking attributes found for the element
-                    node (used for detecting the invalid condition of
-                    and element with more than one linking attribute)
     """
 
     CDR_ID = Doc.qname("id")
@@ -7262,41 +7268,32 @@ class Link:
     INTERNAL_LINK_ATTRS = {CDR_REF, CDR_HREF}
     VERSIONS = dict(C="Current", V="last", P="lastp")
 
-    def __init__(self, doc, node):
+    def __init__(self, doc, node, name):
         """
         Collect the linking information for this element node (if any)
 
         Pass:
           doc - reference to `Doc` object for linking document
           node - reference to `etree._Element` object containing the link
+          name - attribute name for link
         """
 
         # Start with a clean slate
         doc.session.logger.debug("top of Link() constructor")
         self.link_name = self.url = self.internal = self.store = None
         self.target_doc = self.fragment_id = self.linktype = None
-        self.nlink_attrs = 0
 
         # Capture the values we were given.
         self.doc = doc
         self.node = node
         self.element = node.tag
+        self.link_name = name
+        self.internal = name in self.INTERNAL_LINK_ATTRS
         self.eid = node.get("cdr-eid")
         self.id = node.get(self.CDR_ID)
-
-        # Check to see if we have one (or more) linking attributes
-        for name in self.LINK_ATTRS:
-            value = node.get(name)
-            if value:
-                doc.session.logger.debug("@%r=%r", name, value)
-                self.nlink_attrs += 1
-
-                # We only save the value for the first linking attribute.
-                if not self.link_name:
-                    self.link_name = name
-                    self.url = value
-                    self.internal = name in self.INTERNAL_LINK_ATTRS
-                    self.key = self.element, value
+        self.url = node.get(name)
+        self.key = self.element, self.url
+        doc.session.logger.debug("%r@%r=%r", self.element, name, self.url)
 
         # Collect the information that's only relevant to internal links.
         if self.internal:
