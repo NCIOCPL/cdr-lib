@@ -41,6 +41,13 @@ class Session:
       cache - session-specific cache of filtering objects
     """
 
+    INACTIVE = "DATEDIFF(hour, last_act, GETDATE()) > 24"
+    CONDITIONS = "ended IS NULL", "name <> 'guest'", INACTIVE
+    CONDITIONS = " AND ".join(CONDITIONS)
+    SELECT = "SELECT COUNT(*) FROM session WHERE {}".format(CONDITIONS)
+    UPDATE = "UPDATE session SET ended = GETDATE() WHERE {}".format(CONDITIONS)
+    CLEAR_FAILURE_LOGGED = False
+
     def __init__(self, name, tier=None, loglevel="INFO"):
         """
         Populate the attributes for the object if the session is active
@@ -70,14 +77,15 @@ class Session:
         self.logger = self.tier.get_logger("session", **opts)
         #self.conn = db.connect(tier=self.tier.name)
         #self.cursor = self.conn.cursor()
-        inactive = "DATEDIFF(hour, last_act, GETDATE()) > 24"
-        conditions = "ended IS NULL", "name <> 'guest'", inactive
-        update = "UPDATE session SET ended = GETDATE() WHERE {}"
         try:
-            self.cursor.execute(update.format(" AND ".join(conditions)))
-            self.conn.commit()
+            self.cursor.execute(self.SELECT)
+            if self.cursor.fetchone()[0] > 0:
+                self.cursor.execute(self.UPDATE)
+                self.conn.commit()
         except:
-            self.logger.warning("Unable to clear stale sessions")
+            if not Session.CLEAR_FAILURE_LOGGED:
+                self.logger.exception("Unable to clear stale sessions")
+                Session.CLEAR_FAILURE_LOGGED = True
         query = db.Query("session s", "s.id", "u.id", "u.name")
         query.join("open_usr u", "u.id = s.usr")
         query.where(query.Condition("s.name", name))
@@ -90,8 +98,12 @@ class Session:
         self.id, self.user_id, self.user_name = row
         self.cache = self.Cache()
         update = "UPDATE session SET last_act = GETDATE() WHERE id = ?"
-        self.cursor.execute(update, (self.id,))
-        self.conn.commit()
+        try:
+            self.cursor.execute(update, (self.id,))
+            self.conn.commit()
+        except:
+            self.logger.exception("Unable to set last_act")
+            raise
 
     #@property
     #def logger(self):
