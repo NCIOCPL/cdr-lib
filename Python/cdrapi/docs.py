@@ -4150,7 +4150,8 @@ class Resolver(etree.Resolver):
                 try:
                     doc = Doc(self.session, id=doc_id, version=version)
                 except:
-                    self.doc.logger.exception("Doc({}) failure".format(parms))
+                    message = "Doc({}) failure".format(parms)
+                    self.doc.session.logger.exception(message)
                     if scheme == "cdrx":
                         return self.resolve_string("<empty/>", context)
                     raise Exception(message)
@@ -4159,7 +4160,8 @@ class Resolver(etree.Resolver):
             try:
                 doc = Doc(self.session, id=parms)
             except:
-                self.doc.logger.exception("Doc({}) failure".format(parms))
+                message = "Doc({}) failure".format(parms)
+                self.doc.session.logger.exception(message)
                 if scheme == "cdrx":
                     return self.resolve_string("<empty/>", context)
                 raise Exception(message)
@@ -4183,7 +4185,7 @@ class Resolver(etree.Resolver):
         try:
             return self.resolve_string(doc.xml, context)
         except:
-            self.doc.logger.exception("resolve_string() failure")
+            self.doc.session.logger.exception("resolve_string() failure")
             if scheme == "cdrx":
                 return self.resolve_string("<empty/>", context)
             raise Exception(message)
