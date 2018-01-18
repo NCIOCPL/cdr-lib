@@ -113,7 +113,6 @@ class Job:
                 cutoff = self.parms.get("MaxDocUpdatedDate")
                 if not cutoff or cutoff == "JobStartDateTime":
                     cutoff = self.started
-                #self.session.logger.info("cutoff=%r", cutoff)
                 opts = dict(before=cutoff)
                 for requested in self.__opts.get("docs", []):
                     opts["id"] = requested.id
@@ -516,6 +515,7 @@ class Job:
           parms - dictionary of settings which can be overridden for a job
           action - string for permission-controlled action, used to
                    determine whether the current user can create this job
+          script - custom script for job
         """
 
         def __init__(self, node, name):
@@ -584,3 +584,100 @@ class Job:
                 path = "SubsetActionName"
                 self._action = Doc.get_text(self.__node.find(path))
             return self._action
+
+        @property
+        def script(self):
+            """
+            Script for custom job processing
+            """
+
+            if not hasattr(self, "_script"):
+                self._script = Doc.get_text(self.__node.find("ProcessScript"))
+            return self._script
+
+        @property
+        def specifications(self):
+            """
+            Instructions for processing this job
+            """
+
+            if not hasattr(self, "_specifications"):
+                self._specifications = []
+                path = "SubsetSpecifications/SubsetSpecification"
+                for node in self.__node.findall(path):
+                    self._specifications.append(self.Specification(node))
+            return self._specifications
+
+
+        class Specification:
+            """
+            """
+            def __init__(self, node):
+                self.__node = node
+
+            @property
+            def user_select_doctypes(self):
+                if not hasattr(self, _doctypes):
+                    self._doctypes = set()
+                    path = "SubsetSelection/UserSelect/UserSelectDoctype"
+                    for node in self.__node.findall(path):
+                        doctype = Doc.get_text(node)
+                        if doctype:
+                            self._doctypes.add(doctype)
+                return self._doctypes
+
+            @property
+            def query(self):
+                if not hasattr(self, _query):
+                    node = self.__node.find("SubsetSelection/SubsetSQL")
+                    self._query = Doc.get_text(node)
+                return self._query
+
+            @property
+            def subdirectory(self):
+                if not hasattr(self, _subdirectory):
+                    node = self.__node.find("Subdirectory")
+                    self._subdirectory = Doc.get_text(node)
+                return self._subdirectory
+
+            @property
+            def filters(self):
+                if not hasattr(self, _filters):
+                    self._filters = []
+                    for node in self.__node.findall("SubsetFilters"):
+                        self._filters.append(self.FiltersWithParms(node))
+                return self._filters
+
+            class FiltersWithParms:
+                def __init__(self, node):
+                    self.__node = node
+
+                @property
+                def filters(self):
+                    if not hasattr(self, _filters):
+                        self._filters = []
+                        for node in self.__node.findall("SubsetFilter/*"):
+                            text = Doc.get_text(node)
+                            if text:
+                                if node.tag == "SubsetFilterName":
+                                    if not text.startswith("set:"):
+                                        text = "name:{}".format(text)
+                                elif node.tag != "SubsetFilterId":
+                                    err = "Unexpected filter element {}"
+                                    raise Exception(err.format(node.tag))
+                                self._filters.append(text)
+                        if not self._filters:
+                            raise Exception("No filters in group")
+                    return self._filters
+
+                @property
+                def parameters(self):
+                    if not hasattr(self, _parameters):
+                        self._parameters = dict()
+                        for node in self.__node.findall("SubsetFilterParm"):
+                            name = Doc.get_text(node.find("ParmName"))
+                            value = Doc.get_text(node.find("ParmValue"))
+                            if not value:
+                                raise Exception("parameter value missing")
+                            self._parameters[name] = value
+                    return self._parameters
