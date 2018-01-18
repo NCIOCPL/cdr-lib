@@ -219,8 +219,7 @@ class Publish:
     #---------------------------------------------------------------
     # Load the job settings from the database.  User-specified
     # documents will already have been recorded in the pub_proc_doc
-    # table, but other documents can be added through SQL or XQL
-    # queries.
+    # table, but other documents can be added through SQL queries.
     #---------------------------------------------------------------
     def __init__(self, jobId):
 
@@ -479,11 +478,10 @@ class Publish:
             # Two passes through the subset specification are required.
             # The first pass publishes documents specified by the user, and
             # builds the list of filters used for each specification.
-            # The second pass publishes the documents selected by queries
-            # (XML or XQL), skipping documents which have already been
-            # published by the job (either because they were picked up by
-            # another earlier query, or because they appeared in the
-            # user-specified list).
+            # The second pass publishes the documents selected by XML queries
+            # skipping documents which have already been published by the job
+            # (either because they were picked up by another earlier query,
+            # or because they appeared in the user-specified list).
             #
             # In the first pass a document on the user's list is published
             # only once, for the first specification which allows the user to
@@ -659,9 +657,9 @@ class Publish:
                 # Rename the output directory from JobNNNNN.InProcess
                 # to JobNNNNN (dest_base will be empty for push jobs).
                 # Note: The value for dest_base is always set to a directory
-                #       path in the server for every job even though a 
-                #       directory does not get created for push jobs.  
-                #       The value will be reset to an empty string in the 
+                #       path in the server for every job even though a
+                #       directory does not get created for push jobs.
+                #       The value will be reset to an empty string in the
                 #       database for push jobs downstream.
                 if dest_base and not self.__isCgPushJob():
                     try:
@@ -1207,16 +1205,17 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 # -------------------------------------------------------
                 ### if cdr.isProdHost():   # for testing only
                 if not cdr.isProdHost():
-                    self.__debugLog(\
+                    self.__debugLog(
                       "For test, switching to GateKeeper lastJobId")
                     msg += """%s: Switching to Gatekeeper lastJobId""" % (
                            time.ctime())
                     lastJobId = response.details.lastJobId
                 else:
                     if self.__params['IgnoreGKJobIDMismatch'] == 'No':
-                        raise Exception("Aborting on lastJobId CDR / CG mismatch")
+                        message = "Aborting on lastJobId CDR / CG mismatch"
+                        raise Exception(message)
                     else:
-                        self.__debugLog(\
+                        self.__debugLog(
                           "Overwrite lastJobId CDR / CG mismatch")
                         msg += """%s: Overwrite lastJobId mismatch""" % (
                                time.ctime())
@@ -2566,36 +2565,35 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                 # XXX Need to add filterDate param in future
                 maxFilterDate = None
 
-                # First filter set is run against document from database.
+                # First filter set is run against document from database;
+                # subsequent filter sets are applied to previous results.
+                args = self.__credentials, filterSet[0]
+                opts = dict(
+                    parm=paramList,
+                    docDate=maxDocDate,
+                    filterDate=maxFilterDate
+                )
                 if not filteredDoc:
-                    result = cdr.filterDoc(self.__credentials, filterSet[0],
-                                           docId = docId,
-                                           docVer = doc.getVersion(),
-                                           parm = paramList,
-                                           docDate = maxDocDate,
-                                           filterDate = maxFilterDate)
-
-                # Subsequent filter sets are applied to previous results.
+                    opts["docId"] = docId
+                    opts["docVer"] = doc.getVersion()
                 else:
-                    result = cdr.filterDoc(self.__credentials, filterSet[0],
-                                           doc = filteredDoc, parm = paramList,
-                                           docDate = maxDocDate,
-                                           filterDate = maxFilterDate)
-
-                if type(result) not in (type([]), type(())):
-                    errors = result or "Unspecified failure filtering document"
+                    opts["doc"] = filteredDoc
                     filteredDoc = None
+                try:
+                    filteredDoc, messages = cdr.filterDoc(*args, **opts)
+                    if messages:
+                        warnings += messages
+                except Exception as e:
+                    errors = "Filter failure: {}".format(e)
+                    self.__debugLog(errors)
+                if not filteredDoc:
                     break
-
-                filteredDoc = result[0]
-                if result[1]: warnings += result[1]
 
             # Validate the filteredDoc against Vendor DTD.
             if self.__validateDocs and filteredDoc:
                 pdqdtd = str(os.path.join(cdr.PDQDTDPATH,
                                           self.__params['DTDFileName']))
-                errObj = validateDoc(filteredDoc, docId = docId,
-                                                        dtd = pdqdtd)
+                errObj = validateDoc(filteredDoc, docId=docId, dtd=pdqdtd)
 
                 for error in errObj:
                     if error.level_name == 'ERROR':
@@ -2617,10 +2615,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     if destType == Publish.FILE:
                         self.__saveDoc(filteredDoc, destDir,
                                        self.__fileName, "a")
-                    # Removed because not threadsafe and never used
-                    # elif destType == Publish.DOCTYPE:
-                    #     self.__saveDoc(filteredDoc, destDir,
-                    #                    doc.getDocTypeStr(), "a")
                     else:
                         self.__saveDoc(filteredDoc, destDir,
                                        "CDR%d.xml" % docId)
@@ -2772,11 +2766,9 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     raise Exception(msg)
 
             except cdrdb.Error, info:
-                msg = 'Failure adding or updating row for document %d-%d: %s' % \
-                      (doc.getDocId(), doc.getVersion(), info[1][0])
-                #msg='Failure adding or updating row for document %d: %s' % \
-                      #(self.__jobId, info[1][0])
-                raise Exception(msg)
+                args = doc.getDocId(), doc.getVersion(), info[1][0]
+                msg = "Failure adding or updating row for document {}-{}: {}"
+                raise Exception(msg.format(*args))
 
     #------------------------------------------------------------------
     # For docs already in the pub_proc_doc table, add any messages
@@ -2811,7 +2803,7 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
     # Build a set of documents which match the queries for a subset
     # specification.  This version does not include any optimizations
     # which might be achieved using temporary tables to collapse
-    # multiple queries into one.  XXX XQL queries not yet supported.
+    # multiple queries into one.
     #------------------------------------------------------------------
     def __selectQueryDocs(self, specNode):
 
@@ -2828,13 +2820,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     cursor = self.__conn.cursor()
                     sql = self.__repParams(cdr.getTextContent(child))
                     self.__debugLog("Selecting docs using:\n%s" % sql)
-                    # cdr.callOrExec(cursor, sql, timeout=self.__timeOut)
-                    # cursor.execute(sql, timeout = self.__timeOut)
-                    # XXX FOLLOWING IS EXPERIMENTAL
-                    # XXX NOT WORKING AT PRESENT WITH MULTIPART
-                    # XXX Interim-Export NON-ACTIVE PROTOCOL QUERY
-                    # XXX IT APPARENTLY DOES NOT CREATE A cursor.description
-                    # XXX SAME PROBLEM WHEN INVOKED AS execute OR callproc.
                     if sql.strip().upper().startswith("EXEC"):
                         tempsql = sql.strip().upper()
                         if tempsql.startswith("EXECUTE "):
@@ -2890,30 +2875,6 @@ Check pushed docs</A> (of most recent publishing job)<BR>""" % (time.ctime(),
                     msg = 'Failure retrieving document IDs for job %d: %s' % \
                           (self.__jobId, info[1][0])
                     raise Exception(msg)
-
-            # Handle XQL queries.
-            elif child.nodeName == "SubsetXQL":
-                xql = self.__repParams(cdr.getTextContent(child))
-                resp = cdr.search(self.__credentials, xql)
-                if type(resp) in (type(""), type(u"")):
-                    raise Exception("XQL failure: %s" % resp)
-                for queryResult in resp:
-                    oneId  = queryResult.docId
-                    # dType = queryResult.docType # Currently unused
-                    digits = re.sub('[^\d]', '', oneId)
-                    oneId     = int(digits)
-                    if oneId in self.__alreadyPublished: continue
-                    try:
-                        doc = self.__findPublishableVersion(oneId)
-                    except Exception, arg:
-                        self.__errorCount += 1
-                        threshold = self.__errorsBeforeAborting
-                        if threshold != -1:
-                            if self.__errorCount > threshold:
-                                raise
-                        self.__addJobMessages(arg[0])
-                    docs.append(Doc(doc[0], doc[1], doc[2]))
-                    self.__alreadyPublished.add(oneId)
 
         self.__debugLog("SubsetSpecification queries selected %d documents."
                         % len(docs))
