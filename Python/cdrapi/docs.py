@@ -1473,7 +1473,7 @@ class Doc(object):
             if last_pub_ver and "query_term_pub" not in tables:
                 doc = Doc(self.session, id=doc.id, version=last_pub_ver)
                 doc.update_query_terms(tables=["query_term_pub"])
-                self.session.conn.commit()
+            self.session.conn.commit()
         except Exception as e:
             self.session.logger.exception("Reindex failed")
             self.cursor.execute("SELECT @@TRANCOUNT AS tc")
