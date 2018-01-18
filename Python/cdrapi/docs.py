@@ -1733,7 +1733,7 @@ class Doc(object):
 
         filter = "name:Revision Markup Filter"
         parms = dict(useLevel=str(level or self.revision_level))
-        doc = root or self.root
+        doc = root if root is not None else self.root
         filter_opts = dict(parms=parms, doc=doc)
         result = self.filter(filter, **filter_opts)
         return result.result_tree.getroot()
@@ -3162,19 +3162,22 @@ class Doc(object):
         # Most validation is only done for well-formed non-control documents.
         if self.root is not None and self.is_content_type:
 
+            # Create a copy with error location breadcrumbs if requested.
+            if opts.get("locators"):
+                root = self._eids = copy.deepcopy(self.root)
+                self.__insert_eids(self.eids)
+            else:
+                root = self.root
+
             # Use the filtered document for validation.
-            resolved = self.__apply_revision_markup(level=opts.get("level"))
+            resolution_opts = dict(root=root, level=opts.get("level"))
+            resolved = self.__apply_revision_markup(**resolution_opts)
             utf8 = etree.tostring(resolved, encoding="utf-8")
             validation_xml = utf8.decode("utf-8")
 
             # Find out if we've been asked to do schema and/or link validation.
             validation_types = opts.get("types", ["schema", "links"])
             if validation_types:
-
-                # Create a copy with error location breadcrumbs if requested.
-                if opts.get("locators"):
-                    self._eids = copy.deepcopy(self.root)
-                    self.__insert_eids(self.eids)
 
                 # Apply schema validation if requested.
                 if "schema" in validation_types:
@@ -3249,7 +3252,9 @@ class Doc(object):
         try:
 
             # Validate against the schema.
-            if not schema.validate(doc):
+            doc_without_eids = copy.deepcopy(doc)
+            self.__strip_eids(doc_without_eids)
+            if not schema.validate(doc_without_eids):
                 location = None
                 if self.eids is not None:
                     line_map = self.LineMap(self.eids)
