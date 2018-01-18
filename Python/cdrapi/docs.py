@@ -2158,9 +2158,11 @@ class Doc(object):
             terms.add((path, loc, value))
 
         # Do the same thing for each of the element's attributes.
+        namespace = "{{{}}}".format(Doc.NS)
         for name in node.attrib:
-            full_attr_path = "{}/@{}".format(path, name)
-            wild_attr_path = "//@{}".format(name)
+            prefixed_name = name.replace(namespace, "cdr:")
+            full_attr_path = "{}/@{}".format(path, prefixed_name)
+            wild_attr_path = "//@{}".format(prefixed_name)
             if full_attr_path in paths or wild_attr_path in paths:
                 value = node.attrib[name]
                 if len(value) > max_length:
