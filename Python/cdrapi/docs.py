@@ -1317,6 +1317,10 @@ class Doc(object):
             modifier = modification.user.name
         val_date = self.make_xml_date_string(self.val_date)
         doc_control = etree.Element("CdrDocCtl")
+        ready = "Y" if self.ready_for_review else "N"
+        blocked = "Y" if self.active_status == self.BLOCKED else "N"
+        doc_control.set("readyForReview", ready)
+        doc_control.set("blocked", blocked)
         control_info = [
             ("DocTitle", self.title),
             ("DocActiveStatus", self.active_status),
@@ -2791,9 +2795,10 @@ class Doc(object):
             comment = comment[:self.MAX_COMMENT_LEN-4] + " ..."
 
         # Assemble the values for the `all_docs` table row.
+        active_status = opts.get("active_status", self.active_status)
         fields = {
             "val_status": self.val_status or self.UNVALIDATED,
-            "active_status": self.active_status or self.ACTIVE,
+            "active_status": active_status or self.ACTIVE,
             "doc_type": self.doctype.id,
             "title": title,
             "xml": self.xml,
