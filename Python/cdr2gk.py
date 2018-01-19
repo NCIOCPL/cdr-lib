@@ -458,7 +458,7 @@ class Response:
         return u"".join(pieces)
 
 
-def logString(command_type, value, **opts):
+def _log(command_type, value, **opts):
     """
     Optionally write to the log file if `DEBUGLEVEL` is greater than zero
 
@@ -530,11 +530,11 @@ def sendRequest(body, **opts):
     if DEBUGLEVEL > 1:
         etree.dump(request)
     request_bytes = etree.tostring(request, encoding="utf-8")
-    logString("REQUEST", request_bytes)
+    host = opts.get("host") or HOST
+    _log("REQUEST", request_bytes, host=host)
     tries = MAX_RETRIES
     response = None
     scheme = opts.get("scheme") or SCHEME
-    host = opts.get("host") or HOST
     application = opts.get("app") or APPLICATION
     url = "{}://{}{}".format(scheme, host, application)
     headers = dict(HEADERS)
@@ -549,19 +549,19 @@ def sendRequest(body, **opts):
             wait = (MAX_RETRIES + 1 - tries) * RETRY_MULTIPLIER
             args = tries, wait
             message = "{} retries left; waiting {:f} seconds".format(*args)
-            logString("SEND REQUEST", message, force=True)
+            _log("SEND REQUEST", message, force=True, host=host)
             time.sleep(wait)
             tries -= 1
     if response is None:
         msg = "tried to connect {} times unsuccessfully".format(MAX_RETRIES)
         raise Exception(msg)
     if not response.ok:
-        logString("HTTP ERROR", response.content)
+        _log("HTTP ERROR", response.content, host=host)
         resp = "(occurred at {}) ({})".format(time.ctime(), response.text)
         args = response.status_code, response.reason, resp
         message = "HTTP error: {:d} ({}) {}".format(*args)
         raise Exception(message)
-    logString("RESPONSE", response.content)
+    _log("RESPONSE", response.content, host=host)
     return response.content
 
 
