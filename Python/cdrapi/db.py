@@ -51,6 +51,7 @@ def connect(**opts):
       tier - tier name string (e.g., 'PROD') or Tier object
       database - initial db for the connection (default Query.DB)
       timeout - time to wait before giving up (default Query.DEFAULT_TIMEOUT)
+      autocommit - if True, don't wrap db writes in transactions
     """
 
     tier = opts.get("tier") or settings.Tier()
@@ -71,7 +72,8 @@ def connect(**opts):
         "Timeout": opts.get("timeout", Query.DEFAULT_TIMEOUT)
     }
     connection_string = ";".join(["{}={}".format(*p) for p in parms.items()])
-    return adodbapi.connect(connection_string, timeout=parms["Timeout"])
+    opts = dict(timeout=parms["Timeout"], autocommit=opts.get("autocommit"))
+    return adodbapi.connect(connection_string, **opts)
 
 
 class Query:
