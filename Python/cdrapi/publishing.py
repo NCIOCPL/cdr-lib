@@ -217,7 +217,10 @@ class Job:
     @property
     def parms(self):
         """
-        Name/value pairs overriding the control doc's parameters
+        Dictionary of parameters for the job
+
+        Default values from the control document. Some may be overridden
+        for this job.
         """
 
         if not hasattr(self, "_parms"):
@@ -654,7 +657,7 @@ class Job:
 
                 @property
                 def filters(self):
-                    if not hasattr(self, _filters):
+                    if not hasattr(self, "_filters"):
                         self._filters = []
                         for node in self.__node.findall("SubsetFilter/*"):
                             text = Doc.get_text(node)
@@ -672,7 +675,7 @@ class Job:
 
                 @property
                 def parameters(self):
-                    if not hasattr(self, _parameters):
+                    if not hasattr(self, "_parameters"):
                         self._parameters = dict()
                         for node in self.__node.findall("SubsetFilterParm"):
                             name = Doc.get_text(node.find("ParmName"))
