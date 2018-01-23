@@ -308,6 +308,7 @@ class Job:
                         if Doc.get_text(node) == name:
                             parent = node.getparent()
                             self._subsystem = Job.Subsystem(parent, name)
+                            break
         return self._subsystem
 
     @property
