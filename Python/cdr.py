@@ -2223,7 +2223,7 @@ def valDoc(credentials, doctype, **opts):
             xml = get_text(doc.find("CdrDocXml"))
             level = doc.get("RevisionFilterLevel")
             if level:
-                validation_opts["revision_filter_level"] = level
+                validation_opts["level"] = level
             doc = APIDoc(session, xml=xml, doctype=doctype)
         doc.validate(**validation_opts)
         response = doc.legacy_validation_response(locators)
