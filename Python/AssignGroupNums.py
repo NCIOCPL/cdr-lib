@@ -1,4 +1,5 @@
-import sys, re, time, cdr, cdrdb
+import sys, re, time, cdr
+from cdrapi import db as cdrdb
 
 #----------------------------------------------------------------------
 # class GroupNums
@@ -62,7 +63,7 @@ class GroupNums:
         self.__jobNum = jobNum
 
         # Read only access to the database
-        self.__conn   = cdrdb.connect('CdrGuest')
+        self.__conn   = cdrdb.connect(user='CdrGuest')
         self.__cursor = self.__conn.cursor()
 
         # Set of document IDs for all new documents (i.e., not on Cancer.gov)
@@ -98,7 +99,7 @@ SELECT id
         try:
             self.__cursor.execute(qry)
             self.__newDocs = set([row[0] for row in self.__cursor.fetchall()])
-        except cdrdb.Error, info:
+        except cdrdb.Error as info:
             raise cdr.Exception(
                 "GroupNums: Database error fetching list of newly published "
                 "docs in job %d: %s" % (jobNum, str(info)))
@@ -113,7 +114,7 @@ SELECT id
         try:
             self.__cursor.execute(qry)
             docList = [row[0] for row in self.__cursor.fetchall()]
-        except cdrdb.Error, info:
+        except cdrdb.Error as info:
             raise cdr.Exception(
              "GroupNums: Database error fetching list of docs in job %d: %s" %
                 (jobNum, str(info)))
@@ -194,7 +195,7 @@ SELECT id
                   "GroupNums: Unable to fetch xml for doc %d, rowcount=%d" %
                    (docId, len(rows)))
             return rows[0][0]
-        except cdrdb.Error, info:
+        except cdrdb.Error as info:
             raise cdr.Exception(
              "GroupNums: Database error fetching list of docs in job %d: %s" %
                 (jobNum, str(info)))
@@ -331,5 +332,5 @@ if __name__ == "__main__":
     for docId in gn.getAllDocs():
         print("ID: %7d  isNew=%s groupNum=%d" % (docId, gn.isDocNew(docId),
                                                  gn.getDocGroupNum(docId)))
-    print "Group IDs: %s" % str(gn.getGroupIds())
+    print("Group IDs: %s" % str(gn.getGroupIds()))
 

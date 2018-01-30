@@ -5428,40 +5428,43 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
         bodyType   - subtype for MIMEText object (e.g., 'plain', 'html')
         attachments - optional sequence of EmailAttachment objects
     """
-    import smtplib
+
     if not recips:
         raise Exception("sendMail: no recipients specified")
     if type(recips) not in (tuple, list):
         raise Exception("sendMail: recipients must be a sequence of "
                         "email addresses")
-    recips = [recip.encode('US-ASCII') for recip in recips]
-    sender = sender.encode('US-ASCII')
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.header import Header as EmailHeader
 
-    from email.MIMEText import MIMEText
-    from email.Header   import Header as EmailHeader
-
-    # The Header class will try US-ASCII first, then the charset we
-    # specify, then fall back to UTF-8.
-    if type(subject) != unicode:
-        subject = unicode(subject, 'utf-8')
-    subject = EmailHeader(subject, 'ISO-8859-1')
+    if not isinstance(sender, unicode):
+        sender = sender.decode("utf-8")
+    if not isinstance(subject, unicode):
+        subject = subject.decode("utf-8")
+    if not isinstance(body, unicode):
+        body = body.decode("utf-8")
+    recipients = []
+    for recip in recips:
+        if not isinstance(recip, unicode):
+            recip = recip.decode("utf-8")
+        recipients.append(recip)
+    subject = EmailHeader(subject, "utf-8")
 
     # The charset for the body must be set explicitly.
-    if type(body) != unicode:
-        body = unicode(body, 'utf-8')
-    encodedBody = None
-    for charset in ('US-ASCII', 'ISO-8859-1', 'UTF-8'):
+    encoded_body = None
+    for charset in ("US-ASCII", "ISO-8859-1", "UTF-8"):
         try:
-            encodedBody = body.encode(charset)
+            encoded_body = body.encode(charset)
         except UnicodeError:
             pass
         else:
             break
-    if encodedBody is None:
+    if encoded_body is None:
         raise Exception("sendMailMime: failure determining body charset")
 
     # Create the message object.
-    message = MIMEText(encodedBody, bodyType, charset)
+    message = MIMEText(encoded_body, bodyType, charset)
 
     # Add attachments if present.
     if attachments:
@@ -5474,21 +5477,21 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
         message = wrapper
 
     # Plug in the headers.
-    message['From']    = sender
-    message['To']      = ",\n  ".join(recips)
-    message['Subject'] = subject
+    message["From"] = sender
+    message["To"] = ",\n  ".join(recipients)
+    message["Subject"] = subject
 
     # Send it
     try:
         server = smtplib.SMTP(SMTP_RELAY)
-        server.sendmail(sender, recips, message.as_string())
+        server.sendmail(sender, recipients, message.as_string())
         server.quit()
 
     except Exception as e:
 
         # Log the error before re-throwing an exception.
         msg = "sendMail failure: %s" % e
-        logwrite(msg, tback = True)
+        logwrite(msg, tback=True)
         raise Exception(msg)
 
 #----------------------------------------------------------------------

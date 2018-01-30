@@ -3,6 +3,7 @@ Manage CDR publishing jobs
 """
 
 import datetime
+import threading
 from six import iteritems
 from cdrapi.db import Query
 from cdrapi.docs import Doc
@@ -108,7 +109,7 @@ class Job:
                 query = Query("pub_proc_doc", "doc_id", "doc_version")
                 query.where(query.Condition("pub_proc", self.id))
                 for doc_id, version in query.execute(self.cursor).fetchall():
-                    docs.append(Doc(self.session, doc_id, version))
+                    docs.append(Doc(self.session, id=doc_id, version=version))
             else:
                 cutoff = self.parms.get("MaxDocUpdatedDate")
                 if not cutoff or cutoff == "JobStartDateTime":
@@ -174,6 +175,8 @@ class Job:
 
         if not hasattr(self, "_id"):
             self._id = self.__opts.get("id")
+            if self._id:
+                self._id = int(self._id)
         return self._id
 
     @property
@@ -209,7 +212,7 @@ class Job:
                 row = query.execute(self.cursor).fetchone()
                 if not row:
                     raise Exception("Job {} not found".format(self.id))
-                self._output_dir = row.output_dir
+                self._output_dir = row.output_dir.replace("\\", "/")
             else:
                 self._output_dir = None
         return self._output_dir
@@ -226,7 +229,7 @@ class Job:
         if not hasattr(self, "_parms"):
             if self.id:
                 query = Query("pub_proc_parm", "parm_name", "parm_value")
-                query.where(query.Condition("id", self.id))
+                query.where(query.Condition("pub_proc", self.id))
                 self._parms = {}
                 for name, value in query.execute(self.cursor).fetchall():
                     self._parms[name] = value
@@ -238,7 +241,7 @@ class Job:
                 undefined = set(requested) - set(defined)
                 if undefined:
                     messages = "Paramater(s) {} undefined"
-                    raise Exception(message.format(", ".join(undefined)))
+                    raise Exception(messages.format(", ".join(undefined)))
                 defined.update(requested)
                 self.session.logger.info("job parms: %r", defined)
                 self._parms = defined
@@ -272,7 +275,7 @@ class Job:
             if self.id:
                 query = Query("pub_proc", "started")
                 query.where(query.Condition("id", self.id))
-                row - query.execute(self.cursor).fetchone()
+                row = query.execute(self.cursor).fetchone()
                 if not row:
                     raise Exception("Job {} not found".format(self.id))
                 self._started = row.started
@@ -536,6 +539,17 @@ class Job:
             self.__name = name
 
         @property
+        def action(self):
+            """
+            Used to determine whether the current user can create this job
+            """
+
+            if not hasattr(self, "_action"):
+                path = "SubsetActionName"
+                self._action = Doc.get_text(self.__node.find(path))
+            return self._action
+
+        @property
         def name(self):
             """
             String for the name by which the subsystem is identified
@@ -579,17 +593,6 @@ class Job:
             return self._parms
 
         @property
-        def action(self):
-            """
-            Used to determine whether the current user can create this job
-            """
-
-            if not hasattr(self, "_action"):
-                path = "SubsetActionName"
-                self._action = Doc.get_text(self.__node.find(path))
-            return self._action
-
-        @property
         def script(self):
             """
             Script for custom job processing
@@ -612,6 +615,41 @@ class Job:
                     self._specifications.append(self.Specification(node))
             return self._specifications
 
+        @property
+        def threshold(self):
+            """
+            Global threshold for errors, independent of any document type
+
+            If None, the job runs to completion no matter how many errors
+            are encountered.
+            """
+
+            if not hasattr(self, "_threshold"):
+                abort_on_error = self.options.get("AbortOnError")
+                if abort_on_error is None or abort_on_error == "No":
+                    self._threshold = None
+                elif abort_on_error == "Yes":
+                    self._threshold = 0
+                else:
+                    self._threshold = int(abort_on_error)
+            return self._threshold
+
+        @property
+        def thresholds(self):
+            """
+            Per-doctype error thresholds
+
+            If exceeded, will cause the job to fail.
+            """
+
+            if not hasattr(self, "_thresholds"):
+                self._thresholds = dict()
+                path = "PerDoctypeErrorThresholds/PerDoctypeErrorThreshold"
+                for node in self.__node.findall(path):
+                    doctype = Doc.get_text(node.find("Doctype"))
+                    threshold = int(Doc.get_text(node.find("MaxErrors")))
+                    self._thresholds[doctype] = threshold
+            return self._thresholds
 
         class Specification:
             """
@@ -621,7 +659,7 @@ class Job:
 
             @property
             def user_select_doctypes(self):
-                if not hasattr(self, _doctypes):
+                if not hasattr(self, "_doctypes"):
                     self._doctypes = set()
                     path = "SubsetSelection/UserSelect/UserSelectDoctype"
                     for node in self.__node.findall(path):
@@ -630,27 +668,61 @@ class Job:
                             self._doctypes.add(doctype)
                 return self._doctypes
 
+            def select_documents(self, control):
+                """
+                Select documents selected by the spec's query
+                """
+
+                documents = []
+                if self.query is not None:
+                    sql = self.query
+                    for name in control.job.parms:
+                        if "?" not in sql:
+                            break
+                        placeholder = "?{}?".format(name)
+                        value = control.job.parms[name]
+                        if name == "MaxDocUpdatedDate":
+                            if value == "JobStartDateTime":
+                                value = str(control.job.started)[:19]
+                        elif name == "NumDocs" and not value.strip():
+                            value = "999999"
+                        sql = sql.replace(placeholder, value)
+                    control.logger.info("Selecting for query\n%s\n", sql)
+                    cursor = control.conn.cursor()
+                    cursor.execute(sql)
+                    for row in cursor.fetchall():
+                        doc_id = row[0]
+                        if row[0] not in control.processed:
+                            version = row[1] if len(row) > 1 else "lastp"
+                            documents.append(self.Document(doc_id, version))
+                return documents
+
             @property
             def query(self):
-                if not hasattr(self, _query):
+                if not hasattr(self, "_query"):
                     node = self.__node.find("SubsetSelection/SubsetSQL")
                     self._query = Doc.get_text(node)
                 return self._query
 
             @property
             def subdirectory(self):
-                if not hasattr(self, _subdirectory):
+                if not hasattr(self, "_subdirectory"):
                     node = self.__node.find("Subdirectory")
                     self._subdirectory = Doc.get_text(node)
                 return self._subdirectory
 
             @property
             def filters(self):
-                if not hasattr(self, _filters):
+                if not hasattr(self, "_filters"):
                     self._filters = []
                     for node in self.__node.findall("SubsetFilters"):
                         self._filters.append(self.FiltersWithParms(node))
                 return self._filters
+
+            class Document:
+                def __init__(self, doc_id, doc_version):
+                    self.id = doc_id
+                    self.version = doc_version
 
             class FiltersWithParms:
                 def __init__(self, node):
@@ -680,8 +752,6 @@ class Job:
                         self._parameters = dict()
                         for node in self.__node.findall("SubsetFilterParm"):
                             name = Doc.get_text(node.find("ParmName"))
-                            value = Doc.get_text(node.find("ParmValue"))
-                            if not value:
-                                raise Exception("parameter value missing")
+                            value = Doc.get_text(node.find("ParmValue"), "")
                             self._parameters[name] = value
                     return self._parameters

@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from adodbapi import Binary
+import objgraph
 import dateutil.parser
 from lxml import etree
 from cdrapi.db import Query
@@ -42,6 +43,7 @@ class Doc(object):
 
     Read-only attributes:
       active_status - 'A' if the document is active; 'I' if inactive
+      blob_date - date/time the document's blob was first saved
       cdr_id - standard string representation for the document's id
       comment - description of this version of the document
       creation - `Doc.Action` object for document creation information
@@ -49,7 +51,9 @@ class Doc(object):
       eids - copy of document error location IDs
       errors - sequence of `Error` objects
       errors_node - legacy DOM node for the document's errors
+      export_filename - file name used by export publishing jobs
       first_pub - date/time the document was first published (if known)
+      first_pub_knowable - False for really old legacy documents
       frag_ids - set of unique IDs for candidate link target in this doc
       hard_error_count - number of real errors (not warnings or info messages)
       highest_fragment_id - highest cdr:id attribute value in the form _\d+
@@ -130,6 +134,7 @@ class Doc(object):
     # Error messages for exceptions raised when a version can't be found
     NOT_VERSIONED = "document not versioned"
     NO_PUBLISHABLE_VERSIONS = "no publishable version found"
+    #memory_log = open("c:/tmp/memory.log", "a")
 
     def __init__(self, session, **opts):
         """
@@ -214,6 +219,34 @@ class Doc(object):
 
     @blob.setter
     def blob(self, value): self._blob = value
+
+    @property
+    def blob_date(self):
+        """
+        Date/time the document's blob was last changed
+
+        If the blob has been versioned, find the date of the earliest
+        version with this blob. Otherwise, return the date the
+        document was last saved, assuming it was saved with a blob
+        (if not, return None).
+        """
+
+        table = "version_blob_usage" if self.version else "doc_blob_usage"
+        query = Query(table, "blob_id")
+        query.where(query.Condition("doc_id", self.id))
+        if self.version:
+            query.where(query.Condition("doc_version", self.version))
+        row = query.execute(self.cursor).fetchone()
+        if not row:
+            return None
+        blob_id = row.blob_id
+        query = Query("version_blob_usage u", "MIN(v.dt) AS dt")
+        query.join("doc_version v", "v.id = u.doc_id", "v.num = u.doc_version")
+        query.where(query.Condition("doc_id", self.id))
+        row = query.execute(self.cursor).fetchone()
+        if row:
+            return row.dt
+        return self.last_saved
 
     @property
     def cdr_id(self):
@@ -373,6 +406,33 @@ class Doc(object):
         return node
 
     @property
+    def export_filename(self):
+        """
+        File name used for publishing export jobs.
+        """
+
+        if not hasattr(self, "_export_filename"):
+            suffix = None
+            if self.doctype.name == "Media":
+                for node in self.root.findall("PhysicalMedia"):
+                    for child in node.findall("ImageData/ImageEncoding"):
+                        suffix = self.get_text(child)
+                    if suffix is None:
+                        for child in node.findall("SoundData/SoundEncoding"):
+                            suffix = self.get_text(child)
+                doc_id = self.cdr_id
+            else:
+                suffix = "xml"
+                doc_id = "CDR{:d}".format(self.id)
+            if suffix is None:
+                raise Exception("Encoding missing or unsupported")
+            suffix = suffix.lower()
+            if suffix == "jpeg":
+                suffix = "jpg"
+            self._export_filename = "{}.{}".format(doc_id, suffix)
+        return self._export_filename
+
+    @property
     def first_pub(self):
         """
         Date/time the document was first published if known
@@ -387,6 +447,24 @@ class Doc(object):
         if isinstance(date, datetime.datetime):
             return date.replace(microsecond=0)
         return date
+
+    @property
+    def first_pub_knowable(self):
+        """
+        Flag indicating whether we can know when the doc was first published
+
+        Will be False for really old (pre-CDR) documents
+        """
+
+        if not hasattr(self, "_first_pub_knowable"):
+            self._first_pub_knowable = False
+            if self.id:
+                query = Query("document", "first_pub_knowable")
+                query.where(query.Condition("id", self.id))
+                row = query.execute(self.cursor).fetchone()
+                if row and row.first_pub_knowable == "Y":
+                    self._first_pub_knowable = True
+        return self._first_pub_knowable
 
     @property
     def frag_ids(self):
@@ -1084,6 +1162,8 @@ class Doc(object):
           by the XSL/T engine
         """
 
+        #Doc.memory_log.write("top of filter({})\n".format(self.cdr_id))
+        #objgraph.show_growth(file=Doc.memory_log)
         args = self.id, filters, opts
         self.session.log("Doc.filter({!r}, {!r}, {!r})".format(*args))
         for spec in filters:
@@ -1109,7 +1189,9 @@ class Doc(object):
                     self.session.logger.debug("applying filter %d", f.doc_id)
                 else:
                     self.session.logger.debug("applying in-memory filter")
+                #Doc.memory_log.write("__apply_filter({})\n".format(self.cdr_id))
                 result = self.__apply_filter(f.xml, doc, parser, **parms)
+                #objgraph.show_growth(file=Doc.memory_log)
                 doc = result.result_tree
                 self.session.logger.debug("filter result: %r", str(doc))
                 for entry in result.error_log:
@@ -1123,6 +1205,9 @@ class Doc(object):
         finally:
             Resolver.local.docs.pop()
             self.session.logger.debug("filter() finished")
+        #Doc.memory_log.write("bottom of filter({})\n".format(self.cdr_id))
+        #objgraph.show_growth(file=Doc.memory_log)
+        #Doc.memory_log.flush()
 
     def get_filter(self, doc_id, **opts):
         """
@@ -1192,6 +1277,8 @@ class Doc(object):
             with self.session.cache.filter_lock:
                 if key not in self.session.cache.filters:
                     self.session.cache.filters[key] = Filter(doc.id, xml)
+                    size = len(self.session.cache.filters)
+                    self.session.logger.info("Filter cache size: %d", size)
                 return self.session.cache.filters[key]
         else:
             return Filter(doc.id, xml)
@@ -3690,8 +3777,8 @@ class Doc(object):
             Return a human-readable string for the `Error` object
             """
 
-            args = self.location, self.type, self.level, self.message
-            return "{} [{} {}] {}".format(*args)
+            args = self.location or "", self.type, self.level, self.message
+            return "{} [{} {}] {}".format(*args).strip()
 
 
     class FilterResult:
@@ -4536,6 +4623,8 @@ class Term:
 
     This class is used for XSL/T filtering callbacks.
     """
+
+    MAX_DEPTH = 20
 
     def __init__(self, session, doc_id, depth=0):
         """
