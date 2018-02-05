@@ -963,7 +963,7 @@ class Doc(object):
         # Add the new mapping row.
         fields = dict(
             usage=usage_id,
-            value=str(value),
+            value=unicode(value),
             doc_id=self.id,
             usr=self.session.user_id,
             last_mod=datetime.datetime.now().replace(microsecond=0),
