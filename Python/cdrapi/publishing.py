@@ -31,7 +31,7 @@ class Job:
       docs - list of documents requested or published for this job
       email - string for the email address to which processing notifications
               are sent
-      force - If true, this is a hotfix/remove, so bypass version checks
+      force - If true, this is a hotfix/remove, so bypass 'Active' checks
       permissive - flag to suppress the requirement for publishable doc
                    versions
       no_output - Flag indicating that document output won't be written to disk
@@ -54,7 +54,7 @@ class Job:
           email - address to which reports should be sent for new job
           no_output - if True, job won't write published docs to disk
           permissive - if True, don't require documents to be "publishable"
-          force - if True, this is a hotfix-remove job; any doc version will do
+          force - if True, this is a hotfix-remove job; doc needn't be active
         """
 
         self.__session = session
@@ -101,6 +101,12 @@ class Job:
         the documents explicitly requested at job creation time, but will
         not yet have the documents which will be picked up by the control
         document's query logic for this job type.
+
+        It might seem redundant to create new Doc objects for an unsaved
+        job's documents, but in most cases the Doc objects passed to the
+        constructor will only have document IDs, and no version information.
+        We can't really get the date/time cutoff used to pick the right
+        version without creating a new object.
         """
 
         if not hasattr(self, "_docs"):
@@ -120,9 +126,6 @@ class Job:
                     if self.force:
                         opts["version"] = "last"
                     elif requested.version:
-                        if requested.active_status != "A":
-                            message = "{} is blocked".format(requested.cdr_id)
-                            raise Exception(message)
                         if not (self.permissive or requested.publishable):
                             args = requested.cdr_id, requested.version
                             message = "{}V{} is not publishable".format(*args)
@@ -131,7 +134,10 @@ class Job:
                     else:
                         opts["version"] = "lastp"
                     try:
-                        docs.append(Doc(self.session, **opts))
+                        doc = Doc(self.session, **opts)
+                        if not self.force and doc.active_status != "A":
+                            raise Exception("{} is blocked".format(doc.id))
+                        docs.append(doc)
                     except Exception as e:
                         raise Exception("{}: {}".format(requested.cdr_id, e))
             self._docs = docs
@@ -393,9 +399,6 @@ class Job:
         if pending is not None:
             message = "Job {} of this publication type is still pending"
             raise Exception(message.format(pending))
-        if self.subsystem.options.get("Destination") is None:
-            message = "Destination option not specified in {!r} subsystem"
-            raise Exception(message.format(self.subsystem.name))
 
         # Pass the work on to a helper method to make it easy to roll back.
         try:
@@ -447,7 +450,6 @@ class Job:
         job_id = self.cursor.fetchone().id
 
         # Update the `output_dir` column now that we have the new job ID.
-        # Will be blanked out later in the database for "no output" jobs.
         base_dir = self.subsystem.options.get("Destination", "").rstrip("\\/")
         if base_dir:
             self._output_dir = "{}/Job{}".format(base_dir, job_id)
