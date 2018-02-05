@@ -639,8 +639,6 @@ class Control:
             media_bytes = fp.read()
         encoded = base64encode(media_bytes)
         template = "<Media Type='{}' Size='{:d}' Encoding='base64'>{}</Media>"
-        # TODO: REMOVE NEXT LINE (DEVELOPMENT ONLY)
-        template += "<!-- {} -->".format(datetime.datetime.now())
         return template.format(media_type, len(media_bytes), encoded)
 
     def wait_for_approval(self):
