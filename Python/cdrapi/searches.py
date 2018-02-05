@@ -191,7 +191,7 @@ class Search:
                 n += 1
                 query.join("query_term " + alias, alias + ".doc_id = d.id")
                 query.where(query.Condition(alias + ".path", test.path))
-                column = "{}.{}".format(alias, test.column)
+                column = u"{}.{}".format(alias, test.column)
 
             # Otherwise, the test is looking for matching title strings.
             else:
@@ -281,16 +281,16 @@ class Search:
             else:
                 raise ValueError("unsupported path {!r}".format(path))
             if operator == "contains":
-                self.value = "%{}%".format(value)
+                self.value = u"%{}%".format(value)
                 self.operator = "LIKE"
             elif operator == "begins":
-                self.value = "{}%".format(value)
+                self.value = u"{}%".format(value)
                 self.operator = "LIKE"
             else:
                 self.value = value
                 self.operator = self.OPS.get(operator)
                 if not self.operator:
-                    message = "unsupported operator {!r}".format(operator)
+                    message = u"unsupported operator {!r}".format(operator)
                     raise ValueError(message)
 
 
@@ -358,7 +358,7 @@ class QueryTermDef:
                 query.where(query.Condition("name", self.rule))
                 row = query.execute(self.session.cursor).fetchone()
                 if not row:
-                    message = "Unknown query term rule: {}".format(self.rule)
+                    message = u"Unknown query term rule: {}".format(self.rule)
                     raise Exception(message)
                 self._rule_id = row.id
         return self._rule_id
