@@ -177,8 +177,9 @@ class Control:
           1. Export any manually selected documents
           2. Export any query-selected documents
           3. Write the media manifest if appropriate
-          4. Rename the output directory
-          5. Create push job if appropriate
+          4. Check error thresholds
+          5. Rename the output directory
+          6. Create push job if appropriate
         """
 
         # 0. Housekeeping preparation
@@ -191,14 +192,17 @@ class Control:
         # 2. Export any query-selected document
         self.publish_query_selected_documents()
 
-        # 3. Write the media manifest if appropriate
+        # 3. Make sure we haven't blown any error threshold limits.
+        self.check_error_thresholds()
+
+        # 4. Write the media manifest if appropriate
         self.write_media_manifest()
 
-        # 4. Rename the output directory
+        # 5. Rename the output directory
         if os.path.isdir(self.work_dir):
             os.rename(self.work_dir, self.output_dir)
 
-        # 5. Create the push job if appropriate
+        # 6. Create the push job if appropriate
         if not self.job.no_output:
             if self.job.parms.get("ReportOnly") != "Yes":
                 self.create_push_job()
@@ -341,6 +345,35 @@ class Control:
         elapsed = (datetime.datetime.now() - start).total_seconds()
         args = len(self.docs), spec.name, elapsed
         self.logger.info("exported %d %s docs in %f seconds", *args)
+
+    def check_error_thresholds(self):
+        """
+        Make sure we haven't exceeded error thresholds
+        """
+
+        query = cdrdb.Query("pub_proc_doc d", "t.name", "COUNT(*) AS errors")
+        query.join("doc_version v", "v.id = d.doc_id", "v.num = d.doc_version")
+        query.join("doc_type t", "t.id = v.doc_type")
+        query.where("d.failure = 'Y'")
+        query.where(query.Condition("d.pub_proc", self.job.id))
+        query.group("t.name")
+        rows = query.execute(self.cursor).fetchall()
+        total_errors = 0
+        errors = dict([tuple(row) for row in rows])
+        for doctype in errors:
+            total_errors += errors[doctype]
+            threshold = self.job.subsystem.thresholds.get(doctype)
+            if threshold is not None and threshold < errors[doctype]:
+                args = threshold, doctype, errors[doctype]
+                message = "{:d} {} errors allowed; {:d} found".format(*args)
+                raise Exception(message)
+        threshold = self.job.subsystem.threshold
+        if threshold is not None and threshold < total_errors:
+            args = threshold, total_errors
+            message = "{:d} total errors allowed; {:d} found".format(*args)
+            raise Exception(message)
+        if len(self.processed) - total_errors < 1:
+            raise Exception("All documents failed export")
 
     def write_media_manifest(self):
         """
