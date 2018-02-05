@@ -224,6 +224,9 @@ class Job:
 
         Default values from the control document. Some may be overridden
         for this job.
+
+        Have to strip unwanted space from the values; see
+        https://sourceforge.net/p/adodbapi/bugs/27/
         """
 
         if not hasattr(self, "_parms"):
@@ -232,6 +235,8 @@ class Job:
                 query.where(query.Condition("pub_proc", self.id))
                 self._parms = {}
                 for name, value in query.execute(self.cursor).fetchall():
+                    if value is not None:
+                        value = value.strip() # bug in adodbapi
                     self._parms[name] = value
             else:
                 if not self.subsystem:
@@ -452,11 +457,15 @@ class Job:
         names = "pub_proc", "id", "parm_name", "parm_value"
         args = ", ".join(names), ", ".join(["?"] * len(names))
         insert = "INSERT INTO pub_proc_parm ({}) VALUES ({})".format(*args)
+        self.session.logger.debug("storing parms %s", self.parms)
         for i, name in enumerate(self.parms):
+            self.session.logger.info("parms[%r] = %r", name, self.parms[name])
             try:
                 value = unicode(self.parms[name])
+                self.session.logger.debug("unicode value is %r", value)
             except:
                 value = self.parms[name].decode("utf-8")
+                self.session.logger.debug("decoded value is %r", value)
             values = job_id, i + 1, name, value
             self.cursor.execute(insert, values)
 
