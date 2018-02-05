@@ -10,7 +10,6 @@ import sys
 import threading
 import time
 from adodbapi import Binary
-import objgraph
 import dateutil.parser
 from lxml import etree
 from cdrapi.db import Query
@@ -1162,8 +1161,6 @@ class Doc(object):
           by the XSL/T engine
         """
 
-        #Doc.memory_log.write("top of filter({})\n".format(self.cdr_id))
-        #objgraph.show_growth(file=Doc.memory_log)
         args = self.id, filters, opts
         self.session.log("Doc.filter({!r}, {!r}, {!r})".format(*args))
         for spec in filters:
@@ -1189,9 +1186,7 @@ class Doc(object):
                     self.session.logger.debug("applying filter %d", f.doc_id)
                 else:
                     self.session.logger.debug("applying in-memory filter")
-                #Doc.memory_log.write("__apply_filter({})\n".format(self.cdr_id))
                 result = self.__apply_filter(f.xml, doc, parser, **parms)
-                #objgraph.show_growth(file=Doc.memory_log)
                 doc = result.result_tree
                 self.session.logger.debug("filter result: %r", str(doc))
                 for entry in result.error_log:
@@ -1205,9 +1200,6 @@ class Doc(object):
         finally:
             Resolver.local.docs.pop()
             self.session.logger.debug("filter() finished")
-        #Doc.memory_log.write("bottom of filter({})\n".format(self.cdr_id))
-        #objgraph.show_growth(file=Doc.memory_log)
-        #Doc.memory_log.flush()
 
     def get_filter(self, doc_id, **opts):
         """
