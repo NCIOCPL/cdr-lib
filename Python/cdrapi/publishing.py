@@ -667,6 +667,13 @@ class Job:
                 self.__node = node
 
             @property
+            def name(self):
+                if not hasattr(self, "_name"):
+                    node = self.__node.find("SpecificationName")
+                    self._name = Doc.get_text(node)
+                return self._name
+
+            @property
             def user_select_doctypes(self):
                 if not hasattr(self, "_doctypes"):
                     self._doctypes = set()
