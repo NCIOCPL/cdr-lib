@@ -448,10 +448,14 @@ class Job:
 
         # Update the `output_dir` column now that we have the new job ID.
         # Will be blanked out later in the database for "no output" jobs.
-        base_dir = self.subsystem.options["Destination"].rstrip("\\/")
-        self._output_dir = "{}/Job{}".format(base_dir, job_id)
-        update = "UPDATE pub_proc SET output_dir = ? WHERE id = ?"
-        self.cursor.execute(update, (self.output_dir, job_id))
+        base_dir = self.subsystem.options.get("Destination", "").rstrip("\\/")
+        if base_dir:
+            self._output_dir = "{}/Job{}".format(base_dir, job_id)
+            update = "UPDATE pub_proc SET output_dir = ? WHERE id = ?"
+            self.cursor.execute(update, (self.output_dir, job_id))
+        else: # workaround for https://sourceforge.net/p/adodbapi/bugs/27/
+            update = "UPDATE pub_proc SET output_dir = '' WHERE id = ?"
+            self.cursor.execute(update, (job_id,))
 
         # Store the parameters for the job.
         names = "pub_proc", "id", "parm_name", "parm_value"

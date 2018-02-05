@@ -423,13 +423,6 @@ class Control:
         Find the corresponding export job and queue its docs for pushing to GK
         """
 
-        # Output directory inappropriate for push jobs.
-        # TODO GET RID OF THIS IN THE CONTROL DOC PUSH SUBSYSTEMS
-        job_id = self.job.id
-        update = "UPDATE pub_proc SET output_dir = '' WHERE id = ?"
-        self.cursor.execute(update, (job_id,))
-        self.conn.commit()
-
         # Find the export job we need to push.
         export_job = self.ExportJob(self)
 
@@ -440,6 +433,7 @@ class Control:
 
         # Prepare the working table, unless we're trying again for this job.
         if self.job.parms.get("RerunFailedPush") == "Yes":
+            job_id = self.job.id
             self.logger.info("Job %d reprocessing existing work queue", job_id)
         else:
             self.stage_push_job(export_job)
