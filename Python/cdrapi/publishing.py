@@ -706,6 +706,8 @@ class Job:
                                 value = str(control.job.started)[:19]
                         elif name == "NumDocs" and not value.strip():
                             value = "999999"
+                        elif name == "NumDocsPerDocType" and not value.strip():
+                            value = "999999"
                         sql = sql.replace(placeholder, value)
                     control.logger.info("Selecting for query\n%s\n", sql)
                     cursor = control.conn.cursor()
