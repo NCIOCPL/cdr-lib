@@ -4,7 +4,6 @@ Process a queued publishing job
 
 import argparse
 import base64
-import csv
 import datetime
 import glob
 import os
@@ -13,6 +12,7 @@ import subprocess
 import threading
 import time
 from lxml import etree
+import unicodecsv as csv
 import cdr
 import cdr2gk
 from cdrapi import db as cdrdb
@@ -389,8 +389,9 @@ class Control:
         if rows and os.path.isdir(self.work_dir):
             values = [(row[0], str(row[1])[:10], row[2]) for row in rows]
             path = os.path.join(self.work_dir, "media_catalog.txt")
-            with open(path, "w") as fp:
-                writer = csv.writer(fp)
+            with open(path, "wb") as fp:
+                opts = dict(encoding="utf-8", delimiter=",", quotechar='"')
+                writer = csv.writer(fp, **opts)
                 writer.writerows(values)
 
     def create_push_job(self):
