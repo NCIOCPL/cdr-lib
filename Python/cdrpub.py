@@ -129,7 +129,8 @@ class Control:
                 message = "Processing script {!r} not found".format(script)
                 raise Exception(message)
             command = "{} {:d}".format(script, self.job.id)
-            os.system(cmd)
+            self.logger.info("Launching %s", command)
+            os.system(command)
 
         # The job is an export job or a push job.
         else:
@@ -336,11 +337,15 @@ class Control:
         batchsize = cdr.getControlValue(self.PUB, name, default=default)
         self.batchsize = int(batchsize)
         name = "{}-numprocs".format(spec.name)
-        default = self.DEFAULT_NUMPROCS
+        default = self.__opts.get("numprocs") or self.DEFAULT_NUMPROCS
         numprocs = cdr.getControlValue(self.PUB, name, default=default)
         numprocs = min(int(numprocs), len(self.docs))
         if self.batchsize * numprocs > len(self.docs):
             self.batchsize = len(self.docs) / numprocs
+        if "batchsize" in self.__opts:
+            self.batchsize = self.__opts["batchsize"]
+        if "numprocs" in self.__opts:
+            numprocs = self.__opts["numprocs"]
 
         # Create a separate thread to manage each external process
         self.logger.info("Using %d parallel processes", numprocs)
@@ -1304,8 +1309,10 @@ def main():
     if args.debug:
         cdr2gk.DEBUGLEVEL = 1
         opts["level"] = "DEBUG"
-    if args.threads:
-        opts["threads"] = args.threads
+    if args.numprocs:
+        opts["numprocs"] = args.numprocs
+    if args.batchsize:
+        opts["batchsize"] = args.batchsize
     if args.output:
         opts["output-dir"] = args.output
     Control(args.job_id, **opts).publish()
