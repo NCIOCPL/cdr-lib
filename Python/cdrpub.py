@@ -70,6 +70,7 @@ class Control:
 
         self.__job_id = job_id
         self.__opts = opts
+        self.__gk_prolog_sent = False
 
     # ------------------------------------------------------------------
     # TOP-LEVEL PROCESSING METHODS.
@@ -90,6 +91,13 @@ class Control:
             self.update_status(self.FAILURE, unicode(e))
             if self.work_dir and os.path.isdir(self.work_dir):
                 os.rename(self.work_dir, self.failure_dir)
+            if self.__gk_prolog_sent:
+                args = self.job.id, "Export", 0, "abort"
+                opts = dict(host=self.job.parms.get("GKServer"))
+                response = sendJobComplete(*args, **opts)
+                if response.type != "OK":
+                    args = response.type, response.message
+                    self.logger.warning("GK abort response: %s (%s)", *args)
             self.notify("Job failed: {}".format(e))
 
     def __publish(self):
@@ -133,18 +141,20 @@ class Control:
 
             # 2. Export jobs don't have a `SubSetName` parameter.
             if "SubSetName" not in self.job.parms:
-                verb = "Exported"
                 self.export_docs()
+                verb = "Exported"
+                count = len(self.processed)
 
             # 3. Otherwise, this is a push job.
             else:
-                verb = "Pushed"
                 self.push_docs()
+                verb = "Pushed"
+                count = self.__num_pushed
 
             # Report the job's completion.
             elapsed = (datetime.datetime.now() - start).total_seconds()
-            args = verb, len(self.processed), elapsed
-            message = "{} {:d} documents in {:f} seconds".format(*args)
+            args = verb, count, elapsed
+            message = "{} {:d} documents in {:.2f} seconds".format(*args)
             if self.job.parms.get("ReportOnly") == "Yes":
                 message += " (status set to failure for 'ReportOnly' job)"
                 self.update_status(self.FAILURE, message)
@@ -286,8 +296,8 @@ class Control:
                 docs = spec.select_documents(self)
                 elapsed = (datetime.datetime.now() - start).total_seconds()
                 args = len(docs), spec.name, elapsed
-                message = "{:d} {} docs selected in {:f} seconds".format(*args)
-                self.post_message(message)
+                msg = "{:d} {} docs selected in {:.2f} seconds".format(*args)
+                self.post_message(msg)
                 self.docs = []
                 for doc in docs:
                     if doc.id not in self.processed:
@@ -344,7 +354,7 @@ class Control:
             t.join()
         elapsed = (datetime.datetime.now() - start).total_seconds()
         args = len(self.docs), spec.name, elapsed
-        self.logger.info("exported %d %s docs in %f seconds", *args)
+        self.logger.info("exported %d %s docs in %.2f seconds", *args)
 
     def check_error_thresholds(self):
         """
@@ -467,7 +477,10 @@ class Control:
 
         # Prepare the working table, unless we're trying again for this job.
         if self.job.parms.get("RerunFailedPush") == "Yes":
+            update = "UPDATE pub_proc_cg_work SET cg_job = ?"
             job_id = self.job.id
+            self.cursor.execute(update, (job_id,))
+            self.conn.commit()
             self.logger.info("Job %d reprocessing existing work queue", job_id)
         else:
             self.stage_push_job(export_job)
@@ -711,15 +724,16 @@ class Control:
             return
 
         # Make sure the GateKeeper is awake and open for business.
-        opts = dict(host=self.job.parms.get("GKServer"))
+        gkopts = dict(host=self.job.parms.get("GKServer"))
         target = self.job.parms["GKPubTarget"]
         pub_type = self.job.parms["PubType"]
         if pub_type.startswith("Hotfix"):
             pub_type = "Hotfix"
-        response = cdr2gk.initiateRequest(pub_type, target, **opts)
+        response = cdr2gk.initiateRequest(pub_type, target, **gkopts)
         if response.type != "OK":
             args = response.type, response.message
             raise Exception("GateKeeper: {} ({})".format(*args))
+        self.logger.info("GateKeeper is awake")
 
         # Make any necessary tweaks to the last push ID if on a lower tier.
         last_push = self.last_push
@@ -732,31 +746,43 @@ class Control:
 
         # Give the GateKeeper an idea of what we're about to send.
         args = self.push_desc, self.job.id, pub_type, target, last_push
-        response = cdr2gk.sendDataProlog(*args, **opts)
+        response = cdr2gk.sendDataProlog(*args, **gkopts)
         if response.type != "OK":
             args = response.type, response.message
             raise Exception("GateKeeper: {} ({})".format(*args))
+        self.logger.info("Prolog sent to GateKeeper")
+        self.__gk_prolog_sent = True
 
         # Send the GateKeeper each of the exported documents.
-        query = cdrdb.Query("pub_proc_cg_work", "id", "num", "doc_type", "xml")
+        start = datetime.datetime.now()
+        query = cdrdb.Query("pub_proc_cg_work", "id")
         query.where("xml IS NOT NULL")
         query.where(query.Condition("doc_type", self.EXCLUDED, "NOT IN"))
-        query.execute(self.cursor)
+        ids = [row.id for row in query.execute(self.cursor).fetchall()]
+        elapsed = (datetime.datetime.now() - start).total_seconds()
+        args = len(ids), elapsed
+        self.logger.info("Selected %d documents in %.2f seconds", *args)
+        start = datetime.datetime.now()
         group_nums = GroupNums(self.job.id)
-        row = self.cursor.fetchone()
-        counter = 1
-        while row:
+        elapsed = (datetime.datetime.now() - start).total_seconds()
+        args = group_nums.getDocCount(), elapsed
+        self.logger.info("Grouped %d documents in %.2f seconds", *args)
+        counter = 0
+        for doc_id in ids:
+            query = cdrdb.Query("pub_proc_cg_work", "num", "doc_type", "xml")
+            query.where(query.Condition("id", doc_id))
+            row = query.execute(self.cursor).fetchone()
             doc_type = self.GK_TYPES.get(row.doc_type, row.doc_type)
             xml = self.XMLDECL.sub("", self.DOCTYPE.sub("", row.xml))
-            group_num = group_nums.getDocGroupNum(row.id)
-            args = (self.job.id, counter, "Export", doc_type, row.id,
+            group_num = group_nums.getDocGroupNum(doc_id)
+            counter += 1
+            args = (self.job.id, counter, "Export", doc_type, doc_id,
                     row.num, group_num, xml.encode("utf-8"))
-            self.logger.info("Job %d pushing CDR%d", self.job.id, row.id)
-            response = cdr2gk.sendDocument(*args, **opts)
+            self.logger.info("Job %d pushing CDR%d", self.job.id, doc_id)
+            response = cdr2gk.sendDocument(*args, **gkopts)
             if response.type != "OK":
                 args = response.type, response.message
                 raise Exception("GateKeeper: {} ({})".format(*args))
-            counter += 1
             row = self.cursor.fetchone()
 
         # Tell the GateKeeper about the documents being removed.
@@ -768,16 +794,18 @@ class Control:
             args = self.job.id, row.id
             self.logger.info("Job %d removing blocked document CDR%d", *args)
             doc_type = self.GK_TYPES.get(row.doc_type, row.doc_type)
+            counter += 1
             args = (self.job.id, counter, "Remove", doc_type, row.id,
                     row.num, group_nums.genNewUniqueNum())
-            response = cdr2gk.sendDocument(*args, **opts)
+            response = cdr2gk.sendDocument(*args, **gkopts)
             if response.type != "OK":
                 args = response.type, response.message
                 raise Exception("GateKeeper: {} ({})".format(*args))
 
         # Tell the GateKeeper we're all done.
-        args = self.job.id, pub_type, num_docs, "complete"
-        response = cdr2gk.sendJobComplete(*args, **opts)
+        self.__num_pushed = counter
+        args = self.job.id, pub_type, counter, "complete"
+        response = cdr2gk.sendJobComplete(*args, **gkopts)
         if response.type != "OK":
             args = response.type, response.message
             raise Exception("GateKeeper: {} ({})".format(*args))
@@ -791,20 +819,24 @@ class Control:
         so that everything succeeds or nothing is updated.
         """
 
+        # Use a separate connection with a long timeout.
+        conn = cdrdb.connect(timeout=1000)
+        cursor = conn.cursor()
+
         # Handle removed documents
-        self.cursor.execute("""\
+        cursor.execute("""\
             DELETE FROM pub_proc_cg
                   WHERE id IN (SELECT id
                                  FROM pub_proc_cg_work
                                 WHERE xml IS NULL)""")
-        self.cursor.execute("""\
+        cursor.execute("""\
             INSERT INTO pub_proc_doc (doc_id, doc_version, pub_proc, removed)
                  SELECT id, num, cg_job, 'Y'
                    FROM pub_proc_cg_work
                   WHERE xml IS NULL""")
 
         # Handle changed documents
-        self.cursor.execute("""\
+        cursor.execute("""\
             UPDATE pub_proc_cg
                SET xml = w.xml,
                    pub_proc = w.cg_job,
@@ -813,7 +845,7 @@ class Control:
               FROM pub_proc_cg c
               JOIN pub_proc_cg_work w
                 ON c.id = w.id""")
-        self.cursor.execute("""\
+        cursor.execute("""\
             INSERT INTO pub_proc_doc (doc_id, doc_version, pub_proc)
                  SELECT w.id, w.num, w.cg_job
                    FROM pub_proc_cg_work w
@@ -821,7 +853,7 @@ class Control:
                      ON c.id = w.id""")
 
         # Handle new documents (order of INSERTs is important!)
-        self.cursor.execute("""\
+        cursor.execute("""\
             INSERT INTO pub_proc_doc (doc_id, doc_version, pub_proc)
                  SELECT w.id, w.num, w.cg_job
                    FROM pub_proc_cg_work w
@@ -829,7 +861,7 @@ class Control:
                      ON c.id = w.id
                   WHERE w.xml IS NOT NULL
                     AND c.id IS NULL""")
-        self.cursor.execute("""\
+        cursor.execute("""\
             INSERT INTO pub_proc_cg (id, pub_proc, xml)
                  SELECT w.id, w.cg_job, w.xml
                    FROM pub_proc_cg_work w
@@ -839,7 +871,8 @@ class Control:
                     AND c.id IS NULL""")
 
         # Seal the deal.
-        self.conn.commit()
+        conn.commit()
+        conn.close()
 
     def normalize(self, xml):
         """
@@ -852,10 +885,12 @@ class Control:
           xml - string for serialized version of filtered CDR document
 
         Return:
-          version of `xml` argument with whitespace normalized
+          version of `xml` argument with irrelevant differences suppressed
         """
 
-        return self.NORMALIZE_SPACE.sub(" ", xml)
+
+        xml = self.XMLDECL.sub("", self.DOCTYPE.sub("", xml))
+        return self.NORMALIZE_SPACE.sub(" ", xml).strip() + "\n"
 
     # ------------------------------------------------------------------
     # GENERAL SUPPORT METHODS START HERE.
@@ -939,7 +974,7 @@ class Control:
         """
 
         if not hasattr(self, "_conn"):
-            opts = dict(user="CdrPublishing")
+            opts = dict(user="CdrPublishing", timeout=600)
             try:
                 self._conn = cdrdb.connect(**opts)
             except Exception as e:
