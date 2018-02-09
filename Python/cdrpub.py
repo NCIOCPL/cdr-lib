@@ -893,9 +893,11 @@ class Control:
           version of `xml` argument with irrelevant differences suppressed
         """
 
-
-        xml = self.XMLDECL.sub("", self.DOCTYPE.sub("", xml))
-        return self.NORMALIZE_SPACE.sub(" ", xml).strip() + "\n"
+        xml = self.NORMALIZE_SPACE.sub(" ", xml).strip() + "\n"
+        if "<Media" in xml:
+            xml = xml.replace("Encoding='base64'> ", "Encoding='base64'>")
+            xml = xml.replace(" </Media>", "</Media")
+        return self.XMLDECL.sub("", self.DOCTYPE.sub("", xml))
 
     # ------------------------------------------------------------------
     # GENERAL SUPPORT METHODS START HERE.
