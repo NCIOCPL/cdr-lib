@@ -722,6 +722,7 @@ class Control:
         """
 
         # Make sure we've got something to push.
+        self.__num_pushed = 0
         query = cdrdb.Query("pub_proc_cg_work", "COUNT(*) AS num_docs")
         num_docs = query.execute(self.cursor).fetchone().num_docs
         if not num_docs:
