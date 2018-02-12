@@ -465,7 +465,8 @@ class Control:
         self.record_pushed_docs()
 
         # 4. Record the job's status as waiting for GK to confirm the push
-        self.update_status(self.VERIFYING)
+        if self.__num_pushed:
+            self.update_status(self.VERIFYING)
 
     def prep_push(self):
         """
