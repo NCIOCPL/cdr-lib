@@ -1237,13 +1237,7 @@ class Doc(object):
         """
 
         doc = Doc(self.session, id=doc_id, **opts)
-        key = doc.id, doc.version, self.session.tier.name
         self.session.logger.debug("get_filter(%s, %r)", doc.id, opts)
-        if doc.version:
-            with self.session.cache.filter_lock:
-                f = self.session.filters.get(key)
-                if f is not None:
-                    return f
         root = doc.root
 
         # TODO - REMOVE FOLLOWING CODE WHEN GAUSS LANDS ON DEV
@@ -1265,15 +1259,7 @@ class Doc(object):
                 href = node.get("href")
                 node.set("href", href.replace(" ", "%20"))
         xml = etree.tostring(root.getroottree(), encoding="utf-8")
-        if doc.version:
-            with self.session.cache.filter_lock:
-                if key not in self.session.cache.filters:
-                    self.session.cache.filters[key] = Filter(doc.id, xml)
-                    size = len(self.session.cache.filters)
-                    self.session.logger.info("Filter cache size: %d", size)
-                return self.session.cache.filters[key]
-        else:
-            return Filter(doc.id, xml)
+        return Filter(doc.id, xml)
 
     def get_tree(self, depth=1):
         """
@@ -1802,7 +1788,21 @@ class Doc(object):
             if isinstance(parms[name], basestring):
                 parms[name] = etree.XSLT.strparam(parms[name])
         transform = etree.XSLT(etree.fromstring(filter_xml, parser))
-        doc = transform(doc, **parms)
+        try:
+            doc = transform(doc, **parms)
+        except:
+            for entry in transform.error_log:
+                message = "message from line %s, col %s: %s"
+                args = entry.line, entry.column, entry.message
+                self.session.logger.error(message, *args)
+                args = entry.domain_name, entry.domain
+                self.session.logger.error("domain: %s (%d)", *args)
+                args = entry.type_name, entry.type
+                self.session.logger.error("type: %s (%d)", *args)
+                args = entry.level_name, entry.level
+                self.session.logger.error("level: %s (%d)", *args)
+                self.session.logger.error("filename: %s", entry.filename)
+            raise
         return self.FilterResult(doc, error_log=transform.error_log)
 
     def __apply_revision_markup(self, root=None, level=None):
