@@ -247,6 +247,7 @@ class Control:
         self.cursor.execute(delete, (self.job.id,))
         self.conn.commit()
         self.spec_ids = set()
+        self.export_failed = False
         self.lock = threading.Lock()
 
     def publish_user_selected_documents(self):
@@ -366,6 +367,8 @@ class Control:
         Make sure we haven't exceeded error thresholds
         """
 
+        if self.export_failed:
+            raise Exception("Export multiprocessing failure")
         query = cdrdb.Query("pub_proc_doc d", "t.name", "COUNT(*) AS errors")
         query.join("doc_version v", "v.id = d.doc_id", "v.num = d.doc_version")
         query.join("doc_type t", "t.id = v.doc_type")
@@ -1181,10 +1184,15 @@ class Control:
             """
 
             # Keep going until the queue is exhausted.
+            logger = self.control.logger
+            bailing = "thread %05d bailing because job aborted"
             while True:
 
                 # Take responsibility for a slice of the queue.
                 with self.control.lock:
+                    if self.control.export_failed:
+                        logger.warning(bailing, self.ident)
+                        return
                     remaining = len(self.control.docs) - self.control.next
                     if remaining < 1:
                         break
@@ -1198,19 +1206,25 @@ class Control:
                 pause = 5
                 retrying = False
                 while not self.launch(docs, remaining, retrying):
-                    tries -= 5
+                    tries -= 1
                     if tries > 0:
+                        with self.control.lock:
+                            if self.control.export_failed:
+                                logger.warning(bailing, self.ident)
+                                return
                         retrying = True
                         args = self.ident, tries
                         pattern = "thread %05d has %d tries left"
-                        self.control.logger.warning(pattern, *args)
+                        logger.warning(pattern, *args)
                         time.sleep(pause)
                         pause += 5
                     else:
+                        with self.control.lock:
+                            self.control.export_failed = True
                         message = "thread {:05d} giving up".format(self.ident)
-                        self.control.logger.error(message)
+                        logger.error(message)
                         raise Exception(message)
-            self.control.logger.info("thread %05d finished", self.ident)
+            logger.info("thread %05d finished", self.ident)
 
         def launch(self, docs, remaining, retrying):
             args = self.ident, len(docs), remaining
