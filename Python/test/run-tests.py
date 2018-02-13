@@ -546,7 +546,7 @@ if FULL:
             query.where("name = 'xxtest'")
             filter_id = query.execute(cursor).fetchone().title_filter
             if filter_id is None:
-                ctrl = dict(DocTitle="Filter title: DocTitle for xxtest")
+                ctrl = dict(DocTitle="DocTitle for xxtest")
                 doc = cdr.makeCdrDoc(filter1, "Filter", None, ctrl)
                 doc_id = cdr.addDoc(self.session, doc=doc, tier=self.TIER)
                 self.assertTrue(doc_id.startswith("CDR"))
