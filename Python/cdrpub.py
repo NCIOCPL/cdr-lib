@@ -507,7 +507,7 @@ class Control:
         """
 
         self.logger.info("Job %d clearing %s", self.job.id, self.PUSH_STAGE)
-        self.cursor.execute("DELETE {}".format(self.PUSH_STAGE))
+        self.cursor.execute("TRUNCATE TABLE {}".format(self.PUSH_STAGE))
         self.conn.commit()
         push_id = str(self.job.id)
 
@@ -553,6 +553,7 @@ class Control:
         args = self.PUSH_STAGE, ", ".join(names), placeholders
         insert = "INSERT INTO {} ({}) VALUES ({})".format(*args)
         push_all = self.job.parms.get("PushAllDocs") == "Yes"
+        self.logger.info("Queuing changed documents for push")
         for row in rows:
             if row.id in self.processed:
                 continue
@@ -590,6 +591,7 @@ class Control:
                 self.conn.commit()
 
         # Queue up documents which the GateKeeper doesn't already have.
+        self.logger.info("Queuing new documents for push")
         cols = "v.id", doc_type, "d.subdir", "d.doc_version"
         query = cdrdb.Query("pub_proc_doc d", *cols)
         query.join("doc_version v", "v.id = d.doc_id", "v.num = d.doc_version")
