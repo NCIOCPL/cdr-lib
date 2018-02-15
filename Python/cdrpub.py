@@ -507,7 +507,7 @@ class Control:
         """
 
         self.logger.info("Job %d clearing %s", self.job.id, self.PUSH_STAGE)
-        self.cursor.execute("TRUNCATE TABLE {}".format(self.PUSH_STAGE))
+        self.cursor.execute("DELETE FROM {}".format(self.PUSH_STAGE))
         self.conn.commit()
         push_id = str(self.job.id)
 
