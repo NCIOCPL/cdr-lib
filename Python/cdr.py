@@ -3475,7 +3475,7 @@ def publish(credentials, pubSystem, pubSubset, **opts):
         for name, value in parms:
             parm = etree.SubElement(wrapper, "Parm")
             etree.SubElement(parm, "Name").text = name
-            etree.SubElement(parm, "Value").text = value
+            etree.SubElement(parm, "Value").text = unicode(value)
     if docs:
         wrapper = etree.SubElement(command, "DocList")
         for doc_id, doc_version in docs:
