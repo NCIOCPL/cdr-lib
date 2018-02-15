@@ -474,7 +474,7 @@ def _log(command_type, value, **opts):
     if opts.get("force") or DEBUGLEVEL > 0:
         if not isinstance(value, unicode):
             value = value.decode("utf-8")
-        host = opts.get("host", "").strip() or HOST
+        host = (opts.get("host") or "").strip() or HOST
         args = time.ctime(), command_type, host, value.replace("\r", "")
         message = u"==== {} {} (host={}) ====\n{!r}\n".format(*args)
         with open(LOGFILE, "ab") as fp:
@@ -530,7 +530,7 @@ def sendRequest(body, **opts):
     if DEBUGLEVEL > 1:
         etree.dump(request)
     request_bytes = etree.tostring(request, encoding="utf-8")
-    host = opts.get("host", "").strip() or HOST
+    host = (opts.get("host") or "").strip() or HOST
     _log("REQUEST", request_bytes, host=host)
     tries = MAX_RETRIES
     response = None
@@ -582,7 +582,7 @@ def pubPreview(xml, template_type, **opts):
       `Response` object
     """
 
-    host = opts.get("host", "").strip() or HOST
+    host = (opts.get("host") or "").strip() or HOST
     app = "/CDRPreviewWS/CDRPreview.asmx"
     action = "http://gatekeeper.cancer.gov/CDRPreview/ReturnXML"
     body = etree.Element(PREVIEW_REQUEST, nsmap={None: PREVIEW_NS})
@@ -608,7 +608,7 @@ def initiateRequest(pub_type, pub_target, **opts):
       `Response` object
     """
 
-    host = opts.get("host", "").strip() or HOST
+    host = (opts.get("host") or "").strip() or HOST
     source = opts.get("source") or SOURCE_TIER
     body = etree.Element(REQUEST, nsmap={None: GATEKEEPER_NS})
     etree.SubElement(body, "source").text = source
@@ -637,7 +637,7 @@ def sendDataProlog(desc, job_id, pub_type, pub_target, last_id, **opts):
       `Response` object
     """
 
-    host = opts.get("host", "").strip() or HOST
+    host = (opts.get("host") or "").strip() or HOST
     source = opts.get("source") or SOURCE_TIER
     body = etree.Element(REQUEST, nsmap={None: GATEKEEPER_NS})
     etree.SubElement(body, "source").text = source
@@ -671,7 +671,7 @@ def sendDocument(job, num, action, doctype, id, ver, group, xml=None, **opts):
       `Response` object
     """
 
-    host = opts.get("host", "").strip() or HOST
+    host = (opts.get("host") or "").strip() or HOST
     source = opts.get("source") or SOURCE_TIER
     body = etree.Element(REQUEST, nsmap={None: GATEKEEPER_NS})
     etree.SubElement(body, "source").text = source
@@ -708,7 +708,7 @@ def sendJobComplete(job_id, pub_type, count, status, **opts):
       `Response` object
     """
 
-    host = opts.get("host", "").strip() or HOST
+    host = (opts.get("host") or "").strip() or HOST
     source = opts.get("source") or SOURCE_TIER
     body = etree.Element(REQUEST, nsmap={None: GATEKEEPER_NS})
     etree.SubElement(body, "source").text = source
@@ -739,7 +739,7 @@ def requestStatus(status_type, request_id="", **opts):
       `Response` object
     """
 
-    host = opts.get("host", "").strip() or HOST
+    host = (opts.get("host") or "").strip() or HOST
     source = opts.get("source") or SOURCE_TIER
     action = "http://www.cancer.gov/webservices/RequestStatus"
     body = etree.Element(REQUEST_STATUS, nsmap={None: GATEKEEPER_NS})
