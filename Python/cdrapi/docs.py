@@ -1005,6 +1005,31 @@ class Doc(object):
         # Create the `Error` object and put it in our list.
         self._errors.append(self.Error(message, location, **opts))
 
+    def apply_single_filter(self, transform, **parms):
+        """
+        Filter the document with a pre-compiled `etree.XSLT` object
+
+        This is a special-case optimization for jobs which must
+        apply the same filter to thousands of documents in the same
+        run (see, for example, CG2Public.py).
+
+        Pass:
+          transform - callable object prepared by `Doc.load_single_filter()`
+          parms - optional dictionary of filtering parameters
+
+        Return:
+          `_XSLTResultTree` object
+        """
+
+        for name in parms:
+            if isinstance(parms[name], basestring):
+                parms[name] = etree.XSLT.strparam(parms[name])
+        Resolver.local.docs.append(self)
+        try:
+            return transform(self.root)
+        finally:
+            Resolver.local.docs.pop()
+
     def check_in(self, **opts):
         """
         Release the lock on the document so others can edit it
@@ -1203,27 +1228,14 @@ class Doc(object):
 
     def get_filter(self, doc_id, **opts):
         """
-        Fetch a possibly cached filter document
+        Fetch a CDR filter document
 
         This is a public method, because the `Resolver` class below
         needs it.
 
-        The cache is not used for unversioned filters, because the
-        current working copy of a document can change, something
-        which a specific version of a document is guaranteed not
-        to do.
-
-        If a filter hasn't been used in over `SHELF_LIFE` seconds,
-        we get a fresh copy for the cache.
-
         We have to encode spaces in the filter titles used in the
         `include` and `import` directives in order to make the URLs
         valid.
-
-        While in development, we are using modified filters stored
-        in the `good_filters` table. When we go into production we'll
-        apply the same modifications to the actual filters and restore
-        the use of the `doc_version` view for fetching the filters.
 
         Required positional argument:
           doc_id - integer for the filter's document ID
@@ -3555,6 +3567,40 @@ class Doc(object):
                 report.errors.append(str(e))
         cursor.close()
         return report
+
+    @classmethod
+    def load_single_filter(cls, session, title):
+        """
+        Create an `etree.XSLT` transform object for a named filter
+
+        Special-case handling for optimized filtering of many
+        documents by the same filter. Example use case is tranforming
+        thousands of documents from what we give to GateKeeper for
+        cancer.gov into what we give to the PDQ data partners.
+        We create the transform object once and use it many times.
+
+        Pass:
+          session - reference to object representing user's login
+          title - string for the filter name
+
+        Return:
+          reference to `etree.XSLT` object
+        """
+
+        cursor = session.conn.cursor()
+        filter_id = cls.id_from_title(title, cursor)
+        doc = cls(session, id=filter_id)
+        Resolver.local.docs.append(doc)
+        try:
+            filter_xml = doc.get_filter(filter_id).xml
+            parser = cls.Parser()
+            transform = etree.XSLT(etree.fromstring(filter_xml, parser))
+        except:
+            session.logger.exception("etree.XSLT() failure")
+            raise
+        finally:
+            Resolver.local.docs.pop()
+        return transform
 
     @staticmethod
     def make_xml_date_string(value):
