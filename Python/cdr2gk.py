@@ -1,46 +1,86 @@
-#----------------------------------------------------------------------
-#
-# Support routines for SOAP communication with Cancer.Gov's GateKeeper.
-#
-# BZIssue::3491
-# BZIssue::4123
-#
-#----------------------------------------------------------------------
-import cdr
-import cdrutil
-import httplib
-import re
-import sys
+"""
+Support routines for SOAP communication with Cancer.Gov's GateKeeper
+
+Public functions:
+  pubPreview() - ask the service for a web page version of a CDR document
+  initiateRequest() - see if the GateKeeper service is open for business
+  sendDataProlog() - tell the service about the push job we're about to start
+  sendDocument() - give the service a new document version or a remove request
+  sendJobComplete() - tell the service the job is finished or aborted
+  requestStatus() - ask the service for status info on documents or jobs
+
+Older code would re-assign the module-level `HOST` variable. That's not
+a good idea, because the scheduler loads this module once for many jobs,
+and the `HOST` setting for one job could stomp on what another job assumes.
+Instead, to override the default GateKeeper host, set the optional keyword
+parameter available on the public functions listed above.
+
+On the other hand, re-assigning the `DEBUGLEVEL` variable is supported
+(though in the next incarnation of this module, that will be wrapped in
+an instance of a new `Control` class.
+
+For testing, look at the `main()` function at the bottom of this class.
+You can invoke it by running this module as a script. For usage info, try
+
+                          cdr2gk.py --help
+"""
+
 import time
-import xml.dom.minidom
+import cdr
+import requests
+from lxml import etree
+from cdrapi.settings import Tier
 
-#----------------------------------------------------------------------
+try:
+    basestring
+    PYTHON3 = False
+except:
+    basestring = str, bytes
+    unicode = str
+    PYTHON3 = True
+
+
+# ======================================================================
 # Module data.
-#----------------------------------------------------------------------
-LOGFILE             = cdr.DEFAULT_LOGDIR + "/cdr2gk.log"
-MAX_RETRIES         = 10
-RETRY_MULTIPLIER    = 1.0
-debuglevel          = 0
-host                = "%s.%s" % (cdr.h.host['GK'][0], cdr.h.host['GK'][1])
-                                                  # "gatekeeper.cancer.gov"
-port                = 80
-soapNamespace       = "http://schemas.xmlsoap.org/soap/envelope/"
-gatekeeperNamespace = "http://www.cancer.gov/webservices/"
-application         = "/GateKeeper/GateKeeper.asmx"
-HEADERS             = {
-    'Content-type': 'text/xml; charset="utf-8"',
-    'SOAPAction'  : 'http://www.cancer.gov/webservices/Request'
-}
-if cdr.h.org == 'OCE' and not cdr.isProdHost():
-    testhost        = "gatekeeperGK.cancer.gov"
-    host = testhost
+# ======================================================================
 
-TIER                = cdrutil.getTier()
-SOURCE_TIER         = "CDR-%s" % TIER
+# Some defaults
+TIER = Tier()
+SOURCE_TIER = "CDR-%s" % TIER.name
+LOGFILE = cdr.DEFAULT_LOGDIR + "/cdr2gk.log"
+MAX_RETRIES = 10
+RETRY_MULTIPLIER = 1.0
+DEBUGLEVEL = 0
+HOST = TIER.hosts["GK"]
+SCHEME = "http"
+SOAP_ACTION = "http://www.cancer.gov/webservices/Request"
+APPLICATION = "/GateKeeper/GateKeeper.asmx"
+HEADERS = {"Content-type": 'text/xml; charset="utf-8"'}
 
-#----------------------------------------------------------------------
+# Namespaces
+SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
+GATEKEEPER_NS = "http://www.cancer.gov/webservices/"
+PREVIEW_NS = "http://gatekeeper.cancer.gov/CDRPreview/"
+WRAP_IN_NS = lambda ns, local: "{{{}}}{}".format(ns, local)
+
+# Qualified element names
+ENVELOPE = WRAP_IN_NS(SOAP_NS, "Envelope")
+BODY = WRAP_IN_NS(SOAP_NS, "Body")
+FAULT = WRAP_IN_NS(SOAP_NS, "Fault")
+REQUEST = WRAP_IN_NS(GATEKEEPER_NS, "Request")
+REQUEST_RESPONSE = WRAP_IN_NS(GATEKEEPER_NS, "RequestResponse")
+REQUEST_RESULT = WRAP_IN_NS(GATEKEEPER_NS, "RequestResult")
+REQUEST_STATUS = WRAP_IN_NS(GATEKEEPER_NS, "RequestStatus")
+REQUEST_STATUS_RESPONSE = WRAP_IN_NS(GATEKEEPER_NS, "RequestStatusResponse")
+REQUEST_STATUS_RESULT = WRAP_IN_NS(GATEKEEPER_NS, "RequestStatusResult")
+PREVIEW_REQUEST = WRAP_IN_NS(PREVIEW_NS, "ReturnXML")
+PREVIEW_RESPONSE = WRAP_IN_NS(PREVIEW_NS, "ReturnXMLResponse")
+PREVIEW_RESULT = WRAP_IN_NS(PREVIEW_NS, "ReturnXMLResult")
+
+
+# ======================================================================
 # Module-level class definitions.
-#----------------------------------------------------------------------
+# ======================================================================
 
 class Fault:
     """
@@ -58,13 +98,14 @@ class Fault:
     """
 
     def __init__(self, node):
-        faultCodeElem     = getChildElement(node, "faultcode", True)
-        faultStringElem   = getChildElement(node, "faultstring", True)
-        self.faultcode    = getTextContent(faultCodeElem)
-        self.faultstring  = getTextContent(faultStringElem)
+        self.faultcode    = cdr.get_text(node.find("faultcode"))
+        self.faultstring  = cdr.get_text(node.find("faultstring"))
+        assert self.faultcode, "missing required faultcode"
+        assert self.faultstring, "missing required faultstring"
     def __repr__(self):
-        return (u"Fault (faultcode: %s, faultstring: %s)" %
-                (self.faultcode, self.faultstring))
+        args = self.faultcode, self.faultstring
+        return u"Fault (faultcode: {}, faultstring: {}".format(*args)
+
 
 class DocumentLocation:
     """
@@ -102,15 +143,14 @@ class DocumentLocation:
         """
 
     def __init__(self, node):
-        self.cdrId              = int(node.getAttribute('cdrid'))
-        self.gatekeeperJobId    = node.getAttribute('gatekeeper')
-        self.gatekeeperDateTime = node.getAttribute('gatekeeperDateTime')
-        self.previewJobId       = node.getAttribute('preview')
-        self.previewDateTime    = node.getAttribute('previewDateTime')
-        self.liveJobId          = node.getAttribute('live')
-        self.liveDateTime       = node.getAttribute('liveDateTime')
-        if not self.liveJobId:
-            self.liveJobId      = node.getAttribute('liveID')
+        self.cdrId              = int(node.get("cdrid"))
+        self.gatekeeperJobId    = node.get("gatekeeper")
+        self.gatekeeperDateTime = node.get("gatekeeperDateTime")
+        self.previewJobId       = node.get("preview")
+        self.previewDateTime    = node.get("previewDateTime")
+        self.liveJobId          = node.get("live") or node.get("liveID")
+        self.liveDateTime       = node.get("liveDateTime")
+
 
 class DocumentStatusList:
     """
@@ -119,10 +159,9 @@ class DocumentStatusList:
     """
 
     def __init__(self, node):
-        self.docs = []
-        for child in node.childNodes:
-            if child.nodeName == "document":
-                self.docs.append(DocumentLocation(child))
+        doc = node.findall("document")
+        self.docs = [DocumentLocation(doc) for doc in doc]
+
 
 class StatusSummaryDocument:
     """
@@ -164,14 +203,14 @@ class StatusSummaryDocument:
     """
 
     def __init__(self, node):
-        self.packetNumber    = node.getAttribute('packet')
-        self.group           = node.getAttribute('group')
-        self.cdrId           = node.getAttribute('cdrid')
-        self.pubType         = node.getAttribute('pubType')
-        self.docType         = node.getAttribute('type')
-        self.status          = node.getAttribute('status')
-        self.dependentStatus = node.getAttribute('dependentStatus')
-        self.location        = node.getAttribute('location')
+        self.packetNumber    = node.get("packet")
+        self.group           = node.get("group")
+        self.cdrId           = node.get("cdrid")
+        self.pubType         = node.get("pubType")
+        self.docType         = node.get("type")
+        self.status          = node.get("status")
+        self.dependentStatus = node.get("dependentStatus")
+        self.location        = node.get("location")
 
 
 class StatusSummary:
@@ -200,7 +239,8 @@ class StatusSummary:
                 from this.
 
             initiated
-                date/time the job was started
+                date/time the job was started (misspelled 'initated'
+                in original spec)
 
             completion
                 date/time the job was finished or aborted (if appropriate)
@@ -218,30 +258,27 @@ class StatusSummary:
     """
 
     def __init__(self, node):
-        self.jobId       = node.getAttribute('job')
-        self.requestType = node.getAttribute('type')
-        self.description = node.getAttribute('description')
-        self.status      = node.getAttribute('status')
-        self.source      = node.getAttribute('source')
-        self.initiated   = node.getAttribute('initiated')
-        self.completion  = node.getAttribute('completion')
-        self.target      = node.getAttribute('target')
-        self.docs        = []
-        expectedDocCount = node.getAttribute('expectedDocCount')
-        actualDocCount   = node.getAttribute('actualDocCount')
+        self.jobId       = node.get("job")
+        self.requestType = node.get("type")
+        self.description = node.get("description")
+        self.status      = node.get("status")
+        self.source      = node.get("source")
+        self.initiated   = node.get("initiated") or node.get("initated")
+        self.completion  = node.get("completion")
+        self.target      = node.get("target")
+        expectedDocCount = node.get("expectedDocCount")
+        actualDocCount   = node.get("actualDocCount")
+        children = node.findall("document")
+        self.docs = [StatusSummaryDocument(child) for child in children]
         try:
             self.expectedCount = int(expectedDocCount)
         except:
             self.expectedCount = expectedDocCount
         try:
-            self.actualCount   = int(actualDocCount)
+            self.actualCount = int(actualDocCount)
         except:
-            self.actualCount   = actualDocCount
-        for child in node.childNodes:
-            if child.nodeName == 'document':
-                self.docs.append(StatusSummaryDocument(child))
-        if not self.initiated:
-            self.initiated = node.getAttribute('initated') # typo in spec
+            self.actualCount = actualDocCount
+
 
 class PubEventResponse:
     """
@@ -263,49 +300,39 @@ class PubEventResponse:
     """
 
     def __init__(self, node):
-        pubTypeElem        = getChildElement(node, "pubType", True)
-        lastJobIdElem      = getChildElement(node, "lastJobID")
-        nextJobIdElem      = getChildElement(node, "nextJobID")
-        docCountElem       = getChildElement(node, "docCount")
-        self.pubType       = getTextContent(pubTypeElem)
-        self.highestDocNum = None
+        self.highestDocNum = self.totalPackets = None
+        self.pubType = cdr.get_text(node.find("pubType"))
+        lastJobId = cdr.get_text(node.find("lastJobID"))
+        nextJobId = cdr.get_text(node.find("nextJobID"))
+        docCount = cdr.get_text(node.find("docCount"))
+        if not self.pubType:
+            raise Exception("missing required pubType element")
         self.totalPackets  = None
-        if lastJobIdElem is not None:
-            lastJobText = getTextContent(lastJobIdElem)
+        try:
+            self.lastJobId = int(lastJobId)
+        except:
+            self.lastJobId = lastJobId
+        try:
+            self.nextJobId = int(nextJobId)
+        except:
+            self.nextJobId = nextJobId
+        try:
+            self.docCount = int(docCount)
+        except:
+            self.docCount = docCount
             try:
-                self.lastJobId = int(lastJobText)
+                totalPackets, highestDocNum = docCount.split(u"/")
+                self.totalPackets = int(totalPackets)
+                self.highestDocNum = int(highestDocNum)
             except:
-                self.lastJobId = lastJobText
-        else:
-            self.lastJobId = None
-        if nextJobIdElem is not None:
-            nextJobText = getTextContent(nextJobIdElem)
-            try:
-                self.nextJobId = int(nextJobText)
-            except:
-                self.nextJobId = nextJobText
-        else:
-            self.nextJobId = None
-        if docCountElem is not None:
-            docCountText = getTextContent(docCountElem)
-            try:
-                self.docCount = int(docCountText)
-            except:
-                self.docCount = docCountText
-                try:
-                    totalPackets, highestDocNum = docCountText.split(u'/')
-                    self.totalPackets = int(totalPackets)
-                    self.highestDocNum = int(highestDocNum)
-                except:
-                    pass
-        else:
-            self.docCount = None
+                pass
     def __repr__(self):
         return (u"PubEventResponse "
                 u"(pubType: %s, lastJobId: %s, nextJobId: %s, docCount: %s, "
                 u"totalPackets: %s, highestDocNum: %s)"""
                 % (self.pubType, self.lastJobId, self.nextJobId,
                    self.docCount, self.totalPackets, self.highestDocNum))
+
 
 class PubDataResponse:
     """
@@ -319,23 +346,10 @@ class PubDataResponse:
     """
 
     def __init__(self, node):
-        child = getChildElement(node, "docNum", True)
-        self.docNum = int(getTextContent(child))
+        self.docNum = int(cdr.get_text(node.find("docNum")))
     def __repr__(self):
         return u"PubDataResponse (docNum: %d)" % self.docNum
 
-class HttpError(Exception):
-    def __init__(self, xmlString):
-        self.xmlString = xmlString
-        bodyElem   = extractBodyElement(xmlString)
-        faultElem  = bodyElem and getChildElement(bodyElem, "Fault") or None
-        self.fault = faultElem and Fault(faultElem) or None
-    def __repr__(self):
-        if not self.fault:
-            return self.xmlString
-        return u"""\
-HttpError (faultcode: %s, faultstring: %s)""" % (self.fault.faultcode,
-                                                 self.fault.faultstring)
 
 class Response:
     """
@@ -355,46 +369,83 @@ class Response:
             exchanges; PubDataResponse for document transfers; JobSummary
             or DocumentList for RequestStatus responses
 
+        xmlResult
+            utf-8 string for publish preview
+
         fault
             SOAP fault object containing faultcode and faultstring
             members in the case of a SOAP failure
     """
 
-    def __init__(self, xmlString, publishing = True, statusRequest = False):
+    def __init__(self, xml, publishing=True, statusRequest=False):
 
         """Extract the values from the server's XML response string."""
 
-        self.xmlString   = xmlString
-        self.bodyElem    = extractBodyElement(xmlString)
-        self.faultElem   = getChildElement(self.bodyElem, "Fault")
-        self.fault       = self.faultElem and Fault(self.faultElem) or None
-        self.publishing  = publishing
+        # Parse the response and check for a Fault element.
+        self.root = etree.fromstring(xml)
+        self.body = self.root.find(BODY)
+        self.fault = None
+        node = self.body.find(FAULT)
+        self.fault = None if node is None else Fault(node)
+        self.publishing = publishing
+
+        # Pull out response to a publishing request.
         if publishing:
-            respElem         = extractResponseElement(self.bodyElem)
-            respTypeElem     = getChildElement(respElem, "ResponseType", 1)
-            respMsgElem      = getChildElement(respElem, "ResponseMessage", 1)
-            peResponseElem   = getChildElement(respElem, "PubEventResponse")
-            pdResponseElem   = getChildElement(respElem, "PubDataResponse")
-            self.type        = getTextContent(respTypeElem)
-            self.message     = getTextContent(respMsgElem)
-            if peResponseElem:
-                self.details = PubEventResponse(peResponseElem)
-            elif pdResponseElem:
-                self.details = PubDataResponse(pdResponseElem)
+            path = "{}/{}/Response".format(REQUEST_RESPONSE, REQUEST_RESULT)
+            response = self.body.find(path)
+            self.type = cdr.get_text(response.find("ResponseType"))
+            self.message = cdr.get_text(response.find("ResponseMessage"))
+            if not self.type:
+                raise Exception("Missing required ResponseType element")
+            if not self.message:
+                raise Exception("Missing required ResponseMessage element")
+            pub_event_response = response.find("PubEventResponse")
+            pub_data_response = response.find("PubDataResponse")
+            if pub_event_response is not None:
+                self.details = PubEventResponse(pub_event_response)
+            elif pub_data_response is not None:
+                self.details = PubDataResponse(pub_data_response)
             else:
                 self.details = None
+
+        # Response to a status request.
         elif statusRequest:
-            respElem         = extractStatusResponseElement(self.bodyElem)
-            detailElem       = getChildElement(respElem, "detailedMessage", 1)
-            requestElem      = getChildElement(detailElem, "request")
-            docListElem      = getChildElement(detailElem, "documentList")
-            if requestElem:
-                self.details = StatusSummary(requestElem)
+            args = REQUEST_STATUS_RESPONSE, REQUEST_STATUS_RESULT
+            path = "{}/{}/Response".format(*args)
+            request = self.body.find(path)
+            details = request.find("detailedMessage")
+            if details is None:
+                raise Exception("Missing detailedMessage element")
+            request = details.find("request")
+            doclist = details.find("documentList")
+            if request is not None:
+                self.details = StatusSummary(request)
             else:
-                self.details = DocumentStatusList(docListElem)
+                self.details = DocumentStatusList(doclist)
+
+        # Response to a publish preview request.
         else:
-            self.xmlResult   = extractXmlResult(self.bodyElem)
+            path = "{}/{}".format(PREVIEW_RESPONSE, PREVIEW_RESULT)
+            self._xml = cdr.get_text(self.body.find(path))
+
+    @property
+    def xmlResult(self):
+        """
+        UTF-8 bytes for publish preview page
+        """
+
+        if not hasattr(self, "_xml") or self._xml is None:
+            return None
+        if isinstance(self._xml, unicode):
+            return self._xml.encode("utf-8")
+        else:
+            return self._xml
+
     def __repr__(self):
+        """
+        Display for debugging/logging
+        """
+
         pieces = [u"cdr2gk.Response "]
         if self.publishing:
             pieces.append(u"(type: %s, message: %s, details: %s" %
@@ -406,407 +457,601 @@ class Response:
         pieces.append(u")")
         return u"".join(pieces)
 
-def getTextContent(node):
-    text = ''
-    for n in node.childNodes:
-        if n.nodeType == xml.dom.minidom.Node.TEXT_NODE:
-            text = text + n.nodeValue
-    return text
 
-def getChildElement(parent, name, required = False):
-    child = None
-    for node in parent.childNodes:
-        if node.nodeType == node.ELEMENT_NODE and node.localName == name:
-            child = node
-            break
-    if required and not child:
-        raise Exception("Response missing required %s element" % name)
-    return child
+def _log(command_type, value, **opts):
+    """
+    Optionally write to the log file if `DEBUGLEVEL` is greater than zero
 
-def extractResponseElement(bodyNode):
-    requestResponse = getChildElement(bodyNode,        "RequestResponse", 1)
-    requestResult   = getChildElement(requestResponse, "RequestResult",   1)
-    response        = getChildElement(requestResult,   "Response",        1)
-    return response
+    Requred positional parameters:
+        command_type - e.g., "SEND REQUEST"
+        value - string to be written to the log file
 
-def extractStatusResponseElement(bodyNode):
-    outerWrapper    = "RequestStatusResponse"
-    innerWrapper    = "RequestStatusResult"
-    requestResponse = getChildElement(bodyNode,        outerWrapper,      1)
-    requestResult   = getChildElement(requestResponse, innerWrapper,      1)
-    response        = getChildElement(requestResult,   "Response",        1)
-    return response
+    Optional keyword arguments:
+        force - write even if `DEBUGLEVEL` is not greater than zero
+        host - override `HOST`
+    """
 
-def extractBodyElement(xmlString):
-    dom     = xml.dom.minidom.parseString(xmlString)
-    docElem = dom.documentElement
-    body    = getChildElement(docElem, "Body", True)
-    return body
+    if opts.get("force") or DEBUGLEVEL > 0:
+        if not isinstance(value, unicode):
+            value = value.decode("utf-8")
+        host = (opts.get("host") or "").strip() or HOST
+        args = time.ctime(), command_type, host, value.replace("\r", "")
+        message = u"==== {} {} (host={}) ====\n{!r}\n".format(*args)
+        with open(LOGFILE, "ab") as fp:
+            fp.write(message.encode("utf-8"))
 
-# For publish preview.
-def extractXmlResult(bodyNode):
-    xmlResponse = getChildElement(bodyNode, "ReturnXMLResponse")
-    if xmlResponse:
-        xmlResult = getChildElement(xmlResponse, "ReturnXMLResult")
-        if xmlResult:
-            xmlString = getTextContent(xmlResult)
-            return xmlString.replace("<![CDATA[", "").replace( "]]>", "")
-    return None
+def sendRequest(body, **opts):
+    """
+    Send a SOAP client request to the Gatekeeper host
 
-def logString(commandType, value, forceLog = False):
-    # We are forcing the commandType and host string to ASCII strings
-    # because otherwise if either is a Unicode string (which the host
-    # value will be if it comes from the database, having been explicitly
-    # overridden in the publishing interface), then the pattern string
-    # into which the values are interpolated will be upgrade to a
-    # Unicode string and the value parameter, which is encoded as utf-8,
-    # will fail interpolation if it contains any non-ASCII characters.
-    # The alternate (less efficient, but somewhat cleaner) solution
-    # looks like this:
-    #
-    #   if type(value) is not unicode:
-    #       value = unicode(value, 'utf-8')
-    #   output = (u"==== %s %s (host=%s) ====\n%s\n" %
-    #             (time.ctime(), commandType, host, re.sub("\r", "", value)))
-    #   f.write(output.encode('utf-8')
-    #
-    # which takes everything to Unicode and then back again to utf-8.
-    if forceLog or debuglevel:
-        if type(value) is unicode:
-            value = value.encode('utf-8')
-        f = open(LOGFILE, "ab")
-        f.write("==== %s %s (host=%s) ====\n%s\n" %
-                (time.ctime(), str(commandType), str(host),
-                 [re.sub("\r", "", value)]))
+    There's a bug in the `lxml` package and there's a bug in the original
+    spec for the GateKeeper service, and they work together to cancel
+    each other out. The bug in the spec is that it called for using a
+    default namespace for the `body` node passed into this function,
+    without overriding that namespace for the node's descendants, which
+    causes all of the elements under that node to live in the same name-
+    space (so, for example, every element in a CDR document sent through
+    this SOAP interface is in a namespace when it gets to the GateKeeper,
+    even though all of those elements are in the null namespace when they
+    come out of the export filters. So either the GateKeeper code is
+    looking for the elements it needs by specifying the namespaces it's
+    getting, or it uses an API that lets it select nodes using only
+    local tag names, or it's using raw string manipulation and/or regular
+    expressions to pull apart the documents, or some combination of these
+    techniques.
 
-def sendRequest(body, app = application, host = None, headers = HEADERS):
+    The bug in the xml package is in its serializing logic. The
+    package is aware that the top-level element of the CDR document,
+    as well as all of its children, are in the null namespace when it
+    parses the document, and it preserves that knowledge when the top
+    node is attached to the SOAP document. But when the module's
+    `tostring()` function is invoked, that information is lost, and
+    the package fails to override the enclosing namespace. So the
+    document being handed to GateKeeper matches the spec (thought
+    possibly not what the author of the spec really intended).
 
-    # If host is not explicitly specified by the caller, use the
-    # module's global value (yes, it was a mistake to use the same
-    # name for them, but this works, whether this module is imported
-    # or invoked directly).
-    if not host:
-        host = sys.modules[__name__].host
-    else:
-        logString("SEND REQUEST", "Sending to host %s" % host)
+    I considered filing a bug report for the lxml bug, but I don't
+    really want the bug fixed if GateKeeper really is relying on the
+    extra namespaces it's getting.
 
-    if type(body) == unicode:
-        body = body.encode('utf-8')
-    request = """\
-<?xml version='1.0' encoding='utf-8'?>
-<soap:Envelope xmlns:soap='%s'
-               xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance'
-               xmlns:xsd='http://www.w3.org/2001/XMLSchema'>
- <soap:Body>
-%s
- </soap:Body>
-</soap:Envelope>""" % (soapNamespace, body)
+    Required positional argument:
+      body - single child node of the soap:Body wrapper
 
-    logString("REQUEST", request)
+    Optional keyword arguments:
+      app - resource portion of URL (default "/GateKeeper/GateKeeper.asmx")
+      host - target server (default `HOST`)
+      action - SOAP headers (default `SOAP_ACTION`)
+      scheme - defaults to "http"
+    """
 
-    # Defensive programming.
+    request = etree.Element(ENVELOPE, nsmap={"soap": SOAP_NS})
+    wrapper = etree.SubElement(request, BODY)
+    wrapper.append(body)
+    if DEBUGLEVEL > 1:
+        etree.dump(request)
+    request_bytes = etree.tostring(request, encoding="utf-8")
+    host = (opts.get("host") or "").strip() or HOST
+    _log("REQUEST", request_bytes, host=host)
     tries = MAX_RETRIES
     response = None
+    scheme = opts.get("scheme") or SCHEME
+    application = opts.get("app") or APPLICATION
+    url = "{}://{}{}".format(scheme, host, application)
+    headers = dict(HEADERS)
+    headers["SOAPAction"] = opts.get("action") or SOAP_ACTION
     while tries:
         try:
-
-            # Set up the connection and the request.
-            conn = httplib.HTTPConnection(host, port)
-
-            # Submit the request and get the headers for the response.
-            conn.request("POST", app, request, headers)
-            response = conn.getresponse()
-
-            # Skip past any "Continue" responses.
-            while response.status == 100:
-                response.msg = None
-                response.begin()
-
-            # We can stop trying now, we got it.
+            response = requests.post(url, data=request_bytes, headers=headers)
             tries = 0
-
-        except Exception, e:
-            cdr.logwrite("caught http exception: %s" % e, LOGFILE, tback = True)
-            waitSecs = (MAX_RETRIES + 1 - tries) * RETRY_MULTIPLIER
-            logString("RETRY",
-                      "%d retries left; waiting %f seconds" % (tries,
-                                                               waitSecs),
-                      forceLog = True)
-            time.sleep(waitSecs)
+        except Exception as e:
+            message = "sendRequest({!r}) caught exception {}".format(url, e)
+            cdr.logwrite(message, LOGFILE, tback=True)
+            wait = (MAX_RETRIES + 1 - tries) * RETRY_MULTIPLIER
+            args = tries, wait
+            message = "{} retries left; waiting {:f} seconds".format(*args)
+            _log("SEND REQUEST", message, force=True, host=host)
+            time.sleep(wait)
             tries -= 1
+    if response is None:
+        msg = "tried to connect {} times unsuccessfully".format(MAX_RETRIES)
+        raise Exception(msg)
+    if not response.ok:
+        _log("HTTP ERROR", response.content, host=host)
+        resp = "(occurred at {}) ({})".format(time.ctime(), response.text)
+        args = response.status_code, response.reason, resp
+        message = "HTTP error: {:d} ({}) {}".format(*args)
+        raise Exception(message)
+    _log("RESPONSE", response.content, host=host)
+    return response.content
 
-    # Check for failure.
-    if not response:
-        raise Exception("tried to connect %d times unsuccessfully" %
-                        MAX_RETRIES)
 
-    if response.status != 200:
-        resp = response.read()
-        logString("HTTP ERROR", resp)
-        resp = "(occurred at %s) (%s)" % (time.ctime(), resp)
-        raise Exception("HTTP error: %d (%s) %s" % (response.status,
-                                                    response.reason,
-                                                    resp))
+# ======================================================================
+# PUBLIC REQUEST FUNCTIONS START HERE
+# ======================================================================
 
-    # Get the response payload and return it.
-    data = response.read()
-    logString("RESPONSE", data)
-    return data
-
-def initiateRequest(pubType, pubTarget):
+def pubPreview(xml, template_type, **opts):
     """
-        This is the replacement for initiateRequest, used for version
-        2.0 of the Cancer.gov Gatekeeper.  Asks the GateKeeper if
-        it's open for business.
+    Ask the service to create a simulation of a CDR document's web page
 
-        pubType   - one of 'Hotfix', 'Export', or 'Full Load'
-        pubTarget - one of 'GateKeeper', 'Preview', or 'Live'
+    Pass:
+      xml - utf-8 bytes for the filtered CDR document
+      template_type - e.g., "Summary", "GlossaryTerm, "DrugInfoSummary", etc.
+      host - defaults to `HOST`
+
+    Return:
+      `Response` object
     """
-    request = """\
-  <Request xmlns='%s'>
-   <source>%s</source>
-   <requestID>Status Check</requestID>
-   <message>
-    <PubEvent>
-     <pubType>%s</pubType>
-     <pubTarget>%s</pubTarget>
-    </PubEvent>
-   </message>
-  </Request>""" % (gatekeeperNamespace, SOURCE_TIER, pubType, pubTarget)
-    xmlString = sendRequest(request, host = host)
-    return Response(xmlString)
 
-def sendDataProlog(jobDesc, jobId, pubType, pubTarget, lastJobId):
-    request = u"""\
-  <Request xmlns='%s'>
-   <source>%s</source>
-   <requestID>%s</requestID>
-   <message>
-    <PubEvent>
-     <pubType>%s</pubType>
-     <pubTarget>%s</pubTarget>
-     <description>%s</description>
-     <lastJobID>%s</lastJobID>
-    </PubEvent>
-   </message>
-  </Request>""" % (gatekeeperNamespace, SOURCE_TIER, jobId, pubType,
-                   pubTarget, jobDesc, lastJobId)
-    xmlString = sendRequest(request, host = host)
-    return Response(xmlString)
+    host = (opts.get("host") or "").strip() or HOST
+    app = "/CDRPreviewWS/CDRPreview.asmx"
+    action = "http://gatekeeper.cancer.gov/CDRPreview/ReturnXML"
+    body = etree.Element(PREVIEW_REQUEST, nsmap={None: PREVIEW_NS})
+    wrapper = etree.SubElement(body, "content")
+    doc = etree.fromstring(xml)
+    doc.nsmap[None] = ""
+    wrapper.append(doc)
+    etree.SubElement(body, "template_type").text = template_type
+    xml = sendRequest(body, app=app, host=host, action=action)
+    return Response(xml, publishing=False, statusRequest=False)
 
-def sendDocument(jobId, docNum, transType, docType, docId, docVer,
-                 groupNumber, doc = ""):
+def initiateRequest(pub_type, pub_target, **opts):
+    """
+    Make sure the Gatekeeper is open for business
 
-    # Avoid the overhead of converting the doc to Unicode and back.
-    request = (u"""\
-  <Request xmlns='%s'>
-   <source>%s</source>
-   <requestID>%s</requestID>
-   <message>
-    <PubData>
-     <docNum>%s</docNum>
-     <transactionType>%s</transactionType>
-     <CDRDoc Type    = '%s'
-             ID      = 'CDR%010d'
-             Version = '%d'
-             Group   = '%d'>""" % (gatekeeperNamespace, SOURCE_TIER,
-                                   jobId, docNum,
-                                   transType, docType, docId, docVer,
-                                   groupNumber)).encode('utf-8') + doc + """\
-</CDRDoc>
-    </PubData>
-   </message>
-  </Request>"""
-    xmlString = sendRequest(request, host = host)
-    return Response(xmlString)
+    Pass:
+      pub_type - e.g., "Export", "Hotfix", "Full Load", etc.
+      pub_target - "Preview", "Live", or "GateKeeper"
+      host - optional keyword argument; defaults to `HOST`
+      source - optional keyword argument; defaults to `SOURCE_TIER`
 
-def sendJobComplete(jobId, pubType, count, status):
-    request = u"""\
-  <Request xmlns='%s'>
-   <source>%s</source>
-   <requestID>%s</requestID>
-   <message>
-    <PubEvent>
-     <pubType>%s</pubType>
-     <docCount>%d</docCount>
-     <status>%s</status>
-    </PubEvent>
-   </message>
-  </Request>""" % (gatekeeperNamespace, SOURCE_TIER, jobId, pubType, count, status)
+    Return:
+      `Response` object
+    """
 
-    response = sendRequest(request, host = host)
-    return Response(response)
+    host = (opts.get("host") or "").strip() or HOST
+    source = opts.get("source") or SOURCE_TIER
+    body = etree.Element(REQUEST, nsmap={None: GATEKEEPER_NS})
+    etree.SubElement(body, "source").text = source
+    etree.SubElement(body, "requestID").text = "Status Check"
+    message = etree.SubElement(body, "message")
+    wrapper = etree.SubElement(message, "PubEvent")
+    etree.SubElement(wrapper, "pubType").text = pub_type
+    etree.SubElement(wrapper, "pubTarget").text = pub_target
+    xml = sendRequest(body, host=host)
+    return Response(xml, publishing=True, statusRequest=False)
 
-def pubPreview(xml, typ):
-    request = """
-  <ReturnXML xmlns="http://gatekeeper.cancer.gov/CDRPreview/">
-   <content>%s</content>
-   <template_type>%s</template_type>
-  </ReturnXML>
-""" % (xml, typ)
-    xmlString = sendRequest(
-        request,
-        app     = '/CDRPreviewWS/CDRPreview.asmx',
-        host    = host,
-        headers = { 'Content-type': 'text/xml; charset="utf-8"',
-                    'SOAPAction'  :
-                    'http://gatekeeper.cancer.gov/CDRPreview/ReturnXML' })
-    return Response(xmlString, False)
+def sendDataProlog(desc, job_id, pub_type, pub_target, last_id, **opts):
+    """
+    Tell the service about the upcoming job
 
-#----------------------------------------------------------------------
-# statusType is 'Summary', 'RequestDetail', 'DocumentLocation' or
-# 'SingleDocument'
-# If statusType is 'SingleDocument' then requestId contains the CDR
-# ID of the document for which the report is being generated.
-# If statusType contains the value 'DocumentLocation' then requestId
-# need not be present.
-# Otherwise, requestId refers to the publishing job for which
-# status is requested.
-# RequestDetail is not yet implemented.
-#----------------------------------------------------------------------
-def requestStatus(statusType, requestId = ""):
-    headers = {
-        'Content-type': "text/xml; charset='utf-8'",
-        'SOAPAction'  : 'http://www.cancer.gov/webservices/RequestStatus'
-    }
-    if statusType == 'DocumentLocation':
-        body = u"""\
-  <RequestStatus xmlns='%s'>
-   <source>%s</source>
-   <!-- <requestID></requestID> -->
-   <statusType>%s</statusType>
-  </RequestStatus>""" % (gatekeeperNamespace, SOURCE_TIER, statusType)
-    else:
-        body = u"""\
-  <RequestStatus xmlns='%s'>
-   <source>%s</source>
-   <requestID>%s</requestID>
-   <statusType>%s</statusType>
-  </RequestStatus>""" % (gatekeeperNamespace, SOURCE_TIER, requestId,
-                         statusType)
-    xmlString = sendRequest(body, host = host, headers = headers)
-    # print xmlString
-    return Response(xmlString, False, True)
+    Pass:
+      desc - string describing this job; supplied by user or scheduler
+      job_id - integer primary key into the `pub_proc` table
+      pub_type - e.g., "Export", "Hotfix", "Full Load", etc.
+      pub_target - "Preview", "Live", or "GateKeeper"
+      last_id - integer for what we think is the last push job
+      host - optional keyword argument; defaults to `HOST`
+      source - optional keyword argument; defaults to `SOURCE_TIER`
 
-#----------------------------------------------------------------------
-# Take it out for a test spin.  Try with 43740 (a Country document).
-#----------------------------------------------------------------------
+    Return:
+      `Response` object
+    """
+
+    host = (opts.get("host") or "").strip() or HOST
+    source = opts.get("source") or SOURCE_TIER
+    body = etree.Element(REQUEST, nsmap={None: GATEKEEPER_NS})
+    etree.SubElement(body, "source").text = source
+    etree.SubElement(body, "requestID").text = str(job_id)
+    message = etree.SubElement(body, "message")
+    wrapper = etree.SubElement(message, "PubEvent")
+    etree.SubElement(wrapper, "pubType").text = pub_type
+    etree.SubElement(wrapper, "pubTarget").text = pub_target
+    etree.SubElement(wrapper, "description").text = desc
+    etree.SubElement(wrapper, "lastJobID").text = str(last_id)
+    xml = sendRequest(body, host=host)
+    return Response(xml, publishing=True, statusRequest=False)
+
+def sendDocument(job, num, action, doctype, id, ver, group, xml=None, **opts):
+    """
+    Give the service a new document version or a remove request
+
+    Pass:
+      job - integer for the primary key of the job's row in `pub_proc`
+      num - integer for the position of the document in this batch
+      action - "Export" or "Remove"
+      doctype - string identifying which type this document is (e.g., "Term")
+      doc_id - integer for the document's unique identifier
+      ver - integer for the version of the document being sent or removed
+      group - integer for the subset which must fail if any in the group fails
+      xml - utf-8 bytes for the document if action is "Export"; else ignored
+      host - defaults to `HOST`
+      source - defaults to `SOURCE_TIER`
+
+    Return:
+      `Response` object
+    """
+
+    host = (opts.get("host") or "").strip() or HOST
+    source = opts.get("source") or SOURCE_TIER
+    body = etree.Element(REQUEST, nsmap={None: GATEKEEPER_NS})
+    etree.SubElement(body, "source").text = source
+    etree.SubElement(body, "requestID").text = str(job)
+    message = etree.SubElement(body, "message")
+    wrapper = etree.SubElement(message, "PubData")
+    etree.SubElement(wrapper, "docNum").text = str(num)
+    etree.SubElement(wrapper, "transactionType").text = action
+    cdr_doc = etree.SubElement(wrapper, "CDRDoc")
+    cdr_doc.set("Type", doctype)
+    cdr_doc.set("ID", cdr.normalize(id))
+    cdr_doc.set("Version", str(ver))
+    cdr_doc.set("Group", str(group))
+    if xml is not None:
+        doc = etree.fromstring(xml)
+        doc.nsmap[None] = ""
+        cdr_doc.append(doc)
+    xml = sendRequest(body, host=host)
+    return Response(xml, publishing=True, statusRequest=False)
+
+def sendJobComplete(job_id, pub_type, count, status, **opts):
+    """
+    Tell the service a job has finished or is being aborted
+
+    Pass:
+      job_id - integer for the primary key of the job's row in `pub_proc`
+      pub_type - e.g., "Export"
+      count - number of documents sent
+      status - "complete" or "abort"
+      host - defaults to `HOST`
+      source - defaults to `SOURCE_TIER`
+
+    Return:
+      `Response` object
+    """
+
+    host = (opts.get("host") or "").strip() or HOST
+    source = opts.get("source") or SOURCE_TIER
+    body = etree.Element(REQUEST, nsmap={None: GATEKEEPER_NS})
+    etree.SubElement(body, "source").text = source
+    etree.SubElement(body, "requestID").text = str(job_id)
+    message = etree.SubElement(body, "message")
+    wrapper = etree.SubElement(message, "PubEvent")
+    etree.SubElement(wrapper, "pubType").text = pub_type
+    etree.SubElement(wrapper, "docCount").text = str(count)
+    etree.SubElement(wrapper, "status").text = status
+    xml = sendRequest(body, host=host)
+    return Response(xml, publishing=True, statusRequest=False)
+
+def requestStatus(status_type, request_id="", **opts):
+    """
+    Ask the Gatekeeper server about the status of a job or documents
+
+    Pass:
+      status_type - which status we want; one of:
+        * "SingleDocument" - (requestId contains the CDR document ID)
+        * "DocumentLocation" - all documents in GK (requestId ignored)
+        * "Summary" - documents for one job (requestId carries job ID)
+        * "RequestDetail" - not yet implemented
+      request_id - job or document ID as explained above
+      host - defaults to `HOST`
+      source - defaults to `SOURCE_TIER`
+
+    Return:
+      `Response` object
+    """
+
+    host = (opts.get("host") or "").strip() or HOST
+    source = opts.get("source") or SOURCE_TIER
+    action = "http://www.cancer.gov/webservices/RequestStatus"
+    body = etree.Element(REQUEST_STATUS, nsmap={None: GATEKEEPER_NS})
+    etree.SubElement(body, "source").text = source
+    if status_type != "DocumentLocation":
+        etree.SubElement(body, "requestID").text = str(request_id)
+    etree.SubElement(body, "statusType").text = status_type
+    xml = sendRequest(body, host=host, action=action)
+    return Response(xml, publishing=False, statusRequest=True)
+
+
+class Test:
+    """
+    Provide command-line access to the public functions
+
+    For example:
+      cdr2gk.py status --job-id 15115 --source CDR-PROD --status-type Summary
+      cdr2gk.py preview --doc-id 44000 --doctype GlossaryTerm
+    """
+
+    from cdrapi.db import Query
+    TYPES = "SingleDocument", "DocumentLocation", "Summary"
+    SOURCES = "CDR-PROD", "CDR-STAGE", "CDR-QA", "CDR-DEV"
+    PUB_TYPE = "Export"
+    PUB_TARGET = "GateKeeper"
+    PUB_TARGETS = "Preview", "Live", "GateKeeper"
+    DESC = "Command-line test from cdr2gk module."
+    COMMANDS = (
+        "preview",
+        "init",
+        "prolog",
+        "push",
+        "remove",
+        "complete",
+        "abort",
+        "status",
+    )
+
+    # Some examples
+    DOC_ID = 44000 # sample GlossaryTerm document
+    JOB_ID = 15115 # sample job ID from late 2017; use source CDR-PROD
+
+    def __init__(self):
+        """
+        Capture command-line options
+        """
+
+        global DEBUGLEVEL
+        import argparse
+        status_opts = dict(choices=self.TYPES, default=self.TYPES[0])
+        target_opts = dict(choices=self.PUB_TARGETS, default=self.PUB_TARGET)
+        parser = argparse.ArgumentParser()
+        parser.add_argument("command", choices=self.COMMANDS)
+        parser.add_argument("--doc-id", type=int, default=self.DOC_ID)
+        parser.add_argument("--job-id", type=int, default=self.JOB_ID)
+        parser.add_argument("--status-type", **status_opts)
+        parser.add_argument("--pub-type", default=self.PUB_TYPE)
+        parser.add_argument("--pub-target", **target_opts)
+        parser.add_argument("--debug-level", type=int, default=1)
+        parser.add_argument("--host", default=HOST)
+        parser.add_argument("--source", default=SOURCE_TIER)
+        parser.add_argument("--doctype", default="GlossaryTerm")
+        parser.add_argument("--count", help="doc count for 'complete' action")
+        parser.add_argument("--last-id", help="for testing 'prolog' command")
+        parser.add_argument("--desc", default=self.DESC, help="job desc")
+        parser.add_argument("--group", type=int, default=1, help="fail group")
+        parser.add_argument("--num", type=int, default=1, help="doc position")
+        self.opts = parser.parse_args()
+        DEBUGLEVEL = self.opts.debug_level
+
+    def run(self):
+        """
+        Take the module out for a test spin.
+        """
+
+        getattr(self, "_{}".format(self.opts.command))()
+
+    # ======================================================================
+    # COMMAND IMPLEMENTATION METHODS START HERE
+    # ======================================================================
+
+    def _preview(self):
+        """
+        Ask GK for a web version of a CDR doc
+
+        Required:
+          --doc-id (which document to preview; default 44000, a GTN doc)
+          --doctype (what name does GK know this type by?)
+
+        Optional:
+          --host
+        """
+
+        setname = doctype = self.opts.doctype
+        assert doctype, "--doctype required for preview action"
+        if doctype == "GlossaryTermName":
+            setname = doctype = "GlossaryTerm"
+        if setname == "Person":
+            setname = "GeneticsProfessional"
+        filters = ["set:Vendor {} Set".format(setname)]
+        opts = dict(ver="lastp", parms=[["isPP", "Y"]])
+        result = cdr.filterDoc("guest", filters, self.opts.doc_id, **opts)
+        if isinstance(result, basestring):
+            raise Exception(result)
+        xml, messages = result
+        response = None
+        try:
+            response = pubPreview(xml, doctype, host=self.opts.host)
+            if PYTHON3:
+                print(response.xmlResult.decode("utf-8").strip())
+            else:
+                print(response.xmlResult.strip())
+        except Exception as e:
+            print(e)
+            if response is not None:
+                etree.dump(response.root)
+
+    def _init(self):
+        """
+        See if the GateKeeper is alive and well
+
+        This is not the constructor! :-)
+
+        Required:
+          --pub-type
+          --pub-target
+
+        Optional:
+          --host
+          --source
+        """
+
+        assert self.opts.pub_type, "--pub-type required for 'init' command"
+        assert self.opts.pub_target, "--pub-target required for 'init' command"
+        args = self.opts.pub_type, self.opts.pub_target
+        opts = dict(host=self.opts.host, source=self.opts.source)
+        response = initiateRequest(*args, **opts)
+        etree.dump(response.root)
+
+    def _prolog(self):
+        """
+        Tell GateKeeper about documents which are coming
+
+        Required:
+          --last-id (ID of the previous push job)
+          --job-id (ID of the current job)
+          --pub-type
+          --pub-target
+
+        Optional:
+          --desc (description of the push job)
+          --host
+          --source
+        """
+
+        desc = self.opts.desc
+        job_id, last_id = self.opts.job_id, self.opts.last_id
+        assert job_id is not None, "--job-id required for 'prolog' command"
+        assert last_id is not None, "--last-id required for 'prolog' command"
+        assert self.opts.pub_type, "--pub-type required for 'init' command"
+        assert self.opts.pub_target, "--pub-target required for 'init' command"
+        args = desc, job_id, self.opts.pub_type, self.opts.pub_target, last_id
+        opts = dict(host=self.opts.host, source=self.opts.source)
+        response = sendDataProlog(*args, **opts)
+        etree.dump(response.root)
+
+    def _push(self):
+        """
+        Post a document to the service
+
+        Required:
+          --job-id
+          --doc-id
+          --num
+          --group
+
+        Optional:
+          --host
+          --source
+        """
+
+        from cdrapi.docs import Doc
+        from cdrapi.users import Session
+        job_id = self.opts.job_id
+        num = self.opts.num
+        group = self.opts.group
+        assert job_id, "--job-id required for 'push' command"
+        assert num, "--num required for 'push' command"
+        assert group, "--group required for 'push' command"
+        assert self.opts.doc_id, "--doc-id required for 'push' command"
+        doc = Doc(Session("guest"), id=self.opts.doc_id, version="lastp")
+
+        # Find the filter set with some mapping of document type names.
+        ver = doc.version
+        doctype = doc.doctype.name
+        sets = dict(
+            GlossaryTermName="GlossaryTerm",
+            DrugInformationSummary="DrugInfoSummary",
+            Person="GeneticsProfessional"
+        )
+        set_name = "set:Vendor {} Set".format(sets.get(doctype, doctype))
+
+        # Filter the document and serialize it to utf-8 bytes.
+        result = doc.filter(set_name)
+        xml = str(result.result_tree)
+        if isinstance(xml, unicode):
+            xml = xml.encode("utf-8")
+
+        # Map our doctype name to GateKeeper's.
+        doctypes = dict(
+            GlossaryTermName="GlossaryTerm",
+            Person="GENETICSPROFESSIONAL",
+            DrugInformationSummary="DrugInfoSummary"
+        )
+        doctype = doctypes.get(doctype, doctype)
+
+        # Push the filtered document.
+        args = job_id, num, "Export", doctype, doc.id, ver, group, xml
+        opts = dict(host=self.opts.host, source=self.opts.source)
+        response = sendDocument(*args, **opts)
+        etree.dump(response.root)
+
+    def _remove(self):
+        """
+        Tell GateKeeper to remove a cdr document
+
+        Required:
+          --job-id
+          --doc-id
+          --doc-type
+
+        Optional:
+          --host
+          --source
+        """
+
+        job_id = self.opts.job_id
+        doc_id = self.opts.doc_id
+        doc_type = self.opts.doc_type
+        assert job_id, "--job-id required for 'remove' command"
+        assert doc_id, "--doc-id required for 'remove' command"
+        assert doc_type, "--doc-type required for 'remove' command"
+        args = job_id, 1, "Remove", doc_type.name, doc_id, 1, 1
+        opts = dict(host=self.opts.host, source=self.opts.source)
+        response = sendDocument(*args, **opts)
+        etree.dump(response.root)
+
+    def _complete(self):
+        """
+        Tell GK a job is done
+
+        Required:
+          --job-id (job we're talking about)
+          --count (number of documents sent)
+
+        Optional:
+          --host
+          --source
+        """
+
+        assert self.opts.job_id, "--job-id required for 'complete' command"
+        opts = dict(host=self.opts.host, source=self.opts.source)
+        args = self.opts.job_id, "Export", self.opts.count, "complete"
+        response = sendJobComplete(*args, **opts)
+        etree.dump(response.root)
+
+    def _abort(self):
+        """
+        Tell GK a job is being killed
+
+        Required:
+          --job-id (job to abort)
+
+        Optional:
+          --host
+          --source
+        """
+
+        assert self.opts.job_id, "--job-id required for 'abort' command"
+        opts = dict(host=self.opts.host, source=self.opts.source)
+        args = self.opts.job_id, "Export", 0, "abort"
+        response = sendJobComplete(*args, **opts)
+        etree.dump(response.root)
+
+    def _status(self):
+        """
+        Ask GK for status of a job, or a document, or all documents
+
+        Required:
+          --status-type
+          --doc-id if status-type is "SingleDocument"
+          --job-id if status-type is "Summary"
+
+        Optional:
+          --host
+          --source
+        """
+
+        if self.opts.status_type == "SingleDocument":
+            request_id = self.opts.doc_id
+        elif self.opts.status_type == "Summary":
+            request_id = self.opts.job_id
+        else:
+            request_id = None
+        opts = dict(host=self.opts.host, source=self.opts.source)
+        response = requestStatus(self.opts.status_type, request_id, **opts)
+        etree.dump(response.root)
+
+
 if __name__ == "__main__":
+    """
+    Make it possible to run this as a script for testing the public functions
+    """
 
-    debuglevel = 1
-    if len(sys.argv) > 2 and sys.argv[1] == 'status':
-        requestStatus(sys.argv[2], len(sys.argv) > 3 and sys.argv[3] or "")
-        sys.exit(0)
-    def getCursor():
-        import cdrdb
-        return cdrdb.connect('CdrGuest').cursor()
-        #return cdrdb.connect('CdrGuest', dataSource = 'bach').cursor()
-    def loadDocsOfType(t):
-        cursor = getCursor()
-        cursor.execute("""\
-            SELECT c.id
-              FROM pub_proc_cg c
-              JOIN document d
-                ON c.id = d.id
-              JOIN doc_type t
-                ON t.id = d.doc_type
-             WHERE t.name = ?""", t, timeout = 300)
-        return [str(row[0]) for row in cursor.fetchall()]
-    class Doc:
-        __cursor = getCursor()
-        def __init__(self, docId):
-            self.docId = int(re.sub("[^\\d]+", "", docId))
-            self.group = 1
-            Doc.__cursor.execute("""\
-                SELECT c.xml, t.name, p.doc_version
-                  FROM pub_proc_cg c
-                  JOIN document d
-                    ON c.id = d.id
-                  JOIN doc_type t
-                    ON t.id = d.doc_type
-                  JOIN pub_proc_doc p
-                    ON p.pub_proc = c.pub_proc
-                   AND p.doc_id = d.id
-                 WHERE d.id = ?""", self.docId)
-            docXml, self.docType, self.docVer = Doc.__cursor.fetchall()[0]
-            if self.docType in ('InScopeProtocol', 'CTGovProtocol'):
-                self.docType = 'Protocol'
-            docXml = re.sub(u"<\\?xml[^>]+>\\s*", u"", docXml)
-            self.xml = re.sub(u"<!DOCTYPE[^>]*>\\s*", u"", docXml)
-
-    # If we're asked to abort a job, do it.
-    if len(sys.argv) > 1 and sys.argv[1].startswith('abort='):
-        jobId = sys.argv[1][len('abort='):]
-        response = sendJobComplete(jobId, 'Export', 0, 'abort')
-        print "response:\n%s" % response
-        sys.exit(0)
-
-    # Here's how to close the job by hand.
-    if len(sys.argv) > 2 and sys.argv[1].startswith('complete='):
-        jobId = sys.argv[1][len('complete='):]
-        nDocs = int(sys.argv[2])
-        response = sendJobComplete(jobId, 'Export', nDocs, 'complete')
-        print "response:\n%s" % response
-        sys.exit(0)
-
-    # Get the document IDs from the command line.
-    if len(sys.argv) > 1 and sys.argv[1].startswith('type='):
-        docIds = loadDocsOfType(sys.argv[1][5:])
-    else:
-        docIds = sys.argv[1:]
-    if not docIds:
-        sys.stderr.write("you must specify at least one document ID\n")
-        sys.exit(1)
-
-    # See if the GateKeeper is awake and open for business.
-    pubType   = 'Export'
-    pubTarget = 'GateKeeper'
-    jobDesc   = 'Command-line test from cdr2gk module.'
-    response  = initiateRequest(pubType, pubTarget)
-    if response.type != "OK":
-        print "initiateRequest(): %s: %s" % (response.type, response.message)
-        if response.fault:
-            print "%s: %s" % (response.fault.faultcode,
-                              response.fault.faultstring)
-        elif response.details:
-            print "Last job ID from server: %s" % response.details.lastJobId
-        sys.exit(1)
-
-    # Tell the GateKeeper we're about to send some documents.
-    lastJobId = response.details.lastJobId
-    print lastJobId, type(lastJobId)
-    jobId = lastJobId + 1
-    print "last job id: %d" % lastJobId
-    print "new job id: %d" % jobId
-    response = sendDataProlog(jobDesc, jobId, pubType, pubTarget, lastJobId)
-    if response.type != "OK":
-        print "sendDateProlog(): %s: %s" % (response.type, response.message)
-        sys.exit(1)
-
-    # Send the documents.
-    print "sending %d docs" % len(docIds)
-    docNum = 1
-    for docId in docIds:
-        if docId.startswith('remove='):
-            docId = int(docId[len('remove='):])
-            print ("removing CDR%d (%d of %d)..." % (docId,
-                                                     docNum, len(docIds))),
-            # XXX fix this (look up real doc type) after testing.
-            response = sendDocument(jobId, docNum, "Remove",
-                                    "GENETICSPROFESSIONAL", docId, 1, 1, "")
-        else:
-            doc = Doc(docId)
-            print ("sendDocument(CDR%d) (%d of %d)..." % (doc.docId, docNum,
-                                                          len(docIds))),
-            response = sendDocument(jobId, docNum, 'Export', doc.docType,
-                                    doc.docId, doc.docVer, doc.group, doc.xml)
-        if response.type != "OK":
-            print "%s: %s" % (response.type, response.message)
-        else:
-            print "OK"
-        docNum += 1
-
-    # Wrap it up.
-    response = sendJobComplete(jobId, pubType, len(docIds), 'complete')
-    if response.type != 'OK':
-        print "%s: %s" % (response.type, response.message)
+    Test().run()

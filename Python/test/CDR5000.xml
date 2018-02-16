@@ -1,0 +1,49 @@
+<Person xmlns:cdr="cips.nci.nih.gov/cdr">
+  <PersonNameInformation>
+    <GivenName>Pierre</GivenName>
+    <ProfessionalSuffix>
+      <StandardProfessionalSuffix>MD</StandardProfessionalSuffix>
+    </ProfessionalSuffix>
+    <Comment>Retired -  contact from 3/8646, ASCO del per 7/99 mm 10/99 ncg.test; test save version rmk 2017-11-09 14:33:00.670799</Comment>
+  </PersonNameInformation>
+  <ProfessionalInformation>
+    <PhysicianDetails>
+      <AdministrativeInformation>
+        <Directory>
+          <Include>Do not include</Include>
+          <EnteredBy>Legacy conversion</EnteredBy>
+          <Date>June 21, 2002</Date>
+        </Directory>
+      </AdministrativeInformation>
+      <PhysicianSpecialtyInformation>
+        <OtherSpecialty>Dermatologic oncology</OtherSpecialty>
+        <OtherSpecialty>Plastic surgery</OtherSpecialty>
+        <OtherSpecialty>Surgery</OtherSpecialty>
+        <OtherSpecialty>Surgical oncology</OtherSpecialty>
+      </PhysicianSpecialtyInformation>
+    </PhysicianDetails>
+  </ProfessionalInformation>
+  <PersonLocations>
+    <PrivatePractice>
+      <PrivatePracticeLocation cdr:id="_1">
+        <PostalAddress AddressType="US">
+          <Street>23 Skidoo</Street>
+          <City>Kalamazoo</City>
+          <PoliticalSubUnit_State cdr:ref="CDR0000043857">Alabama</PoliticalSubUnit_State>
+          <Country cdr:ref="CDR0000043764">France</Country>
+          <PostalCode_ZIP>090</PostalCode_ZIP>
+        </PostalAddress>
+      </PrivatePracticeLocation>
+    </PrivatePractice>
+    <OtherPracticeLocation PdqKey="Person:19716#8646" cdr:id="F1">
+      <OrganizationLocation PdqKey="Organization:8646#8646" cdr:ref="CDR0009937042#F1">Hopital Saint-Louis [F1]</OrganizationLocation>
+    </OtherPracticeLocation>
+    <CIPSContact>F1-FOO</CIPSContact>
+  </PersonLocations>
+  <Status>
+    <CurrentStatus>Inactive</CurrentStatus>
+    <EnteredBy>Legacy conversion</EnteredBy>
+    <EntryDate>2002-06-21</EntryDate>
+  </Status>
+  <PdqKey>19716</PdqKey>
+</Person>

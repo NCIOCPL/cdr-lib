@@ -181,8 +181,8 @@ class Concept:
         cls.logger.info(url)
         response = requests.get(url)
         if response.status_code != 200:
-            raise Exception("fetching concept %s: %d (%s)", code,
-                            response.status_code, response.reason)
+            raise Exception("fetching concept %s: %d (%s)" % (code,
+                            response.status_code, response.reason))
         elif format == "json":
             return json.loads(response.content)
         elif format == "xml":
@@ -779,10 +779,10 @@ class TermDoc:
         except:
             Concept.fail("invalid CDR ID %r" % cdr_id)
         self.concept.logger.info("updating %s", self.cdr_id)
-        doc = cdr.getDoc(self.session, self.cdr_id, "Y", getObject=True)
-        error = cdr.checkErr(doc)
-        if error:
-            Concept.fail("failure retrieving %s: %s" % (self.cdr_id, error))
+        try:
+            doc = cdr.getDoc(self.session, self.cdr_id, "Y", getObject=True)
+        except Exception as e:
+            Concept.fail("failure retrieving %s: %s" % (self.cdr_id, e))
         try:
             self.root = self.parse(doc.xml)
             doc.xml = self.update()

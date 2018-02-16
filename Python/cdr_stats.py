@@ -1431,6 +1431,7 @@ class Control:
     TO_STRING_OPTS  Options used for serializing HTML report object.
     B               HTML builder module imported at Control class scope.
     HTML            HTML module imported at Control class scope.
+    TIER            Where we're running
 
     Instance properties:
 
@@ -1450,6 +1451,9 @@ class Control:
 
     import lxml.html.builder as B
     import lxml.html as HTML
+    from cdrapi.settings import Tier
+
+    TIER = Tier()
     TITLE = "PCIB Statistics Report"
     LOGFILE = "%s/cdr_stats.log" % cdr.DEFAULT_LOGDIR
     TODAY = datetime.date.today()
@@ -1611,7 +1615,7 @@ class Control:
             recips = cdr.getEmailList("Test Publishing Notification")
         else:
             recips = cdr.getEmailList('ICRDB Statistics Notification')
-        subject = "%s-%s: %s" %(cdr.h.org, cdr.h.tier, self.title)
+        subject = "CBIIT-%s: %s" %(self.TIER.name, self.title)
         error = cdr.sendMail(self.SENDER, recips, subject, report, html=True)
         self.logger.info("sent %s", subject)
         self.logger.info("recips: %s", ", ".join(recips))

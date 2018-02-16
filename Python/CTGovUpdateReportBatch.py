@@ -8,6 +8,11 @@
 #----------------------------------------------------------------------
 
 import sys, time, cdr, cdrdb, cdrxdiff, cdrbatch, CTGovUpdateCommon
+from cdrapi.settings import Tier
+
+
+# Find out where we're running.
+TIER = Tier()
 
 # These are also used in interactive portion, which imports this file
 JOB_NAME    = CTGovUpdateCommon.JOB_NAME
@@ -60,10 +65,9 @@ def fatal(msg):
     # Tell users
     emailList = batchJobObj.getEmailList()
     if len(emailList):
-        sender = "cdr@%s.%s" % (cdr.h.host['APPC'][0], cdr.h.host['APPC'][1])
-        subj = "%s-%s: CTGov Update Report has failed" % (cdr.h.org,
-                                                             cdr.h.tier)
-        resp = cdr.sendMail(sender, emailList, subject=subj, 
+        sender = "cdr@%s" % TIER.hosts['APPC']
+        subj = "CBIIT-%s: CTGov Update Report has failed" % TIER.name
+        resp = cdr.sendMail(sender, emailList, subject=subj,
                             body="""
 The CTGov Update report started at %s has failed.
 
@@ -381,10 +385,9 @@ reportWrite()
 # Notify user by email
 emailList = batchJobObj.getEmailList()
 if len(emailList):
-    sender = "cdr@%s.%s" % (cdr.h.host['APPC'][0], cdr.h.host['APPC'][1])
-    subj = "%s-%s: CTGov Update Report has completed" % (cdr.h.org,
-                                                         cdr.h.tier)
-    resp = cdr.sendMail(sender, emailList, subject=subj, 
+    sender = "cdr@%s" % TIER.hosts['APPC']
+    subj = "CBIIT-%s: CTGov Update Report has completed" % TIER.name
+    resp = cdr.sendMail(sender, emailList, subject=subj,
                         body="""
 The CTGov Update report has completed.
 The report can be viewed at: <a href="%s">%s</a>

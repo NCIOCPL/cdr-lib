@@ -5,10 +5,8 @@
 import cdr
 
 JOB_NAME    = "Imported CTGovProtocols vs. CWDs"
-REPORT_BASE = "D:/cdr/reports/"
+REPORT_BASE = cdr.BASEDIR + "/reports/"
 REPORT_FILE = "CTGov-CWD-diffs.html"
 SCRIPT      = "CTGovUpdateReportBatch.py"
-REPORT_URL  = "https://%s.%s/cdrreports/%s" % (cdr.h.host['APPC'][0],
-                                               cdr.h.host['APPC'][1],
-                                               REPORT_FILE)
+REPORT_URL  = "https://%s/cdrreports/%s" % (cdr.APPC, REPORT_FILE)
 LF          = cdr.DEFAULT_LOGFILE

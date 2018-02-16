@@ -1,0 +1,61 @@
+<?xml version='1.0' encoding='utf-8'?>
+<Person xmlns:cdr="cips.nci.nih.gov/cdr">
+  <PersonNameInformation>
+    <GivenName>Joe</GivenName>
+    <SurName>Tester</SurName>
+  </PersonNameInformation>
+  <ProfessionalInformation>
+    <PhysicianDetails>
+      <AdministrativeInformation>
+        <Directory>
+          <Include>Include</Include>
+          <EnteredBy>Mr. Tester</EnteredBy>
+          <Date>2017-11-27</Date>
+        </Directory>
+      </AdministrativeInformation>
+    </PhysicianDetails>
+  </ProfessionalInformation>
+  <PersonLocations>
+    <Home cdr:id="_1">
+      <PostalAddress AddressType="US">
+        <Street>123 Main Street</Street>
+        <City>Walla Walla</City>
+        <PoliticalSubUnit_State cdr:ref="CDR0000043879">Michigan</PoliticalSubUnit_State>
+        <Country cdr:ref="CDR0000043753">U.S.A.</Country>
+        <PostalCode_ZIP>55555</PostalCode_ZIP>
+      </PostalAddress>
+    </Home>
+    <PrivatePractice>
+      <PrivatePracticeLocation cdr:id="_2">
+        <PostalAddress AddressType="US">
+          <Street>23 Skidoo</Street>
+          <City>Kalamazoo</City>
+          <PoliticalSubUnit_State cdr:ref="CDR0000043879">Michigan</PoliticalSubUnit_State>
+          <Country cdr:ref="CDR0000043753">U.S.A.</Country>
+          <PostalCode_ZIP>99999</PostalCode_ZIP>
+        </PostalAddress>
+      </PrivatePracticeLocation>
+    </PrivatePractice>
+    <OtherPracticeLocation cdr:id="_3">
+      <OrganizationLocation cdr:ref="CDR0000027196#F1">NCI</OrganizationLocation>
+      <SpecificPostalAddress AddressType="US">
+        <Street>42 Cancer Way</Street>
+        <City>Shady Grove</City>
+        <PoliticalSubUnit_State cdr:ref="CDR0000043877">Maryland</PoliticalSubUnit_State>
+        <Country cdr:ref="CDR0000043753">U.S.A.</Country>
+        <PostalCode_ZIP>11111</PostalCode_ZIP>
+      </SpecificPostalAddress>
+    </OtherPracticeLocation>
+    <CIPSContact>_3</CIPSContact>
+  </PersonLocations>
+  <Status>
+    <CurrentStatus>Inactive</CurrentStatus>
+    <EnteredBy>Joe</EnteredBy>
+    <EntryDate>2017-11-27</EntryDate>
+  </Status>
+  <DatedAction>
+    <ActionDescription>Test the reports module</ActionDescription>
+    <ActionDate>2025-12-25</ActionDate>
+    <Comment>Very important</Comment>
+  </DatedAction>
+</Person>

@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- Filter title: DocTitle for xxtest -->
+<xsl:transform         xmlns:xsl = "http://www.w3.org/1999/XSL/Transform"
+                         version = "1.0"
+                       xmlns:cdr = "cips.nci.nih.gov/cdr">
+ <xsl:output method="text"/>
+ <xsl:template match="xxtest">
+  <xsl:value-of           select = "concat('This is a test ', a)"/>
+ </xsl:template>
+</xsl:transform>

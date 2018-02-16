@@ -71,8 +71,7 @@ class CdrRepublisher:
         def __str__(self):
             return "CDR%010d/%d" % (self.docId, self.docVersion)
 
-    def __init__(self, credentials, host = cdr.DEFAULT_HOST,
-                 port = cdr.DEFAULT_PORT):
+    def __init__(self, credentials, **opts):
 
         """
             Instatiates a new object for republishing CDR documents
@@ -87,17 +86,14 @@ class CdrRepublisher:
                                  and password with which such a
                                  session can be created
                 host           - optional string identifying the CDR
-                                 server on which the re-publishing
+                                 tier on which the re-publishing
                                  job is to be submitted; defaults to
-                                 'localhost'
-                port           - optional integer parameter identifying
-                                 the TCP/IP port to be used in communicating
-                                 with the CDR Server; defaults to 2019
+                                 None (which falls back on the local
+                                 tier)
         """
 
         self.__credentials = credentials
-        self.__host        = host
-        self.__port        = port
+        self.__tier        = opts.get("host")
         self.__conn        = cdrdb.connect()
         self.__cursor      = self.__conn.cursor()
         self.__onCG        = self.__getDocsOnCG()
@@ -341,9 +337,9 @@ class CdrRepublisher:
                 parms.append(('GKPubTarget', gkPubTarget))
                 cdr.logwrite("republish(): setting GateKeeper target to %s" %
                              gkPubTarget, cdr.PUBLOG)
-            resp = cdr.publish(self.__credentials, pubSystem, pubSubset,
-                               parms = parms, docList = docs, email = email,
-                               host = self.__host, port = self.__port)
+            opts = dict(parms=parms, docList=docs, email=email)
+            opts["tier"] = self.__tier
+            resp = cdr.publish(self.__credentials, pubSystem, pubSubset, **opts)
 
             # Make sure the job creation succeeded.
             jobId, errors = resp
@@ -367,7 +363,7 @@ class CdrRepublisher:
             if email:
                 try:
                     sender  = "cdr@%s" % cdrcgi.WEBSERVER
-                    subject = "Republication failure on %s" % self.__host
+                    subject = "Republication failure on %s" % self.__tier
                     body    = "Failure republishing CDR documents:\n%s\n" % e
                     cdr.sendMail(sender, [email], subject, body)
                     cdr.logwrite("republish(): sent failure notification "

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<xsd:schema              xmlns:xsd       = 'http://www.w3.org/2001/XMLSchema'>
+
+  <xsd:element           name            = 'dada'
+                         type            = 'dada'/>
+  <xsd:complexType       name            = 'dada'>
+    <xsd:sequence>
+      <xsd:element       name            = 'gimte'
+                         type            = 'gimte'
+                         maxOccurs       = 'unbounded'/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <xsd:simpleType        name            = 'gimte'>
+    <xsd:restriction     base            = 'xsd:string'>
+      <xsd:enumeration   value           = 'Niedersachsen'/>
+      <xsd:enumeration   value           = 'Köln'/>
+    </xsd:restriction>
+  </xsd:simpleType>
+
+</xsd:schema>
