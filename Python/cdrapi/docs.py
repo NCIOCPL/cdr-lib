@@ -1978,6 +1978,7 @@ class Doc(object):
         # See if the document is locked by another account.
         if lock.locker.id != self.session.user_id:
             if opts.get("force"):
+                doctype = self.doctype.name
                 if not self.session.can_do("FORCE CHECKOUT", doctype):
                     raise Exception(str(lock))
             else:
