@@ -5770,13 +5770,15 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, **opts):
     import difflib
 
     # Normalize
-    etree_opts = dict(pretty_print=True, with_tail=False, with_comments=False)
-    doc1 = etree.tostring(etree.fromstring(utf8DocString1), **etree_opts)
-    doc2 = etree.tostring(etree.fromstring(utf8DocString2), **etree_opts)
+    parser = etree.XMLParser(remove_comments=True)
+    root1 = etree.fromstring(utf8DocString1, parser=parser)
+    root2 = etree.fromstring(utf8DocString2, parser=parser)
+    xml1 = etree.tostring(root1, pretty_print=True, with_tail=False)
+    xml2 = etree.tostring(root2, pretty_print=True, with_tail=False)
 
     # Compare
     diffObj = difflib.Differ()
-    diffSeq = diffObj.compare(doc1.splitlines(1),doc2.splitlines(1))
+    diffSeq = diffObj.compare(xml1.splitlines(1),xml2.splitlines(1))
 
     # If caller only wants changed lines, drop all lines with leading space
     if opts.get("chgOnly", True):
