@@ -673,7 +673,8 @@ class Doc(object):
         self.session      = session
         self.transform    = transform
         self.comment      = comment
-        self.versions     = cdr.lastVersions('guest', "CDR%010d" % id)
+        self.versions     = cdr.lastVersions('guest', "CDR%010d" % id,
+                                             tier=tier)
         self.__messages   = []
         self.disp         = Disposition(id)
         self.activeStatus = None
@@ -1017,7 +1018,7 @@ class Doc(object):
         cursor.execute("""\
                 SELECT val_status
                   FROM document
-                 WHERE id = ?""", self.id)
+                 WHERE id = ?""", (self.id,))
         rows = cursor.fetchall()
         if not rows:
             raise Exception("Failure retrieving val status for CDR%d" %
@@ -1028,7 +1029,7 @@ class Doc(object):
                 SELECT COUNT(*)
                   FROM doc_version
                  WHERE id = ?
-                   AND val_status <> 'U'""", self.id)
+                   AND val_status <> 'U'""", (self.id,))
         rows = cursor.fetchall()
         if not rows:
             raise Exception("Failure retrieving val status for CDR%d" %
