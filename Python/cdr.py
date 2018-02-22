@@ -1816,7 +1816,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
             date=filter_date
         )
         if opts.get("inline"):
-            opts["filter"] = filter
+            options["filter"] = filter
             filters = []
         else:
             filters = filter
@@ -1847,7 +1847,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
     if filter_date:
         command.set("FilterCutoff", str(filter_date))
     if opts.get("inline"):
-        if not isinstance(unicode, filter):
+        if not isinstance(filter, unicode):
             filter = filter.decode("utf-8")
         etree.SubElement(command, "Filter").text = etree.CDATA(filter)
     else:
@@ -1871,7 +1871,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
         if date:
             node.set("maxDate", str(date))
     elif xml:
-        if not isinstance(unicode, xml):
+        if not isinstance(xml, unicode):
             xml = xml.decode("utf-8")
         node.text = etree.CDATA(xml)
     else:
