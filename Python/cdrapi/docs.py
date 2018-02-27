@@ -1287,7 +1287,7 @@ class Doc(object):
         tree = Tree()
         args = self.id, depth
         self.session.log("Doc.get_tree({!r}, depth={!r})".format(*args))
-        self.cursor.callproc("cdr_get_term_tree", (self.id, depth))
+        self.cursor.execute("{CALL cdr_get_term_tree (?,?)}", (self.id, depth))
         for child, parent in self.cursor.fetchall():
             tree.relationships.append(Tree.Relationship(parent, child))
         if not self.cursor.nextset():
