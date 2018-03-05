@@ -6381,14 +6381,11 @@ class LinkType:
                 self._properties = []
                 message = "Property type {!r} not supported"
                 for row in rows:
-                    try:
-                        cls = getattr(LinkType, row.name)
-                        property = cls(self.session, *row)
-                        if not isinstance(property, LinkType.Property):
-                            raise Exception(message.format(row.name))
-                        self._properties.append(property)
-                    except:
+                    cls = getattr(LinkType, row.name)
+                    property = cls(self.session, *row)
+                    if not isinstance(property, LinkType.Property):
                         raise Exception(message.format(row.name))
+                    self._properties.append(property)
             else:
                 self._properties = []
         return self._properties

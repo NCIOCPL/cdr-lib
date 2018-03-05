@@ -3183,14 +3183,11 @@ def putLinkType(credentials, name, linktype, action, **opts):
             opts["targets"][doctype.id] = doctype
         message = "Property type {!r} not supported"
         for name, value, comment in linktype.linkProps:
-            try:
-                cls = getattr(APILinkType, name)
-                property = cls(session, name, value, comment)
-                if not isinstance(property, APILinkType.Property):
-                    raise Exception(message.format(name))
-                opts["properties"].append(property)
-            except:
+            cls = getattr(APILinkType, name)
+            property = cls(session, name, value, comment)
+            if not isinstance(property, APILinkType.Property):
                 raise Exception(message.format(name))
+            opts["properties"].append(property)
         linktype = APILinkType(session, **opts)
         linktype.save()
     else:
