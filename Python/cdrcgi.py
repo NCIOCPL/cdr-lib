@@ -2553,8 +2553,8 @@ def mainMenu(session, news=None):
     if isinstance(user, basestring):
         bail("Missing or expired session")
     menus = (
-        ("Board Manager Menu Users", "BoardManagers.py", "OCCM Board Managers"),
-        ("CIAT/OCCM Staff Menu Users", "CiatCipsStaff.py", "CIAT/OCCM Staff"),
+        ("Board Manager Menu Users", "BoardManagers.py", "OCC Board Managers"),
+        ("CIAT/OCCM Staff Menu Users", "CiatCipsStaff.py", "CIAT/OCC Staff"),
         ("Developer/SysAdmin Menu Users", "DevSA.py",
          "Developers/System Administrators")
     )
