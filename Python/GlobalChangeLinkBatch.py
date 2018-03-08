@@ -281,18 +281,21 @@ class SimpleLinkVars:
         Return:
             String of HTML for embedding in the form to send to the client.
         """
-        html = ""
+        html = u""
         for varName in SimpleLinkVars.fieldList:
             if not alreadyDone or not varName in alreadyDone:
-                varValue = ""
-                if self.getVar(varName):
-                    varValue = " value='%s'" % self.getVar(varName)
-                html += " <input type='hidden' name='%s'%s />\n" % (
+                varValue = u""
+                value = self.getVar(varName)
+                if value:
+                    if not isinstance(value, unicode):
+                        value = value.decode("utf-8")
+                    varValue = u" value='%s'" % value
+                html += u" <input type='hidden' name='%s'%s />\n" % (
                         varName, varValue)
 
         # Add session
         if self.session:
-            html += " <input type='hidden' name='%s' value='%s' />" % (
+            html += u" <input type='hidden' name='%s' value='%s' />" % (
                     cdrcgi.SESSION, self.session)
 
         return html
@@ -319,7 +322,7 @@ class SimpleLinkVars:
             # Create a new session from the old so user can logout while
             #  batch job runs under his credentials.
             batchSession = cdr.dupSession(self.session)
-            argSeq.append(("batchSession", batchSession))
+            argSeq.append(("batchSession", str(batchSession)))
 
         return argSeq
 
@@ -380,10 +383,8 @@ class SimpleLinkVars:
 
         # Add session and state variables
         html += self.saveContext(alreadyDone=haveVars)
-
         # Form termination
         html += "\n</form>\n</body>\n</html>\n"
-
         cdrcgi.sendPage (html)
 
     def chkSrcDocType(self):

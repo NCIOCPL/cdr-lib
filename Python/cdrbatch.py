@@ -642,6 +642,8 @@ class CdrBatch:
 
                 # For each value in the sequence of values for this key
                 for val in valSeq:
+                    if not isinstance(val, unicode):
+                        val = val.decode("utf-8")
                     try:
                         self.__cursor.execute ("""
                           INSERT INTO batch_job_parm (job, name, value)
@@ -759,6 +761,8 @@ class CdrBatch:
         self.__progressMsg = newMsg
 
         # And in the database
+        if isinstance(newMsg, unicode):
+            newMsg = newMsg.encode("utf-8")
         try:
             self.__cursor.execute ("""
               UPDATE batch_job
