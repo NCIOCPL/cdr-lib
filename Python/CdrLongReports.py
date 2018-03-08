@@ -924,8 +924,10 @@ class BrokenExternalLinks(URLChecker):
             B = self.report.B
             element = self.path.split("/")[-2]
             link = B.A(page.url, href=page.url, target="_blank")
+            url = "QcReport.py?DocId={:d}".format(self.doc_id)
+            qclink = B.A(str(self.doc_id), href=url, target="_blank")
             return B.TR(
-                B.TD(str(self.doc_id), B.CLASS("center")),
+                B.TD(qclink, B.CLASS("center")),
                 B.TD(link, B.CLASS("left")),
                 B.TD(page.problem, B.CLASS("left")),
                 B.TD(element, B.CLASS("left"))
@@ -1191,8 +1193,10 @@ class PageTitleMismatches(URLChecker):
             elif self.mismatched:
                 title_class = "mismatch"
             link = B.A(page.url, href=page.url, target="_blank")
+            url = "QcReport.py?DocId={:d}".format(self.doc_id)
+            qclink = B.A(str(self.doc_id), href=url, target="_blank")
             return B.TR(
-                B.TD(str(self.doc_id), B.CLASS("center")),
+                B.TD(qclink, B.CLASS("center")),
                 B.TD(self.doc_title, B.CLASS("left")),
                 B.TD(link, B.CLASS("left")),
                 B.TD(self.stored_title, B.CLASS("left")),
