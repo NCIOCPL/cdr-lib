@@ -2136,7 +2136,7 @@ class Doc(object):
             active_status = row.active_status
         else:
             active_status = "A"
-        new_active_status = opts.get("active_status", active_status)
+        new_active_status = opts.get("active_status") or active_status
         if "D" in (active_status, new_active_status):
             raise Exception("can't save deleted document")
         message = "Invalid active_status value {!r}".format(new_active_status)
