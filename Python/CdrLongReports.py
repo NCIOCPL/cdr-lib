@@ -1450,7 +1450,7 @@ class GlossaryTermSearch(BatchReport):
             doc_id, doc_xml, doc_title = row
             root = etree.fromstring(doc_xml.encode("utf-8"))
             for node in root.findall("SummarySection"):
-                text = cdr.get_text(node).strip()
+                text = u" ".join(node.itertext("*")).strip()
                 sec_title = cdr.get_text(node.find("Title")) or u"[None]"
                 self.tree.clear_flags()
                 for p in self.tree.find_phrases(text):
