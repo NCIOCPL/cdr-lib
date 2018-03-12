@@ -1349,7 +1349,9 @@ class Doc(object):
                 xml = self.denormalized_xml
             else:
                 xml = self.xml
-            etree.SubElement(cdr_doc, "CdrDocXml").text = etree.CDATA(xml)
+            if "]]>" not in xml:
+                xml = etree.CDATA(xml)
+            etree.SubElement(cdr_doc, "CdrDocXml").text = xml
         if opts.get("get_blob") and self.has_blob:
             blob = etree.SubElement(cdr_doc, "CdrDocBlob", encoding="base64")
             blob.text = base64encode(self.blob).decode("ascii")
