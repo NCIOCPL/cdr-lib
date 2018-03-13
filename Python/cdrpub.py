@@ -919,7 +919,8 @@ class Control:
           with_link - if True, include a link to the job's status page
         """
 
-        email = self.job.parms.get("email") or "bkline@rksystems.com"
+        default = cdr.getEmailList("Operator Publishing Notification")
+        email = self.job.parms.get("email") or ",".join(default)
         if email and "@" in email:
             recips = email.replace(";", ",").split(",")
             args = self.tier.name, self.job.id
