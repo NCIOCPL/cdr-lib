@@ -297,8 +297,9 @@ class Control:
                 start = datetime.datetime.now()
                 docs = spec.select_documents(self)
                 elapsed = (datetime.datetime.now() - start).total_seconds()
-                args = len(docs), spec.name, elapsed
-                msg = "{:d} {} docs selected in {:.2f} seconds".format(*args)
+                name = "{} ".format(spec.name) if spec.name else ""
+                args = len(docs), name, elapsed
+                msg = "{:d} {}docs selected in {:.2f} seconds".format(*args)
                 self.post_message(msg)
                 self.docs = []
                 for doc in docs:
