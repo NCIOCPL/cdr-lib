@@ -381,10 +381,11 @@ class Control:
         errors = dict([tuple(row) for row in rows])
         for doctype in errors:
             total_errors += errors[doctype]
-            threshold = self.job.subsystem.thresholds.get(doctype)
-            if threshold is not None and threshold < errors[doctype]:
+            name = "Max{}Errors".format(doctype)
+            threshold = self.job.parms.get(name)
+            if threshold is not None and int(threshold) < errors[doctype]:
                 args = threshold, doctype, errors[doctype]
-                message = "{:d} {} errors allowed; {:d} found".format(*args)
+                message = "{} {} errors allowed; {:d} found".format(*args)
                 raise Exception(message)
         threshold = self.job.subsystem.threshold
         if threshold is not None and threshold < total_errors:

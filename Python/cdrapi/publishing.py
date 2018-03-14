@@ -649,23 +649,6 @@ class Job:
                     self._threshold = int(abort_on_error)
             return self._threshold
 
-        @property
-        def thresholds(self):
-            """
-            Per-doctype error thresholds
-
-            If exceeded, will cause the job to fail.
-            """
-
-            if not hasattr(self, "_thresholds"):
-                self._thresholds = dict()
-                path = "PerDoctypeErrorThresholds/PerDoctypeErrorThreshold"
-                for node in self.__node.findall(path):
-                    doctype = Doc.get_text(node.find("Doctype"))
-                    threshold = int(Doc.get_text(node.find("MaxErrors")))
-                    self._thresholds[doctype] = threshold
-            return self._thresholds
-
         class Specification:
             """
             """
