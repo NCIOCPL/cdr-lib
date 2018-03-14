@@ -1836,12 +1836,13 @@ class Doc(object):
         Optional keyword arguments:
           version - versions to fetch (e.g., 'lastp')
           before - restrict versions to those created before this date/time
+          date - alias for before
 
         Return:
           sequence of `Filter` objects, to be applied in order
         """
         version = opts.get("version")
-        before = opts.get("before")
+        before = opts.get("before") or opts.get("date")
         opts = dict(version=version, before=before)
         filters = []
         #print("filter_specs={}".format(filter_specs))
