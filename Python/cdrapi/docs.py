@@ -4849,6 +4849,8 @@ class Doctype:
                    validate documents of this type
           versioning - "Y" (the default, meaning documents of this type
                        have separate versions created) or "N"
+          title_filter - string for the name of the filter used to
+                         extract titles of documents of this type
         """
 
         self.__session = session
@@ -5106,6 +5108,46 @@ class Doctype:
         return self.__session
 
     @property
+    def title_filter(self):
+        """
+        String for the title of this document type's title filter document
+        """
+
+        if not hasattr(self, "_title_filter"):
+            if "title_filter" in self.__opts:
+                self._title_filter = self.__opts["title_filter"]
+            elif self.id:
+                self._title_filter_id = self._title_filter = None
+                query = Query("document d", "d.id", "d.title")
+                query.join("doc_type t", "t.title_filter = d.id")
+                query.where(query.Condition("t.id", self.id))
+                row = query.execute(self.cursor).fetchone()
+                if row:
+                    self._title_filter_id, self._title_filter = row
+            else:
+                self.session.logger.warning("@title_filter: no doctype id")
+                self._title_filter = None
+        return self._title_filter
+
+    @property
+    def title_filter_id(self):
+        """
+        Integer for the title filter's row in the `all_docs` table
+        """
+
+        if not hasattr(self, "_title_filter_id"):
+            if self.title_filter and not hasattr(self, "_title_filter_id"):
+                _id = Doc.id_from_title(self.title_filter, self.cursor)
+                if _id:
+                    self._title_filter_id = _id
+                else:
+                    message = "Filter {!r} not found".format(self.title_filter)
+                    raise Exception(message)
+            else:
+                self._title_filter_id = None
+        return self._title_filter_id
+
+    @property
     def versioning(self):
         """
         Flag (Y/N) indicating whether documents of this type are versioned
@@ -5243,7 +5285,8 @@ class Doctype:
                 "xml_schema": self.schema_id,
                 "comment": opts.get("comment", self.comment) or None,
                 "active": opts.get("active", self.active),
-                "schema_date": now
+                "schema_date": now,
+                "title_filter": self.title_filter_id
             }
             if fields["comment"]:
                 fields["comment"] = fields["comment"].strip()

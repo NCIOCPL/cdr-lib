@@ -808,7 +808,8 @@ def delGroup(credentials, name, **opts):
 class dtinfo:
     def __init__(self, **opts):
         names = ("type", "format", "versioning", "created", "schema_mod",
-                 "dtd", "schema", "vvLists", "comment", "error", "active")
+                 "dtd", "schema", "vvLists", "comment", "error", "active",
+                 "title_filter")
         for name in names:
             setattr(self, name, opts.get(name))
         if "type" not in opts:
@@ -852,6 +853,7 @@ class dtinfo:
       Versioning: {}
          Created: {}
           Active: {}
+    Title Filter: {}
  Schema Modified: {}
           Schema:
 {}
@@ -864,6 +866,7 @@ class dtinfo:
            self.versioning or "",
            self.created or "",
            self.active or "",
+           self.title_filter or "",
            self.schema_mod or "",
            self.schema or "",
            self.dtd or "",
@@ -901,7 +904,8 @@ def getDoctype(credentials, name, **opts):
             schema=doctype.schema,
             vvLists=vv_lists,
             comment=doctype.comment,
-            active=doctype.active
+            active=doctype.active,
+            title_filter=doctype.title_filter
         )
         return dtinfo(**args)
     command = etree.Element("CdrGetDocType", Type=name, GetEnumValues="Y")
@@ -923,6 +927,8 @@ def getDoctype(credentials, name, **opts):
                     args["dtd"] = get_text(child)
                 elif child.tag == "DocSchema":
                     args["schema"] = get_text(child)
+                elif child.tag == "TitleFilter":
+                    args["title_filter"] = get_text(child)
                 elif child.tag == "EnumSet":
                     values = [v.text for v in child.findall("ValidValue")]
                     args["vvLists"].append((child.get("Node"), values))
@@ -958,7 +964,8 @@ def addDoctype(credentials, info, **opts):
             schema=info.schema,
             format=info.format,
             versioning=info.versioning,
-            comment=info.comment
+            comment=info.comment,
+            title_filter=info.title_filter
         )
         doctype = Doctype(session, **opts)
         doctype.save()
@@ -974,6 +981,8 @@ def addDoctype(credentials, info, **opts):
     if info.active:
         command.set("Active", info.active)
     etree.SubElement(command, "DocSchema").text = info.schema
+    if info.title_filter:
+        etree.SubElement(command, "TitleFilter").text = info.title_filter
     if info.comment is not None:
         etree.SubElement(command, "Comment").text = info.comment
 
@@ -1011,6 +1020,7 @@ def modDoctype(credentials, info, **opts):
             format=info.format,
             versioning=info.versioning,
             comment=info.comment,
+            title_filter=info.title_filter
         )
         if info.active:
             opts["active"] = info.active
@@ -1027,6 +1037,8 @@ def modDoctype(credentials, info, **opts):
         command.set("Active", info.active)
     etree.SubElement(command, "DocSchema").text = info.schema
     etree.SubElement(command, "Comment").text = info.comment or ""
+    if info.title_filter:
+        etree.SubElement(command, "TitleFilter").text = info.title_filter
 
     # Submit the request.
     for response in _Control.send_command(session, command, tier):
