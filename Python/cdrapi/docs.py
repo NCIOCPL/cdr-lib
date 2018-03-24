@@ -3127,6 +3127,8 @@ class Doc(object):
         for path, location, value in wanted:
             integers = self.INTEGERS.findall(value)
             int_val = int(integers[0]) if integers else None
+            if int_val is not None and abs(int_val) > 2147483647:
+                int_val = 0
             args = self.id, path, value, int_val, location
             self.cursor.execute(insert, args)
 
