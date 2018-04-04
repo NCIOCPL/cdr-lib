@@ -2916,7 +2916,8 @@ def getFilterSet(credentials, name, **opts):
         filter_set = APIFilterSet(session, name=name)
         for member in filter_set.members:
             if isinstance(member, APIDoc):
-                members.append(IdAndName(member.cdr_id, member.title))
+                title = member.title or "*** DOCUMENT NOT FOUND ***"
+                members.append(IdAndName(member.cdr_id, title))
             else:
                 members.append(IdAndName(member.id, member.name))
         return FilterSet(filter_set.name, filter_set.description,

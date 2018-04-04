@@ -2485,7 +2485,10 @@ class Doc(object):
         if self.version:
             query.where(query.Condition("num", self.version))
         row = query.execute(self.cursor).fetchone()
-        return row[0]
+        if row:
+            return row[0]
+        self.session.logger.warning("%s for %s not found", column, self.cdr_id)
+        return None
 
     def __generate_fragment_ids(self):
         """
