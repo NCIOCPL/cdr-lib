@@ -555,7 +555,7 @@ if FULL:
                 cursor.execute(update, (filter_id, "xxtest"))
                 conn.commit()
             else:
-                opts = dict(getObject=True, tier=self.TIER)
+                opts = dict(getObject=True, tier=self.TIER, checkout="Y")
                 doc = cdr.getDoc(self.session, filter_id, **opts)
                 doc.xml = filter1
                 doc_id = cdr.repDoc(self.session, doc=str(doc), tier=self.TIER)
