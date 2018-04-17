@@ -38,7 +38,7 @@ def connect(**opts):
     if not password:
         raise Exception("user {!r} unknown on {!r}".format(user, tier.name))
     parms = dict(
-        Driver="SQL Server Native Client 11.0",
+        Driver="{ODBC Driver 13 for SQL Server}",
         Server="{},{}".format(tier.sql_server, tier.port(Query.DB)),
         Database=opts.get("database", Query.DB),
         Uid=user,
