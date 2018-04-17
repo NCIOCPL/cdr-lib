@@ -3977,7 +3977,7 @@ class _Control:
         # This isn't actually used to talk to the database. We're only
         # trying to find out if we have local database access. If we
         # don't we'll be using tunneling over HTTPS for CDR commands.
-        conn = cdrdb.connect(timeout=2)
+        conn = cdrdb.connect(timeout=10)
         HAVE_LOCAL_DB_ACCESS = True
         conn.close()
         del conn
