@@ -9,7 +9,6 @@ import re
 import sys
 import threading
 import time
-from adodbapi import Binary
 import dateutil.parser
 from lxml import etree
 from cdrapi.db import Query
@@ -2984,7 +2983,7 @@ class Doc(object):
             # have to do is replace the old bytes with the new bytes.
             if not blob_is_versioned:
                 update = "UPDATE doc_blob SET data = ? WHERE id = ?"
-                blob = Binary(self.blob)
+                blob = bytearray(self.blob)
                 self.cursor.execute(update, (blob, blob_id))
                 return blob_id
 
@@ -3000,7 +2999,7 @@ class Doc(object):
 
         # Store the bytes for the BLOB.
         insert = "INSERT INTO doc_blob (data) VALUES (?)"
-        self.cursor.execute(insert, (Binary(self.blob),))
+        self.cursor.execute(insert, (bytearray(self.blob),))
 
         # Connect the document to the BLOB.
         self.cursor.execute("SELECT @@IDENTITY AS blob_id")
