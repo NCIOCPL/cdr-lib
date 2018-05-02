@@ -9,7 +9,6 @@ import re
 import sys
 import threading
 import time
-from adodbapi import Binary
 import dateutil.parser
 from lxml import etree
 from cdrapi.db import Query
@@ -1287,7 +1286,7 @@ class Doc(object):
         tree = Tree()
         args = self.id, depth
         self.session.log("Doc.get_tree({!r}, depth={!r})".format(*args))
-        self.cursor.callproc("cdr_get_term_tree", (self.id, depth))
+        self.cursor.execute("{CALL cdr_get_term_tree (?,?)}", (self.id, depth))
         for child, parent in self.cursor.fetchall():
             tree.relationships.append(Tree.Relationship(parent, child))
         if not self.cursor.nextset():
@@ -1349,7 +1348,9 @@ class Doc(object):
                 xml = self.denormalized_xml
             else:
                 xml = self.xml
-            etree.SubElement(cdr_doc, "CdrDocXml").text = etree.CDATA(xml)
+            if "]]>" not in xml:
+                xml = etree.CDATA(xml)
+            etree.SubElement(cdr_doc, "CdrDocXml").text = xml
         if opts.get("get_blob") and self.has_blob:
             blob = etree.SubElement(cdr_doc, "CdrDocBlob", encoding="base64")
             blob.text = base64encode(self.blob).decode("ascii")
@@ -1834,12 +1835,13 @@ class Doc(object):
         Optional keyword arguments:
           version - versions to fetch (e.g., 'lastp')
           before - restrict versions to those created before this date/time
+          date - alias for before
 
         Return:
           sequence of `Filter` objects, to be applied in order
         """
         version = opts.get("version")
-        before = opts.get("before")
+        before = opts.get("before") or opts.get("date")
         opts = dict(version=version, before=before)
         filters = []
         #print("filter_specs={}".format(filter_specs))
@@ -1978,6 +1980,7 @@ class Doc(object):
         # See if the document is locked by another account.
         if lock.locker.id != self.session.user_id:
             if opts.get("force"):
+                doctype = self.doctype.name
                 if not self.session.can_do("FORCE CHECKOUT", doctype):
                     raise Exception(str(lock))
             else:
@@ -2135,7 +2138,7 @@ class Doc(object):
             active_status = row.active_status
         else:
             active_status = "A"
-        new_active_status = opts.get("active_status", active_status)
+        new_active_status = opts.get("active_status") or active_status
         if "D" in (active_status, new_active_status):
             raise Exception("can't save deleted document")
         message = "Invalid active_status value {!r}".format(new_active_status)
@@ -2481,7 +2484,10 @@ class Doc(object):
         if self.version:
             query.where(query.Condition("num", self.version))
         row = query.execute(self.cursor).fetchone()
-        return row[0]
+        if row:
+            return row[0]
+        self.session.logger.warning("%s for %s not found", column, self.cdr_id)
+        return None
 
     def __generate_fragment_ids(self):
         """
@@ -2977,7 +2983,7 @@ class Doc(object):
             # have to do is replace the old bytes with the new bytes.
             if not blob_is_versioned:
                 update = "UPDATE doc_blob SET data = ? WHERE id = ?"
-                blob = Binary(self.blob)
+                blob = bytearray(self.blob)
                 self.cursor.execute(update, (blob, blob_id))
                 return blob_id
 
@@ -2993,7 +2999,7 @@ class Doc(object):
 
         # Store the bytes for the BLOB.
         insert = "INSERT INTO doc_blob (data) VALUES (?)"
-        self.cursor.execute(insert, (Binary(self.blob),))
+        self.cursor.execute(insert, (bytearray(self.blob),))
 
         # Connect the document to the BLOB.
         self.cursor.execute("SELECT @@IDENTITY AS blob_id")
@@ -3123,6 +3129,8 @@ class Doc(object):
         for path, location, value in wanted:
             integers = self.INTEGERS.findall(value)
             int_val = int(integers[0]) if integers else None
+            if int_val is not None and abs(int_val) > 2147483647:
+                int_val = 0
             args = self.id, path, value, int_val, location
             self.cursor.execute(insert, args)
 
@@ -4845,6 +4853,8 @@ class Doctype:
                    validate documents of this type
           versioning - "Y" (the default, meaning documents of this type
                        have separate versions created) or "N"
+          title_filter - string for the name of the filter used to
+                         extract titles of documents of this type
         """
 
         self.__session = session
@@ -5102,6 +5112,46 @@ class Doctype:
         return self.__session
 
     @property
+    def title_filter(self):
+        """
+        String for the title of this document type's title filter document
+        """
+
+        if not hasattr(self, "_title_filter"):
+            if "title_filter" in self.__opts:
+                self._title_filter = self.__opts["title_filter"]
+            elif self.id:
+                self._title_filter_id = self._title_filter = None
+                query = Query("document d", "d.id", "d.title")
+                query.join("doc_type t", "t.title_filter = d.id")
+                query.where(query.Condition("t.id", self.id))
+                row = query.execute(self.cursor).fetchone()
+                if row:
+                    self._title_filter_id, self._title_filter = row
+            else:
+                self.session.logger.warning("@title_filter: no doctype id")
+                self._title_filter = None
+        return self._title_filter
+
+    @property
+    def title_filter_id(self):
+        """
+        Integer for the title filter's row in the `all_docs` table
+        """
+
+        if not hasattr(self, "_title_filter_id"):
+            if self.title_filter and not hasattr(self, "_title_filter_id"):
+                _id = Doc.id_from_title(self.title_filter, self.cursor)
+                if _id:
+                    self._title_filter_id = _id
+                else:
+                    message = "Filter {!r} not found".format(self.title_filter)
+                    raise Exception(message)
+            else:
+                self._title_filter_id = None
+        return self._title_filter_id
+
+    @property
     def versioning(self):
         """
         Flag (Y/N) indicating whether documents of this type are versioned
@@ -5239,7 +5289,8 @@ class Doctype:
                 "xml_schema": self.schema_id,
                 "comment": opts.get("comment", self.comment) or None,
                 "active": opts.get("active", self.active),
-                "schema_date": now
+                "schema_date": now,
+                "title_filter": self.title_filter_id
             }
             if fields["comment"]:
                 fields["comment"] = fields["comment"].strip()
@@ -6380,14 +6431,11 @@ class LinkType:
                 self._properties = []
                 message = "Property type {!r} not supported"
                 for row in rows:
-                    try:
-                        cls = getattr(LinkType, row.name)
-                        property = cls(self.session, *row)
-                        if not isinstance(property, LinkType.Property):
-                            raise Exception(message.format(row.name))
-                        self._properties.append(property)
-                    except:
+                    cls = getattr(LinkType, row.name)
+                    property = cls(self.session, *row)
+                    if not isinstance(property, LinkType.Property):
                         raise Exception(message.format(row.name))
+                    self._properties.append(property)
             else:
                 self._properties = []
         return self._properties

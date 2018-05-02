@@ -771,7 +771,7 @@ class BrokenExternalLinks(URLChecker):
     TITLE = "URL Check"
     BANNER = "CDR Report on Inactive Hyperlinks"
     TABLE_CLASS = "url-check"
-    COLUMN_HEADERS = ("CDR ID", "Stored URL", "Problem", "Element")
+    COLUMN_HEADERS = ("CDR ID", "Title", "Stored URL", "Problem", "Element")
 
     def __init__(self, job):
         """
@@ -830,9 +830,10 @@ class BrokenExternalLinks(URLChecker):
         For any other document type, no other special filtering is needed.
         """
 
-        fields = "u.doc_id", "u.value", "u.path"
+        fields = "u.doc_id", "d.title", "u.value", "u.path"
         query = cdrdb.Query("query_term u", *fields).unique()
         query.where("u.value LIKE 'http%'")
+        query.join("document d", "d.id = u.doc_id")
         if self.doc_type == "GlossaryTermConcept":
             if self.language or self.audience:
                 query.where("u.path = '%s/@cdr:xref'" % self.GTC_RELATED_REF)
@@ -848,6 +849,7 @@ class BrokenExternalLinks(URLChecker):
                     def_path = "/GlossaryTermConcept%TermDefinition"
                 query2 = cdrdb.Query("query_term u", *fields)
                 query2.where("u.path LIKE '%s%%/@cdr:xref'" % def_path)
+                query2.join("document d", "d.id = u.doc_id")
                 if self.audience:
                     query2.join("query_term a", "a.doc_id = u.doc_id",
                                 "a.node_loc = u.node_loc")
@@ -898,7 +900,7 @@ class BrokenExternalLinks(URLChecker):
         External links found in the CDR documents.
         """
 
-        def __init__(self, report, doc_id, url, path):
+        def __init__(self, report, doc_id, title, url, path):
             """
             Store the values for a row in the result set from the
             database query.
@@ -906,6 +908,7 @@ class BrokenExternalLinks(URLChecker):
 
             self.report = report
             self.doc_id = doc_id
+            self.title = title
             self.url = url
             self.path = path
 
@@ -924,8 +927,11 @@ class BrokenExternalLinks(URLChecker):
             B = self.report.B
             element = self.path.split("/")[-2]
             link = B.A(page.url, href=page.url, target="_blank")
+            url = "/cgi-bin/cdr/QcReport.py?DocId={:d}".format(self.doc_id)
+            qclink = B.A(str(self.doc_id), href=url, target="_blank")
             return B.TR(
-                B.TD(str(self.doc_id), B.CLASS("center")),
+                B.TD(qclink, B.CLASS("center")),
+                B.TD(self.title, B.CLASS("left")),
                 B.TD(link, B.CLASS("left")),
                 B.TD(page.problem, B.CLASS("left")),
                 B.TD(element, B.CLASS("left"))
@@ -1191,8 +1197,10 @@ class PageTitleMismatches(URLChecker):
             elif self.mismatched:
                 title_class = "mismatch"
             link = B.A(page.url, href=page.url, target="_blank")
+            url = "/cgi-bin/cdr/QcReport.py?DocId={:d}".format(self.doc_id)
+            qclink = B.A(str(self.doc_id), href=url, target="_blank")
             return B.TR(
-                B.TD(str(self.doc_id), B.CLASS("center")),
+                B.TD(qclink, B.CLASS("center")),
                 B.TD(self.doc_title, B.CLASS("left")),
                 B.TD(link, B.CLASS("left")),
                 B.TD(self.stored_title, B.CLASS("left")),
@@ -1446,7 +1454,7 @@ class GlossaryTermSearch(BatchReport):
             doc_id, doc_xml, doc_title = row
             root = etree.fromstring(doc_xml.encode("utf-8"))
             for node in root.findall("SummarySection"):
-                text = cdr.get_text(node).strip()
+                text = u" ".join(node.itertext("*")).strip()
                 sec_title = cdr.get_text(node.find("Title")) or u"[None]"
                 self.tree.clear_flags()
                 for p in self.tree.find_phrases(text):

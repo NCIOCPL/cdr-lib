@@ -94,7 +94,7 @@ class Control:
             if self.__gk_prolog_sent:
                 args = self.job.id, "Export", 0, "abort"
                 opts = dict(host=self.job.parms.get("GKServer"))
-                response = sendJobComplete(*args, **opts)
+                response = cdr2gk.sendJobComplete(*args, **opts)
                 if response.type != "OK":
                     args = response.type, response.message
                     self.logger.warning("GK abort response: %s (%s)", *args)
@@ -165,6 +165,9 @@ class Control:
                 self.post_message(message)
             self.notify(message, with_link=True)
 
+            # Record documents published for the first time
+            self.record_first_pub()
+
     # ------------------------------------------------------------------
     # METHODS FOR EXPORT JOBS START HERE.
     # ------------------------------------------------------------------
@@ -217,6 +220,36 @@ class Control:
         if not self.job.no_output:
             if self.job.parms.get("ReportOnly") != "Yes":
                 self.create_push_job()
+
+    def record_first_pub(self):
+        """
+        Populate the `document.first_pub` column where appropriate
+
+        Avoid populating the column for documents which pre-date
+        the CDR, because we have no way of knowing when those
+        were first published, as the legacy Oracle system did not
+        capture that information.
+        """
+
+        self.cursor.execute("""\
+            UPDATE document
+               SET document.first_pub = pub_proc.started
+              FROM pub_proc
+              JOIN pub_proc_doc
+                ON pub_proc_doc.pub_proc = pub_proc.id
+              JOIN document
+                ON document.id = pub_proc_doc.doc_id
+             WHERE pub_proc.id = ?
+               AND pub_proc.status = ?
+               AND pub_proc_doc.removed != 'Y'
+               AND pub_proc_doc.failure IS NULL
+               AND document.first_pub IS NULL
+               AND document.first_pub_knowable = 'Y'""",
+                            (self.job.id, self.SUCCESS))
+        count = self.cursor.rowcount
+        if count:
+            self.logger.info("Set first_pub for %d document(s)", count)
+            self.conn.commit()
 
     def prep_export(self):
         """
@@ -297,8 +330,9 @@ class Control:
                 start = datetime.datetime.now()
                 docs = spec.select_documents(self)
                 elapsed = (datetime.datetime.now() - start).total_seconds()
-                args = len(docs), spec.name, elapsed
-                msg = "{:d} {} docs selected in {:.2f} seconds".format(*args)
+                name = "{} ".format(spec.name) if spec.name else ""
+                args = len(docs), name, elapsed
+                msg = "{:d} {}docs selected in {:.2f} seconds".format(*args)
                 self.post_message(msg)
                 self.docs = []
                 for doc in docs:
@@ -380,10 +414,11 @@ class Control:
         errors = dict([tuple(row) for row in rows])
         for doctype in errors:
             total_errors += errors[doctype]
-            threshold = self.job.subsystem.thresholds.get(doctype)
-            if threshold is not None and threshold < errors[doctype]:
+            name = "Max{}Errors".format(doctype)
+            threshold = self.job.parms.get(name)
+            if threshold is not None and int(threshold) < errors[doctype]:
                 args = threshold, doctype, errors[doctype]
-                message = "{:d} {} errors allowed; {:d} found".format(*args)
+                message = "{} {} errors allowed; {:d} found".format(*args)
                 raise Exception(message)
         threshold = self.job.subsystem.threshold
         if threshold is not None and threshold < total_errors:
@@ -663,7 +698,7 @@ class Control:
         self.logger.info("Queueing dropped documents")
         try:
             self.cursor.execute(insert)
-            count = self.cursor.get_rowcount()
+            count = self.cursor.rowcount
             if count:
                 self.logger.info("Queued %d dropped documents", count)
         except:
@@ -919,7 +954,8 @@ class Control:
           with_link - if True, include a link to the job's status page
         """
 
-        email = self.job.parms.get("email") or "bkline@rksystems.com"
+        default = cdr.getEmailList("Operator Publishing Notification")
+        email = self.job.parms.get("email") or ",".join(default)
         if email and "@" in email:
             recips = email.replace(";", ",").split(",")
             args = self.tier.name, self.job.id

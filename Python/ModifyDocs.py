@@ -2,9 +2,14 @@
 # Harness for one-off jobs to apply a custom modification to a group
 # of CDR documents.
 #----------------------------------------------------------------------
-import cdr, cdrdb, cdrglblchg, sys, time, copy
+import copy
 import datetime
 import random
+import sys
+
+import cdr
+from cdrapi import db as cdrdb
+import cdrglblchg
 
 LOGFILE = cdr.DEFAULT_LOGDIR + '/ModifyDocs.log'
 
@@ -71,7 +76,8 @@ class Job:
     The main class for global changes.
     """
     def __init__(self, uid, pwd, filter, transform, comment, testMode=True,
-                 logFile=LOGFILE, validate=True, haltOnValErr=False):
+                 logFile=LOGFILE, validate=True, haltOnValErr=False,
+                 tier=None):
         """
         Create a new one-off job to apply a custom modification to
         a group of CDR documents.
@@ -102,6 +108,7 @@ class Job:
                                  don't save any versions of that doc.
                          False = Save anyway.
                          sets _noSaveOnErr
+          tier         - PROD|STAGE|QA|DEV (optional override)
 
         Notes:
             It can be useful to set the Job object as a field in the
@@ -118,13 +125,14 @@ class Job:
         self.filter    = filter
         self.transform = transform
         self.comment   = comment
-        self.conn      = cdrdb.connect('CdrGuest')
+        self.tier      = tier
+        self.conn      = cdrdb.connect(user='CdrGuest', tier=tier)
         self.cursor    = self.conn.cursor()
 
         # Set session based on passed uid/session id
         if pwd:
             # Caller passed a user id + password
-            self.session = cdr.login(uid, pwd)
+            self.session = cdr.login(uid, pwd, tier=tier)
         else:
             # Caller passed a session id instead of a user id
             self.session = uid
@@ -390,7 +398,7 @@ class Job:
                 warnStr = ""
                 if disp.warnMsgs:
                     warnStr = "<font color='red'>"
-                    if type(disp.warnMsgs) in (type([]), type(())):
+                    if isinstance(disp.warnMsgs, (list, tuple)):
                         count   = 0
                         for warn in disp.warnMsgs:
                             warnStr += warn
@@ -453,7 +461,7 @@ class Job:
         lockedCount = 0
 
         for docId in idList:
-            lockObj = cdr.isCheckedOut(docId)
+            lockObj = cdr.isCheckedOut(docId, self.conn)
             if lockObj:
                 # Report and count each one
                 msg = "Locked %7s: %s: %s\n" % \
@@ -488,6 +496,8 @@ class Job:
             self.createOutputDir()
         else:
             self.log("Running in real mode.  Updating the database")
+        if self.tier:
+            self.log("Running on {}".format(self.tier))
 
         # For reporting time
         startTime = datetime.datetime.now()
@@ -520,14 +530,15 @@ class Job:
                 # XXX might just pass it in
                 # XXX might pass in reference to job and put it in self
                 (lastAny, lastPub, changedYN) = \
-                    cdr.lastVersions('guest', "CDR%010d" % docId)
+                    cdr.lastVersions('guest', "CDR%010d" % docId,
+                                     tier=self.tier)
 
                 # Log doc ID, active status, version info
                 # Format of version info is:
                 #   [lastPubVerNum/lastVerNum/changedYN]
                 #   changedYN: 'y' = CWD changed from last version.
                 msg = "Processing CDR%010d" % docId
-                if cdr.getDocStatus("guest", docId) == 'I':
+                if cdr.getDocStatus("guest", docId, tier=self.tier) == 'I':
                     msg += " (BLOCKED)"
                 msg += " ["
                 if lastPub >=0:
@@ -543,7 +554,7 @@ class Job:
                 # the retrievals and performs all of the transforms for
                 # all versions needing transformation.
                 doc = Doc(docId, self.session, self.transform, self.comment,
-                          self.__transformVER)
+                          self.__transformVER, self.tier)
 
                 # If caller wants to change document status (e.g., block
                 #   all docs), signify that here.  Doc.__saveDoc() will
@@ -591,7 +602,7 @@ class Job:
 
             # Unlock, but only if we locked it
             if lockedDoc:
-                cdr.unlock(self.session, "CDR%010d" % docId)
+                cdr.unlock(self.session, "CDR%010d" % docId, tier=self.tier)
 
             # Progress count
             self.__countDocsProcessed += 1
@@ -636,7 +647,7 @@ class Job:
     # Log processing/error information with a timestamp.
     #------------------------------------------------------------------
     def log(self, what):
-        what = "%s: %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), what)
+        what = "%s: %s\n" % (datetime.datetime.now(), what)
         self.logFile.write(what)
         if not self.noStdErr:
             sys.stderr.write(what)
@@ -655,17 +666,20 @@ class Job:
 #----------------------------------------------------------------------
 class Doc(object):
 
-    def __init__(self, id, session, transform, comment, transformVER=True):
+    def __init__(self, id, session, transform, comment, transformVER=True,
+                 tier=None):
 
         self.id           = id
         self.session      = session
         self.transform    = transform
         self.comment      = comment
-        self.versions     = cdr.lastVersions('guest', "CDR%010d" % id)
+        self.versions     = cdr.lastVersions('guest', "CDR%010d" % id,
+                                             tier=tier)
         self.__messages   = []
         self.disp         = Disposition(id)
         self.activeStatus = None
         self.transformVER = transformVER
+        self.tier         = tier
         self.loadAndTransform()
 
     #------------------------------------------------------------------
@@ -688,9 +702,10 @@ class Doc(object):
             return len(self.__m) > 0
         def __len__(self):
             return len(self.__m)
-    def __getVersionMessages(self):
+
+    @property
+    def versionMessages(self):
         return Doc.VersionMessages(self.__messages)
-    versionMessages = property(__getVersionMessages)
 
     #------------------------------------------------------------------
     # Uses xml comparator from cdr module.
@@ -744,6 +759,8 @@ class Doc(object):
 
         # Checkout current working document to get doc and lock
         opts = dict(checkout=checkout, getObject=True)
+        if self.tier:
+            opts["tier"] = self.tier
         try:
             self.cwd = cdr.getDoc(self.session, self.id, **opts)
         except Exception as e:
@@ -767,7 +784,8 @@ class Doc(object):
         # cwdVal is array of error messages or empty array
         if _validate:
             self.cwdVals = cdr.valPair(self.session, self.cwd.type,
-                                       self.cwd.xml, self.newCwdXml)
+                                       self.cwd.xml, self.newCwdXml,
+                                       tier=self.tier)
 
         # If we're processing versions
         if self.transformVER:
@@ -788,7 +806,10 @@ class Doc(object):
                     self.newLastvXml = self.transform.run(self.lastv)
                     if _validate:
                         self.lastvVals = cdr.valPair(self.session,
-                            self.lastv.type, self.lastv.xml, self.newLastvXml)
+                                                     self.lastv.type,
+                                                     self.lastv.xml,
+                                                     self.newLastvXml,
+                                                     tier=self.tier)
                 else:
                     # Lastv was same as cwd, don't need to load it, just
                     #   reference the existing self.cwd
@@ -818,7 +839,10 @@ class Doc(object):
                         #   attempt to save an invalid pub version will cause
                         #   it to be marked non-publishable
                         self.lastpVals = cdr.valPair(self.session,
-                            self.lastp.type, self.lastp.xml, self.newLastpXml)
+                                                     self.lastp.type,
+                                                     self.lastp.xml,
+                                                     self.newLastpXml,
+                                                     tier=self.tier)
 
                 else:
                     # Lastp was same as lastv, don't need to load it, just
@@ -838,7 +862,7 @@ class Doc(object):
         """
         def log(): pass
 
-    def saveChanges(self, cursor, logger = DummyLogger()):
+    def saveChanges(self, cursor, logger=DummyLogger()):
         """
         In run mode, saves all versions of a document needing to be saved.
         In test mode, writes to output files, leaving the database alone.
@@ -994,7 +1018,7 @@ class Doc(object):
         cursor.execute("""\
                 SELECT val_status
                   FROM document
-                 WHERE id = ?""", self.id)
+                 WHERE id = ?""", (self.id,))
         rows = cursor.fetchall()
         if not rows:
             raise Exception("Failure retrieving val status for CDR%d" %
@@ -1005,7 +1029,7 @@ class Doc(object):
                 SELECT COUNT(*)
                   FROM doc_version
                  WHERE id = ?
-                   AND val_status <> 'U'""", self.id)
+                   AND val_status <> 'U'""", (self.id,))
         rows = cursor.fetchall()
         if not rows:
             raise Exception("Failure retrieving val status for CDR%d" %
@@ -1033,18 +1057,17 @@ class Doc(object):
         logger.log("saveDoc(%d, ver='%s' pub='%s' val='%s'%s)" %
                 (self.id, ver, pub, val, msg))
 
-        response = cdr.repDoc(self.session, doc = docStr, ver = ver,
-                              val = val,
-                              verPublishable = pub,
-                              reason = self.comment, comment = self.comment,
-                              showWarnings = 'Y',
-                              activeStatus = self.activeStatus)
+        response = cdr.repDoc(self.session, doc=docStr, ver=ver, val=val,
+                              verPublishable=pub, reason=self.comment,
+                              comment=self.comment, showWarnings="Y",
+                              activeStatus=self.activeStatus, tier=self.tier)
 
         # Response missing first element means save failed
         # Almost certainly caused by locked doc
         if not response[0]:
             capture_transaction(self.session, docStr, ver, val, pub,
-                                self.comment, self.activeStatus, response[1])
+                                self.comment, self.activeStatus, response[1],
+                                self.tier)
             raise Exception("Failure saving changes for CDR%010d: %s" %
                             (self.id, response[1]))
 
@@ -1061,7 +1084,8 @@ class Doc(object):
         # Remember the message used to describe this version of the document.
         self.__messages.append(msg)
 
-def capture_transaction(session, doc, ver, val, pub, comment, status, error):
+def capture_transaction(session, doc, ver, val, pub, comment, status, error,
+                        tier):
     """
     Create a repro case for a failed document save.
 
@@ -1101,6 +1125,8 @@ def capture_transaction(session, doc, ver, val, pub, comment, status, error):
             fp.write("    reason=%r,\n" % comment)
             fp.write("    comment=%r,\n" % comment)
             fp.write("    showWarnings='Y',\n")
+            if tier:
+                fpwrite("    tier=%r,\n" % tier)
             fp.write("    activeStatus=%r)\n" % status)
             fp.write("print response[0] and 'Success' or 'Failure'\n")
             fp.write("with open(%r, 'w') as fp:\n" % log)

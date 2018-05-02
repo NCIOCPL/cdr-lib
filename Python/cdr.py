@@ -808,7 +808,8 @@ def delGroup(credentials, name, **opts):
 class dtinfo:
     def __init__(self, **opts):
         names = ("type", "format", "versioning", "created", "schema_mod",
-                 "dtd", "schema", "vvLists", "comment", "error", "active")
+                 "dtd", "schema", "vvLists", "comment", "error", "active",
+                 "title_filter")
         for name in names:
             setattr(self, name, opts.get(name))
         if "type" not in opts:
@@ -852,6 +853,7 @@ class dtinfo:
       Versioning: {}
          Created: {}
           Active: {}
+    Title Filter: {}
  Schema Modified: {}
           Schema:
 {}
@@ -864,6 +866,7 @@ class dtinfo:
            self.versioning or "",
            self.created or "",
            self.active or "",
+           self.title_filter or "",
            self.schema_mod or "",
            self.schema or "",
            self.dtd or "",
@@ -901,7 +904,8 @@ def getDoctype(credentials, name, **opts):
             schema=doctype.schema,
             vvLists=vv_lists,
             comment=doctype.comment,
-            active=doctype.active
+            active=doctype.active,
+            title_filter=doctype.title_filter
         )
         return dtinfo(**args)
     command = etree.Element("CdrGetDocType", Type=name, GetEnumValues="Y")
@@ -923,6 +927,8 @@ def getDoctype(credentials, name, **opts):
                     args["dtd"] = get_text(child)
                 elif child.tag == "DocSchema":
                     args["schema"] = get_text(child)
+                elif child.tag == "TitleFilter":
+                    args["title_filter"] = get_text(child)
                 elif child.tag == "EnumSet":
                     values = [v.text for v in child.findall("ValidValue")]
                     args["vvLists"].append((child.get("Node"), values))
@@ -958,7 +964,8 @@ def addDoctype(credentials, info, **opts):
             schema=info.schema,
             format=info.format,
             versioning=info.versioning,
-            comment=info.comment
+            comment=info.comment,
+            title_filter=info.title_filter
         )
         doctype = Doctype(session, **opts)
         doctype.save()
@@ -974,6 +981,8 @@ def addDoctype(credentials, info, **opts):
     if info.active:
         command.set("Active", info.active)
     etree.SubElement(command, "DocSchema").text = info.schema
+    if info.title_filter:
+        etree.SubElement(command, "TitleFilter").text = info.title_filter
     if info.comment is not None:
         etree.SubElement(command, "Comment").text = info.comment
 
@@ -1011,6 +1020,7 @@ def modDoctype(credentials, info, **opts):
             format=info.format,
             versioning=info.versioning,
             comment=info.comment,
+            title_filter=info.title_filter
         )
         if info.active:
             opts["active"] = info.active
@@ -1027,6 +1037,8 @@ def modDoctype(credentials, info, **opts):
         command.set("Active", info.active)
     etree.SubElement(command, "DocSchema").text = info.schema
     etree.SubElement(command, "Comment").text = info.comment or ""
+    if info.title_filter:
+        etree.SubElement(command, "TitleFilter").text = info.title_filter
 
     # Submit the request.
     for response in _Control.send_command(session, command, tier):
@@ -1816,7 +1828,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
             date=filter_date
         )
         if opts.get("inline"):
-            opts["filter"] = filter
+            options["filter"] = filter
             filters = []
         else:
             filters = filter
@@ -1847,7 +1859,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
     if filter_date:
         command.set("FilterCutoff", str(filter_date))
     if opts.get("inline"):
-        if not isinstance(unicode, filter):
+        if not isinstance(filter, unicode):
             filter = filter.decode("utf-8")
         etree.SubElement(command, "Filter").text = etree.CDATA(filter)
     else:
@@ -1871,7 +1883,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
         if date:
             node.set("maxDate", str(date))
     elif xml:
-        if not isinstance(unicode, xml):
+        if not isinstance(xml, unicode):
             xml = xml.decode("utf-8")
         node.text = etree.CDATA(xml)
     else:
@@ -2904,7 +2916,8 @@ def getFilterSet(credentials, name, **opts):
         filter_set = APIFilterSet(session, name=name)
         for member in filter_set.members:
             if isinstance(member, APIDoc):
-                members.append(IdAndName(member.cdr_id, member.title))
+                title = member.title or "*** DOCUMENT NOT FOUND ***"
+                members.append(IdAndName(member.cdr_id, title))
             else:
                 members.append(IdAndName(member.id, member.name))
         return FilterSet(filter_set.name, filter_set.description,
@@ -3186,11 +3199,11 @@ def putLinkType(credentials, name, linktype, action, **opts):
             try:
                 cls = getattr(APILinkType, name)
                 property = cls(session, name, value, comment)
-                if not isinstance(property, APILinkType.Property):
-                    raise Exception(message.format(name))
-                opts["properties"].append(property)
             except:
                 raise Exception(message.format(name))
+            if not isinstance(property, APILinkType.Property):
+                raise Exception(message.format(name))
+            opts["properties"].append(property)
         linktype = APILinkType(session, **opts)
         linktype.save()
     else:
@@ -3964,7 +3977,7 @@ class _Control:
         # This isn't actually used to talk to the database. We're only
         # trying to find out if we have local database access. If we
         # don't we'll be using tunneling over HTTPS for CDR commands.
-        conn = cdrdb.connect(timeout=2)
+        conn = cdrdb.connect(timeout=10)
         HAVE_LOCAL_DB_ACCESS = True
         conn.close()
         del conn
@@ -5770,13 +5783,15 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, **opts):
     import difflib
 
     # Normalize
-    etree_opts = dict(pretty_print=True, with_tail=False, with_comments=False)
-    doc1 = etree.tostring(etree.fromstring(utf8DocString1), **etree_opts)
-    doc2 = etree.tostring(etree.fromstring(utf8DocString2), **etree_opts)
+    parser = etree.XMLParser(remove_comments=True)
+    root1 = etree.fromstring(utf8DocString1, parser=parser)
+    root2 = etree.fromstring(utf8DocString2, parser=parser)
+    xml1 = etree.tostring(root1, pretty_print=True, with_tail=False)
+    xml2 = etree.tostring(root2, pretty_print=True, with_tail=False)
 
     # Compare
     diffObj = difflib.Differ()
-    diffSeq = diffObj.compare(doc1.splitlines(1),doc2.splitlines(1))
+    diffSeq = diffObj.compare(xml1.splitlines(1),xml2.splitlines(1))
 
     # If caller only wants changed lines, drop all lines with leading space
     if opts.get("chgOnly", True):
