@@ -1408,7 +1408,7 @@ def _put_doc(session, command_name, **opts):
             cdr_doc = etree.fromstring(doc)
     except:
         error = cls.wrap_error("Unable to parse document")
-        if show_warnings:
+        if opts.get("show_warnings") or opts.get("showWarnings"):
             return None, error
         return error
 
@@ -1420,7 +1420,7 @@ def _put_doc(session, command_name, **opts):
                 blob = fp.read()
         except:
             error = cls.wrap_error("unable to read BLOB file")
-            if show_warnings:
+            if opts.get("show_warnings") or opts.get("showWarnings"):
                 return None, error
             return error
     else:
