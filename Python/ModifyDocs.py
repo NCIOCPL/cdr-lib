@@ -1,1140 +1,731 @@
-#----------------------------------------------------------------------
-# Harness for one-off jobs to apply a custom modification to a group
-# of CDR documents.
-#----------------------------------------------------------------------
-import copy
-import datetime
-import random
-import sys
+"""
+Harness for batch modification of CDR documents
+
+Jobs can be run in test mode, in which case output is written to the
+file system for review, or in live mode, with the transformed documents
+stored in the repository's database.
+"""
+
+from copy import deepcopy
+from datetime import datetime
+from getpass import getpass
+from os import makedirs
+from random import random
 
 import cdr
 from cdrapi import db as cdrdb
-import cdrglblchg
-
-LOGFILE = cdr.DEFAULT_LOGDIR + '/ModifyDocs.log'
-
-#----------------------------------------------------------------------
-# Custom exception indicating that we can't check out a document.
-#----------------------------------------------------------------------
-class DocumentLocked(Exception): pass
 
 
-#----------------------------------------------------------------------
-# Error controls
-# If exception caught at top level and Job._self.countErrors > _maxErrors,
-#   halt processing
-# NOTES: Global change program that instantiates a ModifyDocs.Job may
-#        have its own exception handlers in its own run() callback
-#        routine.  Hence some exceptions may never reach the Job level
-#        error counter, never increment the count, and never stop the Job.
-#----------------------------------------------------------------------
-_maxErrors = 0
-
-# Caller can alter this
-def setMaxErrors(maxErrs):
-    global _maxErrors
-    _maxErrors = maxErrs
-
-#----------------------------------------------------------------------
-# Module level variables (statics)
-#----------------------------------------------------------------------
-_testMode    = True   # True=Output to files only, not database
-_outputDir   = None   # Files go in this directory
-_validate    = True   # True=Check that change didn't invalidate valid doc
-_noSaveOnErr = False  # True=Don't save any doc if change invalidate a version
-
-#----------------------------------------------------------------------
-# Class to track the disposition of a single document
-#
-# One of these created for each document to indicate what happened
-# to it.
-#----------------------------------------------------------------------
-class Disposition:
-    def __init__(self, docId, errMsg=None):
-        """
-        Describes disposition of a document.
-        Normally created with an empty array of error messages, but
-        the caller can create one of these just to record a message.
-        """
-        self.docId        = docId
-        self.cwdChanged   = False
-        self.lastvChanged = False
-        self.lastpChanged = False
-        self.errMsg       = errMsg
-        self.warnMsgs     = None
-
-    def __str__(self):
-        return "%s: cwd=%s lv=%s lpv=%s msgs=%s warns=%s" % (self.docId,
-               self.cwdChanged, self.lastvChanged, self.lastpChanged,
-               self.errMsg, self.warnMsgs)
-
-#----------------------------------------------------------------------
-# Class for one modification job.
-#----------------------------------------------------------------------
 class Job:
     """
-    The main class for global changes.
+    Top-level control for batch modification job
+
+    Create derived classes implementing the `select()` and
+    `transform()` methods appropriate to each job, and providing
+    a meaningful `COMMENT` string to be stored with the modified
+    documents.
     """
-    def __init__(self, uid, pwd, filter, transform, comment, testMode=True,
-                 logFile=LOGFILE, validate=True, haltOnValErr=False,
-                 tier=None):
+
+    LOGNAME = "ModifyDocs"
+    COMMENT = "Batch transformation of CDR documents"
+
+    def __init__(self, **opts):
         """
-        Create a new one-off job to apply a custom modification to
-        a group of CDR documents.
+        Capture control settings for job
 
-        Pass:
-            uid        - CDR user ID of operator, or active session ID.
-            pwd        - Password for CDR account.
-                         If !pw, then uid = session ID, else uid = user ID.
-            filter     - Object with method to get document IDs to be
-                         processed; must have method getDocIds() that returns
-                         a sequence of CDR IDs as integers.
-            transform  - Object which knows how to take the old XML
-                         for a CDR document and transform it using
-                         the algorithm appropriate to this job; the
-                         name of this method must be run().
-                         transform and filter can be methods in the same
-                         object.
-            comment    - String to be stored with new versions.
-            testMode   - True = write output to files, do not update database.
-                         False = Modify the database.
-            logFile    - Optional path for logfile.
-            validate   - True=validate that the transform did not invalidate
-                         a previously valid document.  NB: if the original
-                         document was invalid, we assume that the transformed
-                         one will be invalid and don't validate it.  We
-                         will ignore haltOnValErr.
-          haltOnValErr - True  = If the transform invalidates a valid doc,
-                                 don't save any versions of that doc.
-                         False = Save anyway.
-                         sets _noSaveOnErr
-          tier         - PROD|STAGE|QA|DEV (optional override)
-
-        Notes:
-            It can be useful to set the Job object as a field in the
-            transform/filter objects.  Then logging with object.job.log()
-            will intersperse logged comments with logging from ModifyDocs in
-            one log file.
+        Keyword arguments:
+          user - CDR user ID of operator; required if no session
+          session - name of active CDR session; required if no user
+          mode - "test" (the default) or "live"
+          tier - PROD|STAGE|QA|DEV (optional override)
+          versions - if False, only create new working documents
+          max_docs - optional throttle (e.g., for debugging)
+          max_errors - error threshold before aborting (default is 0)
+          validate - if True (the default), check for invalidating changes
+          console - set to False to suppress console logging
+          force - if False, don't save versions which were invalidated
+                  invalidated by the change (ignored if validate is False);
+                  default is True
         """
-        global _testMode
-        global _validate
-        global _noSaveOnErr
 
-        self.logFile   = open(logFile, 'a')
-        self.logOpen   = True
-        self.filter    = filter
-        self.transform = transform
-        self.comment   = comment
-        self.tier      = tier
-        self.conn      = cdrdb.connect(user='CdrGuest', tier=tier)
-        self.cursor    = self.conn.cursor()
-
-        # Set session based on passed uid/session id
-        if pwd:
-            # Caller passed a user id + password
-            self.session = cdr.login(uid, pwd, tier=tier)
-        else:
-            # Caller passed a session id instead of a user id
-            self.session = uid
-
-        self.noStdErr  = False
-        _testMode      = testMode
-        _validate      = validate
-        _noSaveOnErr   = haltOnValErr
-
-        # Controls for which versions are transformed, with defaults
-        # To override, call Job.setTransformVER() before calling run().
-        self.__transformVER = True   # Transform CWD plus lastp and lastv
-                                     # False = transform CWD only
-
-        # Control to change the active_status of all documents in this job
-        # Used for blocking docs, though could conceivably used for other
-        #   purposes.
-        # None = no change.
-        self.__docActiveStatus = None
-
-        # Max docs to process, call setMaxDocs to use a lower number for
-        #   debugging or to prevent runaways
-        # To override, call Job.setMaxDocs() before calling run().
-        self.__maxDocs = 9999999
-
-        # Statistics
-        self.__countDocsSelected  = 0
-        self.__countDocsProcessed = 0
-        self.__countDocsSaved     = 0
-        self.__countVersionsSaved = 0
-        self.__countLocked        = 0
-        self.__countErrors        = 0
-
-        # Sequence of Dispositions, one for each doc examined
-        self.__dispositions = []
-
-        # Counters for different types of saves
-        # Key = message passed to Doc.__saveDoc, e.g., " new pub"
-        # Value = count of versions saved with that message
-        self.__countMsgs = {}
-
-    def createOutputDir(self):
-        global _outputDir
-
-        # Raises exception to exit program if fails
-        _outputDir = cdrglblchg.createOutputDir()
-        self.log("Running in test mode.  Output to: %s" % _outputDir)
-
-    #------------------------------------------------------------------
-    # Setter for transform version control
-    #
-    # If set False, no versions will be transformed or saved.
-    #
-    # There is no _transformCWD or setTransformCWD().
-    # It isn't possible to save a version without overwriting the current
-    # working document.  Therefore the program ALWAYS modifies the current
-    # working document.  Only the last version and last publishable
-    # version can be blocked from change.
-    #
-    # Note however that a change to the CWD will always create a new last,
-    # non-publishable version if it is different from the current last
-    # version (whether publishable or not.)  That is by design to avoid
-    # complete, unrecoverable obliteration of the previous CWD.
-    #
-    # This MUST be called before calling Job.run() or it is too late to
-    # set it False.
-    #------------------------------------------------------------------
-    def setTransformVER(self, setting):
-        self.__transformVER = setting
-
-    #------------------------------------------------------------------
-    # Setter to force all documents saved to have a particular active_status.
-    # Typically used for blocking documents.
-    #
-    # Call before calling job.run().
-    #
-    # See Doc.setActiveStatus() and Doc.__saveDoc().
-    #------------------------------------------------------------------
-    def setActiveStatus(self, setting):
-        self.__docActiveStatus = setting
-
-    #------------------------------------------------------------------
-    # Limit processing to no more than this number of docs
-    #
-    # This MUST be called before calling Job.run() or it is too late to
-    # set it False.
-    #------------------------------------------------------------------
-    def setMaxDocs(self, maxDocs):
-        self.__maxDocs = maxDocs
-
-    #------------------------------------------------------------------
-    # Get statistics for the run
-    #------------------------------------------------------------------
-    def getCountDocsSelected(self):
-        return self.__countDocsSelected
-
-    def getCountDocsProcessed(self):
-        return self.__countDocsProcessed
-
-    def getCountDocsSaved(self):
-        return self.__countDocsSaved
-
-    def getCountVersionsSaved(self):
-        return self.__countVersionsSaved
-
-    def getCountDocsLocked(self):
-        return self.__countLocked
-
-    def getCountErrors(self):
-        return self.__countErrors
-
-    def getNotCheckedOut(self, markup=False):
-        """
-        Get a list or an HTML table of docs not checked out, with
-        associated messages.
-
-        Pass:
-            markup - True = return data as an HTML table.
-
-        Return:
-            If markup:
-                A string containing HTML.
-            Else:
-                A sequence of tuples of docId, error message.
-
-            If no docs failed checkout:
-                None
-        """
-        docCount = 0
-        results  = []
-        if markup:
-            # Column headers for HTML table
-            results.append(("<b>Doc ID</b>", "<b>Reason</b>"))
-
-        # Read the dispositions
-        for disp in self.__dispositions:
-
-            # Only report those with errors
-            if disp.errMsg:
-                results.append((disp.docId, disp.errMsg))
-                docCount += 1
-
-        # Return info in requested format
-        if docCount:
-            if markup:
-                return cdr.tabularize(results, "border='1' align='center'")
-            else:
-                return results
-
-        # Or no results
-        return None
-
-    def getSummary(self, markup=False):
-        """
-        Produce a summary of the run.
-
-        Pass:
-            markup - True = return data as an HTML table, else text.
-
-        Return:
-            String of text or HTML.
-        """
-        if not markup:
-            report = """
-           Selected docs: %d
-          Processed docs: %d
-              Docs saved: %d
-        Versions changed: %d
-   Docs locked by others: %d
-""" % (self.getCountDocsSelected(), self.getCountDocsProcessed(),
-       self.getCountDocsSaved(), self.getCountVersionsSaved(),
-       self.getCountDocsLocked())
-
-        else:
-            report = """
-<table border="1">
- <tr><td align='right'>Selected docs: </td><td>%d</td></tr>
- <tr><td align='right'>Processed docs: </td><td>%d</td></tr>
- <tr><td align='right'>Docs saved: </td><td>%d</td></tr>
- <tr><td align='right'>Versions changed: </td><td>%d</td></tr>
- <tr><td align='right'>Locked by others: </td><td>%d</td></tr>
-</table>
-""" % (self.getCountDocsSelected(), self.getCountDocsProcessed(),
-       self.getCountDocsSaved(), self.getCountVersionsSaved(),
-       self.getCountDocsLocked())
-
-        return report
-
-
-    def getProcessed(self, changed=True, unchanged=True, countOnly=False,
-                     docIdOnly=False, markup=False):
-        """
-        Get a list or an HTML table of docs that were processed, with
-        information about what was done for each.
-
-        Pass:
-            changed   - True = Include docs that show a change by
-                        filtering.
-            unchanged - True = Include docs that were not changed by
-                        filtering.
-            countOnly - True = Don't return any specific document data,
-                        just return a count of qualifying docs.
-            docIdOnly - True = Don't return any document version data,
-                        just return a list of doc IDs.
-            markup    - True = return data as an HTML table.
-                        Only makes sense if countOnly=False.
-
-        Return:
-            If markup:
-                A string containing HTML.
-            Else:
-                if countOnly:
-                    A number.
-                else if docIdOnly:
-                    A sequence of doc IDs.
-                else:
-                    A sequence of tuples of docId + Y/N flags for each of
-                    current working document, last version, and last pub
-                    version.
-
-            If no docs processed:
-                if countOnly:
-                    0
-                else:
-                    None
-        """
-        # Validate parms
-        if not changed and not unchanged:
-            raise cdr.Exception(
-            "ModifyDocs.getProcessed called with changed/unchanged both False")
-
-        docCount = 0
-        results  = []
-        if markup:
-            # Column headers for HTML table
-            results.append(("<b>Doc ID</b>", "<b>CWD</b>", "<b>LV</b>",
-                            "<b>LPV</b>", "<b>Warnings</b>"))
-
-        # Read the dispositions
-        for disp in self.__dispositions:
-
-            # Doc not counted as modified unless we find that it was
-            docModified = False
-
-            # Only report those with no errors
-            if not disp.errMsg:
-                cwd = 'N'
-                if disp.cwdChanged:
-                    cwd = 'Y'
-                    docModified = True
-                lv = 'N'
-                if disp.lastvChanged:
-                    lv = 'Y'
-                    docModified = True
-                lpv = 'N'
-                if disp.lastpChanged:
-                    lpv = 'Y'
-                    if disp.warnMsgs:
-                        lpv = 'I'
-                    docModified = True
-
-                # Convert warnings as needed for response
-                warnStr = ""
-                if disp.warnMsgs:
-                    warnStr = "<font color='red'>"
-                    if isinstance(disp.warnMsgs, (list, tuple)):
-                        count   = 0
-                        for warn in disp.warnMsgs:
-                            warnStr += warn
-                            count += 1
-                            if count < len(disp.warnMsgs):
-                                if markup:
-                                    warnStr += "<br />"
-                                else:
-                                    warnStr += "; "
-                    else:
-                        warnStr = disp.warnMsgs
-                    warnStr += "</font>"
-
-                # Did we find what the caller wanted?
-                if ( (docModified and changed) or
-                     (not docModified and unchanged) ):
-                    docCount += 1
-                    if not countOnly:
-                        if docIdOnly:
-                            results.append(disp.docId)
-                        else:
-                            results.append((disp.docId, cwd, lv, lpv, warnStr))
-
-        # Return info in requested format
-        if docCount:
-            if countOnly:
-                return docCount
-            if markup:
-                return cdr.tabularize(results, "border='1' align='center'")
-            else:
-                return results
-
-        # Or no results
-        if countOnly:
-            return 0
-        return None
-
-    #------------------------------------------------------------------
-    # Check for locked documents
-    #------------------------------------------------------------------
-    def checkLocks(self):
-        """
-        Check each document selected for the global.
-        Report any that are locked to the logfile and standard out.
-
-        Typical usage:
-            if job.checkLocks() != 0:
-                job.log("Documents were locked.  See log file.  Exiting.")
-                sys.exit(1)
-
-        Return:
-            Count of currently locked docs.  0 if none.
-        """
-        # Begin logging
-        self.log("\nChecking document locks for global change:\n%s" %
-                  self.comment)
-
-        idList = self.filter.getDocIds()
-        totalCount  = len(idList)
-        lockedCount = 0
-
-        for docId in idList:
-            lockObj = cdr.isCheckedOut(docId, self.conn)
-            if lockObj:
-                # Report and count each one
-                msg = "Locked %7s: %s: %s\n" % \
-                      (lockObj.docId, lockObj.docType, lockObj.docTitle)
-                msg += "            by: %s Since: %s" % \
-                      (lockObj.userFullName, lockObj.dateOut)
-                self.log(msg)
-                lockedCount += 1
-
-        # Report summary
-
-        msg = """Checkout summary:
-            Total documents processed: %5d
-      Total currently locked by users: %5d
-      Total unlocked, okay for global: %5d
-""" % (totalCount, lockedCount, totalCount - lockedCount)
-        self.log(msg)
-
-        return lockedCount
-
-    #------------------------------------------------------------------
-    # Run a transformation.
-    #
-    # Create the job, set any desired post constructor settings,
-    # then call self.run().
-    #------------------------------------------------------------------
-    def run(self):
-        global _maxErrors
-
-        # In test mode, create output directory for files
-        if _testMode:
-            self.createOutputDir()
-        else:
-            self.log("Running in real mode.  Updating the database")
-        if self.tier:
-            self.log("Running on {}".format(self.tier))
-
-        # For reporting time
-        startTime = datetime.datetime.now()
-
-        # Get docs
-        ids = self.filter.getDocIds()
-
-        # If no docs, log info and abort
-        if not ids or len(ids) == 0:
-            self.log("No documents selected.\n  Purpose: %s\n  Ending run!\n"
-                     % self.comment)
-            return
-
-        # Get docs, log count and purpose/comment for job
-        self.log("%d documents selected\n  Purpose: %s" % (len(ids),
-                                                           self.comment))
-        self.__countDocsSelected = len(ids)
-
-
-        # Change all docs
-        logger = self
-        for docId in ids:
-            doc = None
-            lockedDoc = True
-            try:
-                # Need this info for logging
-                # Getting it again in Doc constructor, but it's cheap,
-                #   cached in the DB, and offers less disturbance to
-                #   existing division of labor to fetch it twice
-                # XXX might just pass it in
-                # XXX might pass in reference to job and put it in self
-                (lastAny, lastPub, changedYN) = \
-                    cdr.lastVersions('guest', "CDR%010d" % docId,
-                                     tier=self.tier)
-
-                # Log doc ID, active status, version info
-                # Format of version info is:
-                #   [lastPubVerNum/lastVerNum/changedYN]
-                #   changedYN: 'y' = CWD changed from last version.
-                msg = "Processing CDR%010d" % docId
-                if cdr.getDocStatus("guest", docId, tier=self.tier) == 'I':
-                    msg += " (BLOCKED)"
-                msg += " ["
-                if lastPub >=0:
-                    msg += "pub:%d" % lastPub
-                msg += '/'
-                if lastAny >=0:
-                    msg += "last:%d" % lastAny
-                msg += "/cwd:%s]" % ('New' if changedYN=='y' else str(lastAny))
-                self.log(msg)
-
-                # Process doc
-                # Instantiation of the ModifyDocs.Doc object runs all of
-                # the retrievals and performs all of the transforms for
-                # all versions needing transformation.
-                doc = Doc(docId, self.session, self.transform, self.comment,
-                          self.__transformVER, self.tier)
-
-                # If caller wants to change document status (e.g., block
-                #   all docs), signify that here.  Doc.__saveDoc() will
-                #   use this.
-                if self.__docActiveStatus is not None:
-                    doc.setActiveStatus(self.__docActiveStatus)
-
-                # Transforms are now complete and cached in memory
-                # saveChanges() writes whatever must be written to the
-                # database (run mode) or file system (test mode)
-                doc.saveChanges(self.cursor, logger)
-
-                # One distinct doc saved
-                if doc.versionMessages:
-                    self.__countDocsSaved += 1
-
-                # Number of distinct versions of this doc saved
-                if doc.disp.cwdChanged:
-                    self.__countVersionsSaved += 1
-                if doc.disp.lastvChanged:
-                    self.__countVersionsSaved += 1
-                if doc.disp.lastpChanged:
-                    self.__countVersionsSaved += 1
-
-                for msg in doc.versionMessages:
-                    self.__countMsgs[msg] = self.__countMsgs.get(msg, 0) + 1
-            except DocumentLocked, info:
-                # Lock failed
-                lockedDoc = False
-                self.__countLocked += 1
-                # Log it, but always continue
-                self.log("Document %d: %s" % (docId, str(info)))
-            except Exception, info:
-                self.log("Document %d: %s" % (docId, str(info)))
-                self.__countErrors += 1
-                if self.__countErrors > _maxErrors:
-                    raise
-
-            # Save disposition
-            if doc:
-                self.__dispositions.append(doc.disp)
-            else:
-                # If exception prevented creation of a Doc object
-                self.__dispositions.append(Disposition(docId, str(info)))
-
-            # Unlock, but only if we locked it
-            if lockedDoc:
-                cdr.unlock(self.session, "CDR%010d" % docId, tier=self.tier)
-
-            # Progress count
-            self.__countDocsProcessed += 1
-            if self.__countDocsProcessed >= self.__maxDocs:
-                self.log(
-                  "Halting processing after reaching MAXDOCS limit of %d docs"
-                  % self.__maxDocs)
-                break
-
-        # Cumulate results
-        msgKeys = self.__countMsgs.keys()
-        msgKeys.sort()
-        msgReport = []
-        if msgKeys:
-            msgReport = ["Specific versions saved:\n"]
-            for msg in msgKeys:
-                msgReport.append("  %s = %d\n" % (msg, self.__countMsgs[msg]))
-
-        # Report results
-        self.log(
-"""Run completed.
-   Docs examined    = %d
-   Docs changed     = %d
-   Versions changed = %d
-   Could not lock   = %d
-   Errors           = %d
-   Time             = %s
- %s""" % (self.getCountDocsProcessed(), self.getCountDocsSaved(),
-          self.getCountVersionsSaved(), self.getCountDocsLocked(),
-          self.getCountErrors(), datetime.datetime.now() - startTime,
-          "".join(msgReport)))
-
-
-    #------------------------------------------------------------------
-    # Call this to start/stop use of stderr in logging.
-    # If this is not called, logging will occur.
-    #------------------------------------------------------------------
-    def suppressStdErrLogging(self, suppress=True):
-        self.noStdErr = suppress
-
-    #------------------------------------------------------------------
-    # Log processing/error information with a timestamp.
-    #------------------------------------------------------------------
-    def log(self, what):
-        what = "%s: %s\n" % (datetime.datetime.now(), what)
-        self.logFile.write(what)
-        if not self.noStdErr:
-            sys.stderr.write(what)
-
-    # Flush and close logfile
-    def __del__(self):
-        try:
-            if self.logOpen:
-                self.logFile.close()
-                self.logOpen = False
-        except:
-            pass
-
-#----------------------------------------------------------------------
-# Class for a CDR document.
-#----------------------------------------------------------------------
-class Doc(object):
-
-    def __init__(self, id, session, transform, comment, transformVER=True,
-                 tier=None):
-
-        self.id           = id
-        self.session      = session
-        self.transform    = transform
-        self.comment      = comment
-        self.versions     = cdr.lastVersions('guest', "CDR%010d" % id,
-                                             tier=tier)
-        self.__messages   = []
-        self.disp         = Disposition(id)
-        self.activeStatus = None
-        self.transformVER = transformVER
-        self.tier         = tier
-        self.loadAndTransform()
-
-    #------------------------------------------------------------------
-    # Class to expose read-only access to messages used to describe
-    # versions of the document being saved, without the overhead of
-    # cloning the list each time it's accessed.
-    #------------------------------------------------------------------
-    class VersionMessages:
-        def __init__(self, messages):
-            self.__i = 0
-            self.__m = messages
-        def __iter__(self):
-            return self
-        def next(self):
-            if self.__i >= len(self.__m):
-                raise StopIteration
-            self.__i += 1
-            return self.__m[self.__i - 1]
-        def __nonzero__(self):
-            return len(self.__m) > 0
-        def __len__(self):
-            return len(self.__m)
+        self.__opts = opts
 
     @property
-    def versionMessages(self):
-        return Doc.VersionMessages(self.__messages)
+    def comment(self):
+        """
+        String explaining why we're transforming docs for this job
 
-    #------------------------------------------------------------------
-    # Uses xml comparator from cdr module.
-    #------------------------------------------------------------------
-    def compare(self, a, b):
-        return cdr.compareXmlDocs(a, b)
+        Override the class-level COMMENT value to provide a custom
+        string appropriate to your specific job. Or, if for some
+        reason comments need to be dynamically generated (based,
+        for example, on self.doc) override this @property method
+        instead.
+        """
 
-    #------------------------------------------------------------------
-    # Force a change in active_status, e.g., to block this document
-    # during a __saveDoc operation.
-    #
-    # This should be called in the derived class run() method, before
-    # returning XML to the ModifyDocs module for saving.
-    #
-    # Unless a Doc object is reused for multiple documents (not currently
-    # done in this module), the change in active_status will only affect
-    # the one document represented by this Doc object.
-    #------------------------------------------------------------------
-    def setActiveStatus(self, status):
-        # Only allow valid values
-        if status not in ('A', 'I', 'D', None):
-            raise cdr.Exception(
-                "Invalid status '%s' in ModifyDocs.Doc.setActiveStatus" %
-                 status)
-        self.activeStatus = status
+        return self.COMMENT
 
-    #------------------------------------------------------------------
-    # Check out the CWD, last version, and last publishable version,
-    # and run them through the transformation for this job.
-    #------------------------------------------------------------------
-    def loadAndTransform(self):
+    @property
+    def creating_versions(self):
+        """
+        Boolean controlling whether we create new versions
 
-        # Stored versions
-        self.cwd          = None
-        self.lastv        = None
-        self.lastp        = None
-        self.newCwdXml    = None
-        self.newLastvXml  = None
-        self.newLastpXml  = None
-        self.cwdVals      = None
-        self.lastvVals    = None
-        self.lastpVals    = None
-        lastAny, lastPub, changedYN = self.versions
+        If True (the default) we create new last versions (and new
+        last publishable versions if any publishable version exists).
+        Otherwise, we only update the current working copy of the
+        documents. In either case we create a new version to preserve
+        current working document's XML if it is unversioned and
+        would be lost.
+        """
 
-        # We only need to checkout the docs in live runs
-        # Test mode won't save anything, so we don't need checkouts
-        if _testMode:
-            checkout = 'N'
+        if not hasattr(self, "_creating_versions"):
+            self._creating_versions = self.__opts.get("versions", True)
+        return self._creating_versions
+
+    @property
+    def cursor(self):
+        """
+        Reference to read-only CDR database cursor
+        """
+
+        if not hasattr(self, "_cursor"):
+            self._cursor = cdrdb.connect(user="CdrGuest", tier=self.tier)
+        return self._cursor
+
+    @property
+    def forcing(self):
+        """
+        Do we save documents even if the change invalidates them?
+
+        Return:
+          `True` (the default) or `False`
+        """
+
+        if not hasattr(self, "_forcing"):
+            self._forcing = self.__opts.get("force", True)
+        return self._forcing
+
+    @property
+    def logger(self):
+        """
+        Object for recording what we do
+
+        Override the class-level value `LOGNAME` for a custom
+        location for logging output. Logging output is echoed
+        to the console, unless the `console` option is passed
+        to the constructor with the value `False`.
+        """
+
+        if not hasattr(self, "_logger"):
+            opts = dict(console=self.__opts.get("console", True))
+            self._logger = cdr.Logging.get_logger(self.LOGNAME, **opts)
+        return self._logger
+
+    @property
+    def max_docs(self):
+        """
+        Optional cap on the number of documents to process
+        """
+
+        if not hasattr(self, "_max_docs"):
+            self._max_docs = self.__opts.get("max_docs")
+        return self._max_docs or 9999999
+
+    @property
+    def max_errors(self):
+        """
+        Optional cap on the number of failures before aborting
+
+        These are processing failures, not validation errors.
+        See the `forcing` property for controlling whether validation
+        errors prevent creation of new versions.
+        """
+
+        if not hasattr(self, "_max_errors"):
+            self._max_errors = self.__opts.get("max_errors", 0)
+        return self._max_errors
+
+    @property
+    def output_directory(self):
+        """
+        Directory in which to store test output
+
+        The directory name is in the form YYYY-MM-DD_HH-MM-SS
+        """
+
+        if not hasattr(self, "_output_directory"):
+            now = datetime.now()
+            stamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+            path = "{}/GlobalChange/{}".format(cdr.BASEDIR, stamp)
+            try:
+                makedirs(path)
+            except:
+                self.logger.exception("Creating %s", path)
+                raise
+            self._output_directory = path
+        return self._output_directory
+
+    @property
+    def session(self):
+        """
+        CDR session under which we save document versions
+
+        We use an existing session or create a new one,
+        depending on what has been passed to the constructor.
+
+        Return:
+          string for name of CDR session
+        """
+
+        if not hasattr(self, "_session"):
+            self._session = self.__opts.get("session")
+            if not self._session:
+                user = self.__opts.get("user")
+                if not user:
+                    raise ValueError("must supply session or user name")
+                password = getpass()
+                self._session = str(cdr.login(user, password))
+        return self._session
+
+    @property
+    def testing(self):
+        """
+        Flag indicating whether we are running in test mode
+
+        Return:
+          `True` or `False`
+        """
+
+        if not hasattr(self, "_testing"):
+            self._testing = self.__opts.get("mode", "test").lower() != "live"
+        return self._testing
+
+    @property
+    def tier(self):
+        """
+        CBIIT tier on which we are running (if not on localhost)
+
+        Return:
+          string naming specific tier (e.g., "PROD") or `None`
+        """
+
+        if not hasattr(self, "_tier"):
+            self._tier = self.__opts.get("tier")
+        return self._tier
+
+    @property
+    def validating(self):
+        """
+        Flag indicating whether we are validating the documents
+
+        Return:
+          `True` or `False`
+        """
+
+        if not hasattr(self, "_validating"):
+            self._validating = self.__opts.get("validate", True)
+        return self._validating
+
+    def run(self):
+        """
+        Transform a batch of CDR documents
+
+        The overridden `select()` and `transform()` methods are
+        invoked by this base class method.
+        """
+
+        if not self.testing:
+            self.logger.info("Running in real mode, updating the database")
         else:
-            checkout = 'Y'
-
-        # Checkout current working document to get doc and lock
-        opts = dict(checkout=checkout, getObject=True)
+            self.logger.info("Saving test output to %r", self.output_directory)
         if self.tier:
-            opts["tier"] = self.tier
+            self.logger.info("Running on {}".format(self.tier))
+        start = datetime.now()
+        doc_ids = self.select()
+        counts = dict(
+            processed=0,
+            saved=0,
+            versions=0,
+            locked=0,
+            errors=0
+        )
+        types = {}
+        self.logger.info("%d documents selected", len(doc_ids))
+        self.logger.info("Purpose: %r", self.comment)
+        for doc_id in doc_ids:
+            self.doc = None
+            needs_unlock = True
+            try:
+                self.doc = self.Doc(self, doc_id)
+                self.logger.info("Processing %s", self.doc)
+                self.doc.save_changes()
+                if self.doc.saved:
+                    counts["saved"] += 1
+                if "cwd" in self.doc.changed:
+                    counts["versions"] += 1
+                if "lastv" in self.doc.changed:
+                    counts["versions"] += 1
+                if "lastp" in self.doc.changed:
+                    counts["versions"] += 1
+                for version_type in self.doc.saved:
+                    types[version_type] = types.get(version_type, 0) + 1
+            except Job.DocumentLocked as info:
+                needs_unlock = False
+                counts["locked"] += 1
+                self.logger.warning(str(info))
+            except Exception:
+                self.logger.exception("Document %d", doc_id)
+                counts["errors"] += 1
+                if counts["errors"] > self.max_errors:
+                    message = "Stopping after %d errors"
+                    self.logger.error(message, counts["errors"])
+                    break
+            if needs_unlock:
+                cdr.unlock(self.session, doc_id, tier=self.tier)
+            counts["processed"] += 1
+            if counts["processed"] >= self.max_docs:
+                message = "Stopping after processing %d documents"
+                self.logger.info(message, counts["processed"])
+                break
+        details = []
+        if types:
+            details = ["Specific versions saved:"]
+            for key in sorted(types):
+                details.append("  {} = {:d}".format(key, types[key]))
+        elapsed = datetime.now() - start
+        self.logger.info("""\
+Run completed.
+   Docs examined    = {processed:d}
+   Docs changed     = {saved:d}
+   Versions changed = {versions:d}
+   Could not lock   = {locked:d}
+   Errors           = {errors:d}
+   Time             = {time}
+{details}""".format(details="\n".join(details), time=elapsed, **counts))
+        if not self.__opts.get("session"):
+            cdr.logout(self.session, tier=self.tier)
+
+    def save_pair(self, doc_id, before, after, pair_type, errors=None):
+        """
+        Write before and after XML to the file system
+
+        Used in test mode to save everything to the file system
+        for review, instead of writing to the repository.
+
+        Pass:
+          doc_id - integer identifying the document being processed
+          before - serialized XML for the document before transformation
+          after - serialzed XML for the document after transformation
+          pair_type - string identifying what was transformed (cwd|pub|lastv)
+          errors - optional sequence of validation error messages
+        """
+
+        args = self.output_directory, cdr.normalize(doc_id), pair_type
+        old_path = "{}/{}.{}old.xml".format(*args)
+        new_path = "{}/{}.{}new.xml".format(*args)
+        diff_path = "{}/{}.{}.diff".format(*args)
+        errors_path = "{}/{}.{}.NEW_ERRORS.txt".format(*args)
         try:
-            self.cwd = cdr.getDoc(self.session, self.id, **opts)
-        except Exception as e:
-            message = "Unable to check out CWD for CDR%010d: %s" % (self.id, e)
-            raise DocumentLocked(message)
-
-        # If the cwd is not the same as the last version, or there is no
-        #   saved version, we'll save the cwd and store it as a version
-        #   before storing anything else
-        # We don't store it yet because we don't know yet that anything
-        #   else will actually need to be stored
-        if (changedYN == 'Y' or lastAny < 1):
-            self.saveThisDocFirst = copy.deepcopy(self.cwd)
-        else:
-            self.saveThisDocFirst = None
-
-        # Run the transformation filter on current working doc
-        self.newCwdXml = self.transform.run(self.cwd)
-
-        # If (and only if) old version was valid, validate new version
-        # cwdVal is array of error messages or empty array
-        if _validate:
-            self.cwdVals = cdr.valPair(self.session, self.cwd.type,
-                                       self.cwd.xml, self.newCwdXml,
-                                       tier=self.tier)
-
-        # If we're processing versions
-        if self.transformVER:
-
-            # If there is a last version
-            if lastAny > 0:
-
-                # And it's not the same as the CWD
-                if changedYN == 'Y':
-                    opts["version"] = lastAny
-                    try:
-                        self.lastv = cdr.getDoc(self.session, self.id, **opts)
-                    except Exception as e:
-                        msg = "Failure retrieving lastv (%d) for CDR%010d: %s"
-                        raise Exception(msg % (lastAny, self.id, e))
-
-                    # Transform
-                    self.newLastvXml = self.transform.run(self.lastv)
-                    if _validate:
-                        self.lastvVals = cdr.valPair(self.session,
-                                                     self.lastv.type,
-                                                     self.lastv.xml,
-                                                     self.newLastvXml,
-                                                     tier=self.tier)
-                else:
-                    # Lastv was same as cwd, don't need to load it, just
-                    #   reference the existing self.cwd
-                    # See warning ("BEWARE") below
-                    # After this, any change to lastv.xml changes cwd.xml
-                    self.lastv       = self.cwd
-                    self.newLastvXml = self.newCwdXml
-                    self.lastvVals   = self.cwdVals
-
-            # If there is a last publishable version
-            if lastPub > 0:
-
-                # If it's not the same as the last version
-                if lastPub != lastAny:
-                    opts["version"] = lastPub
-                    try:
-                        self.lastp = cdr.getDoc(self.session, self.id, **opts)
-                    except Exception as e:
-                        msg = "Failure retrieving lastp (%d) for CDR%010d: %s"
-                        raise Exception(msg % (lastPub, self.id, e))
-
-                    # Transform
-                    self.newLastpXml = self.transform.run(self.lastp)
-                    if _validate:
-                        # Original plan was to validate pub version even if
-                        #   last pub was invalid, but this is safe since
-                        #   attempt to save an invalid pub version will cause
-                        #   it to be marked non-publishable
-                        self.lastpVals = cdr.valPair(self.session,
-                                                     self.lastp.type,
-                                                     self.lastp.xml,
-                                                     self.newLastpXml,
-                                                     tier=self.tier)
-
-                else:
-                    # Lastp was same as lastv, don't need to load it, just
-                    #   reference the existing self.lastv
-                    # See warning ("BEWARE") below
-                    # After this, any change to lastp.xml changes lastv.xml
-                    #   and maybe also cwd.xml
-                    self.lastp       = self.lastv
-                    self.newLastpXml = self.newLastvXml
-                    self.lastpVals   = self.lastvVals
-
-
-    class DummyLogger:
-        """
-        Used as default logger object by the saveChanges() method of the
-        Doc class.  Does nothing.
-        """
-        def log(): pass
-
-    def saveChanges(self, cursor, logger=DummyLogger()):
-        """
-        In run mode, saves all versions of a document needing to be saved.
-        In test mode, writes to output files, leaving the database alone.
-
-        Parameters:
-
-            cursor     - cursor for connection to CDR database
-            logger     - object with a single log() method, taking a
-                         string to be logged (without trailing newline)
-
-        Uses the following logic:
-
-        Let PV     = publishable version
-        Let LPV    = latest publishable version
-        Let LPV(t) = transformed copy of latest publishable version
-        Let NPV    = non-publishable version
-        Let CWD    = copy of current working document when job begins
-        Let CWD(t) = transformed copy of CWD
-        Let LV     = latest version (regardless of whether publishable)
-        Let LV(t)  = transformed copy of LV
-        Let LS     = last saved copy of document (versioned or not)
-
-        If CWD <> LV:
-            Create new NPV from unmodified CWD
-            Preserves the original CWD which otherwise would be lost.
-        If LPV(t) <> LPV:
-            Create new PV using LPV(t)
-        If LV(t) <> LV:
-            Create new NPV from LV(t)
-        If CWD(t) <> LS:
-            Create new CWD using CWD(t)
-
-        Often, one or more of the following is true:
-            CWD==LV, CWD==LPV, LV==LPV
-
-        BEWARE! If versions are equivalent, references to objects are
-        manipulated in tricky ways to ensure that the Right Thing is done.
-        """
-
-        global _testMode, _outputDir
-
-        lastSavedXml  = None
-        docId         = self.cwd.id
-        everValidated = self.lastp and True or self.__everValidated(cursor)
-
-        # If change made a valid doc invalid, report it to console & log
-        # Note this only happens if _validate caused one of the Vals
-        #   msg arrays to be created and validation populated it with err msgs
-        vals = self.lastpVals or self.cwdVals or self.lastvVals
-        if vals:
-            msg = "Doc %s made invalid by change - will NOT store it" % docId
-            if self.cwdVals:
-                msg += "\nCurrent working document would become invalid"
-            if self.lastpVals:
-                msg += "\nNew pub version would become invalid"
-            if self.lastvVals:
-                msg += "\nNew last version would become invalid"
-
-            # Just appending one set of messages, others should be similar
-            for val in vals:
-                msg += "\n%s" % val
-            logger.log(msg)
-
-        if _testMode:
-            # Write new/original CWDs
-            cdrglblchg.writeDocs(_outputDir, docId,
-                                 self.cwd.xml, self.newCwdXml, 'cwd',
-                                 self.cwdVals)
-
-        # If publishable version changed ...
-        # When self.transformVER is False, self.lastp is always None
-        if self.lastp and self.compare(self.lastp.xml, self.newLastpXml):
-            if _testMode:
-                # Write new/original last pub version
-                cdrglblchg.writeDocs(_outputDir, docId,
-                                     self.lastp.xml, self.newLastpXml, 'pub',
-                                     self.lastpVals)
-            else:
-                # See "BEWARE" above.
-                # self.lastp may be a reference to
-                self.lastp.xml = self.newLastpXml
-                # If not validating or passed validation,
-                #   save new last pub version
-                if not (vals and _noSaveOnErr):
-                    self.__saveDoc(str(self.lastp), ver='Y', pub='Y',
-                                   logger=logger, val='Y', msg=' new pub')
-                    lastSavedXml = self.newLastpXml
-
-            # Record versions that were changed
-            self.disp.cwdChanged = self.disp.lastpChanged = True
-
-        #--------------------------------------------------------------
-        # Note that in the very common case in which the last created
-        # version and the most recent publishable version are the same
-        # version, the test below will report no differences between
-        # self.lastv.xml and self.newLastvXml.  This is because in this
-        # case self.lastv and self.lastp are references to the same
-        # cdr.Doc object, and the assignment above of self.newLastpXml
-        # to self.lastp.xml also changes self.lastv.xml.  This is
-        # almost too clever and tricky (it has confused the author
-        # of this code on at least one occasion -- hence this comment),
-        # but it's more efficient than doing deep copies of the cdr.Doc
-        # objects, and (equally important) it does the Right Thing.
-        #--------------------------------------------------------------
-        # When self.transformVER is False, self.lastv is always None
-        if self.lastv and self.compare(self.lastv.xml, self.newLastvXml):
-            if _testMode:
-                # Write new/original last non-pub version results
-                cdrglblchg.writeDocs(_outputDir, docId,
-                                     self.lastv.xml, self.newLastvXml, 'lastv',
-                                     self.lastvVals)
-            # Reflect the changes
-            self.lastv.xml = self.newLastvXml
-
-            if not _testMode:
-                # Save new last non-pub version
-                # If doc was never validated, we don't validate this
-                #   time because of validation side effects, e.g., stripping
-                #   XMetal PIs.
-                if not (vals and _noSaveOnErr):
-                    self.__saveDoc(str(self.lastv), ver='Y', pub='N',
-                                   logger=logger,
-                                   val=(everValidated and 'Y' or 'N'),
-                                   msg=' new ver')
-                    lastSavedXml = self.newLastvXml
-
-            # Record versions that were changed
-            self.disp.cwdChanged = self.disp.lastvChanged = True
-
-        # If no XML has been saved, and the new and old cwd are different
-        #   or
-        # If last XML saved is not the same as the new cwd
-        #   then
-        # Save the new current working document
-        if ((not lastSavedXml and self.compare(self.newCwdXml, self.cwd.xml))
-             or (lastSavedXml and self.compare(self.newCwdXml, lastSavedXml))):
-            if not _testMode:
-                # Save new CWD
-                self.cwd.xml = self.newCwdXml
-                if not (vals and _noSaveOnErr):
-                    self.__saveDoc(str(self.cwd), ver='N', pub='N',
-                                   logger=logger,
-                                   val=(everValidated and 'Y' or 'N'),
-                                   msg=' new cwd')
-
-            # Record versions that were changed
-            self.disp.cwdChanged = True
-
-    #------------------------------------------------------------------
-    # Find out whether the document has ever been validated.
-    #------------------------------------------------------------------
-    def __everValidated(self, cursor):
-        cursor.execute("""\
-                SELECT val_status
-                  FROM document
-                 WHERE id = ?""", (self.id,))
-        rows = cursor.fetchall()
-        if not rows:
-            raise Exception("Failure retrieving val status for CDR%d" %
-                            self.id)
-        if rows[0][0] != 'U':
-            return True
-        cursor.execute("""\
-                SELECT COUNT(*)
-                  FROM doc_version
-                 WHERE id = ?
-                   AND val_status <> 'U'""", (self.id,))
-        rows = cursor.fetchall()
-        if not rows:
-            raise Exception("Failure retrieving val status for CDR%d" %
-                            self.id)
-        return rows[0][0] > 0
-
-    #------------------------------------------------------------------
-    # Invoke the CdrRepDoc command.
-    #------------------------------------------------------------------
-    def __saveDoc(self, docStr, ver, pub, logger, val='Y', logWarnings=True,
-                  msg=''):
-        # Debug
-        # return 1
-
-        # It may be necessary to save the current working doc if not saved yet
-        if self.saveThisDocFirst:
-            # Move the doc then save via recursive call, avoiding
-            #   infinite recursion
-            tempRefToDoc          = self.saveThisDocFirst
-            self.saveThisDocFirst = None
-            self.__saveDoc(docStr=str(tempRefToDoc), ver="Y", pub="N",
-                           logger=logger, val='N', msg=" old cwd")
-
-        # Record what we're about to do
-        logger.log("saveDoc(%d, ver='%s' pub='%s' val='%s'%s)" %
-                (self.id, ver, pub, val, msg))
-
-        response = cdr.repDoc(self.session, doc=docStr, ver=ver, val=val,
-                              verPublishable=pub, reason=self.comment,
-                              comment=self.comment, showWarnings="Y",
-                              activeStatus=self.activeStatus, tier=self.tier)
-
-        # Response missing first element means save failed
-        # Almost certainly caused by locked doc
-        if not response[0]:
-            capture_transaction(self.session, docStr, ver, val, pub,
-                                self.comment, self.activeStatus, response[1],
-                                self.tier)
-            raise Exception("Failure saving changes for CDR%010d: %s" %
-                            (self.id, response[1]))
-
-        # Second element contains XSLT filter warning(s), if any
-        if response[1]:
-            warnings = cdr.getErrors(response[1], asSequence = True,
-                                     errorsExpected = False)
-            if logWarnings:
-                for warning in warnings:
-                    logger.log("Warning for CDR%010d: %s" % (self.id,
-                                                             warning))
-            self.disp.warnMsgs = warnings
-
-        # Remember the message used to describe this version of the document.
-        self.__messages.append(msg)
-
-def capture_transaction(session, doc, ver, val, pub, comment, status, error,
-                        tier):
-    """
-    Create a repro case for a failed document save.
-
-    Although the comment above says a failure is almost certainly caused
-    by a locked document, that is unlikely, since the software has already
-    checked for that condition. This function creates a script in the
-    standard CDR log directory which can be used to recreate the failure.
-    To run it, you must:
-        1. Create a CDR session
-        2. Use it to check out the document
-        3. Pass your session ID to this script on the command line
-    Pass:
-        all of the values passed to cdr.repDoc() above, and the
-        second element of the tuple returned by cdr.repDoc().
-    """
-
-    try:
-        stamp = str(datetime.datetime.now())
-        for c in "-: ":
-            stamp = stamp.replace(c, "")
-        stamp += "-" + str(random.random())
-        path = "%s/ModifyDocsFailure-%s.py" % (cdr.DEFAULT_LOGDIR, stamp)
-        log = "ModifyDocsTest-%s.out" % stamp
-        assertion = "session is required"
-        warning = "make sure the document is checked out before running this"
-        with open(path, "w") as fp:
-            fp.write("import sys\nimport cdr\n")
-            fp.write("assert len(sys.argv) > 1, %r\n" % assertion)
-            fp.write("print %r\n" % warning)
-            fp.write("# error: %r\n" % error)
-            fp.write("response = cdr.repDoc(\n")
-            fp.write("    sys.argv[1],\n")
-            fp.write("    doc=%r,\n" % doc)
-            fp.write("    ver=%r,\n" % ver)
-            fp.write("    val=%r,\n" % val)
-            fp.write("    verPublishable=%r,\n" % pub)
-            fp.write("    reason=%r,\n" % comment)
-            fp.write("    comment=%r,\n" % comment)
-            fp.write("    showWarnings='Y',\n")
-            if tier:
-                fpwrite("    tier=%r,\n" % tier)
-            fp.write("    activeStatus=%r)\n" % status)
-            fp.write("print response[0] and 'Success' or 'Failure'\n")
-            fp.write("with open(%r, 'w') as fp:\n" % log)
-            fp.write("    fp.write(repr(response))\n")
-            fp.write("print 'response in %s'\n" % log)
-    except Exception, e:
-        raise
-        try:
-            sys.stderr.write("\ncapture_transaction(): %s\n" % e)
+            with open(old_path, "w") as fp:
+                fp.write(before)
+            with open(new_path, "w") as fp:
+                fp.write(after)
+            diff = cdr.diffXmlDocs(before, after) or "-- No differences --"
+            with open(diff_path, "w") as fp:
+                fp.write(diff)
+            if errors:
+                with open(errors_path, "w") as fp:
+                    for error in errors:
+                        fp.write("{}\n".format(error))
         except:
-            pass
+            self.logger.exception("Failure writing XML pair")
+            raise
+
+    def select(self):
+        """
+        Determine which documents are to be modified
+
+        Invoked once for each job run. Must be implemented by
+        the job's derived class.
+
+        Return:
+           sequence of CDR document ID integers
+        """
+
+        raise NotImplementedError("must override select() method")
+
+    def transform(self, doc):
+        """
+        Modify a single CDR document version
+
+        Must be implemented by the job's derived class.
+
+        Pass:
+          doc - reference to `cdr.Doc` object for document to be modified
+
+        Return:
+          serialized transformed document XML, encoded as UTF-8
+        """
+
+        raise NotImplementedError("must override transform() method")
+
+
+    class DocumentLocked(Exception):
+        """
+        Custom exception indicating that we can't check out a document
+        """
+
+
+    class Doc(object):
+        """
+        Single CDR document to be transformed
+        """
+
+        def __init__(self, job, doc_id):
+
+            self.job = job
+            self.id = doc_id
+            self.cdr_id = cdr.normalize(doc_id)
+            self.versions = cdr.lastVersions("guest", doc_id, tier=job.tier)
+            self.status = cdr.getDocStatus("guest", doc_id, tier=job.tier)
+            self.saved = set()
+            self.doc_objects = {}
+            self.transformed_xml = {}
+            self.errors = {}
+            self.changed = set()
+            self.load_versions()
+
+        def load_versions(self):
+            """
+            Check out and transform the XML for this document
+
+            We get the current working document (CWD), the last version
+            (if any), and the last publishable version (if any).
+            """
+
+            session = self.job.session
+            checkout = "N" if self.job.testing else "Y"
+            opts = dict(checkout=checkout, getObject=True, tier=self.job.tier)
+            try:
+                cwd = cdr.getDoc(session, self.id, **opts)
+                self.doc_objects["cwd"] = cwd
+            except Exception as e:
+                message = "Unable to check out {}: {}".format(self.cdr_id, e)
+                raise Job.DocumentLocked(message)
+            last_version, last_publishable_version, changed = self.versions
+            errors = self.preserve = None
+            if changed == "Y" or last_version < 1:
+                self.preserve = deepcopy(cwd)
+            new_xml = self.transformed_xml["cwd"] = self.job.transform(cwd)
+            if self.job.validating:
+                args = session, cwd.type, cwd.xml, new_xml
+                errors = cdr.valPair(*args, tier=self.job.tier)
+                self.errors["cwd"] = errors
+            if self.job.creating_versions:
+                if last_version > 0:
+                    if changed == "Y":
+                        opts["version"] = last_version
+                        try:
+                            lastv = cdr.getDoc(session, self.id, **opts)
+                            self.doc_objects["lastv"] = lastv
+                        except Exception as e:
+                            msg = "Failure retrieving lastv ({:d}) for {}: {}"
+                            args = last_version, self.cdr_id, e
+                            raise Exception(msg.format(*args))
+                        new_xml = self.job.transform(lastv)
+                        self.transformed_xml["lastv"] = new_xml
+                        if self.job.validating:
+                            args = session, lastv.type, lastv.xml, new_xml
+                            errors = cdr.valPair(*args, tier=self.job.tier)
+                            self.errors["lastv"] = errors
+                    else:
+                        lastv = self.doc_objects["lastv"] = cwd
+                        self.transformed_xml["lastv"] = new_xml
+                        self.errors["lastv"] = errors
+                if last_publishable_version > 0:
+                    if last_publishable_version != last_version:
+                        opts["version"] = last_publishable_version
+                        try:
+                            lastp = cdr.getDoc(session, self.id, **opts)
+                            self.doc_objects["lastp"] = lastp
+                        except Exception as e:
+                            msg = "Failure retrieving lastp ({:d}) for {}: {}"
+                            args = last_publishable_version, self.cdr_id, e
+                            raise Exception(msg.format(*args))
+                        new_xml = self.job.transform(lastp)
+                        self.transformed_xml["lastp"] = new_xml
+                        if self.job.validating:
+                            args = session, lastp.type, lastp.xml, new_xml
+                            errors = cdr.valPair(*args, tier=self.job.tier)
+                            self.errors["lastp"] = errors
+                    else:
+                        self.doc_objects["lastp"] = lastv
+                        self.transformed_xml["lastp"] = new_xml
+                        self.errors["lastp"] = errors
+
+        def save_changes(self):
+            """
+            Save modified XML to the repository or the file system
+
+            In live mode, saves all versions of a document needing to be saved.
+            In test mode, writes to output files, leaving the database alone.
+
+            Uses the following logic:
+
+            Let PV     = publishable version
+            Let LPV    = latest publishable version
+            Let LPV(t) = transformed copy of latest publishable version
+            Let NPV    = non-publishable version
+            Let CWD    = copy of current working document when job begins
+            Let CWD(t) = transformed copy of CWD
+            Let LV     = latest version (regardless of whether publishable)
+            Let LV(t)  = transformed copy of LV
+            Let LS     = last saved copy of document (versioned or not)
+
+            If CWD <> LV:
+                Create new NPV from unmodified CWD
+                Preserves the original CWD which otherwise would be lost.
+            If LPV(t) <> LPV:
+                Create new PV using LPV(t)
+            If LV(t) <> LV:
+                Create new NPV from LV(t)
+            If CWD(t) <> LS:
+                Create new CWD using CWD(t)
+
+            Often, one or more of the following is true:
+                CWD==LV, CWD==LPV, LV==LPV
+
+            NOTE: If versions are equivalent, references to doc objects are
+            manipulated in tricky ways to ensure that the right thing is done.
+            """
+
+            logger = self.job.logger
+            last_saved_xml = errors_to_log = None
+            val_warning = "%s for %s made invalid by change not stored"
+            cwd = self.doc_objects.get("cwd")
+            lastp = self.doc_objects.get("lastp")
+            lastv = self.doc_objects.get("lastv")
+            if self.job.testing:
+                new_xml = self.transformed_xml.get("cwd")
+                errors = self.errors.get("cwd")
+                args = self.id, cwd.xml, new_xml, "cwd", errors
+                self.job.save_pair(*args)
+            new_xml = self.transformed_xml.get("lastp")
+            if lastp and self.compare(lastp.xml, new_xml):
+                errors = errors_to_log = self.errors.get("lastp")
+                if self.job.testing:
+                    args = self.id, lastp.xml, new_xml, "pub", errors
+                    self.job.save_pair(*args)
+                else:
+                    lastp.xml = new_xml
+                    if not errors or self.job.forcing:
+                        self.save("new pub", str(lastp), "Y", "Y", "Y")
+                        last_saved_xml = new_xml
+                    else:
+                        logger.warning(val_warning, "new pub", self.cdr_id)
+                self.changed.add("lastp")
+                self.changed.add("cwd")
+
+            new_xml = self.transformed_xml.get("lastv")
+            if lastv and self.compare(lastv.xml, new_xml):
+                errors = self.errors.get("lastv")
+                errors_to_log = errors_to_log or errors
+                if self.job.testing:
+                    args = self.id, lastv.xml, new_xml, "lastv", errors
+                    self.job.save_pair(*args)
+                lastv.xml = new_xml
+                if not self.job.testing:
+                    if self.job.forcing or not errors:
+                        val = "Y" if self.ever_validated else "N"
+                        self.save("new ver", str(lastv), "Y", "N", val)
+                        last_saved_xml = new_xml
+                    else:
+                        logger.warning(val_warning, "new ver", self.cdr_id)
+                self.changed.add("lastv")
+                self.changed.add("cwd")
+            cwd_save_needed = False
+            new_xml = self.transformed_xml.get("cwd")
+            if last_saved_xml:
+                if self.compare(last_saved_xml, new_xml):
+                    cwd_save_needed = True
+            elif self.compare(cwd.xml, new_xml):
+                cwd_save_needed = True
+            if cwd_save_needed:
+                self.changed.add("cwd")
+                errors = self.errors.get("cwd")
+                errors_to_log = errors_to_log or errors
+                if not self.job.testing:
+                    cwd.xml = new_xml
+                    if self.job.forcing or not errors:
+                        val = "Y" if self.ever_validated else "N"
+                        self.save("new cwd", str(cwd), "N", "N", val)
+                    else:
+                        logger.warning(val_warning, "new cwd", self.cdr_id)
+            if errors_to_log:
+                for error in errors_to_log:
+                    logger.warning("%s: %s", self.cdr_id, error)
+
+        def save(self, label, doc_str, ver, pub, val):
+            """
+            Invoke the CdrRepDoc command (or its local equivalent)
+
+            If what we're about to do would overwrite unversioned XML,
+            we recurse to create a numbered version to capture the current
+            working document before continuing with the requested save.
+            Keep track of which versions we have saved in `self.saved`.
+
+            Pass:
+              label - string identifying what we're saving (e.g., "new cwd")
+              doc_str - serialized CDR document object
+              ver - "Y" or "N" (should we create a version?)
+              pub - "Y" or "N" (should the version be publishable?)
+              val - "Y" or "N" (should we validate the document?)
+            """
+
+            if self.preserve:
+                preserve = str(self.preserve)
+                self.preserve = None
+                self.save("old cwd", preserve, "Y", "N", "N")
+            args = self.id, ver, pub, val, label
+            self.job.logger.info("save(%d, ver=%r pub=%r val=%r %s)", *args)
+            opts = dict(
+                doc=doc_str,
+                ver=ver,
+                val=val,
+                publishable=pub,
+                reason=self.job.comment,
+                comment=self.job.comment,
+                show_warnings=True,
+                tier=self.job.tier
+            )
+            doc_id, errors = cdr.repDoc(self.job.session, **opts)
+            if not doc_id:
+                args = self.job, doc_str, ver, pub, val, errors
+                self.capture_transaction(*args)
+                args = self.cdr_id, errors
+                message = "Failure saving changes for {}: {}".format(*args)
+                raise Exception(message)
+            if errors:
+                opts = dict(asSequence=True, errorsExpected=False)
+                warnings = cdr.getErrors(errors, **opts)
+                for warning in warnings:
+                    self.job.logger.warning("%s: %s" % (self.cdr_id, warning))
+            self.saved.add(label)
+
+        @property
+        def ever_validated(self):
+            """
+            Boolean flag indicating whether this doc has ever been validated
+
+            It is important to avoid running validation on a document
+            for the first time unless a publishable version is being
+            created (in which case validation is mandatory), because
+            the validation wipes out the XMetaL prompt PIs.
+            """
+
+            if not hasattr(self, "_ever_validated"):
+                if "lastp" in self.doc_objects:
+                    self._ever_validated = True
+            if not hasattr(self, "_ever_validated"):
+                query = cdrdb.Query("document", "val_status")
+                query.where(query.Condition("id", self.id))
+                row = query.execute(self.job.cursor).fetchone()
+                if not row:
+                    message = "Failure retrieving val_status for {}"
+                    raise Exception(message.format(self.cdr_id))
+                if row.val_status != "U":
+                    self._ever_validated = True
+            if not hasattr(self, "_ever_validated"):
+                query = cdrdb.Query("doc_version", "COUNT(*) AS n")
+                query.where(query.Condition("id", self.id))
+                query.where("val_status <> 'U'")
+                row = query.execute(self.job.cursor).fetchone()
+                self._ever_validated = row.n > 0
+            return self._ever_validated
+
+        def __str__(self):
+            """
+            String representation of document for logging
+            """
+
+            last_version, last_publishable_version, changed = self.versions
+            cwd_version = "unversioned" if changed == "Y" else last_version
+            segments = [self.cdr_id]
+            if self.status != "A":
+                segments.append(" (BLOCKED)")
+            segments.append(" [")
+            if last_publishable_version > 0:
+                segments.append("pub:{:d}".format(last_publishable_version))
+            segments.append("/")
+            if last_version > 0:
+                segments.append("last:{:d}".format(last_version))
+            segments.append("/cwd:{}]".format(cwd_version))
+            return "".join(segments)
+
+        @staticmethod
+        def compare(old_xml, new_xml):
+            """
+            Compare normalized document XML
+
+            Pass:
+              old_xml - original serialized XML for document versions
+              new_xml - transformed XML
+
+            Return:
+              `True` if they differ, otherwise `False`
+            """
+
+            return cdr.compareXmlDocs(old_xml, new_xml)
+
+        @staticmethod
+        def capture_transaction(job, doc, ver, pub, val, error):
+            """
+            Create a repro case for a failed document save
+
+            The document save will not have failed because the document was
+            checked out by another user, as that condition is detected and
+            handled elsewhere. This function creates a script in the standard
+            CDR log directory which can be used to recreate the failure.
+
+            To run it, you must do the following on the correct tier:
+                1. Create a CDR session
+                2. Use it to check out the document
+                3. Pass your session ID to this script on the command line
+
+            Required positional arguments:
+              job - reference to the `ModifyDocs.Job` object
+              doc - serialized `cdr.Doc` object
+              ver - "Y" or "N" (should we create a version?)
+              pub - "Y" or "N" (should the version be publishable?)
+              val - "Y" or "N" (should we validate the document?)
+              error - string describing the failure
+            """
+
+            stamp = str(datetime.now())
+            for c in "-: ":
+                stamp = stamp.replace(c, "")
+            stamp += "-" + str(random.random())
+            args = cdr.DEFAULT_LOGDIR, stamp
+            path = "{}/ModifyDocsFailure-{}.py".format(*args)
+            log = "ModifyDocsTest-{}.out".format(stamp)
+            assertion = "session is required"
+            warning = "make sure the doc is checked out before running this"
+            with open(path, "w") as fp:
+                fp.write("import sys\nimport cdr\n")
+                fp.write("assert len(sys.argv) > 1, {!r}\n".format(assertion))
+                fp.write("print {!r}\n".format(warning))
+                fp.write("# error: {!r}\n".format(error))
+                fp.write("response = cdr.repDoc(\n")
+                fp.write("    sys.argv[1],\n")
+                fp.write("    doc={!r},\n".format(doc))
+                fp.write("    ver={!r},\n".format(ver))
+                fp.write("    val={!r},\n".format(val))
+                fp.write("    publishable={!r},\n".format(pub))
+                fp.write("    reason={!r},\n".format(job.comment))
+                fp.write("    comment={!r},\n".format(job.comment))
+                if job.tier:
+                    fp.write("    tier={!r},\n".format(job.tier))
+                fp.write("    show_warnings=True)\n")
+                fp.write("print response[0] and 'Success' or 'Failure'\n")
+                fp.write("with open({!r}, 'w') as fp:\n".format(log))
+                fp.write("    fp.write(repr(response))\n")
+                fp.write("print 'response in {}'\n".format(log))
