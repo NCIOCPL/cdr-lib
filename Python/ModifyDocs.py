@@ -183,7 +183,7 @@ class Job:
                 if not user:
                     raise ValueError("must supply session or user name")
                 password = getpass()
-                self._session = str(cdr.login(user, password))
+                self._session = str(cdr.login(user, password, tier=self.tier))
         return self._session
 
     @property
@@ -192,7 +192,7 @@ class Job:
         Flag indicating whether we are running in test mode
 
         Return:
-          `True` or `False`
+          `True` (the default) or `False`
         """
 
         if not hasattr(self, "_testing"):
@@ -291,6 +291,7 @@ class Job:
             details = ["Specific versions saved:"]
             for key in sorted(types):
                 details.append("  {} = {:d}".format(key, types[key]))
+            details.append("")
         elapsed = datetime.now() - start
         self.logger.info("""\
 Run completed.
