@@ -335,7 +335,7 @@ Run completed.
             if errors:
                 with open(errors_path, "wb") as fp:
                     for error in errors:
-                        fp.write("{}\n".format(error))
+                        fp.write(error.encode("utf-8") + b"\n")
         except:
             self.logger.exception("Failure writing XML pair")
             raise
@@ -562,7 +562,7 @@ Run completed.
                         logger.warning(val_warning, "new cwd", self.cdr_id)
             if errors_to_log:
                 for error in errors_to_log:
-                    logger.warning("%s: %s", self.cdr_id, error)
+                    logger.warning("%s: %r", self.cdr_id, error.encode("utf-8"))
 
         def save(self, label, doc_str, ver, pub, val):
             """
