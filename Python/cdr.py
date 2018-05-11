@@ -5051,29 +5051,6 @@ def getEmail(session):
     return row.email
 
 #----------------------------------------------------------------------
-# Find the date that a current working document was created or modified.
-# [Only used by obsolete module CTGovUpdateReportBatch.py; retire?]
-# New code should use `last_saved` property of `cdrapi.Doc` object.
-#----------------------------------------------------------------------
-def getCWDDate(docId, conn=None):
-    """
-    Find the latest date/time in the audit trail for a document.
-    This is the date on the current working document.
-
-    Pass:
-        docId - Doc to process.
-        conn  - Optional database connection.  Else create one.
-
-    Return:
-        Audit_trail date_time as a string.
-
-    Raises:
-        Exception if database error or doc ID not found.
-    """
-
-    return APIDoc(Session("guest"), docId).last_saved
-
-#----------------------------------------------------------------------
 # Search the query term table for values
 #----------------------------------------------------------------------
 def getQueryTermValueForId(path, docId, conn=None):
@@ -5783,11 +5760,12 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, **opts):
     import difflib
 
     # Normalize
+    serialize_opts = dict(pretty_print=True, with_tail=True, encoding="utf-8")
     parser = etree.XMLParser(remove_comments=True)
     root1 = etree.fromstring(utf8DocString1, parser=parser)
     root2 = etree.fromstring(utf8DocString2, parser=parser)
-    xml1 = etree.tostring(root1, pretty_print=True, with_tail=False)
-    xml2 = etree.tostring(root2, pretty_print=True, with_tail=False)
+    xml1 = etree.tostring(root1, **serialize_opts).decode("utf-8")
+    xml2 = etree.tostring(root2, **serialize_opts).decode("utf-8")
 
     # Compare
     diffObj = difflib.Differ()

@@ -325,15 +325,15 @@ Run completed.
         diff_path = "{}/{}.{}.diff".format(*args)
         errors_path = "{}/{}.{}.NEW_ERRORS.txt".format(*args)
         try:
-            with open(old_path, "w") as fp:
+            with open(old_path, "wb") as fp:
                 fp.write(before)
-            with open(new_path, "w") as fp:
+            with open(new_path, "wb") as fp:
                 fp.write(after)
-            diff = cdr.diffXmlDocs(before, after) or "-- No differences --"
-            with open(diff_path, "w") as fp:
+            diff = cdr.diffXmlDocs(before, after) or b"-- No differences --"
+            with open(diff_path, "wb") as fp:
                 fp.write(diff)
             if errors:
-                with open(errors_path, "w") as fp:
+                with open(errors_path, "wb") as fp:
                     for error in errors:
                         fp.write("{}\n".format(error))
         except:
