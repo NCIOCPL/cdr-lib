@@ -38,14 +38,14 @@ class Job:
           session - name of active CDR session; required if no user
           mode - "test" (the default) or "live"
           tier - PROD|STAGE|QA|DEV (optional override)
-          versions - if False, only create new working documents
+          versions - if `False`, only create new working documents
           max_docs - optional throttle (e.g., for debugging)
           max_errors - error threshold before aborting (default is 0)
           validate - if True (the default), check for invalidating changes
-          console - set to False to suppress console logging
-          force - if False, don't save versions which were invalidated
-                  invalidated by the change (ignored if validate is False);
-                  default is True
+          console - set to `False` to suppress console logging
+          force - if `False`, don't save versions which were invalidated
+                  by the change (ignored if validate is `False`); default
+                  is `True`
         """
 
         self.__opts = opts
@@ -633,12 +633,12 @@ Run completed.
                 if not row:
                     message = "Failure retrieving val_status for {}"
                     raise Exception(message.format(self.cdr_id))
-                if row.val_status != "U":
+                if row.val_status in ("I", "V"):
                     self._ever_validated = True
             if not hasattr(self, "_ever_validated"):
                 query = cdrdb.Query("doc_version", "COUNT(*) AS n")
                 query.where(query.Condition("id", self.id))
-                query.where("val_status <> 'U'")
+                query.where("val_status IN ('I', 'V')")
                 row = query.execute(self.job.cursor).fetchone()
                 self._ever_validated = row.n > 0
             return self._ever_validated
