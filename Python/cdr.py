@@ -4137,7 +4137,10 @@ class _Control:
         else:
             blob = opts.get("blob")
             if blob is None:
-                if opts.get("del_blob") or opts.get("delBlob"):
+                encoded_blob = get_text(root.find("CdrDocBlob"))
+                if encoded_blob is not None:
+                    blob = base64decode(encoded_blob.encode("ascii"))
+                elif opts.get("del_blob") or opts.get("delBlob"):
                     blob = b""
         doc_opts = {
             "id": root.get("Id"),
