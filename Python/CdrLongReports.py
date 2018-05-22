@@ -26,10 +26,7 @@ import datetime
 import re
 import socket
 import sys
-import time
 import urlparse
-import xml.dom.minidom
-import xml.sax.saxutils
 
 # Third-party packages
 import lxml.etree as etree
@@ -834,6 +831,8 @@ class BrokenExternalLinks(URLChecker):
         query = cdrdb.Query("query_term u", *fields).unique()
         query.where("u.value LIKE 'http%'")
         query.join("document d", "d.id = u.doc_id")
+        if not self.doc_id:
+            query.where("d.active_status = 'A'")
         if self.doc_type == "GlossaryTermConcept":
             if self.language or self.audience:
                 query.where("u.path = '%s/@cdr:xref'" % self.GTC_RELATED_REF)
@@ -850,6 +849,8 @@ class BrokenExternalLinks(URLChecker):
                 query2 = cdrdb.Query("query_term u", *fields)
                 query2.where("u.path LIKE '%s%%/@cdr:xref'" % def_path)
                 query2.join("document d", "d.id = u.doc_id")
+                if not self.doc_id:
+                    query2.where("d.active_status = 'A'")
                 if self.audience:
                     query2.join("query_term a", "a.doc_id = u.doc_id",
                                 "a.node_loc = u.node_loc")
@@ -1001,6 +1002,8 @@ class PageTitleMismatches(URLChecker):
         query.join("query_term u", "u.doc_id = t.doc_id",
                    "u.node_loc = t.node_loc")
         query.join("document d", "d.id = t.doc_id")
+        if not self.doc_id:
+            query.where("d.active_status = 'A'")
         query.where("t.path LIKE '/%s/%%/@SourceTitle'" % self.doc_type)
         query.where("u.path LIKE '/%s/%%/@cdr:xref'" % self.doc_type)
         if self.doc_id:
