@@ -955,7 +955,7 @@ class TermDoc:
         etree.SubElement(root, "TermStatus").text = "Unreviewed"
         code = etree.SubElement(root, "NCIThesaurusConcept", Public="Yes")
         code.text = self.concept.code
-        return cdr.Doc(etree.tostring(root, pretty_print=True), "Term")
+        return cdr.Doc(etree.tostring(root, pretty_print=True), doctype="Term")
 
     def find_position(self, skip):
         """

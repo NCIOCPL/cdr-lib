@@ -1189,8 +1189,7 @@ class Doc:
     Object containing components of a CdrDoc element.
     """
 
-    def __init__(self, x, type = None, ctrl = None, blob = None, id = None,
-                 encoding = 'latin-1'):
+    def __init__(self, xml, **opts):
         """
         An object encapsulating all the elements of a CDR document.
 
@@ -1198,13 +1197,18 @@ class Doc:
               anything other than latin-1, you MUST provide the name of
               the encoding used as the value of the `encoding' parameter!
 
-        Parameters:
-            x           XML as utf-8 or Unicode string.
-            type        Document type.
+        Required positional argument:
+            xml         XML as utf-8 or Unicode string.
+
+        Optional keyword arguments:
+            doctype     Document type.
                          If passed, all other components of the Doc must
                           also be passed.
                          If none, then a CdrDoc must be passed with all
                           other components derived from the document string.
+                         (also accepted for this option is "type" - an
+                          unfortunately legacy naming of an argument using
+                          a Python keyword)
             ctrl        If type passed, dictionary of CdrDocCtl elements:
                          key = element name/tag
                          value = element text content
@@ -1218,33 +1222,34 @@ class Doc:
             encoding    Character encoding.  Must be accurate.  All
                          XML strings will be internally converted to utf-8.
         """
+
         # Two flavors for the constructor: one for passing in all the pieces:
-        if type:
-            self.id       = id
-            self.ctrl     = ctrl or {}
-            self.type     = type
-            self.xml      = x
-            self.blob     = blob
-            self.encoding = encoding
+        self.encoding = opts.get("encoding", "utf-8")
+        doctype = opts.get("doctype") or opts.get("type")
+        if doctype:
+            self.type = doctype
+            self.xml = xml
+            self.id = opts.get("id")
+            self.ctrl = opts.get("ctrl") or {}
+            self.blob = opts.get("blob")
         # ... and the other for passing in a CdrDoc element to be parsed.
         else:
-            if encoding.lower() != 'utf-8':
-                if isinstance(x, unicode):
-                    x = x.encode('utf-8')
+            if self.encoding.lower() != "utf-8":
+                if isinstance(xml, unicode):
+                    xml = xml.encode("utf-8")
                 else:
-                    x = unicode(x, encoding).encode('utf-8')
-            root          = etree.fromstring(x)
-            self.encoding = encoding
-            self.ctrl     = {}
-            self.xml      = ''
-            self.blob     = None
-            self.id       = root.get("Id")
-            self.type     = root.get("Type")
+                    xml = unicode(xml, self.encoding).encode("utf-8")
+            root = etree.fromstring(xml)
+            self.ctrl = {}
+            self.xml = ""
+            self.blob = None
+            self.id = root.get("Id")
+            self.type = root.get("Type")
             for node in root:
                 if node.tag == "CdrDocCtl":
                     self.parseCtl(node)
                 elif node.tag == "CdrDocXml":
-                    self.xml = get_text(node, "").encode(encoding)
+                    self.xml = get_text(node, "").encode(self.encoding)
                 elif node.tag == "CdrDocBlob":
                     self.extractBlob(node)
 
