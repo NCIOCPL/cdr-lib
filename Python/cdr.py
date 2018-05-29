@@ -5844,7 +5844,7 @@ def emailerCgi(cname=True):
 #    Host-Tier: SubjectLine
 #----------------------------------------------------------------------
 def emailSubject(text='No Subject'):
-    return u"CBIIT-%s: %s" % (_Control.TIER.name, text)
+    return u"[%s] %s" % (_Control.TIER.name, text)
 
 #----------------------------------------------------------------------
 # Create a file to use as an interprocess lockfile.
