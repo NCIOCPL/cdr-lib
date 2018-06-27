@@ -3643,43 +3643,6 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
     return html + "  </TABLE>\n </BODY>\n</HTML>\n"
 
 #----------------------------------------------------------------------
-# Create an HTML table from a passed data
-#----------------------------------------------------------------------
-def tabularize (rows, tblAttrs=None):
-    """
-    Create an HTML table string from passed data.
-
-    Pass:
-        rows = Sequence of rows for the table, each containing
-               a sequence of columns.
-               If the number of columns is not the same in each row,
-               then the caller gets whatever he gets, so it may be
-               wise to add columns with content like "&nbsp;" if needed.
-               No entity conversions are performed.
-
-        tblAttrs = Optional string of attributes to put in table, e.g.,
-               "align='center' border='1' width=95%'"
-
-        We might add rowAttrs and colAttrs if this is worthwhile.
-    Return:
-        HTML as a string.
-    """
-    if not tblAttrs:
-        html = "<table>\n"
-    else:
-        html = "<table " + tblAttrs + ">\n"
-
-    for row in rows:
-        html += " <tr>\n"
-        for col in row:
-            html += "  <td>%s</td>\n" % col
-        html += " </tr>\n"
-    html += "</table>"
-
-    return html
-
-
-#----------------------------------------------------------------------
 # Get the full user name for a given session.
 #----------------------------------------------------------------------
 def getFullUserName(session, conn):
