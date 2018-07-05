@@ -4676,32 +4676,32 @@ class Log:
 FILTERS = {
     'Citation':
         ["set:QC Citation Set"],
-    'CTGovProtocol':
-        ["set:QC CTGovProtocol Set"],
+    # 'CTGovProtocol':
+    #     ["set:QC CTGovProtocol Set"],
     'DrugInformationSummary':
         ["set:QC DrugInfoSummary Set"],
-    'GlossaryTerm':
-        ["set:QC GlossaryTerm Set"],
-    'GlossaryTerm:rs':            # Redline/Strikeout
-        ["set:QC GlossaryTerm Set (Redline/Strikeout)"],
+    # 'GlossaryTerm':
+    #     ["set:QC GlossaryTerm Set"],
+    # 'GlossaryTerm:rs':            # Redline/Strikeout
+    #     ["set:QC GlossaryTerm Set (Redline/Strikeout)"],
     'GlossaryTermConcept':
         ["name:Glossary Term Concept QC Report Filter"],
     'GlossaryTermName':
         ["set:QC GlossaryTermName"],
     'GlossaryTermName:gtnwc':
         ["set:QC GlossaryTermName with Concept Set"],
-    'InScopeProtocol':
-        ["set:QC InScopeProtocol Set"],
+    # 'InScopeProtocol':
+    #     ["set:QC InScopeProtocol Set"],
     'Media:img':
         ["set:QC Media Set"],
     'MiscellaneousDocument':
         ["set:QC MiscellaneousDocument Set"],
     'MiscellaneousDocument:rs':
         ["set:QC MiscellaneousDocument Set (Redline/Strikeout)"],
-    'Organization':
-        ["set:QC Organization Set"],
-    'Person':
-        ["set:QC Person Set"],
+    # 'Organization':
+    #     ["set:QC Organization Set"],
+    # 'Person':
+    #     ["set:QC Person Set"],
     'PDQBoardMemberInfo':
         ["set:QC PDQBoardMemberInfo Set"],
     'Summary':
