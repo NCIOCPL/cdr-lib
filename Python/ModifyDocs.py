@@ -88,7 +88,8 @@ class Job:
         """
 
         if not hasattr(self, "_cursor"):
-            self._cursor = cdrdb.connect(user="CdrGuest", tier=self.tier)
+            conn = cdrdb.connect(user="CdrGuest", tier=self.tier)
+            self._cursor = conn.cursor()
         return self._cursor
 
     @property
