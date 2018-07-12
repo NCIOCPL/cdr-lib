@@ -1866,7 +1866,7 @@ class Control:
     def run(self):
         "Derived class overrides this method if there are custom actions."
         try:
-            if self.request == MAINMENU:
+            if self.request == self.ADMINMENU:
                 navigateTo("Admin.py", self.session)
             elif self.request == self.REPORTS_MENU:
                 navigateTo("Reports.py", self.session)
@@ -1890,6 +1890,8 @@ class Control:
             "subtitle": self.subtitle,
             "page_opts": {
                 "buttons": buttons,
+                "action": self.script,
+                "session": self.session,
                 "action": buttons and self.script or None
             }
         }
