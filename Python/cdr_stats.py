@@ -1615,7 +1615,7 @@ class Control:
             recips = cdr.getEmailList("Test Publishing Notification")
         else:
             recips = cdr.getEmailList('ICRDB Statistics Notification')
-        subject = "CBIIT-%s: %s" %(self.TIER.name, self.title)
+        subject = "[%s] %s" %(self.TIER.name, self.title)
         error = cdr.sendMail(self.SENDER, recips, subject, report, html=True)
         self.logger.info("sent %s", subject)
         self.logger.info("recips: %s", ", ".join(recips))

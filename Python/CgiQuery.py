@@ -154,7 +154,10 @@ Cache-control: no-cache, must-revalidate
                 rowNum += 1
                 html.append(u"<tr>\n")
                 for col in row:
-                    val = col and cgi.escape(u"%s" % col) or u"&nbsp;"
+                    if col is None:
+                        val = u"&nbsp;"
+                    else:
+                        val = cgi.escape(u"%s" % col) or u"&nbsp;"
                     html.append(u"<td valign='top' class='%s'>%s</td>\n" %
                                 (cls, val))
                 html.append(u"</tr>\n")

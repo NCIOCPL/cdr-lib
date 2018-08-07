@@ -1189,8 +1189,7 @@ class Doc:
     Object containing components of a CdrDoc element.
     """
 
-    def __init__(self, x, type = None, ctrl = None, blob = None, id = None,
-                 encoding = 'latin-1'):
+    def __init__(self, xml, **opts):
         """
         An object encapsulating all the elements of a CDR document.
 
@@ -1198,13 +1197,18 @@ class Doc:
               anything other than latin-1, you MUST provide the name of
               the encoding used as the value of the `encoding' parameter!
 
-        Parameters:
-            x           XML as utf-8 or Unicode string.
-            type        Document type.
+        Required positional argument:
+            xml         XML as utf-8 or Unicode string.
+
+        Optional keyword arguments:
+            doctype     Document type.
                          If passed, all other components of the Doc must
                           also be passed.
                          If none, then a CdrDoc must be passed with all
                           other components derived from the document string.
+                         (also accepted for this option is "type" - an
+                          unfortunately legacy naming of an argument using
+                          a Python keyword)
             ctrl        If type passed, dictionary of CdrDocCtl elements:
                          key = element name/tag
                          value = element text content
@@ -1218,33 +1222,34 @@ class Doc:
             encoding    Character encoding.  Must be accurate.  All
                          XML strings will be internally converted to utf-8.
         """
+
         # Two flavors for the constructor: one for passing in all the pieces:
-        if type:
-            self.id       = id
-            self.ctrl     = ctrl or {}
-            self.type     = type
-            self.xml      = x
-            self.blob     = blob
-            self.encoding = encoding
+        self.encoding = opts.get("encoding", "utf-8")
+        doctype = opts.get("doctype") or opts.get("type")
+        if doctype:
+            self.type = doctype
+            self.xml = xml
+            self.id = opts.get("id")
+            self.ctrl = opts.get("ctrl") or {}
+            self.blob = opts.get("blob")
         # ... and the other for passing in a CdrDoc element to be parsed.
         else:
-            if encoding.lower() != 'utf-8':
-                if isinstance(x, unicode):
-                    x = x.encode('utf-8')
+            if self.encoding.lower() != "utf-8":
+                if isinstance(xml, unicode):
+                    xml = xml.encode("utf-8")
                 else:
-                    x = unicode(x, encoding).encode('utf-8')
-            root          = etree.fromstring(x)
-            self.encoding = encoding
-            self.ctrl     = {}
-            self.xml      = ''
-            self.blob     = None
-            self.id       = root.get("Id")
-            self.type     = root.get("Type")
+                    xml = unicode(xml, self.encoding).encode("utf-8")
+            root = etree.fromstring(xml)
+            self.ctrl = {}
+            self.xml = ""
+            self.blob = None
+            self.id = root.get("Id")
+            self.type = root.get("Type")
             for node in root:
                 if node.tag == "CdrDocCtl":
                     self.parseCtl(node)
                 elif node.tag == "CdrDocXml":
-                    self.xml = get_text(node, "").encode(encoding)
+                    self.xml = get_text(node, "").encode(self.encoding)
                 elif node.tag == "CdrDocBlob":
                     self.extractBlob(node)
 
@@ -1408,7 +1413,7 @@ def _put_doc(session, command_name, **opts):
             cdr_doc = etree.fromstring(doc)
     except:
         error = cls.wrap_error("Unable to parse document")
-        if show_warnings:
+        if opts.get("show_warnings") or opts.get("showWarnings"):
             return None, error
         return error
 
@@ -1420,7 +1425,7 @@ def _put_doc(session, command_name, **opts):
                 blob = fp.read()
         except:
             error = cls.wrap_error("unable to read BLOB file")
-            if show_warnings:
+            if opts.get("show_warnings") or opts.get("showWarnings"):
                 return None, error
             return error
     else:
@@ -4674,32 +4679,32 @@ class Log:
 FILTERS = {
     'Citation':
         ["set:QC Citation Set"],
-    'CTGovProtocol':
-        ["set:QC CTGovProtocol Set"],
+    # 'CTGovProtocol':
+    #     ["set:QC CTGovProtocol Set"],
     'DrugInformationSummary':
         ["set:QC DrugInfoSummary Set"],
-    'GlossaryTerm':
-        ["set:QC GlossaryTerm Set"],
-    'GlossaryTerm:rs':            # Redline/Strikeout
-        ["set:QC GlossaryTerm Set (Redline/Strikeout)"],
+    # 'GlossaryTerm':
+    #     ["set:QC GlossaryTerm Set"],
+    # 'GlossaryTerm:rs':            # Redline/Strikeout
+    #     ["set:QC GlossaryTerm Set (Redline/Strikeout)"],
     'GlossaryTermConcept':
         ["name:Glossary Term Concept QC Report Filter"],
     'GlossaryTermName':
         ["set:QC GlossaryTermName"],
     'GlossaryTermName:gtnwc':
         ["set:QC GlossaryTermName with Concept Set"],
-    'InScopeProtocol':
-        ["set:QC InScopeProtocol Set"],
+    # 'InScopeProtocol':
+    #     ["set:QC InScopeProtocol Set"],
     'Media:img':
         ["set:QC Media Set"],
     'MiscellaneousDocument':
         ["set:QC MiscellaneousDocument Set"],
     'MiscellaneousDocument:rs':
         ["set:QC MiscellaneousDocument Set (Redline/Strikeout)"],
-    'Organization':
-        ["set:QC Organization Set"],
-    'Person':
-        ["set:QC Person Set"],
+    # 'Organization':
+    #     ["set:QC Organization Set"],
+    # 'Person':
+    #     ["set:QC Person Set"],
     'PDQBoardMemberInfo':
         ["set:QC PDQBoardMemberInfo Set"],
     'Summary':
@@ -5052,29 +5057,6 @@ def getEmail(session):
     if not row:
         return "Session not found or unauthorized"
     return row.email
-
-#----------------------------------------------------------------------
-# Find the date that a current working document was created or modified.
-# [Only used by obsolete module CTGovUpdateReportBatch.py; retire?]
-# New code should use `last_saved` property of `cdrapi.Doc` object.
-#----------------------------------------------------------------------
-def getCWDDate(docId, conn=None):
-    """
-    Find the latest date/time in the audit trail for a document.
-    This is the date on the current working document.
-
-    Pass:
-        docId - Doc to process.
-        conn  - Optional database connection.  Else create one.
-
-    Return:
-        Audit_trail date_time as a string.
-
-    Raises:
-        Exception if database error or doc ID not found.
-    """
-
-    return APIDoc(Session("guest"), docId).last_saved
 
 #----------------------------------------------------------------------
 # Search the query term table for values
@@ -5554,50 +5536,6 @@ Subject: %s
         return msg
 
 #----------------------------------------------------------------------
-# Create an HTML table from a passed data
-#----------------------------------------------------------------------
-def tabularize(rows, tblAttrs=None):
-    """
-    Create an HTML table string from passed data.
-    This looks like it should be in cdrcgi, but we also produce
-    HTML email in batch programs - which aren't searching the
-    cgi path.
-
-    Deprecated. Should use a real XML package for assembling
-    the table as an object, but we can't do that because `tblAttrs`
-    is passed in as a string instead of a dictionary, so we can't.
-    Don't use this for new code.
-
-    Pass:
-        rows = Sequence of rows for the table, each containing
-               a sequence of columns.
-               If the number of columns is not the same in each row,
-               then the caller gets whatever he gets, so it may be
-               wise to add columns with content like "&nbsp;" if needed.
-               No entity conversions are performed.
-
-        tblAttrs = Optional string of attributes to put in table, e.g.,
-               "align='center' border='1' width=95%'"
-
-        We might add rowAttrs and colAttrs if this is worthwhile.
-    Return:
-        HTML as a string.
-    """
-    if not tblAttrs:
-        html = "<table>\n"
-    else:
-        html = "<table " + tblAttrs + ">\n"
-
-    for row in rows:
-        html += " <tr>\n"
-        for col in row:
-            html += "  <td>%s</td>\n" % col
-        html += " </tr>\n"
-    html += "</table>"
-
-    return html
-
-#----------------------------------------------------------------------
 # Object for results of an external command.
 #----------------------------------------------------------------------
 class CommandResult:
@@ -5786,11 +5724,12 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, **opts):
     import difflib
 
     # Normalize
+    serialize_opts = dict(pretty_print=True, with_tail=True, encoding="utf-8")
     parser = etree.XMLParser(remove_comments=True)
     root1 = etree.fromstring(utf8DocString1, parser=parser)
     root2 = etree.fromstring(utf8DocString2, parser=parser)
-    xml1 = etree.tostring(root1, pretty_print=True, with_tail=False)
-    xml2 = etree.tostring(root2, pretty_print=True, with_tail=False)
+    xml1 = etree.tostring(root1, **serialize_opts).decode("utf-8")
+    xml2 = etree.tostring(root2, **serialize_opts).decode("utf-8")
 
     # Compare
     diffObj = difflib.Differ()
@@ -5864,7 +5803,7 @@ def emailerCgi(cname=True):
 #    Host-Tier: SubjectLine
 #----------------------------------------------------------------------
 def emailSubject(text='No Subject'):
-    return u"CBIIT-%s: %s" % (_Control.TIER.name, text)
+    return u"[%s] %s" % (_Control.TIER.name, text)
 
 #----------------------------------------------------------------------
 # Create a file to use as an interprocess lockfile.

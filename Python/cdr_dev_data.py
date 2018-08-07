@@ -96,7 +96,7 @@ class Data:
         """
         filter_name = subset = None
         if row["filter"]:
-            filter_name = self.docs["Filter"].map[row["filter"]].strip()
+            filter_name = self.docs["Filter"].map.get(row["filter"], "***MISSING***").strip()
         if row["subset"]:
             subset = self.tables["filter_set"].map[row["subset"]].strip()
         filter_set = self.tables["filter_set"].map[row["filter_set"]].strip()
