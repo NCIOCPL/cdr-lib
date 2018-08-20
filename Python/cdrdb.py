@@ -797,7 +797,7 @@ def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr'):
         user = "cdrsqlaccount"
     password = cdrpw.password(h.org, tier, db, user, DRIVE_PREFIX)
     try:
-        connString = ("Provider=SQLOLEDB;"
+        connString = ("Provider=MSOLEDBSQL;"
                       "Data Source=%s,%d;"
                       "Initial Catalog=%s;"
                       "User ID=%s;"
