@@ -4701,10 +4701,10 @@ FILTERS = {
         ["set:QC MiscellaneousDocument Set"],
     'MiscellaneousDocument:rs':
         ["set:QC MiscellaneousDocument Set (Redline/Strikeout)"],
-    # 'Organization':
-    #     ["set:QC Organization Set"],
-    # 'Person':
-    #     ["set:QC Person Set"],
+    'Organization':
+        ["set:QC Organization Set"],
+    'Person':
+        ["set:QC Person Set"],
     'PDQBoardMemberInfo':
         ["set:QC PDQBoardMemberInfo Set"],
     'Summary':
