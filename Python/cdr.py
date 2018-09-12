@@ -5442,6 +5442,7 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
         subject = subject.decode("utf-8")
     if not isinstance(body, unicode):
         body = body.decode("utf-8")
+
     recipients = []
     for recip in recips:
         if not isinstance(recip, unicode):
@@ -5451,6 +5452,7 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
 
     # The charset for the body must be set explicitly.
     encoded_body = None
+
     for charset in ("US-ASCII", "ISO-8859-1", "UTF-8"):
         try:
             encoded_body = body.encode(charset)
@@ -5458,6 +5460,7 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
             pass
         else:
             break
+
     if encoded_body is None:
         raise Exception("sendMailMime: failure determining body charset")
 
@@ -5488,7 +5491,7 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
     except Exception as e:
 
         # Log the error before re-throwing an exception.
-        msg = "sendMail failure: %s" % e
+        msg = "sendMailMime failure: %s" % e
         logwrite(msg, tback=True)
         raise Exception(msg)
 
