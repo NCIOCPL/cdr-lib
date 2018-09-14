@@ -4701,10 +4701,10 @@ FILTERS = {
         ["set:QC MiscellaneousDocument Set"],
     'MiscellaneousDocument:rs':
         ["set:QC MiscellaneousDocument Set (Redline/Strikeout)"],
-    # 'Organization':
-    #     ["set:QC Organization Set"],
-    # 'Person':
-    #     ["set:QC Person Set"],
+    'Organization':
+        ["set:QC Organization Set"],
+    'Person':
+        ["set:QC Person Set"],
     'PDQBoardMemberInfo':
         ["set:QC PDQBoardMemberInfo Set"],
     'Summary':
@@ -5428,9 +5428,9 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
     """
 
     if not recips:
-        raise Exception("sendMail: no recipients specified")
+        raise Exception("sendMailMime: no recipients specified")
     if type(recips) not in (tuple, list):
-        raise Exception("sendMail: recipients must be a sequence of "
+        raise Exception("sendMailMime: recipients must be a sequence of "
                         "email addresses")
     import smtplib
     from email.mime.text import MIMEText
@@ -5442,6 +5442,7 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
         subject = subject.decode("utf-8")
     if not isinstance(body, unicode):
         body = body.decode("utf-8")
+
     recipients = []
     for recip in recips:
         if not isinstance(recip, unicode):
@@ -5451,6 +5452,7 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
 
     # The charset for the body must be set explicitly.
     encoded_body = None
+
     for charset in ("US-ASCII", "ISO-8859-1", "UTF-8"):
         try:
             encoded_body = body.encode(charset)
@@ -5458,6 +5460,7 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
             pass
         else:
             break
+
     if encoded_body is None:
         raise Exception("sendMailMime: failure determining body charset")
 
@@ -5488,7 +5491,7 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
     except Exception as e:
 
         # Log the error before re-throwing an exception.
-        msg = "sendMail failure: %s" % e
+        msg = "sendMailMime failure: %s" % e
         logwrite(msg, tback=True)
         raise Exception(msg)
 
