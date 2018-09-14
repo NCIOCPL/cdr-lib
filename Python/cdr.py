@@ -5428,9 +5428,9 @@ def sendMailMime(sender, recips, subject, body, bodyType='plain',
     """
 
     if not recips:
-        raise Exception("sendMail: no recipients specified")
+        raise Exception("sendMailMime: no recipients specified")
     if type(recips) not in (tuple, list):
-        raise Exception("sendMail: recipients must be a sequence of "
+        raise Exception("sendMailMime: recipients must be a sequence of "
                         "email addresses")
     import smtplib
     from email.mime.text import MIMEText
