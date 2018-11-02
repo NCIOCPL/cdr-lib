@@ -295,8 +295,9 @@ class Control:
             for doc in self.job.docs:
                 if doc.id in self.processed:
                     continue
-                if doc.doctype.name not in spec.user_select_doctypes:
-                    continue
+                if spec.user_select_doctypes:
+                    if doc.doctype.name not in spec.user_select_doctypes:
+                        continue
                 self.docs.append("{}/{}".format(doc.id, doc.version))
                 self.processed.add(doc.id)
             if self.docs:
