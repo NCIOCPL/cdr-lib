@@ -129,6 +129,8 @@ class Control:
                 message = "Processing script {!r} not found".format(script)
                 raise Exception(message)
             command = "{} {:d}".format(script, self.job.id)
+            if script.endswith(".py") and "python" not in command.lower():
+                command = " ".join([cdr.PYTHON, command])
             self.logger.info("Launching %s", command)
             os.system(command)
 
@@ -295,8 +297,9 @@ class Control:
             for doc in self.job.docs:
                 if doc.id in self.processed:
                     continue
-                if doc.doctype.name not in spec.user_select_doctypes:
-                    continue
+                if spec.user_select_doctypes:
+                    if doc.doctype.name not in spec.user_select_doctypes:
+                        continue
                 self.docs.append("{}/{}".format(doc.id, doc.version))
                 self.processed.add(doc.id)
             if self.docs:

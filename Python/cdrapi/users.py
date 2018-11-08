@@ -8,6 +8,7 @@ import hashlib
 import logging
 import random
 import re
+import socket
 import string
 import threading
 import time
@@ -529,11 +530,12 @@ class Session:
         letters = string.ascii_uppercase + string.digits
         suffix = "".join([random.choice(letters) for i in range(12)])
         name = "{:08X}-{:06X}-{:03d}-{}".format(secs, msecs, uid, suffix)
-        cols = "name, usr, comment, initiated, last_act"
-        vals = "?, ?, ?, GETDATE(), GETDATE()"
+        ip_address = socket.gethostbyname(socket.gethostname()) or None
+        cols = "name, usr, comment, initiated, last_act, ip_address"
+        vals = "?, ?, ?, GETDATE(), GETDATE(), ?"
         insert = "INSERT INTO session({}) VALUES({})".format(cols, vals)
         cursor = conn.cursor()
-        cursor.execute(insert, (name, uid, opts.get("comment")))
+        cursor.execute(insert, (name, uid, opts.get("comment"), ip_address))
         conn.commit()
         session = Session(name, opts.get("tier"))
         session.log("login({})".format(name))

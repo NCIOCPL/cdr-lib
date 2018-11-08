@@ -1865,7 +1865,7 @@ class Control:
     def run(self):
         "Derived class overrides this method if there are custom actions."
         try:
-            if self.request == MAINMENU:
+            if self.request == self.ADMINMENU:
                 navigateTo("Admin.py", self.session)
             elif self.request == self.REPORTS_MENU:
                 navigateTo("Reports.py", self.session)
@@ -1889,6 +1889,8 @@ class Control:
             "subtitle": self.subtitle,
             "page_opts": {
                 "buttons": buttons,
+                "action": self.script,
+                "session": self.session,
                 "action": buttons and self.script or None
             }
         }
@@ -3640,43 +3642,6 @@ def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
             html += "<TR><TD COLWIDTH='3'>&nbsp;</TD></TR>\n"
 
     return html + "  </TABLE>\n </BODY>\n</HTML>\n"
-
-#----------------------------------------------------------------------
-# Create an HTML table from a passed data
-#----------------------------------------------------------------------
-def tabularize (rows, tblAttrs=None):
-    """
-    Create an HTML table string from passed data.
-
-    Pass:
-        rows = Sequence of rows for the table, each containing
-               a sequence of columns.
-               If the number of columns is not the same in each row,
-               then the caller gets whatever he gets, so it may be
-               wise to add columns with content like "&nbsp;" if needed.
-               No entity conversions are performed.
-
-        tblAttrs = Optional string of attributes to put in table, e.g.,
-               "align='center' border='1' width=95%'"
-
-        We might add rowAttrs and colAttrs if this is worthwhile.
-    Return:
-        HTML as a string.
-    """
-    if not tblAttrs:
-        html = "<table>\n"
-    else:
-        html = "<table " + tblAttrs + ">\n"
-
-    for row in rows:
-        html += " <tr>\n"
-        for col in row:
-            html += "  <td>%s</td>\n" % col
-        html += " </tr>\n"
-    html += "</table>"
-
-    return html
-
 
 #----------------------------------------------------------------------
 # Get the full user name for a given session.
