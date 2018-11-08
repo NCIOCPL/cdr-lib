@@ -129,6 +129,8 @@ class Control:
                 message = "Processing script {!r} not found".format(script)
                 raise Exception(message)
             command = "{} {:d}".format(script, self.job.id)
+            if script.endswith(".py") and "python" not in command.lower():
+                command = " ".join([cdr.PYTHON, command])
             self.logger.info("Launching %s", command)
             os.system(command)
 
