@@ -4865,7 +4865,7 @@ class Error:
         every time this module is loaded.
         """
         if not cls.__pattern:
-            cls.__pattern = re.compile("<Err(?:\\s+[^>]*)?>(.*?)</Err>",
+            cls.__pattern = re.compile(u"<Err(?:\\s+[^>]*)?>(.*?)</Err>",
                                        re.DOTALL)
         return cls.__pattern
 
@@ -4962,11 +4962,13 @@ def getErrors(xmlFragment, **opts):
             if as_objects:
                 return errors
             return [e.getMessage(as_utf8) for e in errors]
-        if as_utf8 and isinstance(xmlFragment, unicode):
-            xmlFragment = xmlFragment.encode("utf-8")
+        if not isinstance(xmlFragment, unicode):
+            xmlFragment = xmlFragment.decode("utf-8")
         errors = Error.getPattern().findall(xmlFragment)
         if not errors and expected:
             return ["Internal failure"]
+        if as_utf8:
+            return [e.encode("utf-8") for e in errors]
         return errors
 
     elif use_dom and root is not None:
@@ -4979,9 +4981,11 @@ def getErrors(xmlFragment, **opts):
 
     else:
         # Compile the pattern for the regular expression.
-        pattern = re.compile("<Errors[>\s].*</Errors>", re.DOTALL)
+        pattern = re.compile(u"<Errors[>\\s].*</Errors>", re.DOTALL)
 
         # Search for the <Errors> element.
+        if not isinstance(xmlFragment, unicode):
+            xmlFragment = xmlFragment.decode("utf-8")
         errors = pattern.search(xmlFragment)
         if errors:
             return errors.group()
