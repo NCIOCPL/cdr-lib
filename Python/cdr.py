@@ -1291,7 +1291,9 @@ class Doc:
             for key in self.ctrl:
                 value = self.ctrl[key].decode(self.encoding)
                 etree.SubElement(control_wrapper, key).text = value
-        xml = self.xml.decode("utf-8")
+        xml = self.xml
+        if not isinstance(xml, unicode):
+            xml = xml.decode("utf-8")
         if "]]>" not in xml:
             xml = etree.CDATA(xml)
         etree.SubElement(doc, "CdrDocXml").text = xml
