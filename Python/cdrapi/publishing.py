@@ -1,10 +1,14 @@
 """
-Manage CDR publishing jobs
+Manage CDR publishing jobs and provide acceess to the Drupal CMS
 """
 
 import datetime
+import json
+import logging
 import threading
 from six import iteritems
+import dateutil.parser
+import requests
 from cdrapi.db import Query
 from cdrapi.docs import Doc
 
@@ -762,3 +766,292 @@ class Job:
                             value = Doc.get_text(node.find("ParmValue"), "")
                             self._parameters[name] = value
                     return self._parameters
+
+class DrupalClient:
+    """
+    Client end of the PDQ RESTful APIs in the Drupal CMS
+
+    Provides functionality comparable to that provided for communicating
+    with the legacy GateKeeper APIs in the `cdr2gk` module.
+
+    Class constants:
+        CHUNKSIZE - maximum number of documents we can set to `published`
+                    in a single batch
+        URI_PATH - used for routing of PDQ RESTful API requests
+        TYPES - names used for the types of PDQ documents we publish
+    """
+
+    CHUNKSIZE = 25
+    URI_PATH = "/pdq/api"
+    TYPES = dict(
+        Summary=("pdq_cancer_information_summary", "cis"),
+        DrugInformationSummary=("pdq_drug_information_summary", "dis"),
+    )
+
+    def __init__(self, session, **opts): #base, auth, logger=None):
+        """
+        Perform any necessary setup for communicating with the PDQ APIs
+
+        Required positional argument:
+          session - information about the account in control
+
+        Optional keyword arguments:
+          auth - override for basic authorization credentials pair
+          base - e.g., "https://ncigovcddev.prod.acquia-sites.com"
+          logger - override for logging object
+        """
+
+        self.__session = session
+        self.__opts = opts
+        self.logger.info("DrupalClient created for %s", self.base)
+
+    @property
+    def auth(self):
+        """
+        Basic authorization credentials pair
+        """
+
+        if not hasattr(self, "_auth"):
+            self._auth = self.__opts.get("auth")
+            if not self._auth:
+                password = self.__session.tier.password("PDQ")
+                if not password:
+                    raise Exception("Unable to find PDQ CMS credentials")
+                self._auth = "PDQ", password
+        return self._auth
+
+    @property
+    def base(self):
+        """
+        Front portion of the PDQ API URL
+        """
+
+        if not hasattr(self, "_base"):
+            self._base = self.__opts.get("base")
+            if self._base:
+                self._base = self._base.strip("/")
+                if not self._base.startswith("http"):
+                    raise Exception("Valid URL base required")
+            else:
+                host = self.__session.hosts.get("DRUPAL")
+                if not host:
+                    raise Exception("Unable to determine CMS host name")
+                self._base = "https://{}".format(host)
+        return self._base
+
+    @property
+    def logger(self):
+        """
+        Object for recording what we do
+        """
+
+        if not hasattr(self, "_logger"):
+            self._logger = self.__opts.get("logger")
+            if not self._logger:
+                self._logger = self.__session.logger
+        return self._logger
+
+    @property
+    def session(self):
+        """
+        Reference to object representing the current login
+        """
+
+        return self.__session
+
+    @property
+    def types(self):
+        """
+        Mapping from Drupal class for content to API URL tail
+        """
+
+        if not hasattr(self, "_types"):
+            self._types = dict(self.TYPES.values())
+        return self._types
+
+    def push(self, values):
+        """
+        Send a PDQ document to the Drupal CMS
+
+        The document will be stored in the `draft` state, and must be
+        released to the `published` state at the end of the job in batch
+        with the other PDQ documents published by the job (see the
+        `publish()` method).
+
+        Pass:
+          values - dictionary of field values keyed by field name
+
+        Return:
+          integer for the ID of the node in which the document is stored
+        """
+
+        # Make sure we use the existing node if already in the CMS.
+        self.__check_nid(values)
+
+        # Different types use different API URLs.
+        t = values["type"]
+        url = "{}{}/{}".format(self.base, self.URI_PATH, self.types[t])
+        self.logger.debug("URL for push(): %s", url)
+
+        # Send the values to the CMS and check for success.
+        response = requests.post(url, json=values, auth=self.auth)
+        if not response.ok:
+            raise Exception(response.reason)
+
+        # Give the caller the node ID where the document was stored.
+        parsed = json.loads(response.text)
+        nid = int(parsed["nid"])
+        values["cdr_id"], self.base, nid
+        self.logger.info("Pushed CDR%d to %s as node %d", *args)
+        return nid
+
+    def publish(self, documents):
+        """
+        Ask the CMS to set the specified documents to the `published` state.
+
+        We have to break the batch into chunks small enough that memory
+        usage will not be an issue.
+
+        Pass:
+          documents - sequence of tuples for the PDQ documents which should
+                      be switched from `draft` to `published` state, each
+                      tuple containing:
+                          - integer for the document's unique CDR ID
+                          - integer for the Drupal node for the document
+                          - language code ('en' or 'es')
+                      for example:
+                          [
+                              (257994, 231, "en"),
+                              (257995, 241, "en"),
+                              (448617, 226, "es"),
+                              (742114, 136, "en"),
+                          ]
+
+        Return:
+          possibly empty dictionary of error messages, indexed by the
+          CDR ID for documents which failed
+        """
+
+        url = "{}/{}".format(self.base, self.URI_PATH)
+        self.logger.debug("URL for publish(): %s", url)
+        offset = 0
+        lookup = dict([(doc[1:], doc[0]) for doc in docsuments])
+        errors = dict()
+        while offset < len(documents):
+            end = offset + self.CHUNKSIZE
+            chunk = [doc[1:] for doc in documents[offset:end]]
+            self.logger.debug("Setting published status for %r", chunk)
+            offset = end
+            response = requests.post(url, json=chunk, auth=self.auth)
+            if not response.ok:
+                for key in chunk:
+                    cdr_id = lookup[key]
+                    errors[cdr_id] = response.reason
+                    self.logger.error("CDR%d: %s", cdr_id, response.reason)
+            else:
+                for nid, lang, err in json.loads(response.text)["errors"]:
+                    key = nid, lang
+                    cdr_id = lookup[(nid, lang)]
+                    errors[cdr_id] = err
+                    self.logger.error("CDR%d: %s", cdr_id, err)
+        return errors
+
+    def remove(self, cdr_id):
+        """
+        Drop a PDQ document from the Drupal CMS
+
+        Pass:
+          cdr_id - integer for the PDQ document to be deleted
+
+        Throws:
+          `Exception` if delete request failed
+        """
+
+        url = "{}/{}/{:d}".format(self.base, self.URI_PATH, cdr_id)
+        self.logger.debug("URL for remove(): %s", url)
+        response = requests.delete(url, auth=self.auth)
+        if not response.ok:
+            self.logger.error("CDR%d: %s", cdr_id, response.reason)
+            raise Exception(response.reason)
+        self.logger.info("Removed CDR%d from %s", cdr_id, self.base)
+
+    def list(self):
+        """
+        Fetch catalog of PDQ content in Drupal CMS
+
+        Return:
+          sequence of `CatalogEntry` objects
+        """
+
+        url = "{}{}/list".format(self.base, self.URI_PATH)
+        self.logger.debug("URL for list(): %s", url)
+        response = requests.get(url, auth=self.auth)
+        if not response.ok:
+            raise Exception(response.reason)
+        values = json.loads(response.text)
+        catalog = [self.CatalogEntry(v) for v in values]
+        args = len(catalog), self.base
+        self.logger.info("Found %d PDQ documents on %s", *args)
+        return catalog
+
+    def lookup(self, cdr_id):
+        """
+        Fetch the Drupal ID for document's node (if it exists)
+
+        Pass:
+          cdr_id - integer for PDQ document
+
+        Return:
+          integer for unique Drupal node ID or None
+        """
+
+        url = "{}{}/{}".format(self.base, self.URI_PATH, cdr_id)
+        self.logger.debug("URL for get_nid(): %s", url)
+        response = requests.get(url, auth=self.AUTH)
+        if response.ok:
+            parsed = json.loads(response.text)
+            if not parsed:
+                raise Exception("CDR ID {} not found".format(cdr_id))
+            if len(parsed) > 1:
+                raise Exception("Ambiguous CDR ID {}".format(cdr_id))
+            return int(parsed[0][0])
+        else:
+            return None
+
+    def __check_nid(self, values):
+        """
+        Insert node ID for document already in the Drupal CMS
+
+        Node must already exist when storing the Spanish translation
+        of the summary (business rule confirmed by Bryan Pizillo).
+
+        Pass:
+          values - dictionary of values for the document being stored
+                   (we save the node ID here if appropriate as a side
+                   effect)
+        """
+
+        if not values.get("nid"):
+            nid = self.lookup(values["cdr_id"])
+            if nid:
+                values["nid"] = nid
+            elif values["language"] != "en":
+                raise Exception("English summary must be saved first")
+
+
+    class CatalogEntry:
+        """
+        Information about a PDQ document in the Drupal CMS
+        """
+
+        INTEGERS = "cdr_id", "nid", "vid"
+        DATETIMES = "created", "changed"
+
+        def __init__(self, values):
+            for name in values:
+                value = values[name]
+                if name in self.INTEGERS:
+                    value = int(value)
+                elif name in self.DATETIMES:
+                    value = dateutil.parser.parse(value)
+                setattr(self, name, value)
