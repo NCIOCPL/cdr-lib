@@ -775,13 +775,13 @@ class DrupalClient:
     with the legacy GateKeeper APIs in the `cdr2gk` module.
 
     Class constants:
-        CHUNKSIZE - maximum number of documents we can set to `published`
-                    in a single batch
+        BATCH_SIZE - maximum number of documents we can set to `published`
+                     in a single chunk
         URI_PATH - used for routing of PDQ RESTful API requests
         TYPES - names used for the types of PDQ documents we publish
     """
 
-    CHUNKSIZE = 25
+    BATCH_SIZE = 25
     URI_PATH = "/pdq/api"
     TYPES = dict(
         Summary=("pdq_cancer_information_summary", "cis"),
@@ -799,6 +799,7 @@ class DrupalClient:
           auth - override for basic authorization credentials pair
           base - e.g., "https://ncigovcddev.prod.acquia-sites.com"
           logger - override for logging object
+          batch_size - override for number to mark `published` at once
         """
 
         self.__session = session
@@ -838,6 +839,20 @@ class DrupalClient:
                     raise Exception("Unable to determine CMS host name")
                 self._base = "https://{}".format(host)
         return self._base
+
+    @property
+    def batch_size(self):
+        """
+        The number of documents to be marked `published` at once
+        """
+
+        if not hasattr(self, "_batch_size"):
+            self._batch_size = self.__opts.get("batch_size")
+            if self._batch_size:
+                self.logger.debug("Batch size set to %d", self._batch_size)
+            else:
+                self._batch_size = self.BATCH_SIZE
+        return self._batch_size
 
     @property
     def logger(self):
@@ -938,7 +953,7 @@ class DrupalClient:
         lookup = dict([(doc[1:], doc[0]) for doc in docsuments])
         errors = dict()
         while offset < len(documents):
-            end = offset + self.CHUNKSIZE
+            end = offset + self.batch_size
             chunk = [doc[1:] for doc in documents[offset:end]]
             self.logger.debug("Setting published status for %r", chunk)
             offset = end
