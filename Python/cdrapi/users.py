@@ -76,8 +76,6 @@ class Session:
         self.local = self.Local(**opts)
         opts["dbconn"] = self.LoggingDBConnection()
         self.logger = self.tier.get_logger("session", **opts)
-        #self.conn = db.connect(tier=self.tier.name)
-        #self.cursor = self.conn.cursor()
         try:
             self.cursor.execute(self.SELECT)
             if self.cursor.fetchone()[0] > 0:
@@ -105,10 +103,6 @@ class Session:
         except:
             self.logger.exception("Unable to set last_act")
             raise
-
-    #@property
-    #def logger(self):
-    #    return self.local.logger
 
     @property
     def conn(self):
