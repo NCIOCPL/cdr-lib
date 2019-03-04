@@ -11,13 +11,13 @@ import re
 import subprocess
 import threading
 import time
-from lxml import etree
+from lxml import etree, html
 import unicodecsv as csv
 import cdr
 import cdr2gk
 from cdrapi import db as cdrdb
 from cdrapi.docs import Doc
-from cdrapi.publishing import Job
+from cdrapi.publishing import Job, DrupalClient
 from cdrapi.settings import Tier
 from cdrapi.users import Session
 from AssignGroupNums import GroupNums
@@ -62,6 +62,8 @@ class Control:
         gif="image/gif",
         mp3="audio/mpeg"
     )
+    SHORT_TITLE_MAX = 100
+    DESCRIPTION_MAX = 320
 
     def __init__(self, job_id, **opts):
         """
@@ -804,6 +806,7 @@ class Control:
         self.__gk_prolog_sent = True
 
         # Send the GateKeeper each of the exported documents.
+        send_to_cms = dict()
         start = datetime.datetime.now()
         query = cdrdb.Query("pub_proc_cg_work", "id")
         query.where("xml IS NOT NULL")
@@ -833,9 +836,11 @@ class Control:
             if response.type != "OK":
                 args = response.type, response.message
                 raise Exception("GateKeeper: {} ({})".format(*args))
-            row = self.cursor.fetchone()
+            if row.doc_type in DrupalClient.TYPES:
+                send_to_cms[doc_id] = row.doc_type
 
         # Tell the GateKeeper about the documents being removed.
+        remove_from_cms = dict()
         query = cdrdb.Query("pub_proc_cg_work", "id", "num", "doc_type")
         query.where("xml IS NULL")
         query.where(query.Condition("doc_type", self.EXCLUDED, "NOT IN"))
@@ -851,6 +856,8 @@ class Control:
             if response.type != "OK":
                 args = response.type, response.message
                 raise Exception("GateKeeper: {} ({})".format(*args))
+            if row.doc_type in DrupalClient.TYPES:
+                remove_from_cms[row.id] = row.doc_type
 
         # Tell the GateKeeper we're all done.
         self.__num_pushed = counter
@@ -859,6 +866,236 @@ class Control:
         if response.type != "OK":
             args = response.type, response.message
             raise Exception("GateKeeper: {} ({})".format(*args))
+
+        # Send the PDQ summaries to the Drupal CMS.
+        source = "pub_proc_cg_work"
+        opts = dict(
+            send=send_to_cms,
+            remove=remove_from_cms,
+            table=source,
+            logger=self.logger,
+        )
+        self.update_cms(self.session, **opts)
+
+    @classmethod
+    def update_cms(cls, session, **opts):
+        """
+        Send new/modified summaries to Drupal and remove dropped content
+
+        As with the push to GateKeeper, failure of any of these documents
+        will cause the entire job to be marked as a failure (and almost
+        always leave the content pushed to Drupal in a `draft` state).
+        I say "almost" because the edge case is that the `publish()`
+        call might fail between batches. Nothing we can do about that
+        very unlikely problem.
+
+        Implemented as a class method so that we can invoke use this
+        functionality without creating a real publishing job.
+
+        Required positional argument:
+          session - object to be used in database queries, logging, etc.
+
+        Optional keyword arguments
+          send - dictionary of cdr_id -> document type for summaries to send
+          remove - similar dictionary for summaries being dropped
+          table - where to get the exported XML (default is pub_proc_cg)
+          logger - overide session.logger for recording activity
+
+        Raise:
+          `Exception` if unable to perform complete update successfully
+        """
+
+        # Record what we're about to do.
+        client = DrupalClient(session, logger=opts.get("logger"))
+        send = opts.get("send") or dict()
+        remove = opts.get("remove") or dict()
+        args = len(send), len(remove)
+        client.logger.info("Sending %d documents and removing %d", *args)
+        start = datetime.datetime.now()
+
+        # Compile the XSL/T filters we'll need.
+        xsl = dict()
+        for name in ("Cancer", "Drug"):
+            title = "{} Information Summary for Drupal CMS".format(name)
+            xsl[name] = Doc.load_single_filter(session, title)
+
+        # Defer the Spanish content to a second pass.
+        spanish = set()
+        pushed = []
+        table = opts.get("table", "pub_proc_cg")
+        query = cdrdb.Query("query_term_pub", "value")
+        query.where("path = '/Summary/SummaryMetaData/SummaryLanguage'")
+        query.where(query.Condition("doc_id", 0))
+        query = str(query)
+        for doc_id in send:
+            args = session, doc_id, xsl, table
+            if send[doc_id].lower() == "summary":
+                session.cursor.execute(query, (doc_id,))
+                language = session.cursor.fetchone().value
+                if language.lower() != "english":
+                    spanish.add(doc_id)
+                    continue
+                values = cls.assemble_values_for_cis(*args)
+            else:
+                values = cls.assemble_values_for_dis(*args)
+            nid = client.push(values)
+            pushed.append((doc_id, nid, "en"))
+
+        # Do a second pass for the translated content.
+        for doc_id in spanish:
+            args = session, doc_id, xsl, table
+            values = cls.assemble_values_for_cis(*args)
+            nid = client.push(values)
+            pushed.append((doc_id, nid, "es"))
+
+        # Drop the documents being removed.
+        for doc_id in remove:
+            client.remove(doc_id)
+
+        # Only after all the other steps are done, set pushed docs to published.
+        client.publish(pushed)
+
+        # Record how long it took.
+        elapsed = (datetime.datetime.now() - start).total_seconds()
+        args = len(send), len(remove), elapsed
+        client.logger.info("Sent %d and removed %d in %f seconds", *args)
+
+    @classmethod
+    def assemble_values_for_cis(cls, session, doc_id, xsl, table):
+        """
+        Get the pieces of the summary needed by the Drupal CMS
+
+        Pass:
+          session - object to be used in database queries, logging, etc.
+          doc_id - CDR ID for the PDQ summary
+          xsl - compiled filters for generating HTML for the summary
+          table - source for the exported xml
+        """
+
+        # Pull the exported XML from the appropriate cancer.gov table.
+        query = cdrdb.Query(table, "xml")
+        query.where(query.Condition("id", doc_id))
+        xml = query.execute(session.cursor).fetchone().xml
+        root = etree.fromstring(xml.encode("utf-8"))
+
+        # Tease out pieces which need a little bit of logic.
+        meta = root.find("SummaryMetaData")
+        node = meta.find("SummaryURL")
+        if node is None:
+            raise Exception("CDR{:d} has no SummaryURL".format(doc_id))
+        url = node.get("xref").replace("https://www.cancer.gov", "")
+        if url.startswith("/espanol"):
+            url = url[len("/espanol"):]
+        short_title = None
+        for node in root.findall("AltTitle"):
+            if node.get("TitleType") == "Short":
+                short_title = Doc.get_text(node)
+        translation_of = None
+        node = root.find("TranslationOf")
+        if node is not None:
+            translation_of = Doc.extract_id(node.get("ref"))
+
+        # Munging of image URLs based on instructions from Blair in
+        # Slack message to Volker and me 2019-02-18 11:20.
+        # Possibly a temporary solution?
+        tier_extras = dict(DEV="-blue-dev", PROD="")
+        suffix = tier_extras.get(session.tier.name, "-qa")
+        replacement = "https://www{}.cancer.gov/images/cdr/live".format(suffix)
+        target = "/images/cdr/live"
+
+        # Pull out the summary sections into sequence of separate dictionaries.
+        transformed = xsl["Cancer"](root)
+        xpath = "body/div/article/div[@class='pdq-sections']"
+        sections = []
+        for node in transformed.xpath(xpath):
+            h2 = node.find("h2")
+            if h2 is None:
+                raise Exception("CDR{:d} missing section title".format(doc_id))
+            section_title = cls.get_inner_html(h2)
+            node.remove(h2)
+            section_id = node.get("id")
+            if section_id.startswith("_section"):
+                section_id = section_id[len("_section"):]
+            body = html.tostring(node).decode("utf-8")
+            body = body.replace(target, replacement)
+            sections.append(dict(
+                title=section_title,
+                id=section_id,
+                html=body
+            ))
+
+        # Pull everything together.
+        langs = dict(English="en", Spanish="es")
+        audience = Doc.get_text(meta.find("SummaryAudience"))
+        description = Doc.get_text(meta.find("SummaryDescription"))
+        return dict(
+            cdr_id=doc_id,
+            url=url,
+            short_title=short_title[:cls.SHORT_TITLE_MAX],
+            translation_of=translation_of,
+            sections=sections,
+            title=Doc.get_text(root.find("SummaryTitle")),
+            description=description[:cls.DESCRIPTION_MAX],
+            summary_type=Doc.get_text(meta.find("SummaryType")),
+            audience=audience.replace(" prof", " Prof"),
+            language=langs[Doc.get_text(meta.find("SummaryLanguage"))],
+            posted_date=Doc.get_text(root.find("DateFirstPublished")),
+            updated_date=Doc.get_text(root.find("DateLastModified")),
+            type="pdq_cancer_information_summary",
+        )
+
+    @classmethod
+    def assemble_values_for_dis(cls, session, doc_id, xsl, table):
+        """
+        Get the pieces of the drug info summary needed by the Drupal CMS
+
+        Pass:
+          session - object to be used in database queries, logging, etc.
+          doc_id - CDR ID for the PDQ summary
+          xsl - compiled filters for generating HTML for the summary
+          table - source for the exported xml
+        """
+
+        # Pull the exported XML from the appropriate cancer.gov table.
+        query = cdrdb.Query(table, "xml")
+        query.where(query.Condition("id", doc_id))
+        xml = query.execute(session.cursor).fetchone().xml
+        root = etree.fromstring(xml.encode("utf-8"))
+
+        # Tease out the pronunciation fields. Strange that we have one pro-
+        # nunciation key, but multiple audio pronunciation clips. ¯\_(ツ)_/¯
+        meta = root.find("DrugInfoMetaData")
+        audio_id = None
+        pron = meta.find("PronunciationInfo")
+        if pron is not None:
+            for node in pron.findall("MediaLink"):
+                if node.get("language") == "en":
+                    ref = node.get("ref")
+                    if ref:
+                        try:
+                            audio_id = int(Doc.extract_id(ref))
+                            break
+                        except Exception as e:
+                            args = doc_id, ref
+                            msg = "CDR{}: invalid audio ID {!r}".format(*args)
+                            raise Exception(msg)
+            pron = Doc.get_text(pron.find("TermPronunciation"))
+
+        # Pull everything together.
+        prefix = "https://www.cancer.gov"
+        description = Doc.get_text(meta.find("DrugInfoDescription"))
+        return dict(
+            cdr_id=doc_id,
+            title=Doc.get_text(root.find("DrugInfoTitle")),
+            description=description[:cls.DESCRIPTION_MAX],
+            url=meta.find("DrugInfoURL").get("xref").replace(prefix, ""),
+            posted_date=Doc.get_text(root.find("DateFirstPublished")),
+            updated_date=Doc.get_text(root.find("DateLastModified")),
+            pron=pron,
+            audio_id=audio_id,
+            body=html.tostring(xsl["Drug"](root)).decode("utf-8"),
+            type="pdq_drug_information_summary",
+        )
 
     def record_pushed_docs(self):
         """
@@ -1015,6 +1252,37 @@ class Control:
             self.post_message(message)
         else:
             self.logger.info("Job %d: set status to %s", self.job.id, status)
+
+    @staticmethod
+    def get_inner_html(node):
+        """
+        Extract the serialized HTML for the node's text and element children
+
+        For example, <h2>Some <em>title</em></h2> would be returned as
+        "Some <em>title</em>".
+
+        Pass:
+          node - reference to an element in the parsed HTML for a summary
+
+        Return:
+          serialized representation of the node, including HTML markup,
+          but excluding the node's own tag
+        """
+
+        if node is None:
+            return None
+        pieces = list()
+        if node.text is not None:
+            pieces = [node.text]
+        for child in node.iterdescendants():
+            pieces.append(html.tostring(child).decode("utf-8"))
+        return u"".join(pieces)
+
+    @classmethod
+    def wrap_for_cms(cls, doc, cdr_id):
+        """
+        Create a dictionary of values to be sent to the Drupal PDQ API
+        """
 
     # ------------------------------------------------------------------
     # PROPERTIES START HERE.
