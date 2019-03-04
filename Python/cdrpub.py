@@ -1063,7 +1063,7 @@ class Control:
         root = etree.fromstring(xml.encode("utf-8"))
 
         # Tease out the pronunciation fields. Strange that we have one pro-
-        # nunciation key, but multiple audio pronunciation clips. ¯\_(ツ)_/¯
+        # nunciation key, but multiple audio pronunciation clips.
         meta = root.find("DrugInfoMetaData")
         audio_id = None
         pron = meta.find("PronunciationInfo")
