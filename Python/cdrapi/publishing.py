@@ -5,12 +5,17 @@ Manage CDR publishing jobs and provide acceess to the Drupal CMS
 import datetime
 import json
 import logging
+import time
 import threading
 from six import iteritems
 import dateutil.parser
 import requests
 from cdrapi.db import Query
 from cdrapi.docs import Doc
+
+# TODO: Get Acquia to fix their broken certificates.
+from urllib3.exceptions import InsecureRequestWarning
+requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 try:
     basestring
@@ -781,6 +786,7 @@ class DrupalClient:
         TYPES - names used for the types of PDQ documents we publish
     """
 
+    MAX_RETRIES = 5
     BATCH_SIZE = 25
     URI_PATH = "/pdq/api"
     TYPES = dict(
@@ -788,7 +794,7 @@ class DrupalClient:
         DrugInformationSummary=("pdq_drug_information_summary", "dis"),
     )
 
-    def __init__(self, session, **opts): #base, auth, logger=None):
+    def __init__(self, session, **opts):
         """
         Perform any necessary setup for communicating with the PDQ APIs
 
@@ -834,7 +840,7 @@ class DrupalClient:
                 if not self._base.startswith("http"):
                     raise Exception("Valid URL base required")
             else:
-                host = self.__session.hosts.get("DRUPAL")
+                host = self.__session.tier.hosts.get("DRUPAL")
                 if not host:
                     raise Exception("Unable to determine CMS host name")
                 self._base = "https://{}".format(host)
@@ -909,14 +915,25 @@ class DrupalClient:
         self.logger.debug("URL for push(): %s", url)
 
         # Send the values to the CMS and check for success.
-        response = requests.post(url, json=values, auth=self.auth)
-        if not response.ok:
-            raise Exception(response.reason)
+        # TODO: Get Acquia to fix their broken certificates.
+        opts = dict(json=values, auth=self.auth, verify=False)
+        tries = self.MAX_RETRIES
+        while tries > 0:
+            response = requests.post(url, **opts)
+            if response.ok:
+                break
+            tries -= 1
+            if tries <= 0:
+                self.logger.error("%r failed: %s", url, response.reason)
+                raise Exception(response.reason)
+            time.sleep(1)
+            args = values["cdr_id"], response.reason
+            self.logger.warning("%s: %s (trying again)", *args)
 
         # Give the caller the node ID where the document was stored.
         parsed = json.loads(response.text)
         nid = int(parsed["nid"])
-        values["cdr_id"], self.base, nid
+        args = values["cdr_id"], self.base, nid
         self.logger.info("Pushed CDR%d to %s as node %d", *args)
         return nid
 
@@ -947,17 +964,21 @@ class DrupalClient:
           CDR ID for documents which failed
         """
 
-        url = "{}/{}".format(self.base, self.URI_PATH)
+        url = "{}{}".format(self.base, self.URI_PATH)
+        self.logger.info("Marking %d documents published", len(documents))
         self.logger.debug("URL for publish(): %s", url)
         offset = 0
-        lookup = dict([(doc[1:], doc[0]) for doc in docsuments])
+        lookup = dict([(doc[1:], doc[0]) for doc in documents])
         errors = dict()
         while offset < len(documents):
             end = offset + self.batch_size
             chunk = [doc[1:] for doc in documents[offset:end]]
-            self.logger.debug("Setting published status for %r", chunk)
+            self.logger.info("Marking %d docs as published", len(chunk))
+            self.logger.debug("Docs: %r", chunk)
             offset = end
-            response = requests.post(url, json=chunk, auth=self.auth)
+            # TODO: Get Acquia to fix their broken certificates.
+            opts = dict(json=chunk, auth=self.auth, verify=False)
+            response = requests.post(url, **opts)
             if not response.ok:
                 for key in chunk:
                     cdr_id = lookup[key]
@@ -969,6 +990,7 @@ class DrupalClient:
                     cdr_id = lookup[(nid, lang)]
                     errors[cdr_id] = err
                     self.logger.error("CDR%d: %s", cdr_id, err)
+        self.logger.info("%d errors found marking docs published", len(errors))
         return errors
 
     def remove(self, cdr_id):
@@ -982,11 +1004,24 @@ class DrupalClient:
           `Exception` if delete request failed
         """
 
-        url = "{}/{}/{:d}".format(self.base, self.URI_PATH, cdr_id)
+        url = "{}{}/{:d}".format(self.base, self.URI_PATH, cdr_id)
         self.logger.debug("URL for remove(): %s", url)
-        response = requests.delete(url, auth=self.auth)
+        # TODO: Get Acquia to fix their broken certificates.
+
+        tries = self.MAX_RETRIES
+        while tries > 0:
+            response = requests.delete(url, auth=self.auth, verify=False)
+            if response.ok:
+                break
+            tries -= 1
+            if tries <= 0:
+                self.logger.error("CDR%d: %s", cdr_id, response.reason)
+                raise Exception(response.reason)
+            time.sleep(1)
+            args = cdr_id, response.reason
+            self.logger.warning("CDR%d: %s (trying again)", *args)
+
         if not response.ok:
-            self.logger.error("CDR%d: %s", cdr_id, response.reason)
             raise Exception(response.reason)
         self.logger.info("Removed CDR%d from %s", cdr_id, self.base)
 
@@ -1000,7 +1035,8 @@ class DrupalClient:
 
         url = "{}{}/list".format(self.base, self.URI_PATH)
         self.logger.debug("URL for list(): %s", url)
-        response = requests.get(url, auth=self.auth)
+        # TODO: Get Acquia to fix their broken certificates.
+        response = requests.get(url, auth=self.auth, verify=False)
         if not response.ok:
             raise Exception(response.reason)
         values = json.loads(response.text)
@@ -1022,7 +1058,8 @@ class DrupalClient:
 
         url = "{}{}/{}".format(self.base, self.URI_PATH, cdr_id)
         self.logger.debug("URL for get_nid(): %s", url)
-        response = requests.get(url, auth=self.AUTH)
+        # TODO: Get Acquia to fix their broken certificates.
+        response = requests.get(url, auth=self.auth, verify=False)
         if response.ok:
             parsed = json.loads(response.text)
             if not parsed:
@@ -1047,11 +1084,14 @@ class DrupalClient:
         """
 
         if not values.get("nid"):
-            nid = self.lookup(values["cdr_id"])
-            if nid:
-                values["nid"] = nid
-            elif values["language"] != "en":
-                raise Exception("English summary must be saved first")
+            translation_of = values.get("translation_of")
+            if translation_of:
+                nid = self.lookup(translation_of)
+                if not nid:
+                    raise Exception("English summary must be saved first")
+            else:
+                nid = self.lookup(values["cdr_id"])
+            values["nid"] = nid
 
 
     class CatalogEntry:
