@@ -978,18 +978,28 @@ class DrupalClient:
             offset = end
             # TODO: Get Acquia to fix their broken certificates.
             opts = dict(json=chunk, auth=self.auth, verify=False)
-            response = requests.post(url, **opts)
-            if not response.ok:
-                for key in chunk:
-                    cdr_id = lookup[key]
-                    errors[cdr_id] = response.reason
-                    self.logger.error("CDR%d: %s", cdr_id, response.reason)
-            else:
-                for nid, lang, err in json.loads(response.text)["errors"]:
-                    key = nid, lang
-                    cdr_id = lookup[(nid, lang)]
-                    errors[cdr_id] = err
-                    self.logger.error("CDR%d: %s", cdr_id, err)
+            tries = self.MAX_RETRIES
+            while tries > 0:
+                response = requests.post(url, **opts)
+                if not response.ok:
+                    tries -= 1
+                    if tries <= 0:
+                        for key in chunk:
+                            cdr_id = lookup[key]
+                            errors[cdr_id] = response.reason
+                            args = cdr_id, response.reason
+                            self.logger.error("CDR%d: %s", *args)
+                    else:
+                        time.sleep(1)
+                        msg = "publish(): %s (trying again)"
+                        self.logger.warning(msg, response.reason)
+                else:
+                    for nid, lang, err in json.loads(response.text)["errors"]:
+                        key = nid, lang
+                        cdr_id = lookup[(nid, lang)]
+                        errors[cdr_id] = err
+                        self.logger.error("CDR%d: %s", cdr_id, err)
+                    break
         self.logger.info("%d errors found marking docs published", len(errors))
         return errors
 
