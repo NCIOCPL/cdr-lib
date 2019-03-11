@@ -1,5 +1,14 @@
 """
 Process a queued publishing job
+
+The top-level entry point for this module is `Control.publish()`, which
+calls `Control.__publish()`, wrapped in a try block to facilitate handling
+of all failures in a central place. The latter method decides which of the
+three basic publishing job types is being run (scripted, export, or push)
+and handles the job appropriately. For scripted jobs the work is simply
+handed off to the specified script by launching a separate process. For
+an overview of the logic for the other two job types, see the methods
+`Control.export_docs()` and `Control.push_docs()`.
 """
 
 import argparse
@@ -465,6 +474,7 @@ class Control:
             default_desc = "{} push job".format(self.job.subsystem.name)
             desc = self.job.parms.get("GKPushJobDescription") or default_desc
             parms = dict(
+                DrupalServer=self.job.parms.get("DrupalServer"),
                 GKServer=self.job.parms["GKServer"],
                 GKPubTarget=self.job.parms["GKPubTarget"],
                 GKPushJobDescription=desc,
@@ -869,11 +879,14 @@ class Control:
 
         # Send the PDQ summaries to the Drupal CMS.
         source = "pub_proc_cg_work"
+        server = self.job.parms.get("DrupalServer")
+        base = "https://{}".format(server) if server else None
         opts = dict(
             send=send_to_cms,
             remove=remove_from_cms,
             table=source,
             logger=self.logger,
+            base=base,
         )
         self.update_cms(self.session, **opts)
 
@@ -900,13 +913,15 @@ class Control:
           remove - similar dictionary for summaries being dropped
           table - where to get the exported XML (default is pub_proc_cg)
           logger - overide session.logger for recording activity
+          base - front portion of PDQ API URL
 
         Raise:
           `Exception` if unable to perform complete update successfully
         """
 
         # Record what we're about to do.
-        client = DrupalClient(session, logger=opts.get("logger"))
+        client_opts = dict(logger=opts.get("logger"), base=opts.get("base"))
+        client = DrupalClient(session, **client_opts)
         send = opts.get("send") or dict()
         remove = opts.get("remove") or dict()
         args = len(send), len(remove)
@@ -1005,6 +1020,7 @@ class Control:
 
         # Pull out the summary sections into sequence of separate dictionaries.
         transformed = xsl["Cancer"](root)
+        cls.consolidate_citation_references(transformed)
         xpath = "body/div/article/div[@class='pdq-sections']"
         sections = []
         for node in transformed.xpath(xpath):
@@ -1096,6 +1112,143 @@ class Control:
             body=html.tostring(xsl["Drug"](root)).decode("utf-8"),
             type="pdq_drug_information_summary",
         )
+
+    @classmethod
+    def consolidate_citation_references(cls, root):
+        """
+        Combine adjacent citation reference links
+
+        Ranges of three or more sequential reference numbers should be
+        collapsed as FIRST-LAST. A sequence of adjacent refs (ignoring
+        interventing whitespace) should be surrounded by a pair of
+        square brackets. Both ranges and individual refs should be
+        separated by commas. The substring "cit/section" should be
+        replaced in the result by "section" (stripping "cit/"). For
+        example, with input of ...
+
+          <a href="#cit/section_1.1">1</a>
+          <a href="#cit/section_1.2">2</a>
+          <a href="#cit/section_1.3">3</a>
+          <a href="#cit/section_1.5">5</a>
+          <a href="#cit/section_1.6">6</a>
+
+        ... we should end up with ...
+
+          [<a href="section_1.1"
+           >1</a>-<a href="section_1.3"
+           >3</a>,<a href="section_1.5"
+           >5</a>,<a href="section_1.6"
+           >6</a>]
+
+        Pass:
+          root - reference to parsed XML document for the PDQ summary
+
+        Return:
+          None (parsed tree is altered as a side effect)
+        """
+
+        # Collect all of the citation links, stripping "cit/" from the url.
+        links = []
+        for link in root.iter("a"):
+            href = link.get("href")
+            if href is not None and href.startswith("#cit/section"):
+                link.set("href", href.replace("#cit/section", "#section"))
+                links.append(link)
+
+        # Collect links which are only separated by optional whitespace.
+        adjacent = []
+        for link in links:
+
+            # First time through the loop? Start a new list.
+            if not adjacent:
+                adjacent = [link]
+                prev = link
+
+            # Otherwise, find out if this element belongs in the list.
+            else:
+                if prev.getnext() is link:
+
+                    # Whitespace in between is ignored.
+                    if prev.tail is None or not prev.tail.strip():
+                        adjacent.append(link)
+                        prev = link
+                        continue
+
+                # Consolidate the previous list and start a new one.
+                cls.rewrite_adjacent_citation_refs(adjacent)
+                adjacent = [link]
+                prev = link
+
+        # Deal with the final list of adjacent elements, if any.
+        if adjacent:
+            cls.rewrite_adjacent_citation_refs(adjacent)
+
+    @classmethod
+    def rewrite_adjacent_citation_refs(cls, links):
+        """
+        Add punctuation to citation reference links and collapse ranges
+
+        For details, see `consolidate_citation_references()` above.
+
+        Pass:
+          nodes - list of adjacent reference link elements
+
+        Return:
+          None (the parsed tree is modified in place)
+        """
+
+        # Find out where to hang the left square bracket.
+        prev = links[0].getprevious()
+        parent = links[0].getparent()
+        if prev is not None:
+            if prev.tail is not None:
+                prev.tail += "["
+            else:
+                prev.tail = "["
+        elif parent.text is not None:
+            parent.text += "["
+        else:
+            parent.text = "["
+
+        # Pull out the integers for the reference lines.
+        refs = [int(link.text) for link in links]
+
+        # Find ranges of unbroken integer sequences.
+        i = 0
+        while i < len(refs):
+
+            # Identify the next range.
+            range_len = 1
+            while i + range_len < len(refs):
+                if refs[i+range_len-1] + 1 != refs[i+range_len]:
+                    break
+                range_len += 1
+
+            # If range is three or more integers, collapse it.
+            if range_len > 2:
+                if i > 0:
+                    links[i-1].tail = ","
+                links[i].tail = "-"
+                j = 1
+                while j < range_len - 1:
+                    parent.remove(links[i+j])
+                    j += 1
+                i += range_len
+
+            # For shorter ranges, separate each from its left neighbor.
+            else:
+                while range_len > 0:
+                    if i > 0:
+                        links[i-1].tail = ","
+                    i += 1
+                    range_len -= 1
+
+        # Add closing bracket, preserving the last node's tail text.
+        tail = links[-1].tail
+        if tail is None:
+            links[-1].tail = "]"
+        else:
+            links[-1].tail = "]{}".format(tail)
 
     def record_pushed_docs(self):
         """
