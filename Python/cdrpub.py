@@ -1140,6 +1140,9 @@ class Control:
            >5</a>,<a href="section_1.6"
            >6</a>]
 
+        2019-03-13: Bryan P. decided to override Frank's request to
+        have "cit/" stripped from the linking URLs.
+
         Pass:
           root - reference to parsed XML document for the PDQ summary
 
@@ -1148,11 +1151,12 @@ class Control:
         """
 
         # Collect all of the citation links, stripping "cit/" from the url.
+        # 2019-03-13 (per BP): don't strip "cit/".
         links = []
         for link in root.iter("a"):
             href = link.get("href")
-            if href is not None and href.startswith("#cit/section"):
-                link.set("href", href.replace("#cit/section", "#section"))
+            if href is not None and href.startswith(u"#cit/section"):
+                #link.set("href", href.replace(u"#cit/section", u"#section"))
                 links.append(link)
 
         # Collect links which are only separated by optional whitespace.
@@ -1202,13 +1206,13 @@ class Control:
         parent = links[0].getparent()
         if prev is not None:
             if prev.tail is not None:
-                prev.tail += "["
+                prev.tail += u"["
             else:
-                prev.tail = "["
+                prev.tail = u"["
         elif parent.text is not None:
-            parent.text += "["
+            parent.text += u"["
         else:
-            parent.text = "["
+            parent.text = u"["
 
         # Pull out the integers for the reference lines.
         refs = [int(link.text) for link in links]
@@ -1227,8 +1231,8 @@ class Control:
             # If range is three or more integers, collapse it.
             if range_len > 2:
                 if i > 0:
-                    links[i-1].tail = ","
-                links[i].tail = "-"
+                    links[i-1].tail = u","
+                links[i].tail = u"-"
                 j = 1
                 while j < range_len - 1:
                     parent.remove(links[i+j])
@@ -1239,16 +1243,16 @@ class Control:
             else:
                 while range_len > 0:
                     if i > 0:
-                        links[i-1].tail = ","
+                        links[i-1].tail = u","
                     i += 1
                     range_len -= 1
 
         # Add closing bracket, preserving the last node's tail text.
         tail = links[-1].tail
         if tail is None:
-            links[-1].tail = "]"
+            links[-1].tail = u"]"
         else:
-            links[-1].tail = "]{}".format(tail)
+            links[-1].tail = u"]{}".format(tail)
 
     def record_pushed_docs(self):
         """
