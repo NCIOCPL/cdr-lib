@@ -1026,6 +1026,7 @@ class DrupalClient:
             tries -= 1
             if tries <= 0:
                 self.logger.error("CDR%d: %s", cdr_id, response.reason)
+                self.logger.debug(response.text)
                 raise Exception(response.reason)
             time.sleep(1)
             args = cdr_id, response.reason
@@ -1086,6 +1087,8 @@ class DrupalClient:
 
         Node must already exist when storing the Spanish translation
         of the summary (business rule confirmed by Bryan Pizillo).
+        However, this rule does not apply for publish preview
+        requests, for which the CDR ID is passed as a negative integer.
 
         Pass:
           values - dictionary of values for the document being stored
@@ -1093,7 +1096,8 @@ class DrupalClient:
                    effect)
         """
 
-        if not values.get("nid"):
+        cdr_id = int(values["cdr_id"])
+        if cdr_id > 0 and not values.get("nid"):
             translation_of = values.get("translation_of")
             if translation_of:
                 nid = self.lookup(translation_of)
