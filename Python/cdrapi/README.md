@@ -69,6 +69,11 @@ requesting that a new publishing job be queued for processing, as well
 as various properties indicating the job's type, when it was created and
 (if applicable) completed, parameters for the job, etc.
 
+The module also implements the `DrupalClient` class, which is able to
+connect to the Drupal CMS and use its PDQ API for publishing and removing
+PDQ documents, as well as retrieving a catalog of which PDQ documents
+are currently in the CMS.
+
 ## The `reports` module
 
 The `reports` provides support for common reports, via the
@@ -77,4 +82,4 @@ The `reports` provides support for common reports, via the
 ## Architectural overview
 Here is how the new CDR API fits into the CDR server's architecture.
 
-![Overview](https://github.com/NCIOCPL/cdr-lib/raw/gauss/Python/cdrapi/CDR.jpg)
+![Overview](https://github.com/NCIOCPL/cdr-lib/raw/master/Python/cdrapi/CDR.jpg)
