@@ -19,6 +19,7 @@
 #----------------------------------------------------------------------
 # Import external modules needed.
 #----------------------------------------------------------------------
+from builtins import range
 import cdr
 import cdrdb
 import cgi
@@ -35,6 +36,15 @@ import time
 import urllib
 import xlwt
 import xml.sax.saxutils
+
+#----------------------------------------------------------------------
+# Make this work on Python 2 and 3.
+#----------------------------------------------------------------------
+try:
+    basestring
+except:
+    basestring = str, bytes
+    unicode = str
 
 #----------------------------------------------------------------------
 # Do this once, right after loading the module. Used in Report class.
@@ -1192,7 +1202,7 @@ function check_ra(val) {
 }""")
         page.add_css("header h1 { background-color: blue; }")
         page._finish()
-        print "".join(page._html)
+        print("".join(page._html))
 
 class Report:
     """
@@ -1876,7 +1886,7 @@ class Control:
                 self.show_report()
             else:
                 self.show_form()
-        except Exception, e:
+        except Exception as e:
             bail(str(e))
     def show_report(self):
         "Override this method if you have a non-tabular report."
@@ -2470,14 +2480,17 @@ def sendPage(page, textType = 'html', parms='', docId='', docType='',
     Return:
         No return.  After writing to the browser, the process exits.
     """
-    if parms == '':
-        redirect = ''
+    if parms == "":
+        redirect = ""
     else:
-        redirect = 'Location: http://%s%s/QCforWord.py?DocId=%s&DocType=%s&DocVersion=%s&%s\n' % (WEBSERVER, BASE, docId, docType, docVer, parms)
-    print """\
-%sContent-type: text/%s
+        url = "https://{}{}/QCforWord.py".format(WEBSERVER, BASE)
+        args = docId, docType, docVer, parms
+        parms = "DocId={}&DocType={}&DocVersion={}&{}".format(*args)
+        redirect = "Location: {}?{}\n".format(url, parms)
+    print("""\
+{}Content-type: text/{}
 
-%s""" % (redirect, textType, unicodeToLatin1(page))
+{}""".format(redirect, textType, unicodeToLatin1(page)))
     sys.exit(0)
 
 #----------------------------------------------------------------------
@@ -2612,20 +2625,17 @@ def mainMenu(session, news=None):
 # Navigate to menu location or publish preview.
 #----------------------------------------------------------------------
 def navigateTo(where, session, **params):
-    url = "https://%s%s/%s?%s=%s" % (WEBSERVER,
-                                     BASE,
-                                     where,
-                                     SESSION,
-                                     session)
+    args = WEBSERVER, BASE, where, SESSION, session
+    url = ["https://{}{}/{}?{}={}".format(*args)]
 
     # Concatenate additional Parameters to URL for PublishPreview
     # -----------------------------------------------------------
     for param in params.keys():
-        url += "&%s=%s" % (cgi.escape(param), cgi.escape(params[param]))
+        args = cgi.escape(param), cgi.escape(params[param])
+        url.append("&{}={}".format(*args))
 
-    print "Location:%s\n\n" % (url)
+    print("Location:{}\n".format("".join(url)))
     sys.exit(0)
-
 
 #----------------------------------------------------------------------
 # Determine whether query contains unescaped wildcards.
@@ -2682,7 +2692,7 @@ def sanitize(formStr, dType='str', maxLen=None, noSemis=True,
         if dType == 'int':
             try:
                 int(newStr)
-            except ValueError, info:
+            except ValueError as info:
                 if excp:
                     raise
                 return None
@@ -2712,7 +2722,7 @@ def sanitize(formStr, dType='str', maxLen=None, noSemis=True,
         elif dType == 'cdrID':
             try:
                 cdr.exNormalize(newStr)
-            except cdr.Exception, info:
+            except cdr.Exception as info:
                 if excp:
                     raise ValueError(info)
                 return None
@@ -2771,7 +2781,7 @@ SELECT DISTINCT value
         rows = cursor.fetchall()
         cursor.close()
         cursor = None
-    except cdrdb.Error, info:
+    except cdrdb.Error as info:
         bail('Failure retrieving misc type list from CDR: %s' % info[1][0])
     html = """\
       <SELECT NAME='%s'>
@@ -2957,7 +2967,7 @@ def generateHtmlPicklist(conn, fieldName, query, pattern, selAttrs=None,
         rows = cursor.fetchall()
         cursor.close()
         cursor = None
-    except cdrdb.Error, info:
+    except cdrdb.Error as info:
         bail('Failure retrieving %s list from CDR: %s' % (fieldName,
                                                           info[1][0]))
 
@@ -3730,9 +3740,9 @@ def int_to_roman(inNum):
    MCMXCIX
    """
    if type(inNum) != type(1):
-      raise TypeError, "expected integer, got %s" % type(inNum)
+      raise TypeError("expected integer, got {!r}".format(type(inNum)))
    if not 0 < inNum < 4000:
-      raise ValueError, "Argument must be between 1 and 3999"
+      raise ValueError("Argument must be between 1 and 3999")
    ints = (1000, 900,  500, 400, 100,  90, 50,  40, 10,  9,   5,  4,   1)
    nums = ('M',  'CM', 'D', 'CD','C', 'XC','L','XL','X','IX','V','IV','I')
    result = ""
@@ -3760,7 +3770,7 @@ def colorDiffs(report, subColor='#FAFAD2', addColor='#F0E68C',
     """
     wrapper = textwrap.TextWrapper(subsequent_indent=' ', width=90)
     lines = report.splitlines()
-    for i in xrange(len(lines)):
+    for i in range(len(lines)):
         color = None
         if lines[i].startswith('-'):
             color = subColor
