@@ -88,7 +88,7 @@ def getControlGroup(group, tier=None):
       dictionary of active values for the group, indexed by their names
     """
 
-    cursor = cdrdb.connect("CdrGuest", tier=tier).cursor if tier else None
+    cursor = cdrdb.connect(user="CdrGuest", tier=tier).cursor if tier else None
     query = cdrdb.Query("ctl", "name", "val")
     query.where(query.Condition("grp", group))
     query.where("inactivated IS NULL")
