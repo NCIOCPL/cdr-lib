@@ -1949,6 +1949,26 @@ function check_set(name, val) {
             logger.info("started %s", self.title)
         return logger
 
+    def get_unicode_parameter(self, name):
+        """
+        Get the Unicode value for a CGI parameter
+
+        Pass:
+          name - string for the name of the CGI parameter
+
+        Return:
+          Unicode value for the parameter (u"" for None)
+        """
+
+        value = self.fields.getvalue(name)
+        if value is None:
+            return u""
+        if not isinstance(value, basestring):
+            return unicode(value)
+        if isinstance(value, unicode):
+            return value
+        return value.decode("utf-8")
+
     @staticmethod
     def get_referer():
         "Find out which page called us."
