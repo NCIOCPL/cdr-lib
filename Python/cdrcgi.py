@@ -2189,7 +2189,7 @@ function check_set(name, val) {
             try:
                 return cdr.exNormalize(value)[1]
             except:
-                cdrcgi.bail("Invalid format for CDR ID")
+                bail("Invalid format for CDR ID")
         return None
 
     def get_parsed_doc_xml(self, doc_id, doc_version=None):
