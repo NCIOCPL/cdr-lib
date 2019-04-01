@@ -929,10 +929,11 @@ class Control:
         start = datetime.datetime.now()
 
         # Compile the XSL/T filters we'll need.
-        xsl = dict()
+        filters= dict()
         for name in ("Cancer", "Drug"):
             title = "{} Information Summary for Drupal CMS".format(name)
-            xsl[name] = Doc.load_single_filter(session, title)
+            key = "DrugInformationSummary" if name == "Drug" else "Summary"
+            filters[key] = Doc.load_single_filter(session, title)
 
         # Defer the Spanish content to a second pass.
         spanish = set()
@@ -943,8 +944,11 @@ class Control:
         query.where(query.Condition("doc_id", 0))
         query = str(query)
         for doc_id in send:
-            args = session, doc_id, xsl, table
-            if send[doc_id].lower() == "summary":
+            doctype = send[doc_id]
+            xsl = filters[doctype]
+            root = cls.fetch_exported_doc(session, doc_id, table)
+            args = session, doc_id, xsl, root
+            if doctype == "Summary":
                 session.cursor.execute(query, (doc_id,))
                 language = session.cursor.fetchone().value
                 if language.lower() != "english":
@@ -957,8 +961,10 @@ class Control:
             pushed.append((doc_id, nid, "en"))
 
         # Do a second pass for the translated content.
+        xsl = filters["Summary"]
         for doc_id in spanish:
-            args = session, doc_id, xsl, table
+            root = cls.fetch_exported_doc(session, doc_id, table)
+            args = session, doc_id, xsl, root
             values = cls.assemble_values_for_cis(*args)
             nid = client.push(values)
             pushed.append((doc_id, nid, "es"))
@@ -976,22 +982,16 @@ class Control:
         client.logger.info("Sent %d and removed %d in %f seconds", *args)
 
     @classmethod
-    def assemble_values_for_cis(cls, session, doc_id, xsl, table):
+    def assemble_values_for_cis(cls, session, doc_id, xsl, root):
         """
         Get the pieces of the summary needed by the Drupal CMS
 
         Pass:
           session - object to be used in database queries, logging, etc.
           doc_id - CDR ID for the PDQ summary
-          xsl - compiled filters for generating HTML for the summary
-          table - source for the exported xml
+          xsl - compiled filter for generating HTML for the summary
+          root - parsed xml for the exported document
         """
-
-        # Pull the exported XML from the appropriate cancer.gov table.
-        query = cdrdb.Query(table, "xml")
-        query.where(query.Condition("id", doc_id))
-        xml = query.execute(session.cursor).fetchone().xml
-        root = etree.fromstring(xml.encode("utf-8"))
 
         # Tease out pieces which need a little bit of logic.
         meta = root.find("SummaryMetaData")
@@ -1019,7 +1019,7 @@ class Control:
         target = "/images/cdr/live"
 
         # Pull out the summary sections into sequence of separate dictionaries.
-        transformed = xsl["Cancer"](root)
+        transformed = xsl(root)
         cls.consolidate_citation_references(transformed)
         xpath = "body/div/article/div[@class='pdq-sections']"
         sections = []
@@ -1061,22 +1061,16 @@ class Control:
         )
 
     @classmethod
-    def assemble_values_for_dis(cls, session, doc_id, xsl, table):
+    def assemble_values_for_dis(cls, session, doc_id, xsl, root):
         """
         Get the pieces of the drug info summary needed by the Drupal CMS
 
         Pass:
           session - object to be used in database queries, logging, etc.
           doc_id - CDR ID for the PDQ summary
-          xsl - compiled filters for generating HTML for the summary
-          table - source for the exported xml
+          xsl - compiled filter for generating HTML for the summary
+          root - parsed xml for the exported document
         """
-
-        # Pull the exported XML from the appropriate cancer.gov table.
-        query = cdrdb.Query(table, "xml")
-        query.where(query.Condition("id", doc_id))
-        xml = query.execute(session.cursor).fetchone().xml
-        root = etree.fromstring(xml.encode("utf-8"))
 
         # Tease out the pronunciation fields. Strange that we have one pro-
         # nunciation key, but multiple audio pronunciation clips.
@@ -1109,7 +1103,7 @@ class Control:
             updated_date=Doc.get_text(root.find("DateLastModified")),
             pron=pron,
             audio_id=audio_id,
-            body=html.tostring(xsl["Drug"](root)).decode("utf-8"),
+            body=html.tostring(xsl(root)).decode("utf-8"),
             type="pdq_drug_information_summary",
         )
 
@@ -1253,6 +1247,25 @@ class Control:
             links[-1].tail = u"]"
         else:
             links[-1].tail = u"]{}".format(tail)
+
+    @classmethod
+    def fetch_exported_doc(cls, session, doc_id, table):
+        """
+        Pull the exported XML from the appropriate cancer.gov table
+
+        Pass:
+          session - used for database query
+          doc_id - which document to fetch
+          table - where to fetch it from
+
+        Return:
+          parsed XML document
+        """
+
+        query = cdrdb.Query(table, "xml")
+        query.where(query.Condition("id", doc_id))
+        xml = query.execute(session.cursor).fetchone().xml
+        return etree.fromstring(xml.encode("utf-8"))
 
     def record_pushed_docs(self):
         """
