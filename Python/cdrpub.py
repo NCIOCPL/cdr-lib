@@ -1410,31 +1410,6 @@ class Control:
         else:
             self.logger.info("Job %d: set status to %s", self.job.id, status)
 
-    @staticmethod
-    def get_inner_html(node):
-        """
-        Extract the serialized HTML for the node's text and element children
-
-        For example, <h2>Some <em>title</em></h2> would be returned as
-        "Some <em>title</em>".
-
-        Pass:
-          node - reference to an element in the parsed HTML for a summary
-
-        Return:
-          serialized representation of the node, including HTML markup,
-          but excluding the node's own tag
-        """
-
-        if node is None:
-            return None
-        pieces = list()
-        if node.text is not None:
-            pieces = [node.text]
-        for child in node.iterdescendants():
-            pieces.append(html.tostring(child).decode("utf-8"))
-        return u"".join(pieces)
-
     @classmethod
     def wrap_for_cms(cls, doc, cdr_id):
         """
