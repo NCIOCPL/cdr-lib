@@ -1027,7 +1027,7 @@ class Control:
             h2 = node.find("h2")
             if h2 is None:
                 raise Exception("CDR{:d} missing section title".format(doc_id))
-            section_title = cls.get_inner_html(h2)
+            section_title = Doc.get_text(h2)
             node.remove(h2)
             section_id = node.get("id")
             if section_id.startswith("_section"):
