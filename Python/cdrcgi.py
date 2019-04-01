@@ -2564,8 +2564,11 @@ def logout(session):
     if not session: bail('No session found.')
 
     # Perform the logout.
-    error = cdr.logout(session)
-    message = error or "Session Logged Out Successfully"
+    message = "Session Logged Out Successfully"
+    try:
+        cdr.logout(session)
+    except Exception as e:
+        message = str(e)
 
     # Display a page with a link to log back in.
     title   = "CDR Administration"
