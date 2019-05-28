@@ -72,7 +72,7 @@ class Control:
         mp3="audio/mpeg"
     )
     SHORT_TITLE_MAX = 100
-    DESCRIPTION_MAX = 320
+    DESCRIPTION_MAX = 600
 
     def __init__(self, job_id, **opts):
         """
@@ -991,6 +991,9 @@ class Control:
           doc_id - CDR ID for the PDQ summary
           xsl - compiled filter for generating HTML for the summary
           root - parsed xml for the exported document
+
+        Return:
+          dictionary of values suitable for shipping to Drupal API
         """
 
         # Tease out pieces which need a little bit of logic.
@@ -1044,14 +1047,20 @@ class Control:
         langs = dict(English="en", Spanish="es")
         audience = Doc.get_text(meta.find("SummaryAudience"))
         description = Doc.get_text(meta.find("SummaryDescription"))
+        if len(description) > cls.DESCRIPTION_MAX:
+            session.logger.warning(u"Truncating description %r", description)
+            description = description[:cls.DESCRIPTION_MAX]
+        if len(short_title) > cls.SHORT_TITLE_MAX:
+            session.logger.warning(u"Truncating short title %r", short_title)
+            short_title = short_title[:cls.SHORT_TITLE_MAX]
         return dict(
             cdr_id=doc_id,
             url=url,
-            short_title=short_title[:cls.SHORT_TITLE_MAX],
+            short_title=short_title,
             translation_of=translation_of,
             sections=sections,
             title=Doc.get_text(root.find("SummaryTitle")),
-            description=description[:cls.DESCRIPTION_MAX],
+            description=description,
             summary_type=Doc.get_text(meta.find("SummaryType")),
             audience=audience.replace(" prof", " Prof"),
             language=langs[Doc.get_text(meta.find("SummaryLanguage"))],
@@ -1070,6 +1079,9 @@ class Control:
           doc_id - CDR ID for the PDQ summary
           xsl - compiled filter for generating HTML for the summary
           root - parsed xml for the exported document
+
+        Return:
+          dictionary of values suitable for shipping to Drupal API
         """
 
         # Tease out the pronunciation fields. Strange that we have one pro-
@@ -1094,10 +1106,13 @@ class Control:
         # Pull everything together.
         prefix = "https://www.cancer.gov"
         description = Doc.get_text(meta.find("DrugInfoDescription"))
+        if len(description) > cls.DESCRIPTION_MAX:
+            session.logger.warning(u"Truncating description %r", description)
+            description = description[:cls.DESCRIPTION_MAX]
         return dict(
             cdr_id=doc_id,
             title=Doc.get_text(root.find("DrugInfoTitle")),
-            description=description[:cls.DESCRIPTION_MAX],
+            description=description,
             url=meta.find("DrugInfoURL").get("xref").replace(prefix, ""),
             posted_date=Doc.get_text(root.find("DateFirstPublished")),
             updated_date=Doc.get_text(root.find("DateLastModified")),
