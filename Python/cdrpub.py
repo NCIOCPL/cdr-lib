@@ -914,12 +914,14 @@ class Control:
           table - where to get the exported XML (default is pub_proc_cg)
           logger - overide session.logger for recording activity
           base - front portion of PDQ API URL
+          dumpfile - optional path for file in which to store docs
 
         Raise:
           `Exception` if unable to perform complete update successfully
         """
 
         # Record what we're about to do.
+        dumpfile = opts.get("dumpfile")
         client_opts = dict(logger=opts.get("logger"), base=opts.get("base"))
         client = DrupalClient(session, **client_opts)
         send = opts.get("send") or dict()
@@ -957,6 +959,9 @@ class Control:
                 values = cls.assemble_values_for_cis(*args)
             else:
                 values = cls.assemble_values_for_dis(*args)
+            if dumpfile:
+                with open(dumpfile, "a") as fp:
+                    fp.write("{!r}\n".format(values))
             nid = client.push(values)
             pushed.append((doc_id, nid, "en"))
 
@@ -966,6 +971,9 @@ class Control:
             root = cls.fetch_exported_doc(session, doc_id, table)
             args = session, doc_id, xsl, root
             values = cls.assemble_values_for_cis(*args)
+            if dumpfile:
+                with open(dumpfile, "a") as fp:
+                    fp.write("{!r}\n".format(values))
             nid = client.push(values)
             pushed.append((doc_id, nid, "es"))
 
