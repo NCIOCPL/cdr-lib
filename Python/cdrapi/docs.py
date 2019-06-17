@@ -4498,7 +4498,7 @@ class Resolver(etree.Resolver):
 
         result = etree.Element("ValidZip")
         query = Query("zipcode", "zip")
-        query.where(query.Condition("zip", args))
+        query.where(query.Condition("zip", args[:5]))
         row = query.execute(self.cursor).fetchone()
         if row and row.zip:
             result.text = str(row.zip)[:5]
