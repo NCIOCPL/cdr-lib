@@ -77,4 +77,4 @@ The `reports` provides support for common reports, via the
 ## Architectural overview
 Here is how the new CDR API fits into the CDR server's architecture.
 
-![Overview](https://github.com/NCIOCPL/cdr-lib/raw/gauss/Python/cdrapi/CDR.jpg)
+![Overview](https://github.com/NCIOCPL/cdr-lib/raw/master/Python/cdrapi/CDR.jpg)
