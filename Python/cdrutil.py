@@ -646,7 +646,7 @@ def sendPage(page, textType = 'html'):
 Content-type: text/%s; charset=utf-8
 
 %s""" % (textType, page)
-    print output.encode('utf-8')
+    print(output.encode('utf-8'))
     exit(0)
 
 #----------------------------------------------------------------------

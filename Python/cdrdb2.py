@@ -662,7 +662,7 @@ class Query:
 
     @staticmethod
     def report(test_number, query, outcome):
-        print "Test %2d...%s" % (test_number, outcome and "passed" or "failed")
+        print("Test %2d...%s" % (test_number, outcome and "passed" or "failed"))
         f = open("Query.tests", "a")
         banner = (" Test %d " % test_number).center(70, "=")
         f.write("%s\n" % banner)
