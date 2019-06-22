@@ -91,8 +91,7 @@ DAY_ONE  = cdr.URDATE
 NEWLINE  = "@@@NEWLINE-PLACEHOLDER@@@"
 BR       = "@@@BR-PLACEHOLDER@@@"
 HEADER   = u"""\
-<!DOCTYPE HTML PUBLIC '-//W3C//DTD HTML 4.01 Transitional//EN'
-                      'http://www.w3.org/TR/html4/loose.dtd'>
+<!DOCTYPE html>
 <HTML>
  <HEAD>
   <TITLE>%s</TITLE>
