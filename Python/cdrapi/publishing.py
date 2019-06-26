@@ -911,7 +911,8 @@ class DrupalClient:
 
         # Different types use different API URLs.
         t = values["type"]
-        url = "{}{}/{}".format(self.base, self.URI_PATH, self.types[t])
+        args = self.base, self.URI_PATH, self.types[t]
+        url = "{}{}/{}?_format=json".format(*args)
         self.logger.debug("URL for push(): %s", url)
 
         # Send the values to the CMS and check for success.
@@ -964,7 +965,7 @@ class DrupalClient:
           CDR ID for documents which failed
         """
 
-        url = "{}{}".format(self.base, self.URI_PATH)
+        url = "{}{}?_format=json".format(self.base, self.URI_PATH)
         self.logger.info("Marking %d documents published", len(documents))
         self.logger.debug("URL for publish(): %s", url)
         offset = 0
@@ -1014,7 +1015,7 @@ class DrupalClient:
           `Exception` if delete request failed
         """
 
-        url = "{}{}/{:d}".format(self.base, self.URI_PATH, cdr_id)
+        url = "{}{}/{:d}?_format=json".format(self.base, self.URI_PATH, cdr_id)
         self.logger.debug("URL for remove(): %s", url)
         # TODO: Get Acquia to fix their broken certificates.
 
@@ -1044,7 +1045,7 @@ class DrupalClient:
           sequence of `CatalogEntry` objects
         """
 
-        url = "{}{}/list".format(self.base, self.URI_PATH)
+        url = "{}{}/list?_format=json".format(self.base, self.URI_PATH)
         self.logger.debug("URL for list(): %s", url)
         # TODO: Get Acquia to fix their broken certificates.
         response = requests.get(url, auth=self.auth, verify=False)
@@ -1067,7 +1068,7 @@ class DrupalClient:
           integer for unique Drupal node ID or None
         """
 
-        url = "{}{}/{}".format(self.base, self.URI_PATH, cdr_id)
+        url = "{}{}/{}?_format=json".format(self.base, self.URI_PATH, cdr_id)
         self.logger.debug("URL for get_nid(): %s", url)
         # TODO: Get Acquia to fix their broken certificates.
         response = requests.get(url, auth=self.auth, verify=False)
