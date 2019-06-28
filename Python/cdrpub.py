@@ -1,5 +1,14 @@
 """
 Process a queued publishing job
+
+The top-level entry point for this module is `Control.publish()`, which
+calls `Control.__publish()`, wrapped in a try block to facilitate handling
+of all failures in a central place. The latter method decides which of the
+three basic publishing job types is being run (scripted, export, or push)
+and handles the job appropriately. For scripted jobs the work is simply
+handed off to the specified script by launching a separate process. For
+an overview of the logic for the other two job types, see the methods
+`Control.export_docs()` and `Control.push_docs()`.
 """
 
 import argparse
@@ -11,13 +20,13 @@ import re
 import subprocess
 import threading
 import time
-from lxml import etree
+from lxml import etree, html
 import unicodecsv as csv
 import cdr
 import cdr2gk
 from cdrapi import db as cdrdb
 from cdrapi.docs import Doc
-from cdrapi.publishing import Job
+from cdrapi.publishing import Job, DrupalClient
 from cdrapi.settings import Tier
 from cdrapi.users import Session
 from AssignGroupNums import GroupNums
@@ -62,6 +71,8 @@ class Control:
         gif="image/gif",
         mp3="audio/mpeg"
     )
+    SHORT_TITLE_MAX = 100
+    DESCRIPTION_MAX = 600
 
     def __init__(self, job_id, **opts):
         """
@@ -463,6 +474,7 @@ class Control:
             default_desc = "{} push job".format(self.job.subsystem.name)
             desc = self.job.parms.get("GKPushJobDescription") or default_desc
             parms = dict(
+                DrupalServer=self.job.parms.get("DrupalServer"),
                 GKServer=self.job.parms["GKServer"],
                 GKPubTarget=self.job.parms["GKPubTarget"],
                 GKPushJobDescription=desc,
@@ -804,6 +816,7 @@ class Control:
         self.__gk_prolog_sent = True
 
         # Send the GateKeeper each of the exported documents.
+        send_to_cms = dict()
         start = datetime.datetime.now()
         query = cdrdb.Query("pub_proc_cg_work", "id")
         query.where("xml IS NOT NULL")
@@ -833,9 +846,11 @@ class Control:
             if response.type != "OK":
                 args = response.type, response.message
                 raise Exception("GateKeeper: {} ({})".format(*args))
-            row = self.cursor.fetchone()
+            if row.doc_type in DrupalClient.TYPES:
+                send_to_cms[doc_id] = row.doc_type
 
         # Tell the GateKeeper about the documents being removed.
+        remove_from_cms = dict()
         query = cdrdb.Query("pub_proc_cg_work", "id", "num", "doc_type")
         query.where("xml IS NULL")
         query.where(query.Condition("doc_type", self.EXCLUDED, "NOT IN"))
@@ -851,6 +866,8 @@ class Control:
             if response.type != "OK":
                 args = response.type, response.message
                 raise Exception("GateKeeper: {} ({})".format(*args))
+            if row.doc_type in DrupalClient.TYPES:
+                remove_from_cms[row.id] = row.doc_type
 
         # Tell the GateKeeper we're all done.
         self.__num_pushed = counter
@@ -859,6 +876,419 @@ class Control:
         if response.type != "OK":
             args = response.type, response.message
             raise Exception("GateKeeper: {} ({})".format(*args))
+
+        # Send the PDQ summaries to the Drupal CMS.
+        source = "pub_proc_cg_work"
+        server = self.job.parms.get("DrupalServer")
+        base = "https://{}".format(server) if server else None
+        opts = dict(
+            send=send_to_cms,
+            remove=remove_from_cms,
+            table=source,
+            logger=self.logger,
+            base=base,
+        )
+        self.update_cms(self.session, **opts)
+
+    @classmethod
+    def update_cms(cls, session, **opts):
+        """
+        Send new/modified summaries to Drupal and remove dropped content
+
+        As with the push to GateKeeper, failure of any of these documents
+        will cause the entire job to be marked as a failure (and almost
+        always leave the content pushed to Drupal in a `draft` state).
+        I say "almost" because the edge case is that the `publish()`
+        call might fail between batches. Nothing we can do about that
+        very unlikely problem.
+
+        Implemented as a class method so that we can invoke use this
+        functionality without creating a real publishing job.
+
+        Required positional argument:
+          session - object to be used in database queries, logging, etc.
+
+        Optional keyword arguments
+          send - dictionary of cdr_id -> document type for summaries to send
+          remove - similar dictionary for summaries being dropped
+          table - where to get the exported XML (default is pub_proc_cg)
+          logger - overide session.logger for recording activity
+          base - front portion of PDQ API URL
+          dumpfile - optional path for file in which to store docs
+
+        Raise:
+          `Exception` if unable to perform complete update successfully
+        """
+
+        # Record what we're about to do.
+        dumpfile = opts.get("dumpfile")
+        client_opts = dict(logger=opts.get("logger"), base=opts.get("base"))
+        client = DrupalClient(session, **client_opts)
+        send = opts.get("send") or dict()
+        remove = opts.get("remove") or dict()
+        args = len(send), len(remove)
+        client.logger.info("Sending %d documents and removing %d", *args)
+        start = datetime.datetime.now()
+
+        # Compile the XSL/T filters we'll need.
+        filters= dict()
+        for name in ("Cancer", "Drug"):
+            title = "{} Information Summary for Drupal CMS".format(name)
+            key = "DrugInformationSummary" if name == "Drug" else "Summary"
+            filters[key] = Doc.load_single_filter(session, title)
+
+        # Defer the Spanish content to a second pass.
+        spanish = set()
+        pushed = []
+        table = opts.get("table", "pub_proc_cg")
+        query = cdrdb.Query("query_term_pub", "value")
+        query.where("path = '/Summary/SummaryMetaData/SummaryLanguage'")
+        query.where(query.Condition("doc_id", 0))
+        query = str(query)
+        for doc_id in send:
+            doctype = send[doc_id]
+            xsl = filters[doctype]
+            root = cls.fetch_exported_doc(session, doc_id, table)
+            args = session, doc_id, xsl, root
+            if doctype == "Summary":
+                session.cursor.execute(query, (doc_id,))
+                language = session.cursor.fetchone().value
+                if language.lower() != "english":
+                    spanish.add(doc_id)
+                    continue
+                values = cls.assemble_values_for_cis(*args)
+            else:
+                values = cls.assemble_values_for_dis(*args)
+            if dumpfile:
+                with open(dumpfile, "a") as fp:
+                    fp.write("{!r}\n".format(values))
+            nid = client.push(values)
+            pushed.append((doc_id, nid, "en"))
+
+        # Do a second pass for the translated content.
+        xsl = filters["Summary"]
+        for doc_id in spanish:
+            root = cls.fetch_exported_doc(session, doc_id, table)
+            args = session, doc_id, xsl, root
+            values = cls.assemble_values_for_cis(*args)
+            if dumpfile:
+                with open(dumpfile, "a") as fp:
+                    fp.write("{!r}\n".format(values))
+            nid = client.push(values)
+            pushed.append((doc_id, nid, "es"))
+
+        # Drop the documents being removed.
+        for doc_id in remove:
+            client.remove(doc_id)
+
+        # Only after all the other steps are done, set pushed docs to published.
+        client.publish(pushed)
+
+        # Record how long it took.
+        elapsed = (datetime.datetime.now() - start).total_seconds()
+        args = len(send), len(remove), elapsed
+        client.logger.info("Sent %d and removed %d in %f seconds", *args)
+
+    @classmethod
+    def assemble_values_for_cis(cls, session, doc_id, xsl, root):
+        """
+        Get the pieces of the summary needed by the Drupal CMS
+
+        Pass:
+          session - object to be used in database queries, logging, etc.
+          doc_id - CDR ID for the PDQ summary
+          xsl - compiled filter for generating HTML for the summary
+          root - parsed xml for the exported document
+
+        Return:
+          dictionary of values suitable for shipping to Drupal API
+        """
+
+        # Tease out pieces which need a little bit of logic.
+        meta = root.find("SummaryMetaData")
+        node = meta.find("SummaryURL")
+        if node is None:
+            raise Exception("CDR{:d} has no SummaryURL".format(doc_id))
+        url = node.get("xref").replace("https://www.cancer.gov", "")
+        if url.startswith("/espanol"):
+            url = url[len("/espanol"):]
+        short_title = None
+        for node in root.findall("AltTitle"):
+            if node.get("TitleType") == "Short":
+                short_title = Doc.get_text(node)
+        translation_of = None
+        node = root.find("TranslationOf")
+        if node is not None:
+            translation_of = Doc.extract_id(node.get("ref"))
+
+        # Munging of image URLs based on instructions from Blair in
+        # Slack message to Volker and me 2019-02-18 11:20.
+        # Possibly a temporary solution?
+        tier_extras = dict(DEV="-blue-dev", PROD="")
+        suffix = tier_extras.get(session.tier.name, "-qa")
+        replacement = "https://www{}.cancer.gov/images/cdr/live".format(suffix)
+        target = "/images/cdr/live"
+
+        # Pull out the summary sections into sequence of separate dictionaries.
+        transformed = xsl(root)
+        cls.consolidate_citation_references(transformed)
+        xpath = "body/div/article/div[@class='pdq-sections']"
+        sections = []
+        for node in transformed.xpath(xpath):
+            h2 = node.find("h2")
+            if h2 is None:
+                raise Exception("CDR{:d} missing section title".format(doc_id))
+            section_title = Doc.get_text(h2)
+            node.remove(h2)
+            section_id = node.get("id")
+            if section_id.startswith("_section"):
+                section_id = section_id[len("_section"):]
+            body = html.tostring(node).decode("utf-8")
+            body = body.replace(target, replacement)
+            sections.append(dict(
+                title=section_title,
+                id=section_id,
+                html=body
+            ))
+
+        # Pull everything together.
+        langs = dict(English="en", Spanish="es")
+        audience = Doc.get_text(meta.find("SummaryAudience"))
+        description = Doc.get_text(meta.find("SummaryDescription"))
+        if len(description) > cls.DESCRIPTION_MAX:
+            session.logger.warning(u"Truncating description %r", description)
+            description = description[:cls.DESCRIPTION_MAX]
+        if len(short_title) > cls.SHORT_TITLE_MAX:
+            session.logger.warning(u"Truncating short title %r", short_title)
+            short_title = short_title[:cls.SHORT_TITLE_MAX]
+        return dict(
+            cdr_id=doc_id,
+            url=url,
+            short_title=short_title,
+            translation_of=translation_of,
+            sections=sections,
+            title=Doc.get_text(root.find("SummaryTitle")),
+            description=description,
+            summary_type=Doc.get_text(meta.find("SummaryType")),
+            audience=audience.replace(" prof", " Prof"),
+            language=langs[Doc.get_text(meta.find("SummaryLanguage"))],
+            posted_date=Doc.get_text(root.find("DateFirstPublished")),
+            updated_date=Doc.get_text(root.find("DateLastModified")),
+            type="pdq_cancer_information_summary",
+        )
+
+    @classmethod
+    def assemble_values_for_dis(cls, session, doc_id, xsl, root):
+        """
+        Get the pieces of the drug info summary needed by the Drupal CMS
+
+        Pass:
+          session - object to be used in database queries, logging, etc.
+          doc_id - CDR ID for the PDQ summary
+          xsl - compiled filter for generating HTML for the summary
+          root - parsed xml for the exported document
+
+        Return:
+          dictionary of values suitable for shipping to Drupal API
+        """
+
+        # Tease out the pronunciation fields. Strange that we have one pro-
+        # nunciation key, but multiple audio pronunciation clips.
+        meta = root.find("DrugInfoMetaData")
+        audio_id = None
+        pron = meta.find("PronunciationInfo")
+        if pron is not None:
+            for node in pron.findall("MediaLink"):
+                if node.get("language") == "en":
+                    ref = node.get("ref")
+                    if ref:
+                        try:
+                            audio_id = int(Doc.extract_id(ref))
+                            break
+                        except Exception as e:
+                            args = doc_id, ref
+                            msg = "CDR{}: invalid audio ID {!r}".format(*args)
+                            raise Exception(msg)
+            pron = Doc.get_text(pron.find("TermPronunciation"))
+
+        # Pull everything together.
+        prefix = "https://www.cancer.gov"
+        description = Doc.get_text(meta.find("DrugInfoDescription"))
+        if len(description) > cls.DESCRIPTION_MAX:
+            session.logger.warning(u"Truncating description %r", description)
+            description = description[:cls.DESCRIPTION_MAX]
+        return dict(
+            cdr_id=doc_id,
+            title=Doc.get_text(root.find("DrugInfoTitle")),
+            description=description,
+            url=meta.find("DrugInfoURL").get("xref").replace(prefix, ""),
+            posted_date=Doc.get_text(root.find("DateFirstPublished")),
+            updated_date=Doc.get_text(root.find("DateLastModified")),
+            pron=pron,
+            audio_id=audio_id,
+            body=html.tostring(xsl(root)).decode("utf-8"),
+            type="pdq_drug_information_summary",
+        )
+
+    @classmethod
+    def consolidate_citation_references(cls, root):
+        """
+        Combine adjacent citation reference links
+
+        Ranges of three or more sequential reference numbers should be
+        collapsed as FIRST-LAST. A sequence of adjacent refs (ignoring
+        interventing whitespace) should be surrounded by a pair of
+        square brackets. Both ranges and individual refs should be
+        separated by commas. The substring "cit/section" should be
+        replaced in the result by "section" (stripping "cit/"). For
+        example, with input of ...
+
+          <a href="#cit/section_1.1">1</a>
+          <a href="#cit/section_1.2">2</a>
+          <a href="#cit/section_1.3">3</a>
+          <a href="#cit/section_1.5">5</a>
+          <a href="#cit/section_1.6">6</a>
+
+        ... we should end up with ...
+
+          [<a href="section_1.1"
+           >1</a>-<a href="section_1.3"
+           >3</a>,<a href="section_1.5"
+           >5</a>,<a href="section_1.6"
+           >6</a>]
+
+        2019-03-13: Bryan P. decided to override Frank's request to
+        have "cit/" stripped from the linking URLs.
+
+        Pass:
+          root - reference to parsed XML document for the PDQ summary
+
+        Return:
+          None (parsed tree is altered as a side effect)
+        """
+
+        # Collect all of the citation links, stripping "cit/" from the url.
+        # 2019-03-13 (per BP): don't strip "cit/".
+        links = []
+        for link in root.iter("a"):
+            href = link.get("href")
+            if href is not None and href.startswith(u"#cit/section"):
+                #link.set("href", href.replace(u"#cit/section", u"#section"))
+                links.append(link)
+
+        # Collect links which are only separated by optional whitespace.
+        adjacent = []
+        for link in links:
+
+            # First time through the loop? Start a new list.
+            if not adjacent:
+                adjacent = [link]
+                prev = link
+
+            # Otherwise, find out if this element belongs in the list.
+            else:
+                if prev.getnext() is link:
+
+                    # Whitespace in between is ignored.
+                    if prev.tail is None or not prev.tail.strip():
+                        adjacent.append(link)
+                        prev = link
+                        continue
+
+                # Consolidate the previous list and start a new one.
+                cls.rewrite_adjacent_citation_refs(adjacent)
+                adjacent = [link]
+                prev = link
+
+        # Deal with the final list of adjacent elements, if any.
+        if adjacent:
+            cls.rewrite_adjacent_citation_refs(adjacent)
+
+    @classmethod
+    def rewrite_adjacent_citation_refs(cls, links):
+        """
+        Add punctuation to citation reference links and collapse ranges
+
+        For details, see `consolidate_citation_references()` above.
+
+        Pass:
+          nodes - list of adjacent reference link elements
+
+        Return:
+          None (the parsed tree is modified in place)
+        """
+
+        # Find out where to hang the left square bracket.
+        prev = links[0].getprevious()
+        parent = links[0].getparent()
+        if prev is not None:
+            if prev.tail is not None:
+                prev.tail += u"["
+            else:
+                prev.tail = u"["
+        elif parent.text is not None:
+            parent.text += u"["
+        else:
+            parent.text = u"["
+
+        # Pull out the integers for the reference lines.
+        refs = [int(link.text) for link in links]
+
+        # Find ranges of unbroken integer sequences.
+        i = 0
+        while i < len(refs):
+
+            # Identify the next range.
+            range_len = 1
+            while i + range_len < len(refs):
+                if refs[i+range_len-1] + 1 != refs[i+range_len]:
+                    break
+                range_len += 1
+
+            # If range is three or more integers, collapse it.
+            if range_len > 2:
+                if i > 0:
+                    links[i-1].tail = u","
+                links[i].tail = u"-"
+                j = 1
+                while j < range_len - 1:
+                    parent.remove(links[i+j])
+                    j += 1
+                i += range_len
+
+            # For shorter ranges, separate each from its left neighbor.
+            else:
+                while range_len > 0:
+                    if i > 0:
+                        links[i-1].tail = u","
+                    i += 1
+                    range_len -= 1
+
+        # Add closing bracket, preserving the last node's tail text.
+        tail = links[-1].tail
+        if tail is None:
+            links[-1].tail = u"]"
+        else:
+            links[-1].tail = u"]{}".format(tail)
+
+    @classmethod
+    def fetch_exported_doc(cls, session, doc_id, table):
+        """
+        Pull the exported XML from the appropriate cancer.gov table
+
+        Pass:
+          session - used for database query
+          doc_id - which document to fetch
+          table - where to fetch it from
+
+        Return:
+          parsed XML document
+        """
+
+        query = cdrdb.Query(table, "xml")
+        query.where(query.Condition("id", doc_id))
+        xml = query.execute(session.cursor).fetchone().xml
+        return etree.fromstring(xml.encode("utf-8"))
 
     def record_pushed_docs(self):
         """
@@ -1015,6 +1445,12 @@ class Control:
             self.post_message(message)
         else:
             self.logger.info("Job %d: set status to %s", self.job.id, status)
+
+    @classmethod
+    def wrap_for_cms(cls, doc, cdr_id):
+        """
+        Create a dictionary of values to be sent to the Drupal PDQ API
+        """
 
     # ------------------------------------------------------------------
     # PROPERTIES START HERE.

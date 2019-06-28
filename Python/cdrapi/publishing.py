@@ -1,12 +1,21 @@
 """
-Manage CDR publishing jobs
+Manage CDR publishing jobs and provide acceess to the Drupal CMS
 """
 
 import datetime
+import json
+import logging
+import time
 import threading
 from six import iteritems
+import dateutil.parser
+import requests
 from cdrapi.db import Query
 from cdrapi.docs import Doc
+
+# TODO: Get Acquia to fix their broken certificates.
+from urllib3.exceptions import InsecureRequestWarning
+requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 try:
     basestring
@@ -762,3 +771,357 @@ class Job:
                             value = Doc.get_text(node.find("ParmValue"), "")
                             self._parameters[name] = value
                     return self._parameters
+
+class DrupalClient:
+    """
+    Client end of the PDQ RESTful APIs in the Drupal CMS
+
+    Provides functionality comparable to that provided for communicating
+    with the legacy GateKeeper APIs in the `cdr2gk` module.
+
+    Class constants:
+        BATCH_SIZE - maximum number of documents we can set to `published`
+                     in a single chunk
+        URI_PATH - used for routing of PDQ RESTful API requests
+        TYPES - names used for the types of PDQ documents we publish
+    """
+
+    MAX_RETRIES = 5
+    BATCH_SIZE = 25
+    URI_PATH = "/pdq/api"
+    TYPES = dict(
+        Summary=("pdq_cancer_information_summary", "cis"),
+        DrugInformationSummary=("pdq_drug_information_summary", "dis"),
+    )
+
+    def __init__(self, session, **opts):
+        """
+        Perform any necessary setup for communicating with the PDQ APIs
+
+        Required positional argument:
+          session - information about the account in control
+
+        Optional keyword arguments:
+          auth - override for basic authorization credentials pair
+          base - e.g., "https://ncigovcddev.prod.acquia-sites.com"
+          logger - override for logging object
+          batch_size - override for number to mark `published` at once
+        """
+
+        self.__session = session
+        self.__opts = opts
+        self.logger.info("DrupalClient created for %s", self.base)
+
+    @property
+    def auth(self):
+        """
+        Basic authorization credentials pair
+        """
+
+        if not hasattr(self, "_auth"):
+            self._auth = self.__opts.get("auth")
+            if not self._auth:
+                password = self.__session.tier.password("PDQ")
+                if not password:
+                    raise Exception("Unable to find PDQ CMS credentials")
+                self._auth = "PDQ", password
+        return self._auth
+
+    @property
+    def base(self):
+        """
+        Front portion of the PDQ API URL
+        """
+
+        if not hasattr(self, "_base"):
+            self._base = self.__opts.get("base")
+            if self._base:
+                self._base = self._base.strip("/")
+                if not self._base.startswith("http"):
+                    raise Exception("Valid URL base required")
+            else:
+                host = self.__session.tier.hosts.get("DRUPAL")
+                if not host:
+                    raise Exception("Unable to determine CMS host name")
+                self._base = "https://{}".format(host)
+        return self._base
+
+    @property
+    def batch_size(self):
+        """
+        The number of documents to be marked `published` at once
+        """
+
+        if not hasattr(self, "_batch_size"):
+            self._batch_size = self.__opts.get("batch_size")
+            if self._batch_size:
+                self.logger.debug("Batch size set to %d", self._batch_size)
+            else:
+                self._batch_size = self.BATCH_SIZE
+        return self._batch_size
+
+    @property
+    def logger(self):
+        """
+        Object for recording what we do
+        """
+
+        if not hasattr(self, "_logger"):
+            self._logger = self.__opts.get("logger")
+            if not self._logger:
+                self._logger = self.__session.logger
+        return self._logger
+
+    @property
+    def session(self):
+        """
+        Reference to object representing the current login
+        """
+
+        return self.__session
+
+    @property
+    def types(self):
+        """
+        Mapping from Drupal class for content to API URL tail
+        """
+
+        if not hasattr(self, "_types"):
+            self._types = dict(self.TYPES.values())
+        return self._types
+
+    def push(self, values):
+        """
+        Send a PDQ document to the Drupal CMS
+
+        The document will be stored in the `draft` state, and must be
+        released to the `published` state at the end of the job in batch
+        with the other PDQ documents published by the job (see the
+        `publish()` method).
+
+        Pass:
+          values - dictionary of field values keyed by field name
+
+        Return:
+          integer for the ID of the node in which the document is stored
+        """
+
+        # Make sure we use the existing node if already in the CMS.
+        self.__check_nid(values)
+
+        # Different types use different API URLs.
+        t = values["type"]
+        args = self.base, self.URI_PATH, self.types[t]
+        url = "{}{}/{}?_format=json".format(*args)
+        self.logger.debug("URL for push(): %s", url)
+
+        # Send the values to the CMS and check for success.
+        # TODO: Get Acquia to fix their broken certificates.
+        opts = dict(json=values, auth=self.auth, verify=False)
+        tries = self.MAX_RETRIES
+        while tries > 0:
+            response = requests.post(url, **opts)
+            if response.ok:
+                break
+            tries -= 1
+            if tries <= 0:
+                self.logger.error("%r failed: %s", url, response.reason)
+                raise Exception(response.reason)
+            time.sleep(1)
+            args = values["cdr_id"], response.reason
+            self.logger.warning("%s: %s (trying again)", *args)
+
+        # Give the caller the node ID where the document was stored.
+        parsed = json.loads(response.text)
+        nid = int(parsed["nid"])
+        args = values["cdr_id"], self.base, nid
+        self.logger.info("Pushed CDR%d to %s as node %d", *args)
+        return nid
+
+    def publish(self, documents):
+        """
+        Ask the CMS to set the specified documents to the `published` state.
+
+        We have to break the batch into chunks small enough that memory
+        usage will not be an issue.
+
+        Pass:
+          documents - sequence of tuples for the PDQ documents which should
+                      be switched from `draft` to `published` state, each
+                      tuple containing:
+                          - integer for the document's unique CDR ID
+                          - integer for the Drupal node for the document
+                          - language code ('en' or 'es')
+                      for example:
+                          [
+                              (257994, 231, "en"),
+                              (257995, 241, "en"),
+                              (448617, 226, "es"),
+                              (742114, 136, "en"),
+                          ]
+
+        Return:
+          possibly empty dictionary of error messages, indexed by the
+          CDR ID for documents which failed
+        """
+
+        url = "{}{}?_format=json".format(self.base, self.URI_PATH)
+        self.logger.info("Marking %d documents published", len(documents))
+        self.logger.debug("URL for publish(): %s", url)
+        offset = 0
+        lookup = dict([(doc[1:], doc[0]) for doc in documents])
+        errors = dict()
+        while offset < len(documents):
+            end = offset + self.batch_size
+            chunk = [doc[1:] for doc in documents[offset:end]]
+            self.logger.info("Marking %d docs as published", len(chunk))
+            self.logger.debug("Docs: %r", chunk)
+            offset = end
+            # TODO: Get Acquia to fix their broken certificates.
+            opts = dict(json=chunk, auth=self.auth, verify=False)
+            tries = self.MAX_RETRIES
+            while tries > 0:
+                response = requests.post(url, **opts)
+                if not response.ok:
+                    tries -= 1
+                    if tries <= 0:
+                        for key in chunk:
+                            cdr_id = lookup[key]
+                            errors[cdr_id] = response.reason
+                            args = cdr_id, response.reason
+                            self.logger.error("CDR%d: %s", *args)
+                    else:
+                        time.sleep(1)
+                        msg = "publish(): %s (trying again)"
+                        self.logger.warning(msg, response.reason)
+                else:
+                    for nid, lang, err in json.loads(response.text)["errors"]:
+                        key = nid, lang
+                        cdr_id = lookup[(nid, lang)]
+                        errors[cdr_id] = err
+                        self.logger.error("CDR%d: %s", cdr_id, err)
+                    break
+        self.logger.info("%d errors found marking docs published", len(errors))
+        return errors
+
+    def remove(self, cdr_id):
+        """
+        Drop a PDQ document from the Drupal CMS
+
+        Pass:
+          cdr_id - integer for the PDQ document to be deleted
+
+        Throws:
+          `Exception` if delete request failed
+        """
+
+        url = "{}{}/{:d}?_format=json".format(self.base, self.URI_PATH, cdr_id)
+        self.logger.debug("URL for remove(): %s", url)
+        # TODO: Get Acquia to fix their broken certificates.
+
+        tries = self.MAX_RETRIES
+        while tries > 0:
+            response = requests.delete(url, auth=self.auth, verify=False)
+            if response.ok:
+                break
+            tries -= 1
+            if tries <= 0:
+                self.logger.error("CDR%d: %s", cdr_id, response.reason)
+                self.logger.debug(response.text)
+                raise Exception(response.reason)
+            time.sleep(1)
+            args = cdr_id, response.reason
+            self.logger.warning("CDR%d: %s (trying again)", *args)
+
+        if not response.ok:
+            raise Exception(response.reason)
+        self.logger.info("Removed CDR%d from %s", cdr_id, self.base)
+
+    def list(self):
+        """
+        Fetch catalog of PDQ content in Drupal CMS
+
+        Return:
+          sequence of `CatalogEntry` objects
+        """
+
+        url = "{}{}/list?_format=json".format(self.base, self.URI_PATH)
+        self.logger.debug("URL for list(): %s", url)
+        # TODO: Get Acquia to fix their broken certificates.
+        response = requests.get(url, auth=self.auth, verify=False)
+        if not response.ok:
+            raise Exception(response.reason)
+        values = json.loads(response.text)
+        catalog = [self.CatalogEntry(v) for v in values]
+        args = len(catalog), self.base
+        self.logger.info("Found %d PDQ documents on %s", *args)
+        return catalog
+
+    def lookup(self, cdr_id):
+        """
+        Fetch the Drupal ID for document's node (if it exists)
+
+        Pass:
+          cdr_id - integer for PDQ document
+
+        Return:
+          integer for unique Drupal node ID or None
+        """
+
+        url = "{}{}/{}?_format=json".format(self.base, self.URI_PATH, cdr_id)
+        self.logger.debug("URL for get_nid(): %s", url)
+        # TODO: Get Acquia to fix their broken certificates.
+        response = requests.get(url, auth=self.auth, verify=False)
+        if response.ok:
+            parsed = json.loads(response.text)
+            if not parsed:
+                raise Exception("CDR ID {} not found".format(cdr_id))
+            if len(parsed) > 1:
+                raise Exception("Ambiguous CDR ID {}".format(cdr_id))
+            return int(parsed[0][0])
+        else:
+            return None
+
+    def __check_nid(self, values):
+        """
+        Insert node ID for document already in the Drupal CMS
+
+        Node must already exist when storing the Spanish translation
+        of the summary (business rule confirmed by Bryan Pizillo).
+        However, this rule does not apply for publish preview
+        requests, for which the CDR ID is passed as a negative integer.
+
+        Pass:
+          values - dictionary of values for the document being stored
+                   (we save the node ID here if appropriate as a side
+                   effect)
+        """
+
+        cdr_id = int(values["cdr_id"])
+        if cdr_id > 0 and not values.get("nid"):
+            translation_of = values.get("translation_of")
+            if translation_of:
+                nid = self.lookup(translation_of)
+                if not nid:
+                    raise Exception("English summary must be saved first")
+            else:
+                nid = self.lookup(values["cdr_id"])
+            values["nid"] = nid
+
+
+    class CatalogEntry:
+        """
+        Information about a PDQ document in the Drupal CMS
+        """
+
+        INTEGERS = "cdr_id", "nid", "vid"
+        DATETIMES = "created", "changed"
+
+        def __init__(self, values):
+            for name in values:
+                value = values[name]
+                if name in self.INTEGERS:
+                    value = int(value)
+                elif name in self.DATETIMES:
+                    value = dateutil.parser.parse(value)
+                setattr(self, name, value)

@@ -304,14 +304,14 @@ class Cursor:
         params               = cmd.Parameters
         nParams              = params.Count
         if not nParams:
-            raise ProgrammingError, ("Cursor.callproc",
+            raise ProgrammingError("Cursor.callproc",
                                    (u"Procedure %s not cataloged" % procname,))
 
         # Plug in the parameters
         if type(parameters) not in (list, tuple):
             parameters = (parameters,)
         if len(parameters) != nParams - 1:
-            raise ProgrammingError, ("Cursor.callproc",
+            raise ProgrammingError("Cursor.callproc",
                     (u"expected %d parameters, received %d" %
                      (nParams - 1, len(parameters)),))
         for i in range(len(parameters)):
@@ -343,8 +343,8 @@ class Cursor:
         except:
             errorList = buildErrorList(self.__conn)
             if errorList:
-                raise Error, ("Cursor.callproc", errorList)
-            raise InternalError, ("Cursor.callproc",
+                raise Error("Cursor.callproc", errorList)
+            raise InternalError("Cursor.callproc",
                     ((u"internal error in '%s'" % procname),))
 
     def close(self):
@@ -407,7 +407,7 @@ class Cursor:
                 if type(params) not in (tuple, list):
                     params = (params,)
                 if len(cmdParams) != len(params):
-                    raise ProgrammingError, ("Cursor.execute",
+                    raise ProgrammingError("Cursor.execute",
                             (u"expected %d parameters, received %d" %
                              (len(cmdParams), len(params)),))
                 for i in range(len(params)):
@@ -433,8 +433,8 @@ class Cursor:
                 queryStr += ' Params: ' + str(params)
             errorList = buildErrorList(self.__conn)
             if errorList:
-                raise Error, ("Cursor.execute:%s" % queryStr, errorList)
-            raise InternalError, ("Cursor.execute",
+                raise Error("Cursor.execute:%s" % queryStr, errorList)
+            raise InternalError("Cursor.execute",
                     ((u"unexpected failure for query:%s" % queryStr),))
 
     def executemany(self, query, paramSets):
@@ -504,7 +504,7 @@ class Cursor:
         """
 
         if not self.__rs or not self.description:
-            raise ProgrammingError, ("Cursor.fetchmany",
+            raise ProgrammingError("Cursor.fetchmany",
                                     (u"No result set available",))
         if size == None:
             size = self.arraysize
@@ -533,8 +533,8 @@ class Cursor:
         except:
             errorList = buildErrorList(self.__conn)
             if errorList:
-                raise Error, ("Cursor.fetchmany", errorList)
-            raise InternalError, ("Cursor.fetchmany",
+                raise Error("Cursor.fetchmany", errorList)
+            raise InternalError("Cursor.fetchmany",
                     (u"unexpected failure",))
 
     def nextset(self):
@@ -554,7 +554,7 @@ class Cursor:
         self.description     = None
         self.rowcount        = -1
         if not self.__rs:
-            raise ProgrammingError, ("Cursor.nextset",
+            raise ProgrammingError("Cursor.nextset",
                     (u"no record sets available",))
 
         try:
@@ -575,8 +575,8 @@ class Cursor:
         except:
             errorList = buildErrorList(self.__conn)
             if errorList:
-                raise Error, ("Cursor.nextset", errorList)
-            raise InternalError, ("Cursor.nextset",
+                raise Error("Cursor.nextset", errorList)
+            raise InternalError("Cursor.nextset",
                                  (u"unexpected failure",))
 
     def setinputsizes(self, sizes):
@@ -621,7 +621,7 @@ class Cursor:
         if nativeType in NUMBER  .nativeTypes: return NUMBER
         if nativeType in DATETIME.nativeTypes: return DATETIME
         if nativeType in ROWID   .nativeTypes: return ROWID
-        raise NotSupportedError, ("Cursor.__nativeTypeToApiType",
+        raise NotSupportedError("Cursor.__nativeTypeToApiType",
                 ((u"unrecognized native type %d" % nativeType),))
 
     def __getFieldDesc(self, field):
@@ -669,8 +669,8 @@ class Connection:
         except:
             errorList = buildErrorList(self.__adoConn)
             if errorList:
-                raise Error, ("Connection.close", errorList)
-            raise InternalError, ("Connection.close",
+                raise Error("Connection.close", errorList)
+            raise InternalError("Connection.close",
                     (u"unexpected failure",))
 
     def commit(self):
@@ -691,8 +691,8 @@ class Connection:
         except:
             errorList = buildErrorList(self.__adoConn)
             if errorList:
-                raise Error, ("Connection.commit", errorList)
-            raise InternalError, ("Connection.commit",
+                raise Error("Connection.commit", errorList)
+            raise InternalError("Connection.commit",
                     (u"unexpected failure",))
 
     def rollback(self):
@@ -712,8 +712,8 @@ class Connection:
         except:
             errorList = buildErrorList(self.__adoConn)
             if errorList:
-                raise Error, ("Connection.rollback", errorList)
-            raise InternalError, ("Connection.rollback",
+                raise Error("Connection.rollback", errorList)
+            raise InternalError("Connection.rollback",
                     (u"unexpected failure",))
 
     def cursor(self):
@@ -755,8 +755,8 @@ class Connection:
         except:
             errorList = buildErrorList(self.__adoConn)
             if errorList:
-                raise Error, ("Connection.setAutoCommit", errorList)
-            raise InternalError, ("Connection.setAutoCommit",
+                raise Error("Connection.setAutoCommit", errorList)
+            raise InternalError("Connection.setAutoCommit",
                     (u"unexpected failure",))
 
         return oldAutoCommit
@@ -806,7 +806,7 @@ def connect(user='cdr', dataSource=CDR_DB_SERVER, db='cdr'):
         debugLog(what="CONNECTION STRING: %s" % repr(connString))
         adoConn.Open(connString)
     except:
-        raise DatabaseError, ("connect", buildErrorList(adoConn))
+        raise DatabaseError("connect", buildErrorList(adoConn))
     return Connection(adoConn)
 
 class Type:
@@ -1467,7 +1467,7 @@ class Query:
 
     @staticmethod
     def report(test_number, query, outcome):
-        print "Test %d...%s" % (test_number, outcome and "passed" or "failed")
+        print("Test %d...%s" % (test_number, outcome and "passed" or "failed"))
         f = open("Query.tests", "a")
         banner = (" Test %d " % test_number).center(70, "=")
         f.write("%s\n" % banner)
