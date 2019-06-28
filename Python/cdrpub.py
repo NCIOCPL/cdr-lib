@@ -15,6 +15,7 @@ import argparse
 import base64
 import datetime
 import glob
+import json
 import os
 import re
 import subprocess
@@ -961,7 +962,7 @@ class Control:
                 values = cls.assemble_values_for_dis(*args)
             if dumpfile:
                 with open(dumpfile, "a") as fp:
-                    fp.write("{!r}\n".format(values))
+                    fp.write("{}\n".format(json.dumps(values)))
             nid = client.push(values)
             pushed.append((doc_id, nid, "en"))
 
@@ -973,7 +974,7 @@ class Control:
             values = cls.assemble_values_for_cis(*args)
             if dumpfile:
                 with open(dumpfile, "a") as fp:
-                    fp.write("{!r}\n".format(values))
+                    fp.write("{}\n".format(json.dumps(values)))
             nid = client.push(values)
             pushed.append((doc_id, nid, "es"))
 
