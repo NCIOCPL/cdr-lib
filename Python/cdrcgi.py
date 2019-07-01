@@ -1420,10 +1420,9 @@ class Report:
             "align": "wrap True, vert top"
         }
         if opts.get("header") or opts.get("banner"):
-            font = ["colour white", "bold True"]
+            font = ["colour black", "bold True"]
             if opts.get("banner"):
                 font.append("height 240")
-            settings["pattern"] = "pattern solid, fore_colour hdrbg"
             settings["font"] = ", ".join(font)
             settings["align"] = "wrap True, vert centre, horiz centre"
         default = ";".join(["%s: %s" % (k, settings[k]) for k in settings])
