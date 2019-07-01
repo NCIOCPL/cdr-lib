@@ -1319,11 +1319,16 @@ class Report:
             if table._html_callback_pre:
                 table._html_callback_pre(table, page)
             page.add('<table class="report">')
-            if table._caption:
+            if table._caption or table._show_report_date:
+                if not table._caption:
+                    lines = []
                 if type(table._caption) in (list, tuple):
                     lines = list(table._caption)
                 else:
                     lines = [table._caption]
+                if table._show_report_date:
+                    today = datetime.date.today()
+                    lines += ["", "Report date: {}".format(today), ""]
                 line = lines.pop(0)
                 caption = B.CAPTION(line)
                 while lines:
@@ -1496,6 +1501,7 @@ class Report:
         sheet = book.add_sheet(name)
         sheet.print_grid = True
         row_number = 0
+        last_col = len(table._columns) - 1
         for col_number, column in enumerate(table._columns):
             width = Report._get_excel_width(column)
             if width:
@@ -1506,10 +1512,18 @@ class Report:
             else:
                 captions = [table._caption]
             for caption in captions:
-                sheet.write_merge(row_number, row_number,
-                                  0, len(table._columns) - 1,
-                                  caption, self._banner_style)
+                sheet.write_merge(row_number, row_number, 0, last_col, caption,
+                                  self._banner_style)
                 row_number += 1
+        if table._show_report_date:
+            sheet.write_merge(row_number, row_number, 0, last_col, "")
+            row_number += 1
+            sheet.write_merge(row_number, row_number, 0, last_col,
+                              "Report date: {}".format(datetime.date.today()),
+                              self._bold_data_style)
+            row_number += 1
+            sheet.write_merge(row_number, row_number, 0, last_col, "")
+            row_number += 1
         for col_number, column in enumerate(table._columns):
             sheet.write(row_number, col_number, column._name,
                         self._header_style)
@@ -1689,6 +1703,9 @@ class Report:
 
                 stripe  - Use odd / even background coloring for rows.
                           Default=True.
+
+                show_report_date
+                        - If true, add "Report date: yyyy-mm-dd" line
             """
             if not columns:
                 raise Exception("no columns specified for table")
@@ -1703,6 +1720,7 @@ class Report:
             self._user_data = options.get("user_data")
             # Note None != False, hence True is default
             self._stripe = options.get("stripe") != False
+            self._show_report_date = options.get("show_report_date")
 
         def options(self):
             """
