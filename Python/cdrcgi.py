@@ -1013,7 +1013,20 @@ class Page:
     def _indent(class_, level, block):
         """
         Add indenting to a block of lines.
-        """
+
+        This turns out not to have been such a good idea. The intention
+        was to make the generated HTML source more readable by a human,
+        giving a visual indication of the nested hierarchy of the elements.
+        However, it introduced undesirable and unanticipated side effects,
+        the most notable of which was that multiline values for textarea
+        form fields was garbled. The original solution for that problem
+        was to have the caller replace the newlines in the value with a
+        unique placeholder, which would prevent the garbling, and this
+        method swaps back in the newlines at the last minute. For right
+        now we're retaining that swap so that older scripts using that
+        technique will still work correctly, but we are no longer doing
+        any indenting behind the curtain.
+
         indent = class_.INDENT * level
         if not "\n" in block:
             result = u"%s%s\n" % (indent, block)
@@ -1021,6 +1034,9 @@ class Page:
             lines = block.splitlines()
             result = u"".join([u"%s%s\n" % (indent, line) for line in lines])
         return result.replace(NEWLINE, "\n").replace(BR, "<br>")
+        """
+
+        return block.replace(NEWLINE, "\n").replace(BR, "<br>") + "\n"
 
     def _add_checkbox_or_radio_button(self, widget, group, label, value,
                                      **kwargs):
