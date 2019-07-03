@@ -184,12 +184,16 @@ class Query:
         queries as a whole.  Make sure only this query has an ORDER set.
         If you need each component query to maintain its own internal order,
         construct and serialize each separately, and assemble them by hand.
-        Be sure you assign aliases to each of the virtual queries.
+        Be sure you assign aliases to each of the virtual tables.
         For example:
 
         q1 = cdrdb.Query(...).join.(...).where(...).order(...).alias(...)
         q2 = cdrdb.Query(...).join.(...).where(...).order(...).alias(...)
         union = cdrdb.Query(q1, "*").union(cdrdb.Query(q2, "*"))
+
+        For a more straightforward use of `union()`, not involving
+        virtual tables, see the seventh unit test near the bottom of this
+        file.
         """
         self._unions.append(query)
         self._str = None
