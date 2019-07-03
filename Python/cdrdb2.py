@@ -222,8 +222,8 @@ class Query:
         construct and serialize each separately, and assemble them by hand.
         For example:
 
-        q1 = cdrdb.Query(...).join.(...).where(...).order(...)
-        q2 = cdrdb.Query(...).join.(...).where(...).order(...)
+        q1 = cdrdb.Query(...).join.(...).where(...).order(...).alias(...)
+        q2 = cdrdb.Query(...).join.(...).where(...).order(...).alias(...)
         union = cdrdb.Query(q1, "*").union(cdrdb.Query(q2, "*"))
         """
         self._unions.append(query)
