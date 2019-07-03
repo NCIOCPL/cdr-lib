@@ -350,20 +350,6 @@ if FULL:
                 "tier": self.TIER
             }
 
-        def __fix_cdr5000(self):
-            path = "{}/{}".format(self.TEST_DIR, "CDR5000.xml")
-            with open(path, "rb") as fp:
-                xml = fp.read().strip()
-            query = db.Query("document", "xml")
-            query.where("id = 5000")
-            row = query.execute().fetchone()
-            if row.xml.strip() != xml:
-                opts = dict(checkout="Y", tier=self.TIER, getObject=True)
-                doc = cdr.getDoc(self.session, 5000, **opts)
-                doc.xml = xml
-                opts = dict(tier=self.TIER, doc=str(doc), check_in="Y")
-                cdr.repDoc(self.session, **opts)
-
         def test_23_add_doc_____(self):
             doc = self.__make_doc("001.xml")
             response = cdr.addDoc(self.session, **self.__get_opts(doc))
@@ -382,10 +368,7 @@ if FULL:
             self.assertEqual(doc.ctrl.get("DocValStatus"), b"M")
 
         def test_24_get_doc_____(self):
-            self.__fix_cdr5000()
             opts = dict(tier=self.TIER, getObject=True)
-            doc = cdr.getDoc(self.session, 5000, **opts)
-            self.assertEqual(doc.type, "Person")
             doc = cdr.getDoc(self.session, self.__class__.doc, **opts)
             self.__class__.doc = doc
             self.assertEqual(doc.type, "xxtest")
@@ -418,14 +401,6 @@ if FULL:
             self.assertTrue(b"small intestine cancer" in result[0])
 
         def test_27_val_doc_____(self):
-            opts = dict(doc_id=5000, locators=True, tier=self.TIER)
-            result = cdr.valDoc(self.session, "Person", **opts).decode("utf-8")
-            expected = (
-                "Element 'ProfessionalSuffix': This element is not expected.",
-                "eref="
-            )
-            for e in expected:
-                self.assertIn(e, result)
             opts = dict(doc=u"<x>\uEBAD<x>", tier=self.TIER)
             result = cdr.valDoc(self.session, "xxtest", **opts).decode("utf-8")
             for expected in ("private use char", "malformed"):
@@ -435,6 +410,7 @@ if FULL:
             for cdr_id in self.__class__.doc_ids:
                 response = cdr.delDoc(self.session, cdr_id, tier=self.TIER)
                 self.assertTrue(response.startswith("CDR"))
+
         def test_29_add_mapping_(self):
             usage = "GlossaryTerm Phrases"
             value = "test bogus mapping {}".format(datetime.datetime.now())
@@ -887,9 +863,13 @@ if FULL:
             with test(Exception, expected.format(cdr.normalize(target))):
                 cdr.check_proposed_link(*args, **opts)
         def test_58_get_links___(self):
-            links = cdr.get_links(self.session, 5000, tier=self.TIER)
-            self.assertTrue(len(links) >= 4)
-            self.assertTrue("Physician-Annual remail" in "".join(links))
+            query = db.Query("query_term", "doc_id").limit(1)
+            query.where("path = '/Term/PreferredName'")
+            query.where("value = 'bevacizumab'")
+            target = query.execute().fetchone().doc_id
+            links = cdr.get_links(self.session, target, tier=self.TIER)
+            self.assertTrue(len(links) >= 2)
+            self.assertTrue("bevacizumab" in "".join(links).lower())
             self.assertTrue(links[0].startswith("Document "))
             self.assertTrue("links to this document" in links[-1])
         def test_59_search_links(self):
@@ -948,7 +928,11 @@ if FULL:
             self.assertFalse((self.PATH, self.RULE) in defs)
             self.assertFalse((self.PATH, None) in defs)
         def test_64_reindex_doc_(self):
-            self.assertIsNone(cdr.reindex(self.session, 5000, tier=self.TIER))
+            query = db.Query("query_term_pub", "doc_id").limit(1)
+            query.where("path LIKE '/Term%'")
+            doc_id = query.execute().fetchone().doc_id
+            result = cdr.reindex(self.session, doc_id, tier=self.TIER)
+            self.assertIsNone(result)
         def test_65_search______(self):
             opts = dict(doctypes=["PublishingSystem"], tier=self.TIER)
             docs = cdr.search("guest", **opts)
