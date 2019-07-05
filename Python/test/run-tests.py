@@ -554,6 +554,7 @@ if FULL:
             self.assertTrue(result)
             title = query.execute(cursor).fetchone().title
             self.assertEqual(title, "Modified title for gimte")
+            cdr.delDoc(self.session, doc_id)
         def test_38_english_map_(self):
             name = u"stage II cutaneous T-cell lymphoma"
             phrase = u"STAGE IIA CUTANEOUS T CELL LYMPHOMA"
