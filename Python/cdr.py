@@ -6052,3 +6052,61 @@ def extract_board_name(doc_title):
     if board_name.startswith("Cancer Complementary"):
         board_name = board_name.replace("Cancer ", "").strip()
     return board_name
+
+def get_image(doc_id, **opts):
+    """
+    Get the bytes for a CDR image, possibly transformed
+
+    Pass:
+      doc_id - required positional argument for CDR document ID
+      width - optional integer restraining maximum width in pixels
+      height - optional integer restraining maximum height in pixels
+      quality - optional positive number (max 100, default 85)
+      sharpen - optional floating point number for enhancing sharpness
+
+    Return:
+      bytearray for image binary
+    """
+
+    # Load the object's bytes
+    session = opts.get("session", Session("guest"))
+    if not isinstance(session, Session):
+        session = Session(session)
+    doc = APIDoc(session, id=doc_id, version=opts.get("version"))
+
+    # If no transformations are requested, we're done.
+    mods = "width", "height", "quality", "sharpen"
+    if not any([opts.get(name) for name in mods]):
+        return doc.blob
+
+    # Get an image object so we can apply the requested modifications.
+    from PIL import Image, ImageEnhance
+    try:
+        from cStringIO import StringIO as BytesIO
+    except:
+        from io import BytesIO
+    image = Image.open(BytesIO(doc.blob))
+
+    # Scale the image if requested.
+    if opts.get("width") or opts.get("height"):
+        width, height = image_width, image_height = image.size
+        max_width, max_height = opts.get("width"), opts.get("height")
+        if width > max_width:
+            ratio = 1.0 * image_height / image_width
+            width = max_width
+            height = int(round(width * ratio))
+        if height > max_height:
+            ration = 1.0 * image_width / image_height
+            height = max_height
+            width = int(round(height * ratio))
+        image = image.resize((width, height), Image.ANTIALIAS)
+
+    # Apply sharpening if requested.
+    if opts.get("sharpen"):
+        tool = ImageEnhance.Sharpness(image)
+        image = tool.enhance(float(opts.get("sharpen")))
+
+    # Get the bytes back out.
+    fp = BytesIO()
+    image.save(fp, "JPEG", quality=int(opts.get("quality", 85)))
+    return fp.getvalue()
