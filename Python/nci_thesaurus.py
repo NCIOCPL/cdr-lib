@@ -860,12 +860,12 @@ class TermDoc:
         if vals.dups:
             what = "OtherName block" + (vals.dups > 1 and "s" or "")
             self.changes.add("%d duplicate %s removed" % (vals.dups, what))
-        nodes = []
+        nodes = {}
         for attr_name in self.OTHER_NAMES:
             for n in getattr(self.concept, attr_name):
                 if n.include:
                     key = Concept.normalize(n.name)
-                    if key not in vals.used:
+                    if key not in nodes: # vals.used:
                         status = "Reviewed"
                         original = vals.original.get(key)
                         if original is None:
@@ -875,12 +875,12 @@ class TermDoc:
                             status = "Unreviewed"
                             change = "replaced %r with %r" % (original, n.name)
                             self.changes.add(change)
-                        nodes.append(n.convert(self.concept.code, status))
+                        nodes[key] = n.convert(self.concept.code, status)
                         vals.used.add(key)
         etree.strip_elements(self.root, "OtherName")
         position = self.find_position(Concept.OtherName.SKIP)
-        for node in reversed(nodes):
-            self.root.insert(position, node)
+        for key in reversed(nodes):
+            self.root.insert(position, nodes[key])
         for key in (set(vals.original) - vals.used):
             self.changes.add("dropped name %r" % vals.original[key])
 
@@ -935,14 +935,15 @@ class TermDoc:
         root = etree.Element("Term", nsmap=self.NSMAP)
         node = etree.SubElement(root, "PreferredName")
         node.text = self.concept.preferred_name
-        done = set()
+        nodes = {}
         for name in self.OTHER_NAMES:
             for other_name in getattr(self.concept, name):
                 if other_name.include:
                     key = Concept.normalize(other_name.name)
-                    if key not in done:
-                        root.append(other_name.convert(self.concept.code))
-                        done.add(key)
+                    if key not in nodes:
+                        nodes[key] = other_name.convert(self.concept.code)
+        for key in sorted(nodes):
+            root.append(nodes[key])
         done = set()
         for definition in self.concept.definitions:
             if definition.source == "NCI":
