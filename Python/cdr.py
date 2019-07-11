@@ -6063,9 +6063,11 @@ def get_image(doc_id, **opts):
       height - optional integer restraining maximum height in pixels
       quality - optional positive number (max 100, default 85)
       sharpen - optional floating point number for enhancing sharpness
+      return_image - if True, return Image object instead of bytes
+      return_stream - if True, return BytesIO object instead of bytes
 
     Return:
-      bytearray for image binary
+      bytes for image binary, unless return_... option specified
     """
 
     # Load the object's bytes
@@ -6075,28 +6077,26 @@ def get_image(doc_id, **opts):
     doc = APIDoc(session, id=doc_id, version=opts.get("version"))
 
     # If no transformations are requested, we're done.
-    mods = "width", "height", "quality", "sharpen"
+    mods = ("width", "height", "quality", "sharpen", "return_image",
+            "return_stream")
     if not any([opts.get(name) for name in mods]):
         return doc.blob
 
     # Get an image object so we can apply the requested modifications.
     from PIL import Image, ImageEnhance
-    try:
-        from cStringIO import StringIO as BytesIO
-    except:
-        from io import BytesIO
+    from io import BytesIO
     image = Image.open(BytesIO(doc.blob))
 
     # Scale the image if requested.
     if opts.get("width") or opts.get("height"):
         width, height = image_width, image_height = image.size
         max_width, max_height = opts.get("width"), opts.get("height")
-        if width > max_width:
+        if max_width is not None and width > max_width:
             ratio = 1.0 * image_height / image_width
             width = max_width
             height = int(round(width * ratio))
-        if height > max_height:
-            ration = 1.0 * image_width / image_height
+        if max_height is not None and height > max_height:
+            ratio = 1.0 * image_width / image_height
             height = max_height
             width = int(round(height * ratio))
         image = image.resize((width, height), Image.ANTIALIAS)
@@ -6106,7 +6106,11 @@ def get_image(doc_id, **opts):
         tool = ImageEnhance.Sharpness(image)
         image = tool.enhance(float(opts.get("sharpen")))
 
-    # Get the bytes back out.
+    # Return what the caller asked for.
+    if opts.get("return_image"):
+        return image
     fp = BytesIO()
     image.save(fp, "JPEG", quality=int(opts.get("quality", 85)))
-    return fp.getvalue()
+    if opts.get("return_stream"):
+        return fp
+    return bytes(fp.getvalue())
