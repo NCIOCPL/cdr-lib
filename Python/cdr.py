@@ -6114,3 +6114,36 @@ def get_image(doc_id, **opts):
     if opts.get("return_stream"):
         return fp
     return bytes(fp.getvalue())
+
+def prepare_pubmed_article_for_import(node):
+    """
+    Transform XML from NLM's PubMed for insertion into a CDR Citation doc
+
+    We used to pretty much accept what NLM gave us, but that broke our
+    software every time they updated their schemas and DTD (which
+    happened a lot), so we now just cherry-pick the pieces we need,
+    which means our own schema can be much more stable.
+
+    Pass:
+      node - parsed XML object for an PubmedArticle block
+
+    Return:
+      transformed PubmedArticle node object
+    """
+
+    for citation in node.findall("MedlineCitation"):
+        namespace = "http://www.w3.org/1998/Math/MathML"
+        mml_math = "{{{}}}math".format(namespace)
+        namespaces = dict(mml=namespace)
+        for child in citation.xpath("//mml:math", namespaces=namespaces):
+            if child.tail is None:
+                child.tail = "[formula]"
+            else:
+                child.tail = "[formula]" + child.tail
+        etree.strip_elements(citation, mml_math, with_tail=False)
+        xslt = APIDoc.load_single_filter(Session("guest"), "Import Citation")
+        citation = etree.fromstring(str(xslt(citation)))
+        article = etree.Element("PubmedArticle")
+        article.append(citation)
+        return article
+    raise Exception("MedlineCitation child not found")
