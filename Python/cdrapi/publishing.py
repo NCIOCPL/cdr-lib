@@ -1108,6 +1108,8 @@ class DrupalClient:
             else:
                 nid = self.lookup(values["cdr_id"])
             values["nid"] = nid
+        if "nid" not in values:
+            values["nid"] = None
 
 
     class CatalogEntry:
