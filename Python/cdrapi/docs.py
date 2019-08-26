@@ -2422,7 +2422,7 @@ class Doc(object):
 
         # Record the inbound links as errors.
         for doc_id, frag_id in rows:
-            doc = Doc(id=doc_id)
+            doc = Doc(self.session, id=doc_id)
             args = doc.cdr_id, doc.title
             message = "Document {} ({}) links to this document".format(*args)
             if frag_id:
@@ -2434,9 +2434,11 @@ class Doc(object):
             return False
 
         # Delete the links and tell the caller to proceed with the 'deletion'.
-        delete = "DELETE FROM {} WHERE source_doc = ?"
-        for table in ("link_net", "link_fragment"):
-            sql = delete.format(table)
+        delete_sql = (
+            "DELETE FROM link_fragment WHERE doc_id = ?",
+            "DELETE FROM link_net WHERE target_doc = ?"
+        )
+        for sql in delete_sql:
             self.cursor.execute(sql, (self.id,))
         return True
 
@@ -4498,7 +4500,7 @@ class Resolver(etree.Resolver):
 
         result = etree.Element("ValidZip")
         query = Query("zipcode", "zip")
-        query.where(query.Condition("zip", args))
+        query.where(query.Condition("zip", args[:5]))
         row = query.execute(self.cursor).fetchone()
         if row and row.zip:
             result.text = str(row.zip)[:5]

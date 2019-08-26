@@ -18,6 +18,7 @@
 # JIRA::OCECDR-4216 and JIRA::OCECDR-4219 - URL check mods
 # Extensive reorganization and cleanup January 2017
 # JIRA::OCECDR-4284 - Fix Glossary Term and Variant Search report
+# JIRA::OCECDR-4547 - Add section title for summaries
 #----------------------------------------------------------------------
 
 # Standard library modules
@@ -777,6 +778,8 @@ class BrokenExternalLinks(URLChecker):
 
         URLChecker.__init__(self, job, self.NAME, self.TITLE, self.BANNER)
         self.show_redirects = job.getParm("show_redirects") == "True"
+        if self.doc_type == "Summary":
+            BrokenExternalLinks.COLUMN_HEADERS += ("Section Title",)
 
     def fill_body(self, body):
         """
@@ -827,7 +830,7 @@ class BrokenExternalLinks(URLChecker):
         For any other document type, no other special filtering is needed.
         """
 
-        fields = "u.doc_id", "d.title", "u.value", "u.path"
+        fields = "u.doc_id", "d.title", "u.value", "u.path", "u.node_loc"
         query = cdrdb.Query("query_term u", *fields).unique()
         query.where("u.value LIKE 'http%'")
         query.join("document d", "d.id = u.doc_id")
@@ -901,7 +904,7 @@ class BrokenExternalLinks(URLChecker):
         External links found in the CDR documents.
         """
 
-        def __init__(self, report, doc_id, title, url, path):
+        def __init__(self, report, doc_id, title, url, path, node_loc):
             """
             Store the values for a row in the result set from the
             database query.
@@ -912,6 +915,36 @@ class BrokenExternalLinks(URLChecker):
             self.title = title
             self.url = url
             self.path = path
+            self.node_loc = node_loc
+
+        @property
+        def section_title(self):
+            """
+            Title of innermost enclosing summary section where link is found
+
+            None if this is not a link in a Cancer Information Summary.
+            An empty string if it is a CIS, but no section title is found
+            (very unlikely).
+            """
+
+            if not hasattr(self, "_section_title"):
+                self._section_title = None
+                if self.path.startswith("/Summary/"):
+                    self._section_title = u""
+                    top_loc = self.node_loc[:4]
+                    query = cdrdb.Query("query_term", "value", "node_loc")
+                    query.where(query.Condition("LEFT(node_loc, 4)", top_loc))
+                    query.where("path LIKE '/Summary/%SummarySection/Title'")
+                    query.where(query.Condition("doc_id", self.doc_id))
+                    rows = query.execute(self.report.cursor).fetchall()
+                    loc_len = 0
+                    for title, node_loc in rows:
+                        section_loc = node_loc[:-4]
+                        if self.node_loc.startswith(section_loc):
+                            if loc_len < len(section_loc):
+                                self._section_title = title
+                                loc_len = len(section_loc)
+            return self._section_title
 
         def in_scope(self, page):
             """
@@ -930,13 +963,16 @@ class BrokenExternalLinks(URLChecker):
             link = B.A(page.url, href=page.url, target="_blank")
             url = "/cgi-bin/cdr/QcReport.py?DocId={:d}".format(self.doc_id)
             qclink = B.A(str(self.doc_id), href=url, target="_blank")
-            return B.TR(
+            row = B.TR(
                 B.TD(qclink, B.CLASS("center")),
                 B.TD(self.title, B.CLASS("left")),
                 B.TD(link, B.CLASS("left")),
                 B.TD(page.problem, B.CLASS("left")),
                 B.TD(element, B.CLASS("left"))
             )
+            if self.section_title is not None:
+                row.append(B.TD(self.section_title, B.CLASS("left")))
+            return row
 
 class PageTitleMismatches(URLChecker):
     """

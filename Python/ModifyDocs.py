@@ -705,7 +705,7 @@ Run completed.
             stamp = str(datetime.now())
             for c in "-: ":
                 stamp = stamp.replace(c, "")
-            stamp += "-" + str(random.random())
+            stamp += "-" + str(random())
             args = cdr.DEFAULT_LOGDIR, stamp
             path = "{}/ModifyDocsFailure-{}.py".format(*args)
             log = "ModifyDocsTest-{}.out".format(stamp)

@@ -918,6 +918,7 @@ class DrupalClient:
         # Send the values to the CMS and check for success.
         # TODO: Get Acquia to fix their broken certificates.
         opts = dict(json=values, auth=self.auth, verify=False)
+        self.logger.debug("auth=%s", self.auth)
         tries = self.MAX_RETRIES
         while tries > 0:
             response = requests.post(url, **opts)
@@ -1107,6 +1108,8 @@ class DrupalClient:
             else:
                 nid = self.lookup(values["cdr_id"])
             values["nid"] = nid
+        if "nid" not in values:
+            values["nid"] = None
 
 
     class CatalogEntry:

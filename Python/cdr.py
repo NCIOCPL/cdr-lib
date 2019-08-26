@@ -6052,3 +6052,98 @@ def extract_board_name(doc_title):
     if board_name.startswith("Cancer Complementary"):
         board_name = board_name.replace("Cancer ", "").strip()
     return board_name
+
+def get_image(doc_id, **opts):
+    """
+    Get the bytes for a CDR image, possibly transformed
+
+    Pass:
+      doc_id - required positional argument for CDR document ID
+      width - optional integer restraining maximum width in pixels
+      height - optional integer restraining maximum height in pixels
+      quality - optional positive number (max 100, default 85)
+      sharpen - optional floating point number for enhancing sharpness
+      return_image - if True, return Image object instead of bytes
+      return_stream - if True, return BytesIO object instead of bytes
+
+    Return:
+      bytes for image binary, unless return_... option specified
+    """
+
+    # Load the object's bytes
+    session = opts.get("session", Session("guest"))
+    if not isinstance(session, Session):
+        session = Session(session)
+    doc = APIDoc(session, id=doc_id, version=opts.get("version"))
+
+    # If no transformations are requested, we're done.
+    mods = ("width", "height", "quality", "sharpen", "return_image",
+            "return_stream")
+    if not any([opts.get(name) for name in mods]):
+        return doc.blob
+
+    # Get an image object so we can apply the requested modifications.
+    from PIL import Image, ImageEnhance
+    from io import BytesIO
+    image = Image.open(BytesIO(doc.blob))
+
+    # Scale the image if requested.
+    if opts.get("width") or opts.get("height"):
+        width, height = image_width, image_height = image.size
+        max_width, max_height = opts.get("width"), opts.get("height")
+        if max_width is not None and width > max_width:
+            ratio = 1.0 * image_height / image_width
+            width = max_width
+            height = int(round(width * ratio))
+        if max_height is not None and height > max_height:
+            ratio = 1.0 * image_width / image_height
+            height = max_height
+            width = int(round(height * ratio))
+        image = image.resize((width, height), Image.ANTIALIAS)
+
+    # Apply sharpening if requested.
+    if opts.get("sharpen"):
+        tool = ImageEnhance.Sharpness(image)
+        image = tool.enhance(float(opts.get("sharpen")))
+
+    # Return what the caller asked for.
+    if opts.get("return_image"):
+        return image
+    fp = BytesIO()
+    image.save(fp, "JPEG", quality=int(opts.get("quality", 85)))
+    if opts.get("return_stream"):
+        return fp
+    return bytes(fp.getvalue())
+
+def prepare_pubmed_article_for_import(node):
+    """
+    Transform XML from NLM's PubMed for insertion into a CDR Citation doc
+
+    We used to pretty much accept what NLM gave us, but that broke our
+    software every time they updated their schemas and DTD (which
+    happened a lot), so we now just cherry-pick the pieces we need,
+    which means our own schema can be much more stable.
+
+    Pass:
+      node - parsed XML object for an PubmedArticle block
+
+    Return:
+      transformed PubmedArticle node object
+    """
+
+    for citation in node.findall("MedlineCitation"):
+        namespace = "http://www.w3.org/1998/Math/MathML"
+        mml_math = "{{{}}}math".format(namespace)
+        namespaces = dict(mml=namespace)
+        for child in citation.xpath("//mml:math", namespaces=namespaces):
+            if child.tail is None:
+                child.tail = "[formula]"
+            else:
+                child.tail = "[formula]" + child.tail
+        etree.strip_elements(citation, mml_math, with_tail=False)
+        xslt = APIDoc.load_single_filter(Session("guest"), "Import Citation")
+        citation = etree.fromstring(str(xslt(citation)))
+        article = etree.Element("PubmedArticle")
+        article.append(citation)
+        return article
+    raise Exception("MedlineCitation child not found")

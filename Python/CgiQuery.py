@@ -4,6 +4,7 @@
 # BZIssue::4710
 #----------------------------------------------------------------------
 import cgi, sys, time, cdrdb, cdrcgi
+import re
 
 class CgiQuery:
 
@@ -201,8 +202,14 @@ Cache-control: no-cache, must-revalidate
             footer = u"%d row(s) retrieved (%.3f seconds)" % (row - 1, secs)
             sheet.write_merge(row, row, 0, len(cursor.description) - 1, footer)
             now = time.strftime("%Y%m%d%H%M%S")
+            if self.queryName:
+                name = self.queryName.lower().replace(" ", "_")
+                name = re.sub("[^0-9a-z_-]*", "", name)
+            else:
+                name = "ad-hoc-query"
+            name = "{}-{}.xls".format(name, now)
             print "Content-type: application/vnd.ms-excel"
-            print "Content-Disposition: attachment; filename=sdlm-%s.xls" % now
+            print "Content-Disposition: attachment; filename={}".format(name)
             print
             styles.book.save(sys.stdout)
         except cdrdb.Error, info:

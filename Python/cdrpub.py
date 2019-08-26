@@ -15,6 +15,7 @@ import argparse
 import base64
 import datetime
 import glob
+import json
 import os
 import re
 import subprocess
@@ -914,6 +915,7 @@ class Control:
           table - where to get the exported XML (default is pub_proc_cg)
           logger - overide session.logger for recording activity
           base - front portion of PDQ API URL
+          auth - optional credentials for Drupal client (name, pw tuple)
           dumpfile - optional path for file in which to store docs
 
         Raise:
@@ -922,7 +924,10 @@ class Control:
 
         # Record what we're about to do.
         dumpfile = opts.get("dumpfile")
-        client_opts = dict(logger=opts.get("logger"), base=opts.get("base"))
+        logger = opts.get("logger")
+        base = opts.get("base")
+        auth = opts.get("auth")
+        client_opts = dict(logger=logger, base=base, auth=auth)
         client = DrupalClient(session, **client_opts)
         send = opts.get("send") or dict()
         remove = opts.get("remove") or dict()
@@ -961,7 +966,7 @@ class Control:
                 values = cls.assemble_values_for_dis(*args)
             if dumpfile:
                 with open(dumpfile, "a") as fp:
-                    fp.write("{!r}\n".format(values))
+                    fp.write("{}\n".format(json.dumps(values)))
             nid = client.push(values)
             pushed.append((doc_id, nid, "en"))
 
@@ -973,7 +978,7 @@ class Control:
             values = cls.assemble_values_for_cis(*args)
             if dumpfile:
                 with open(dumpfile, "a") as fp:
-                    fp.write("{!r}\n".format(values))
+                    fp.write("{}\n".format(json.dumps(values)))
             nid = client.push(values)
             pushed.append((doc_id, nid, "es"))
 

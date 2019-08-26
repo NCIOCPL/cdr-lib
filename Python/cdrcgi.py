@@ -92,6 +92,7 @@ FILTER   = "Filter"
 FORMBG   = '/images/back.jpg'
 BASE     = '/cgi-bin/cdr'
 MAINMENU = 'Admin Menu'
+DEVTOP   = 'Developer Menu'
 WEBSERVER= _getWebServerName()
 SPLTNAME = WEBSERVER.lower().split(".")
 THISHOST = SPLTNAME[0]
@@ -1012,7 +1013,20 @@ class Page:
     def _indent(class_, level, block):
         """
         Add indenting to a block of lines.
-        """
+
+        This turns out not to have been such a good idea. The intention
+        was to make the generated HTML source more readable by a human,
+        giving a visual indication of the nested hierarchy of the elements.
+        However, it introduced undesirable and unanticipated side effects,
+        the most notable of which was that multiline values for textarea
+        form fields was garbled. The original solution for that problem
+        was to have the caller replace the newlines in the value with a
+        unique placeholder, which would prevent the garbling, and this
+        method swaps back in the newlines at the last minute. For right
+        now we're retaining that swap so that older scripts using that
+        technique will still work correctly, but we are no longer doing
+        any indenting behind the curtain.
+
         indent = class_.INDENT * level
         if not "\n" in block:
             result = u"%s%s\n" % (indent, block)
@@ -1020,6 +1034,9 @@ class Page:
             lines = block.splitlines()
             result = u"".join([u"%s%s\n" % (indent, line) for line in lines])
         return result.replace(NEWLINE, "\n").replace(BR, "<br>")
+        """
+
+        return block.replace(NEWLINE, "\n").replace(BR, "<br>") + "\n"
 
     def _add_checkbox_or_radio_button(self, widget, group, label, value,
                                      **kwargs):
@@ -1302,11 +1319,16 @@ class Report:
             if table._html_callback_pre:
                 table._html_callback_pre(table, page)
             page.add('<table class="report">')
-            if table._caption:
+            if table._caption or table._show_report_date:
+                if not table._caption:
+                    lines = []
                 if type(table._caption) in (list, tuple):
                     lines = list(table._caption)
                 else:
                     lines = [table._caption]
+                if table._show_report_date:
+                    today = datetime.date.today()
+                    lines += ["", "Report date: {}".format(today), ""]
                 line = lines.pop(0)
                 caption = B.CAPTION(line)
                 while lines:
@@ -1419,10 +1441,9 @@ class Report:
             "align": "wrap True, vert top"
         }
         if opts.get("header") or opts.get("banner"):
-            font = ["colour white", "bold True"]
+            font = ["colour black", "bold True"]
             if opts.get("banner"):
                 font.append("height 240")
-            settings["pattern"] = "pattern solid, fore_colour hdrbg"
             settings["font"] = ", ".join(font)
             settings["align"] = "wrap True, vert centre, horiz centre"
         default = ";".join(["%s: %s" % (k, settings[k]) for k in settings])
@@ -1480,6 +1501,7 @@ class Report:
         sheet = book.add_sheet(name)
         sheet.print_grid = True
         row_number = 0
+        last_col = len(table._columns) - 1
         for col_number, column in enumerate(table._columns):
             width = Report._get_excel_width(column)
             if width:
@@ -1490,10 +1512,18 @@ class Report:
             else:
                 captions = [table._caption]
             for caption in captions:
-                sheet.write_merge(row_number, row_number,
-                                  0, len(table._columns) - 1,
-                                  caption, self._banner_style)
+                sheet.write_merge(row_number, row_number, 0, last_col, caption,
+                                  self._banner_style)
                 row_number += 1
+        if table._show_report_date:
+            sheet.write_merge(row_number, row_number, 0, last_col, "")
+            row_number += 1
+            sheet.write_merge(row_number, row_number, 0, last_col,
+                              "Report date: {}".format(datetime.date.today()),
+                              self._bold_data_style)
+            row_number += 1
+            sheet.write_merge(row_number, row_number, 0, last_col, "")
+            row_number += 1
         for col_number, column in enumerate(table._columns):
             sheet.write(row_number, col_number, column._name,
                         self._header_style)
@@ -1673,6 +1703,9 @@ class Report:
 
                 stripe  - Use odd / even background coloring for rows.
                           Default=True.
+
+                show_report_date
+                        - If true, add "Report date: yyyy-mm-dd" line
             """
             if not columns:
                 raise Exception("no columns specified for table")
@@ -1687,6 +1720,7 @@ class Report:
             self._user_data = options.get("user_data")
             # Note None != False, hence True is default
             self._stripe = options.get("stripe") != False
+            self._show_report_date = options.get("show_report_date")
 
         def options(self):
             """
@@ -1838,6 +1872,7 @@ class Control:
     PAGE_TITLE = "CDR Administration"
     REPORTS_MENU = SUBMENU = "Reports Menu"
     ADMINMENU = MAINMENU
+    DEVMENU  = DEVTOP
     SUBMIT = "Submit"
     LOG_OUT = "Log Out"
     FORMATS = ("html", "excel")
@@ -1879,6 +1914,8 @@ class Control:
                 navigateTo("Admin.py", self.session)
             elif self.request == self.REPORTS_MENU:
                 navigateTo("Reports.py", self.session)
+            elif self.request == self.DEVMENU:
+                navigateTo("DevSA.py", self.session)
             elif self.request == self.LOG_OUT:
                 logout(self.session)
             elif self.request == self.SUBMIT:

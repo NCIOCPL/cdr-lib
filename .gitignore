@@ -1,3 +1,4 @@
 *~
 *.pyc
 Python/cdrapi/__pycache__
+.DS_Store

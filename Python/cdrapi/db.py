@@ -184,11 +184,16 @@ class Query:
         queries as a whole.  Make sure only this query has an ORDER set.
         If you need each component query to maintain its own internal order,
         construct and serialize each separately, and assemble them by hand.
+        Be sure you assign aliases to each of the virtual tables.
         For example:
 
-        q1 = cdrdb.Query(...).join.(...).where(...).order(...)
-        q2 = cdrdb.Query(...).join.(...).where(...).order(...)
+        q1 = cdrdb.Query(...).join.(...).where(...).order(...).alias(...)
+        q2 = cdrdb.Query(...).join.(...).where(...).order(...).alias(...)
         union = cdrdb.Query(q1, "*").union(cdrdb.Query(q2, "*"))
+
+        For a more straightforward use of `union()`, not involving
+        virtual tables, see the seventh unit test near the bottom of this
+        file.
         """
         self._unions.append(query)
         self._str = None
@@ -735,7 +740,12 @@ class QueryTests(unittest.TestCase):
         q.where(self.C("i", self.Q("#t2", "i").unique(), "NOT IN"))
         r = self.D(q.execute(c).fetchall(), c)
         self.assertTrue(r == [{"n": "Elmer"}])
-
+    def test_11_union_with_virtual_queries(self):
+        q1 = self.Q("#t2", "n").limit(1).alias("q1").order("n")
+        q2 = self.Q("#t2", "n").limit(1).alias("q2").order("n DESC")
+        u = self.Q(q1, "*").union(self.Q(q2, "*"))
+        r = [r[0] for r in u.execute(self.c).fetchall()]
+        self.assertTrue(r == ["aviation", "volleyball"])
 
 if __name__ == "__main__":
     unittest.main()
