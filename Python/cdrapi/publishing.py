@@ -17,12 +17,6 @@ from cdrapi.docs import Doc
 from urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
-try:
-    basestring
-except:
-    basestring = str, bytes
-    unicode = str
-
 
 class Job:
     """
@@ -476,7 +470,7 @@ class Job:
         for i, name in enumerate(self.parms):
             self.session.logger.info("parms[%r] = %r", name, self.parms[name])
             try:
-                value = unicode(self.parms[name])
+                value = str(self.parms[name])
                 self.session.logger.debug("unicode value is %r", value)
             except:
                 value = self.parms[name].decode("utf-8")

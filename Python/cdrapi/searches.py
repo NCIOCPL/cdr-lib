@@ -5,15 +5,6 @@ Search support in the CDR
 from cdrapi.db import Query
 from cdrapi.docs import Doc
 
-# ----------------------------------------------------------------------
-# Try to make the module compatible with Python 2 and 3.
-# ----------------------------------------------------------------------
-try:
-    basestring
-except:
-    basestring = str, bytes
-    unicode = str
-
 
 class Search:
     """
@@ -145,7 +136,9 @@ class Search:
                 tests = [tests]
             self._tests = []
             for test in tests:
-                if isinstance(test, basestring):
+                if isinstance(test, bytes):
+                    test = test.decode("utf-8")
+                if isinstance(test, str):
                     test = Search.Test(test)
                 if not isinstance(test, Search.Test):
                     message = "Search test must be string or Test object"
@@ -187,11 +180,11 @@ class Search:
             # If the `Test` object specifies a column use the `query_term`
             # table.
             if test.column:
-                alias = "qt{:d}".format(n)
+                alias = f"qt{n:d}"
                 n += 1
                 query.join("query_term " + alias, alias + ".doc_id = d.id")
                 query.where(query.Condition(alias + ".path", test.path))
-                column = u"{}.{}".format(alias, test.column)
+                column = f"{alias}.{test.column}"
 
             # Otherwise, the test is looking for matching title strings.
             else:
@@ -230,8 +223,7 @@ class Search:
         """
 
         # All the heavy lifting is done in the `query` property.
-        args = self.__tests, self.__opts
-        self.session.log("Search.run({!r}, {!r})".format(*args))
+        self.session.log(f"Search.run({self.__tests!r}, {self.__opts!r})")
         rows = self.query.execute(self.cursor).fetchall()
         return [Doc(self.session, id=row.id) for row in rows]
 
@@ -268,30 +260,27 @@ class Search:
             try:
                 path, operator, value = assertion.split(None, 2)
             except:
-                message = "invalid test assertion {!r}".format(assertion)
-                raise ValueError(message)
+                raise ValueError(f"invalid test assertion {assertion!r}")
             assert path and value, "query test must have path and value"
             if path.startswith("/"):
                 self.path, self.column = path.rsplit("/", 1)
                 if self.column not in ("value", "int_val"):
-                    message = "invalid table column {!r}".format(self.path)
-                    raise ValueError(message)
+                    raise ValueError(f"invalid table column {self.path!r}")
             elif path == "CdrCtl/Title":
                 self.path, self.column = path, None
             else:
-                raise ValueError("unsupported path {!r}".format(path))
+                raise ValueError(f"unsupported path {path!r}")
             if operator == "contains":
-                self.value = u"%{}%".format(value)
+                self.value = f"%{value}%"
                 self.operator = "LIKE"
             elif operator == "begins":
-                self.value = u"{}%".format(value)
+                self.value = f"{value}%"
                 self.operator = "LIKE"
             else:
                 self.value = value
                 self.operator = self.OPS.get(operator)
                 if not self.operator:
-                    message = u"unsupported operator {!r}".format(operator)
-                    raise ValueError(message)
+                    raise ValueError(f"unsupported operator {operator!r}")
 
 
 class QueryTermDef:
@@ -358,8 +347,7 @@ class QueryTermDef:
                 query.where(query.Condition("name", self.rule))
                 row = query.execute(self.session.cursor).fetchone()
                 if not row:
-                    message = u"Unknown query term rule: {}".format(self.rule)
-                    raise Exception(message)
+                    raise Exception(f"Unknown query term rule: {self.rule}")
                 self._rule_id = row.id
         return self._rule_id
 
@@ -372,8 +360,7 @@ class QueryTermDef:
           client XML wrapper command CdrAddQueryTermDef
         """
 
-        args = self.path, self.rule
-        self.session.log("QueryTermDef.add({!r}, {!r})".format(*args))
+        self.session.log(f"QueryTermDef.add({self.path!r}, {self.rule!r})")
         if not self.session.can_do("ADD QUERY TERM DEF"):
             message = "User not authorized to add query term definitions"
             raise Exception(message)
@@ -385,7 +372,7 @@ class QueryTermDef:
             raise Exception("Duplicate query term definition")
         names = "path, term_rule"
         values = self.path, self.rule_id
-        insert = "INSERT INTO query_term_def ({}) VALUES (?, ?)".format(names)
+        insert = f"INSERT INTO query_term_def ({names}) VALUES (?, ?)"
         self.session.cursor.execute(insert, values)
         self.session.conn.commit()
 
@@ -398,7 +385,7 @@ class QueryTermDef:
           client XML wrapper command CdrDelQueryTermDef
         """
 
-        self.session.log("QueryTermDef.delete{!r})".format(self.path))
+        self.session.log(f"QueryTermDef.delete({self.path!r})")
         if not self.session.can_do("DELETE QUERY TERM DEF"):
             message = "User not authorized to delete query term definitions"
             raise Exception(message)

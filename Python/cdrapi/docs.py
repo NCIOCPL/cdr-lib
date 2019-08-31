@@ -9,30 +9,11 @@ import re
 import sys
 import threading
 import time
+from urllib.parse import quote as url_quote
+from urllib.parse import unquote as url_unquote
 import dateutil.parser
 from lxml import etree
 from cdrapi.db import Query
-
-
-# ----------------------------------------------------------------------
-# Try to make the module compatible with both Python 2 and 3.
-# ----------------------------------------------------------------------
-from six import itervalues
-try:
-    basestring
-    base64encode = base64.encodestring
-    base64decode = base64.decodestring
-except:
-    base64encode = base64.encodebytes
-    base64decode = base64.decodebytes
-    basestring = str, bytes
-    unicode = str
-try:
-    from urllib.parse import quote as url_quote
-    from urllib.parse import unquote as url_unquote
-except ImportError:
-    from urllib import quote as url_quote
-    from urllib import unquote as url_unquote
 
 
 class Doc(object):
@@ -117,7 +98,7 @@ class Doc(object):
     MAX_LOCATION_LENGTH = INDEX_POSITION_WIDTH * MAX_INDEX_ELEMENT_DEPTH
 
     # Patterns for generating the values for columns in the query term tables
-    HEX_INDEX = "{{:0{}X}}".format(INDEX_POSITION_WIDTH)
+    HEX_INDEX = f"{{:0{INDEX_POSITION_WIDTH}X}}"
     INTEGERS = re.compile(r"\d+")
 
     # Codes indicating which markup revision should be applied
@@ -252,7 +233,7 @@ class Doc(object):
         Canonical string form for the CDR document ID (CDR9999999999)
         """
 
-        return "CDR{:010d}".format(self.id) if self.id else None
+        return f"CDR{self.id:010d}" if self.id else None
 
     @property
     def comment(self):
@@ -328,7 +309,7 @@ class Doc(object):
         else:
             try:
                 result = self.filter("name:Fast Denormalization Filter")
-                self._denormalized_xml = unicode(result.result_tree)
+                self._denormalized_xml = str(result.result_tree)
             except:
                 self._denormalized_xml = self.xml
         return self._denormalized_xml
@@ -421,13 +402,13 @@ class Doc(object):
                 doc_id = self.cdr_id
             else:
                 suffix = "xml"
-                doc_id = "CDR{:d}".format(self.id)
+                doc_id = f"CDR{self.id:d}"
             if suffix is None:
                 raise Exception("Encoding missing or unsupported")
             suffix = suffix.lower()
             if suffix == "jpeg":
                 suffix = "jpg"
-            self._export_filename = "{}.{}".format(doc_id, suffix)
+            self._export_filename = f"{doc_id}.{suffix}"
         return self._export_filename
 
     @property
@@ -693,7 +674,7 @@ class Doc(object):
         query.where(query.Condition("num", self.version))
         row = query.execute(self.cursor).fetchone()
         if not row:
-            message = "Information for version {} missing".format(self.version)
+            message = f"Information for version {self.version} missing"
             raise Exception(message)
         return row.publishable == "Y"
 
@@ -822,7 +803,7 @@ class Doc(object):
                 try:
                     version = version.lower()
                 except:
-                    raise Exception("invalid version {!r}".format(version))
+                    raise Exception(f"invalid version {version!r}")
 
                 # Current is an alias for non-versioned copy.
                 if version in ("current", "none"):
@@ -851,7 +832,7 @@ class Doc(object):
 
                 # We've run out of valid options.
                 else:
-                    error = "invalid version spec {}".format(version)
+                    error = f"invalid version spec {version}"
                     self.session.logger.exception(error)
                     raise Exception(error)
 
@@ -868,7 +849,7 @@ class Doc(object):
             return self._xml
         self._xml = self.__opts.get("xml")
         if self._xml:
-            if not isinstance(self._xml, unicode):
+            if not isinstance(self._xml, str):
                 self._xml = self._xml.decode("utf-8")
         elif self.id:
             if self.version:
@@ -895,7 +876,7 @@ class Doc(object):
         """
 
         self._xml = value
-        if self._xml and not isinstance(self._xml, unicode):
+        if self._xml and not isinstance(self._xml, str):
             self._xml = self._xml.decode("utf-8")
         self._root = self._denormalized_xml = self._resolved = None
 
@@ -933,7 +914,7 @@ class Doc(object):
         """
 
         # Make sure we have the required arguments.
-        self.session.log("add_external_usage({!r}, {!r})".format(usage, value))
+        self.session.log(f"add_external_usage({usage!r}, {value!r})")
         if not usage:
             raise Exception("Missing usage name")
         if not value:
@@ -951,18 +932,18 @@ class Doc(object):
         query.where(query.Condition("u.name", usage))
         row = query.execute(self.cursor).fetchone()
         if not row:
-            raise Exception("Unknown usage {!r}".format(usage))
+            raise Exception(f"Unknown usage {usage!r}")
         usage_id, action = row
 
         # Make sure the user is allowed to add a row for this usage.
         if not self.session.can_do(action):
-            message = "User not allowed to add {} mappings".format(usage)
+            message = f"User not allowed to add {usage} mappings"
             raise Exception(message)
 
         # Add the new mapping row.
         fields = dict(
             usage=usage_id,
-            value=unicode(value),
+            value=str(value),
             doc_id=self.id,
             usr=self.session.user_id,
             last_mod=datetime.datetime.now().replace(microsecond=0),
@@ -1021,8 +1002,11 @@ class Doc(object):
         """
 
         for name in parms:
-            if isinstance(parms[name], basestring):
-                parms[name] = etree.XSLT.strparam(parms[name])
+            value = parms[name]
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            if isinstance(value, str):
+                parms[name] = etree.XSLT.strparam(value)
         Resolver.local.docs.append(self)
         try:
             return transform(self.root)
@@ -1046,7 +1030,7 @@ class Doc(object):
           publishable - if True, mark version publishable if we create one
         """
 
-        self.session.log("Doc.check_in({!r}, {!r})".format(self.cdr_id, opts))
+        self.session.log(f"Doc.check_in({self.cdr_id!r}, {opts!r})")
         self.__check_in(audit=True, **opts)
         try:
             self.session.conn.commit()
@@ -1069,7 +1053,7 @@ class Doc(object):
           comment - optional string for the `checkout.comment` column
         """
 
-        self.session.log("Doc.check_out({!r}, {!r})".format(self.cdr_id, opts))
+        self.session.log(f"Doc.check_out({self.cdr_id!r}, {opts!r})")
         self.__check_out(**opts)
         self.session.conn.commit()
 
@@ -1093,7 +1077,7 @@ class Doc(object):
         """
 
         # Make sure the audit trail records don't step on each other.
-        self.session.log("Doc.delete({!r}, {!r})".format(self.cdr_id, opts))
+        self.session.log(f"Doc.delete({self.cdr_id!r}, {opts!r})")
         self.__audit_trail_delay()
 
         # Start with a clean slate.
@@ -1109,7 +1093,7 @@ class Doc(object):
         query.where(query.Condition("id", self.id))
         row = query.execute(self.cursor).fetchone()
         if row:
-            message = "Cannot delete published doc {}".format(self.cdr_id)
+            message = f"Cannot delete published doc {self.cdr_id}"
             raise Exception(message)
 
         # Make sure it's not in the external mapping table.
@@ -1137,7 +1121,7 @@ class Doc(object):
                 # We got the green light to proceed with the deletion.
                 update = "UPDATE document SET active_status = 'D' WHERE id = ?"
                 for table in "query_term", "query_term_pub":
-                    delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
+                    delete = f"DELETE FROM {table} WHERE doc_id = ?"
                     self.cursor.execute(delete, (self.id,))
                 self.cursor.execute(update, (self.id,))
                 self.__audit_action("Doc.delete", "DELETE DOCUMENT", reason)
@@ -1185,8 +1169,7 @@ class Doc(object):
           by the XSL/T engine
         """
 
-        args = self.id, filters, opts
-        self.session.log("Doc.filter({!r}, {!r}, {!r})".format(*args))
+        self.session.log(f"Doc.filter({self.id!r}, {filters!r}, {opts!r})")
         for spec in filters:
             if not spec:
                 raise Exception("missing filter spec")
@@ -1284,8 +1267,7 @@ class Doc(object):
                 def __init__(self, parent, child):
                     self.parent, self.child = parent, child
         tree = Tree()
-        args = self.id, depth
-        self.session.log("Doc.get_tree({!r}, depth={!r})".format(*args))
+        self.session.log(f"Doc.get_tree({self.id!r}, depth={depth!r})")
         self.cursor.execute("{CALL cdr_get_term_tree (?,?)}", (self.id, depth))
         for child, parent in self.cursor.fetchall():
             tree.relationships.append(Tree.Relationship(parent, child))
@@ -1307,17 +1289,17 @@ class Doc(object):
           label - string for this label's name
         """
 
-        self.session.log("Doc.label({!r}, {!r})".format(self.id, label))
+        self.session.log(f"Doc.label({self.id!r}, {label!r})")
         assert self.version, "Missing version for label"
         query = Query("version_label", "id")
         query.where(query.Condition("name", label))
         row = query.execute(self.cursor).fetchone()
         if not row:
-            raise Exception("Unable to find label {!r}".format(label))
+            raise Exception(f"Unable to find label {label!r}")
         names = "label, document, num"
         values = row.id, self.id, self.version
-        insert = "INSERT INTO doc_version_label ({}) VALUES (?, ?, ?)"
-        self.cursor.execute(insert.format(names), values)
+        insert = f"INSERT INTO doc_version_label ({names}) VALUES (?, ?, ?)"
+        self.cursor.execute(insert, values)
         self.session.conn.commit()
 
     def legacy_doc(self, **opts):
@@ -1353,7 +1335,7 @@ class Doc(object):
             etree.SubElement(cdr_doc, "CdrDocXml").text = xml
         if opts.get("get_blob") and self.has_blob:
             blob = etree.SubElement(cdr_doc, "CdrDocBlob", encoding="base64")
-            blob.text = base64encode(self.blob).decode("ascii")
+            blob.text = base64.encodebytes(self.blob).decode("ascii")
         return cdr_doc
 
     def legacy_doc_control(self, **opts):
@@ -1404,7 +1386,7 @@ class Doc(object):
             if value:
                 child = etree.SubElement(doc_control, tag)
                 try:
-                    child.text = unicode(value)
+                    child.text = str(value)
                 except:
                     #print(repr((tag, value)))
                     raise
@@ -1468,7 +1450,7 @@ class Doc(object):
           sequence of strings describing each inbound link
         """
 
-        self.session.log("Doc.link_report({})".format(self.id))
+        self.session.log(f"Doc.link_report({self.id})")
         query = Query("link_net n", "n.source_doc", "d.title", "n.target_frag")
         query.join("document d", "d.id = n.source_doc")
         query.where(query.Condition("n.target_doc", self.id))
@@ -1477,7 +1459,7 @@ class Doc(object):
         for row in query.execute(self.cursor).fetchall():
             link = pattern.format(row.source_doc, row.title)
             if row.target_frag:
-                link += " Fragment({})".format(row.target_frag)
+                link += f" Fragment({row.target_frag})"
             links.append(link)
         return links
 
@@ -1496,7 +1478,7 @@ class Doc(object):
             * comment for the version, if any (otherwise None)
         """
 
-        self.session.log("Doc.list_versions({}, {!r})".format(self.id, limit))
+        self.session.log(f"Doc.list_versions({self.id}, {limit!r})")
         fields = "num AS number", "dt AS saved", "comment"
         query = Query("doc_version", *fields).order("num DESC")
         query.where(query.Condition("id", self.id))
@@ -1521,7 +1503,7 @@ class Doc(object):
             raise Exception("reindex(): missing document id")
 
         # Make sure the object we have represents the latest XML.
-        self.session.log("Doc.reindex({})".format(self.id))
+        self.session.log(f"Doc.reindex({self.id})")
         doc = self
         last_pub_ver = doc.last_publishable_version
         last_saved = doc.last_saved
@@ -1583,7 +1565,7 @@ class Doc(object):
           None
         """
 
-        self.session.log("Doc.save({}, {!r})".format(self.id, opts))
+        self.session.log(f"Doc.save({self.id}, {opts!r})")
         try:
             self.__audit_trail_delay()
             self.__save(**opts)
@@ -1613,8 +1595,7 @@ class Doc(object):
           None
         """
 
-        args = self.id, status, opts
-        self.session.log("Doc.set_status({}, {!r}, {!r})".format(*args))
+        self.session.log(f"Doc.set_status({self.id}, {status!r}, {opts!r})")
         if not self.doctype:
             raise Exception("Document not found")
         if not self.session.can_do("PUBLISH DOCUMENT", self.doctype.name):
@@ -1651,15 +1632,15 @@ class Doc(object):
           label - string for this label's name
         """
 
-        self.session.log("Doc.unlabel({}, {!r})".format(self.id, label))
+        self.session.log(f"Doc.unlabel({self.id}, {label!r})")
         query = Query("version_label", "id")
         query.where(query.Condition("name", label))
         row = query.execute(self.cursor).fetchone()
         if not row:
-            raise Exception("Unable to find label {!r}".format(label))
+            raise Exception(f"Unable to find label {label!r}")
         table = "doc_version_label"
-        delete = "DELETE FROM {} WHERE document = ? AND label = ?"
-        self.cursor.execute(delete.format(table), (self.id, row.id))
+        delete = f"DELETE FROM {table} WHERE document = ? AND label = ?"
+        self.cursor.execute(delete, (self.id, row.id))
         self.session.conn.commit()
 
     def update_query_terms(self, **opts):
@@ -1686,12 +1667,12 @@ class Doc(object):
             return
 
         # Find out which elements and attributes get indexed (`paths`).
-        absolute_path = "path LIKE '/{}/%'".format(self.doctype.name)
+        absolute_path = f"path LIKE '/{self.doctype.name}/%'"
         relative_path = "path LIKE '//%'"
         query = Query("query_term_def", "path")
         query.where(query.Or(absolute_path, relative_path))
         rows = query.execute(self.cursor).fetchall()
-        paths = set([row.path for row in rows])
+        paths = {row.path for row in rows}
 
         # Collect the indexable values and store them.
         terms = set()
@@ -1711,7 +1692,7 @@ class Doc(object):
           True if the document's title was changed; otherwise False
         """
 
-        self.session.log("Doc.update_title({})".format(self.id))
+        self.session.log(f"Doc.update_title({self.id})")
         if self.id and self.title is not None:
             title = self.__create_title()
             if title is not None and self.title != title:
@@ -1748,7 +1729,7 @@ class Doc(object):
 
         # Hand off the work to the private validation method.
         start = datetime.datetime.now()
-        self.session.log("Doc.validate({}, {!r})".format(self.id, opts))
+        self.session.log(f"Doc.validate({self.id}, {opts!r})")
         self._errors = []
         try:
             self.__validate(**opts)
@@ -1786,8 +1767,11 @@ class Doc(object):
         """
 
         for name in parms:
-            if isinstance(parms[name], basestring):
-                parms[name] = etree.XSLT.strparam(parms[name])
+            value = parms[name]
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            if isinstance(value, str):
+                parms[name] = etree.XSLT.strparam(value)
         transform = etree.XSLT(etree.fromstring(filter_xml, parser))
         try:
             doc = transform(doc, **parms)
@@ -1844,7 +1828,6 @@ class Doc(object):
         before = opts.get("before") or opts.get("date")
         opts = dict(version=version, before=before)
         filters = []
-        #print("filter_specs={}".format(filter_specs))
         for spec in filter_specs:
             spec = str(spec)
             if spec.startswith("set:"):
@@ -1856,7 +1839,6 @@ class Doc(object):
                     doc_id = Doc.id_from_title(name, self.cursor)
                 else:
                     doc_id = spec
-                #print("doc_id={} opts={}".format(doc_id, opts))
                 filters.append(self.get_filter(doc_id, **opts))
         return filters
 
@@ -1914,7 +1896,7 @@ class Doc(object):
         query.where(query.Condition("name", action))
         row = query.execute(self.cursor).fetchone()
         if not row:
-            raise Exception("Invalid action {!r}".format(action))
+            raise Exception(f"Invalid action {action!r}")
         action_id = row.id
 
         # Prepare and execute the INSERT statement for the new row.
@@ -1953,7 +1935,7 @@ class Doc(object):
             logged = False
             while now == last:
                 if not logged:
-                    message = "{}: audit trail delay".format(self.cdr_id)
+                    message = f"{self.cdr_id}: audit trail delay"
                     self.session.logger.warning(message)
                     logged = True
                 time.sleep(.1)
@@ -2088,7 +2070,7 @@ class Doc(object):
 
         # Check the basic add/modify permission for this document type.
         action = "MODIFY" if self.id else "ADD"
-        if not self.session.can_do("{} DOCUMENT".format(action), doctype):
+        if not self.session.can_do(f"{action} DOCUMENT", doctype):
             args = action.lower(), doctype
             message = "user not authorized to {} {} documents".format(*args)
             raise Exception(message)
@@ -2125,7 +2107,7 @@ class Doc(object):
                 query.where(query.Condition("id", self.id, "<>"))
             row = query.execute(self.cursor).fetchone()
             if row.n:
-                raise Exception("title {!r} already exists".format(title))
+                raise Exception(f"title {title!r} already exists")
 
         # If the active_status is being changed, make sure that's allowed.
         active_status_change = None
@@ -2134,21 +2116,21 @@ class Doc(object):
             query.where(query.Condition("id", self.id))
             row = query.execute(self.cursor).fetchone()
             if not row:
-                raise Exception("document {} not found".format(self.cdr_id))
+                raise Exception(f"document {self.cdr_id} not found")
             active_status = row.active_status
         else:
             active_status = "A"
         new_active_status = opts.get("active_status") or active_status
         if "D" in (active_status, new_active_status):
             raise Exception("can't save deleted document")
-        message = "Invalid active_status value {!r}".format(new_active_status)
+        message = f"Invalid active_status value {new_active_status!r}"
         assert new_active_status in ("A", "I"), message
         if new_active_status != active_status:
             action = "block" if active_status == "A" else "unblock"
-            message = "user not authorized to {} document".format(action)
+            message = f"user not authorized to {action} document"
             if not self.session.can_do("PUBLISH DOCUMENT", doctype):
                 raise Exception(message)
-            active_status_change = "{} DOCUMENT".format(action.upper())
+            active_status_change = f"{action.upper()} DOCUMENT"
 
         # Inform caller know about any additional audit actions to be recorded.
         return active_status_change
@@ -2183,7 +2165,7 @@ class Doc(object):
         # Find all the links to CDR documents.
         namespaces = dict(cdr="cips.nci.nih.gov/cdr")
         for local_name in ("ref", "href"):
-            xpath = "//*[@cdr:{}]".format(local_name)
+            xpath = f"//*[@cdr:{local_name}]"
             name = Doc.qname(local_name)
             for node in doc.xpath(xpath, namespaces=namespaces):
                 link = Link(self, node, name)
@@ -2196,7 +2178,7 @@ class Doc(object):
         for node in doc.xpath("//*[@cdr:id]", namespaces=namespaces):
             cdr_id = node.get(Link.CDR_ID)
             if cdr_id in self._frag_ids:
-                message = "cdr:id {!r} used more than once".format(cdr_id)
+                message = f"cdr:id {cdr_id!r} used more than once"
                 self.add_error(message, node.get("cdr-eid"), type=self.LINK)
             else:
                 self._frag_ids.add(cdr_id)
@@ -2228,8 +2210,8 @@ class Doc(object):
         # Find out where we are and check for infinite recursion.
         if len(loc) > self.MAX_LOCATION_LENGTH:
             raise Exception("Indexing beyond max allowed depth")
-        path = "{}/{}".format(parent, node.tag)
-        wild = "//{}".format(node.tag)
+        path = f"{parent}/{node.tag}"
+        wild = f"//{node.tag}"
         max_length = self.MAX_SQLSERVER_INDEX_SIZE
         error_opts = dict(type=self.OTHER, level=self.LEVEL_WARNING)
         template = "Only {} characters of {} will be indexed"
@@ -2244,11 +2226,11 @@ class Doc(object):
             terms.add((path, loc, value))
 
         # Do the same thing for each of the element's attributes.
-        namespace = "{{{}}}".format(Doc.NS)
+        namespace = f"{{{Doc.NS}}}"
         for name in node.attrib:
             prefixed_name = name.replace(namespace, "cdr:")
-            full_attr_path = "{}/@{}".format(path, prefixed_name)
-            wild_attr_path = "//@{}".format(prefixed_name)
+            full_attr_path = f"{path}/@{prefixed_name}"
+            wild_attr_path = f"//@{prefixed_name}"
             if full_attr_path in paths or wild_attr_path in paths:
                 value = node.attrib[name]
                 if len(value) > max_length:
@@ -2276,12 +2258,12 @@ class Doc(object):
         query.where(query.Condition("id", self.doctype.id))
         row = query.execute(self.cursor).fetchone()
         if not row or not row.title_filter:
-            message = "doctype {} has no title filter"
-            self.session.logger.warning(message.format(self.doctype.name))
+            message = "doctype %s has no title filter"
+            self.session.logger.warning(message, self.doctype.name)
             return None
         try:
             opts = dict(doc=self.resolved)
-            return unicode(self.filter(row.title_filter, **opts).result_tree)
+            return str(self.filter(row.title_filter, **opts).result_tree)
         except:
             self.session.logger.exception("__create_title() failure")
             return None
@@ -2385,8 +2367,8 @@ class Doc(object):
             query = Query(table, "blob_id")
             query.where(query.Condition("doc_id", self.id))
             rows = query.execute(self.cursor).fetchall()
-            blob_ids |= set([row.blob_id for row in rows])
-            delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
+            blob_ids |= {row.blob_id for row in rows}
+            delete = f"DELETE FROM {table} WHERE doc_id = ?"
             self.cursor.execute(delete, (self.id,))
 
         # Remove the BLOBs themselves.
@@ -2426,7 +2408,7 @@ class Doc(object):
             args = doc.cdr_id, doc.title
             message = "Document {} ({}) links to this document".format(*args)
             if frag_id:
-                message += " Fragment({})".format(frag_id)
+                message += f" Fragment({frag_id})"
             self.add_error(message, type=self.LINK)
 
         # Tell the caller not to proceed with the deletion (links were found).
@@ -2456,7 +2438,7 @@ class Doc(object):
 
         for node in schema:
             if node.tag == Schema.ANNOTATION:
-                for child in node.findall("{}/pattern".format(Schema.APPINFO)):
+                for child in node.findall(f"{Schema.APPINFO}/pattern"):
                     rule_set = self.RuleSet(child)
                     if rule_set.name not in sets:
                         sets[rule_set.name] = []
@@ -2507,7 +2489,7 @@ class Doc(object):
             if node.tag in allowed:
                 if not node.get(Link.CDR_ID):
                     highest_fragment_id += 1
-                    fragment_id = "_{:d}".format(highest_fragment_id)
+                    fragment_id = f"_{highest_fragment_id:d}"
                     node.set(Link.CDR_ID, fragment_id)
         self._xml = etree.tostring(self.root, encoding="utf-8").decode("utf-8")
         self._resolved = None
@@ -2606,7 +2588,7 @@ class Doc(object):
         query.where(query.Condition("l.name", label))
         row = query.execute(self.cursor).fetchone()
         if not row.n:
-            raise Exception("no version labeled {}".format(label))
+            raise Exception(f"no version labeled {label}")
         return row.n
 
     def __get_schema(self):
@@ -2623,7 +2605,7 @@ class Doc(object):
         query = Query("document", "title")
         query.where(query.Condition("id", self.doctype.schema_id))
         row = query.execute(self.cursor).fetchone()
-        assert row, "no schema for document type {}".format(self.doctype.name)
+        assert row, f"no schema for document type {self.doctype.name}"
         parser = etree.XMLParser()
         parser.resolvers.add(self.SchemaResolver(self.cursor))
         xml = self.get_schema_xml(row.title, self.cursor)
@@ -2648,7 +2630,7 @@ class Doc(object):
             try:
                 when = dateutil.parser.parse(before)
             except:
-                message = "unrecognized date/time format: {!r}".format(before)
+                message = f"unrecognized date/time format: {before!r}"
                 raise Exception(message)
 
         # Workaround for bug in adodbapi.
@@ -2661,7 +2643,7 @@ class Doc(object):
             query.where("publishable = 'Y'")
         row = query.execute(self.cursor).fetchone()
         if not row:
-            raise Exception("no version before {}".format(when))
+            raise Exception(f"no version before {when}")
         return row.n
 
     def __insert_eids(self, root=None):
@@ -2681,7 +2663,7 @@ class Doc(object):
         if root is not None:
             eid = 1
             for node in root.iter("*"):
-                node.set("cdr-eid", "_{:d}".format(eid))
+                node.set("cdr-eid", f"_{eid:d}")
                 eid += 1
 
     def __namespaces_off(self, root):
@@ -2698,7 +2680,7 @@ class Doc(object):
         """
 
         if root is not None:
-            NS = "{{{}}}".format(self.NS)
+            NS = f"{{{self.NS}}}"
             for node in root.iter("*"):
                 for name in node.attrib:
                     if name.startswith(NS):
@@ -2849,10 +2831,10 @@ class Doc(object):
         """
 
         action = "Block" if status == self.INACTIVE else "Unblock"
-        comment = opts.get("comment", "{}ing document".format(action))
+        comment = opts.get("comment", f"{action}ing document")
         args = "set_status()", "MODIFY DOCUMENT"
         when = self.__audit_action(*args, comment=opts.get("comment"))
-        self.__audit_added_action("{} DOCUMENT".format(action.upper()), when)
+        self.__audit_added_action(f"{action.upper()} DOCUMENT", when)
         update = "UPDATE all_docs SET active_status = ? WHERE id = ?"
         self.cursor.execute(update, (status, self.id))
 
@@ -3028,8 +3010,8 @@ class Doc(object):
         query = Query("link_net", "source_elem", "url")
         query.where(query.Condition("source_doc", self.id))
         rows = query.execute(self.cursor).fetchall()
-        old_links = set([tuple(row) for row in rows])
-        new_links = set([link.key for link in links if link.linktype])
+        old_links = {tuple(row) for row in rows}
+        new_links = {link.key for link in links if link.linktype}
         wanted = new_links - old_links
         unwanted = old_links - new_links
         args = len(wanted), len(unwanted)
@@ -3060,7 +3042,7 @@ class Doc(object):
         query = Query("link_fragment", "fragment")
         query.where(query.Condition("doc_id", self.id))
         rows = query.execute(self.cursor).fetchall()
-        old = set([row.fragment for row in rows])
+        old = {row.fragment for row in rows}
         new = self.frag_ids or set()
         wanted = new - old
         unwanted = old - new
@@ -3105,14 +3087,14 @@ class Doc(object):
         query = Query(table, "path", "node_loc", "value")
         query.where(query.Condition("doc_id", self.id))
         rows = query.execute(self.cursor).fetchall()
-        old_terms = set([tuple(row) for row in rows])
+        old_terms = {tuple(row) for row in rows}
 
         # Figure out what needs to be eliminated, what needs to be added.
         unwanted = old_terms - terms
         wanted = terms - old_terms
 
         # If the "optimized" approach will be inefficient, start fresh.
-        delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
+        delete = f"DELETE FROM {table} WHERE doc_id = ?"
         if len(unwanted) > 1000 and len(unwanted) > len(terms) / 2:
             wanted = terms
             self.cursor.execute(delete, (self.id,))
@@ -3163,7 +3145,7 @@ class Doc(object):
         invalidates the `root` property, forcing it to be reparsed.
         """
 
-        self.xml = unicode(self.filter("name:Strip XMetaL PIs").result_tree)
+        self.xml = str(self.filter("name:Strip XMetaL PIs").result_tree)
 
     def __update_val_status(self, store):
         """
@@ -3276,7 +3258,7 @@ class Doc(object):
 
         # Check for an error found in Microsoft documents which schema
         # validation can't detect. Do this for all documents.
-        if re.search(u"[\uE000-\uF8FF]+", validation_xml):
+        if re.search("[\uE000-\uF8FF]+", validation_xml):
             message = "Document contains private use character(s)"
             self.add_error(message)
 
@@ -3378,7 +3360,7 @@ class Doc(object):
 
         if not self.doctype or not self.doctype.id:
             problem = "invalid" if self.doctype else "missing"
-            raise Exception("__validate_links(): {} doctype".format(problem))
+            raise Exception(f"__validate_links(): {problem} doctype")
         links = self.__collect_links(resolved)
         for link in links:
             if link.internal:
@@ -3406,14 +3388,13 @@ class Doc(object):
           comment - optional string describing the label's usage
         """
 
-        args = label, comment
-        session.log("Doc.create_label({!r}, comment={!r})".format(*args))
+        session.log(f"Doc.create_label({label!r}, comment={comment!r})")
         assert label, "Missing label name"
         cursor = session.conn.cursor()
         query = Query("version_label", "COUNT(*) AS n")
         query.where(query.Condition("name", label))
         if query.execute(cursor).fetchone().n > 0:
-            raise Exception("Label {!r} already exists".format(label))
+            raise Exception(f"Label {label!r} already exists")
         insert = "INSERT INTO version_label (name, comment) VALUES (?, ?)"
         cursor.execute(insert, (label, comment))
         session.conn.commit()
@@ -3435,14 +3416,14 @@ class Doc(object):
           label - string name for label to be removed
         """
 
-        session.log("Doc.delete_label({!r})".format(label))
+        session.log(f"Doc.delete_label({label!r})")
         assert label, "Missing label name"
         cursor = session.conn.cursor()
         query = Query("version_label", "id")
         query.where(query.Condition("name", label))
         row = query.execute(cursor).fetchone()
         if not row:
-            raise Exception("Can't find label {!r}".format(label))
+            raise Exception(f"Can't find label {label!r}")
         label_id = row.id
         delete = "DELETE FROM doc_version_label WHERE label = ?"
         cursor.execute(delete, (label_id,))
@@ -3453,7 +3434,7 @@ class Doc(object):
         except:
             cursor.execute("ROLLBACK TRANSACTION")
             session.logger.exception("delete_label() failure")
-            raise Exception("Failure deleting label {!r}".format(label))
+            raise Exception(f"Failure deleting label {label!r}")
 
     @staticmethod
     def extract_id(arg):
@@ -3461,8 +3442,10 @@ class Doc(object):
         Return the CDR document ID as an integer (ignoring fragment suffixes)
         """
 
-        if isinstance(arg, basestring):
-            return int(re.sub(r"[^\d]", "", str(arg).split("#")[0]))
+        if isinstance(arg, bytes):
+            arg = arg.decode("utf-8")
+        if isinstance(arg, str):
+            return int(re.sub(r"[^\d]", "", arg.split("#")[0]))
         return int(arg)
 
     @staticmethod
@@ -3509,7 +3492,7 @@ class Doc(object):
         try:
             return query.execute(cursor).fetchone().xml
         except:
-            raise Exception("schema {!r} not found".format(name))
+            raise Exception(f"schema {name!r} not found")
 
     @staticmethod
     def id_from_title(title, cursor=None):
@@ -3535,7 +3518,7 @@ class Doc(object):
         query.where(query.Condition("title", title))
         rows = query.execute(cursor).fetchall()
         if len(rows) > 1:
-            raise Exception("Multiple documents with title {}".format(title))
+            raise Exception(f"Multiple documents with title {title}")
         for row in rows:
             return row.id
         return None
@@ -3561,14 +3544,14 @@ class Doc(object):
 
         session.log("Doc.delete_failed_mailers()")
         class CleanupReport:
-            def __init__(self): self.deleted, self.errors = [],[]
+            def __init__(self): self.deleted, self.errors = [], []
         reason = "Deleting tracking document for failed mailer job"
         report = CleanupReport()
         cursor = session.conn.cursor()
         query = Query("query_term q", "q.doc_id").unique()
         query.join("pub_proc p", "p.id = q.int_val", "p.status = 'Failure'")
         query.where("q.path = '/Mailer/JobId'")
-        query.where("q.doc_id > {}".format(cls.LEGACY_MAILER_CUTOFF))
+        query.where(f"q.doc_id > {cls.LEGACY_MAILER_CUTOFF}")
         for row in query.execute(cursor).fetchall():
             try:
                 Doc(session, id=row.doc_id).delete(reason=reason)
@@ -3645,11 +3628,11 @@ class Doc(object):
 
         if doc_id is None:
             return None
-        if isinstance(doc_id, basestring):
-            if not isinstance(doc_id, unicode):
+        if isinstance(doc_id, (str, bytes)):
+            if isinstance(doc_id, bytes):
                 doc_id = doc_id.decode("ascii")
             doc_id = int(re.sub("[^0-9]", "", doc_id))
-        return "CDR{:010d}".format(doc_id)
+        return f"CDR{doc_id:010d}"
 
     @classmethod
     def qname(cls, local, ns=None):
@@ -3663,7 +3646,7 @@ class Doc(object):
 
         if ns is None:
             ns = cls.NS
-        return "{{{}}}{}".format(ns, local)
+        return f"{{{ns}}}{local}"
 
 
     # ------------------------------------------------------------------
@@ -3721,9 +3704,9 @@ class Doc(object):
             IF = Doc.qname("if", Filter.NS)
             CALL = Doc.qname("call-template", Filter.NS)
             WITH = Doc.qname("with-param", Filter.NS)
-            test = etree.Element(IF, test="not({})".format(self.test))
+            test = etree.Element(IF, test=f"not({self.test})")
             call = etree.SubElement(test, CALL, name="pack-error")
-            message = '"{}"'.format(self.message)
+            message = f'"{self.message}"'
             etree.SubElement(call, WITH, name="msg", select=message)
             return test
 
@@ -4198,7 +4181,7 @@ class Resolver(etree.Resolver):
             return self.__get_doc(scheme, parms, context)
         elif scheme == "cdrutil":
             return self.__run_function(parms, context)
-        raise Exception("unsupported url {!r}".format(self.url))
+        raise Exception(f"unsupported url {self.url!r}")
 
     def __get_doc(self, scheme, parms, context):
         """
@@ -4214,7 +4197,7 @@ class Resolver(etree.Resolver):
         """
 
         # Prepare for failure.
-        message = "Unable to resolve uri {!r}".format(parms)
+        message = f"Unable to resolve uri {parms!r}"
 
         # Documents (usually, but not always, Filters) can be fetched by name.
         if parms.startswith("name:"):
@@ -4227,7 +4210,7 @@ class Resolver(etree.Resolver):
             if not doc_id:
                 if scheme == "cdrx":
                     return self.resolve_string("<empty/>", context)
-                raise Exception("Filter {!r} not found".format(title))
+                raise Exception(f"Filter {title!r} not found")
             doc = Doc(self.session, id=doc_id, version=version)
             if doc.doctype.name == "Filter":
                 doc_xml = doc.get_filter(doc_id, version=version).xml
@@ -4249,7 +4232,7 @@ class Resolver(etree.Resolver):
                 try:
                     doc = Doc(self.session, id=doc_id, version=version)
                 except:
-                    message = "Doc({}) failure".format(parms)
+                    message = f"Doc({parms}) failure"
                     self.doc.session.logger.exception(message)
                     if scheme == "cdrx":
                         return self.resolve_string("<empty/>", context)
@@ -4259,7 +4242,7 @@ class Resolver(etree.Resolver):
             try:
                 doc = Doc(self.session, id=parms)
             except:
-                message = "Doc({}) failure".format(parms)
+                message = f"Doc({parms}) failure"
                 self.doc.session.logger.exception(message)
                 if scheme == "cdrx":
                     return self.resolve_string("<empty/>", context)
@@ -4314,11 +4297,11 @@ class Resolver(etree.Resolver):
         function, args = parms, None
         if "/" in parms:
             function, args = parms.split("/", 1)
-        method_name = "_{}".format(function.lower().replace("-", "_"))
+        method_name = f"_{function.lower().replace('-', '_')}"
         handler = getattr(self, method_name)
         if handler is not None:
             return handler(args, context)
-        error = "unsupported function {!r} in {!r}".format(function, self.url)
+        error = f"unsupported function {function!r} in {self.url!r}"
         raise Exception(error)
 
     def _date(self, args, context):
@@ -4340,8 +4323,8 @@ class Resolver(etree.Resolver):
             front, back = now.split(".", 1)
         else:
             front, back = now, ""
-        back = "{}000".format(back)[:3]
-        result.text = "{}.{}".format(front, back)
+        back = f"{back}000"[:3]
+        result.text = f"{front}.{back}"
         return self.__package_result(result, context)
 
     def _dedup_ids(self, args, context):
@@ -4478,7 +4461,7 @@ class Resolver(etree.Resolver):
                     col.set("null", "Y")
                 else:
                     try:
-                        col.text = unicode(v)
+                        col.text = str(v)
                     except:
                         col.text = v.decode("utf-8")
             r += 1
@@ -4730,7 +4713,7 @@ class Term:
         try:
             doc_id = Doc.extract_id(node.get(Link.CDR_REF))
         except:
-            error = "No cdr:ref for parent of Term {}".format(self.cdr_id)
+            error = f"No cdr:ref for parent of Term {self.cdr_id}"
             raise Exception(failure)
         if doc_id not in self.parents:
             parent = Term.get_term(self.session, doc_id, depth + 1)
@@ -4751,7 +4734,7 @@ class Term:
 
         # Stop if recursion has gotten out of hand.
         if depth > cls.MAX_DEPTH:
-            error = "term hierarchy depth exceeded at CDR()".format(doc_id)
+            error = f"term hierarchy depth exceeded at CDR{doc_id}"
             raise Exception(error)
 
         # Pull the Term object from the cache if we already have it.
@@ -4796,7 +4779,7 @@ class Filter:
         """
 
         self.doc_id = doc_id
-        self.xml = xml.encode("utf-8") if isinstance(xml, unicode) else xml
+        self.xml = xml.encode("utf-8") if isinstance(xml, str) else xml
         self.now = time.time()
 
 
@@ -4974,7 +4957,7 @@ class Doctype:
         self._format = value
         format_id = self.__format_id_from_name(value)
         if format_id is None:
-            raise Exception("Unrecognized doctype format {!r}".format(value))
+            raise Exception(f"Unrecognized doctype format {value!r}")
         self._format_id = format_id
 
     @property
@@ -5070,7 +5053,7 @@ class Doctype:
         else:
             schema_id = Doc.id_from_title(value, self.cursor)
             if not schema_id:
-                raise Exception("Schema {!r} not found".format(value))
+                raise Exception(f"Schema {value!r} not found")
             self._schema_id = schema_id
 
     @property
@@ -5085,8 +5068,7 @@ class Doctype:
                 if schema_id:
                     self._schema_id = schema_id
                 else:
-                    message = "Schema {!r} not found".format(self.schema)
-                    raise Exception(message)
+                    raise Exception(f"Schema {self.schema!r} not found")
         return self._schema_id
 
     @property
@@ -5147,8 +5129,7 @@ class Doctype:
                 if _id:
                     self._title_filter_id = _id
                 else:
-                    message = "Filter {!r} not found".format(self.title_filter)
-                    raise Exception(message)
+                    raise Exception(f"Filter {self.title_filter!r} not found")
             else:
                 self._title_filter_id = None
         return self._title_filter_id
@@ -5212,11 +5193,11 @@ class Doctype:
           client XML wrapper command CdrDelDocType
         """
 
-        self.session.log("Doctype.delete({!r})".format(self.name))
+        self.session.log(f"Doctype.delete({self.name!r})")
         if not self.session.can_do("DELETE DOCTYPE"):
             raise Exception("User not authorized to delete document types")
         if not self.id:
-            raise Exception("Document type {!r} not found".format(self.name))
+            raise Exception(f"Document type {self.name!r} not found")
         query = Query("all_docs", "COUNT(*) AS n")
         query.where(query.Condition("doc_type", self.id))
         if query.execute(self.cursor).fetchone().n:
@@ -5229,7 +5210,7 @@ class Doctype:
             ("doc_type", "id")
         ]
         for table, column in tables:
-            sql = "DELETE FROM {} WHERE {} = ?".format(table, column)
+            sql = f"DELETE FROM {table} WHERE {column} = ?"
             self.cursor.execute(sql, (self.id,))
         self.session.conn.commit()
 
@@ -5281,7 +5262,7 @@ class Doctype:
                        have separate versions created) or "N"
         """
 
-        self.session.log("Doctype.save({!r}, {!r})".format(self.name, opts))
+        self.session.log(f"Doctype.save({self.name!r}, {opts!r})")
         now = datetime.datetime.now().replace(microsecond=0)
         try:
             fields = {
@@ -5310,7 +5291,7 @@ class Doctype:
         else:
             names = sorted(fields)
             values = tuple([fields[name] for name in names] + [self.id])
-            assignments = ["{} = ?".format(name) for name in names]
+            assignments = [f"{name} = ?" for name in names]
             pattern = "UPDATE doc_type SET {} WHERE id = ?"
             sql = pattern.format(", ".join(assignments))
         self.session.logger.debug("sql=%s", sql)
@@ -5577,7 +5558,7 @@ class DTD:
 
         self.values = dict()
         self.linking_elements = set()
-        lines = ["<!-- Generated from {} -->".format(self.name), ""]
+        lines = [f"<!-- Generated from {self.name} -->", ""]
         self.defined = set()
         self.top.define(lines)
         return "\n".join(lines) + "\n"
@@ -5587,7 +5568,7 @@ class DTD:
         Insert the type object into the `types` dictionary attribute
         """
 
-        assert t not in self.types, "duplicate type {}".format(t.name)
+        assert t not in self.types, f"duplicate type {t.name}"
         self.types[t.name] = t
 
 
@@ -5741,7 +5722,7 @@ class DTD:
             if self.name not in [element.name for element in elements]:
                 elements.append(self)
             if serialize:
-                return "{}{}".format(self.name, self.count_char)
+                return f"{self.name}{self.count_char}"
 
 
     class Type:
@@ -5812,7 +5793,7 @@ class DTD:
               DTD definition string for element
             """
 
-            return "<!ELEMENT {} (#PCDATA)>".format(element.name)
+            return f"<!ELEMENT {element.name} (#PCDATA)>"
 
         def define_attributes(self, element):
             """
@@ -5837,9 +5818,9 @@ class DTD:
               DTD equivalent for schema type if found; otherwise "CDATA"
             """
 
-            for n in ("ID", "IDREFS", "NMTOKEN", "NMTOKENS"):
-                if schema_type == "xsd:{}".format(n):
-                    return n
+            for name in ("ID", "IDREFS", "NMTOKEN", "NMTOKENS"):
+                if schema_type == f"xsd:{name}"
+                    return name
             return "CDATA"
 
 
@@ -5885,12 +5866,11 @@ class DTD:
             """
 
             if self.nmtokens:
-                return "({})".format("|".join(sorted(self.nmtokens)))
+                return f"({'|'.join(sorted(self.nmtokens))})"
             if "xsd:" in self.base:
                 return DTD.Type.map_type(self.base)
             base = self.dtd.types.get(self.base)
-            args = self.name, self.base
-            assert base, "{}: base type {} not found".format(*args)
+            assert base, f"{self.name}: base type {self.base} not found"
             return base.dtd_type()
 
 
@@ -5906,8 +5886,8 @@ class DTD:
 
         # Prepared error message for multiple content definitions
         CONTENT = "sequence", "choice", "simpleContent", "group"
-        CNAMES = ", ".join(["xsd:{}".format(c) for c in CONTENT])
-        ERROR = "complex type may only contain one of {}".format(CNAMES)
+        CNAMES = ", ".join([f"xsd:{c}" for c in CONTENT])
+        ERROR = f"complex type may only contain one of {CNAMES}"
 
         def __init__(self, dtd, node):
             """
@@ -5929,12 +5909,11 @@ class DTD:
                 if child.tag == Schema.ATTRIBUTE:
                     self.add_attribute(dtd, child)
                 elif self.content:
-                    raise Exception("{}: {}".format(self.name, self.ERROR))
+                    raise Exception(f"{self.name}: {self.ERROR}")
                 elif child.tag == Schema.SIMPLE_CONTENT:
                     self.model = DTD.TEXT_ONLY
                     extension = child.find(Schema.EXTENSION)
-                    message = "{}: missing extension".format(self.name)
-                    assert len(extension), message
+                    assert len(extension), f"{self.name}: missing extension"
                     self.base = extension.get("base")
                     for child in extension.findall(Schema.ATTRIBUTE):
                         self.add_attribute(dtd, child)
@@ -5949,7 +5928,7 @@ class DTD:
                     elif child.tag == Schema.GROUP:
                         self.content = DTD.Group(dtd, child)
                     else:
-                        raise Exception("{}: {}".format(self.name, self.ERROR))
+                        raise Exception(f"{self.name}: {self.ERROR}")
             dtd.add_type(self)
 
         def add_attribute(self, dtd, child):
@@ -5963,8 +5942,7 @@ class DTD:
 
             attribute = DTD.Attribute(dtd, child)
             if attribute.name in self.attributes:
-                values =  self.name, attribute.name
-                error = "Duplicate attribute {}/@{}".format(*values)
+                error = f"Duplicate attribute {self.name}/@{attribute.name}"
                 raise Exception(error)
             self.attributes[attribute.name] = attribute
 
@@ -5980,23 +5958,22 @@ class DTD:
             """
 
             if self.model == DTD.TEXT_ONLY:
-                return "<!ELEMENT {} (#PCDATA)>".format(element.name)
+                return f"<!ELEMENT {element.name} (#PCDATA)>"
             elif self.model == DTD.EMPTY:
-                return "<!ELEMENT {} EMPTY>".format(element.name)
+                return f"<!ELEMENT {element.name} EMPTY>"
             elif self.model == DTD.MIXED:
                 self.content.get_node(element.children)
                 children = "|".join([c.name for c in element.children])
-                names = element.name, children
-                return "<!ELEMENT {} (#PCDATA|{})*>".format(*names)
+                return f"<!ELEMENT {element.name} (#PCDATA|{children})*>"
             elif self.model == DTD.ELEMENT_ONLY:
                 content = self.content.get_node(element.children, True)
                 assert content, "Elements required for elementOnly content"
                 if not self.dtd.defined:
-                    content = "(CdrDocCtl,{})".format(content)
+                    content = f"(CdrDocCtl,{content})"
                 elif not content.startswith("("):
-                    content = "({})".format(content)
-                return "<!ELEMENT {} {}>".format(element.name, content)
-            raise Exception("{}: unrecognized content model".format(self.name))
+                    content = f"({content})"
+                return f"<!ELEMENT {element.name} {content}>"
+            raise Exception(f"{self.name}: unrecognized content model")
 
         def define_attributes(self, element):
             """
@@ -6016,7 +5993,7 @@ class DTD:
                 attributes.append(str(attribute))
                 values = attribute.values
                 if values:
-                    key = "{}@{}".format(element.name, attribute.name)
+                    key = f"{element.name}@{attribute.name}"
                     self.dtd.values[key] = values
             if not self.dtd.defined and "readonly" not in self.attributes:
                 attributes.append("readonly CDATA #IMPLIED")
@@ -6025,7 +6002,7 @@ class DTD:
                 if not self.dtd.defined:
                     attributes = ["xmlns:cdr CDATA #IMPLIED"] + attributes
                 attributes = " ".join(attributes)
-                return "<!ATTLIST {} {}>".format(element.name, attributes)
+                return f"<!ATTLIST {element.name} {attributes}>"
 
 
     class ChoiceOrSequence(CountedNode):
@@ -6081,8 +6058,8 @@ class DTD:
             if serialize:
                 string = self.separator.join(nodes)
                 if len(self.nodes) > 1:
-                    string = "({})".format(string)
-                return "{}{}".format(string, self.count_char)
+                    string = f"({string})"
+                return f"{string}{self.count_char}"
 
 
     class Choice(ChoiceOrSequence):
@@ -6160,7 +6137,7 @@ class DTD:
             self.name = node.get("name")
             dtd.session.logger.debug("Group %s", self.name)
             if self.name in dtd.groups:
-                message = "multiple definitions for group {}".format(self.name)
+                message = f"multiple definitions for group {self.name}"
                 raise Exception(message)
             nodes = []
             for child in node:
@@ -6168,8 +6145,7 @@ class DTD:
                     nodes.append(DTD.Choice(dtd, child))
                 elif child.tag == Schema.SEQUENCE:
                     nodes.append(DTD.Sequence(dtd, child))
-            args = self.name, len(nodes)
-            assert len(nodes) == 1, "group {} has {:d} nodes".format(*args)
+            assert len(nodes) == 1, f"group {self.name} has {len(nodes)} nodes"
             self.node = nodes[0]
             dtd.groups[self.name] = self
 
@@ -6251,7 +6227,7 @@ class DTD:
             """
 
             required = self.required and "REQUIRED" or "IMPLIED"
-            return "{} {} #{}".format(self.name, self.dtd_type(), required)
+            return f"{self.name} {self.dtd_type()} #{required}"
 
         def dtd_type(self):
             """
@@ -6266,8 +6242,7 @@ class DTD:
                 return DTD.Type.map_type(self.type_name)
             simple_type = self.dtd.types.get(self.type_name)
             if not simple_type:
-                vals = self.type_name, self.name
-                error = "unrecognized type {} for @{}".format(*vals)
+                error = f"unrecognized type {self.type_name} for @{self.name}"
                 raise Exception(error)
             return simple_type.dtd_type()
 
@@ -6299,7 +6274,7 @@ class DTD:
                 return False
             if 0xF900 < o < 0xFFFF:
                 return False
-            if c not in u".-_:\u00B7\u0e87":
+            if c not in ".-_:\u00B7\u0e87":
                 if unicodedata.category(c) not in cls.NAME_CHAR_CATEGORIES:
                     return False
         return True
@@ -6540,7 +6515,7 @@ class LinkType:
             else:
                 self._chk_type = None
         if self._chk_type is not None:
-            message = "Invalid check type {!r}".format(self._chk_type)
+            message = f"Invalid check type {self._chk_type!r}"
             assert self._chk_type in self.CHECK_TYPES, message
         return self._chk_type
 
@@ -6606,7 +6581,7 @@ class LinkType:
           possibly empty sequence of `Doc` objects
         """
 
-        self.session.log("LinkType.search({!r}, {!r})".format(self.name, opts))
+        self.session.log(f"LinkType.search({self.name!r}, {opts!r})")
         pattern = opts.get("pattern")
         limit = opts.get("limit")
         query = Query("document d", "d.id", "d.title").order("d.title")
@@ -6636,14 +6611,14 @@ class LinkType:
           client XML wrapper command CdrModLinkType
         """
 
-        self.session.log("LinkType.save({!r})".format(self.name))
+        self.session.log(f"LinkType.save({self.name!r})")
         action = "MODIFY LINKTYPE" if self.id else "ADD LINKTYPE"
         if not self.session.can_do(action):
-            raise Exception("User not authorized to perform {}".format(action))
+            raise Exception(f"User not authorized to perform {action}")
         if not self.targets:
-            raise Exception("Link type {} allows no targets".format(self.name))
+            raise Exception(f"Link type {self.name} allows no targets")
         if self.chk_type not in self.CHECK_TYPES:
-            raise Exception("Invalid check type {!r}".format(self.chk_type))
+            raise Exception(f"Invalid check type {self.chk_type!r}")
         try:
             self.__save()
             self.session.conn.commit()
@@ -6665,11 +6640,11 @@ class LinkType:
           client XML wrapper command CdrDelLinkType
         """
 
-        self.session.log("LinkType.delete({!r})".format(self.name))
+        self.session.log(f"LinkType.delete({self.name!r})")
         if not self.session.can_do("DELETE LINKTYPE"):
             raise Exception("User not authorized to delete link types")
         if not self.id:
-            raise Exception("Link type {} not found".format(self.name))
+            raise Exception(f"Link type {self.name} not found")
         try:
             self.__delete()
             self.session.conn.commit()
@@ -6707,7 +6682,7 @@ class LinkType:
             column = "link_id"
             if table == "link_target":
                 column = "source_link_type"
-            delete = "DELETE FROM {} WHERE {} = ?".format(table, column)
+            delete = f"DELETE FROM {table} WHERE {column} = ?"
             self.cursor.execute(delete, (self.id,))
 
     def __save(self):
@@ -6725,11 +6700,11 @@ class LinkType:
         values = [fields[name] for name in names]
         if self.id:
             values.append(self.id)
-            assignments = ", ".join(["{} = ?".format(name) for name in names])
-            sql = "UPDATE link_type SET {} WHERE id = ?".format(assignments)
+            assignments = ", ".join([f"{name} = ?" for name in names])
+            sql = f"UPDATE link_type SET {assignments} WHERE id = ?"
         else:
             names = ", ".join(names)
-            sql = "INSERT INTO link_type ({}) VALUES (?, ?, ?)".format(names)
+            sql = f"INSERT INTO link_type ({names}) VALUES (?, ?, ?)"
         self.cursor.execute(sql, tuple(values))
         if self.id:
             self.__drop_related_rows()
@@ -6748,16 +6723,16 @@ class LinkType:
                 raise Exception(message.format(*args))
             names = "link_id, doc_type, element"
             values = self.id, source.doctype.id, source.element
-            insert = "INSERT INTO link_xml ({}) VALUES (?, ?, ?)".format(names)
+            insert = f"INSERT INTO link_xml ({names}) VALUES (?, ?, ?)"
             self.cursor.execute(insert, values)
 
         # Create the rows identifying which document types can be targets
         # for this link type.
-        for target in itervalues(self.targets):
-            assert target.id, "doc type {} not found".format(target.name)
+        for target in self.targets.values():
+            assert target.id, f"doc type {target.name} not found"
             names = "source_link_type, target_doc_type"
             values = self.id, target.id
-            insert = "INSERT INTO link_target ({}) VALUES (?, ?)".format(names)
+            insert = f"INSERT INTO link_target ({names}) VALUES (?, ?)"
             try:
                 self.cursor.execute(insert, values)
             except:
@@ -7074,7 +7049,7 @@ class LinkType:
             """
 
             if not self.assertions.test(link):
-                error = "Failed link target rule: {}".format(self.value)
+                error = f"Failed link target rule: {self.value}"
                 link.add_error(error)
 
         @property
@@ -7193,7 +7168,7 @@ class LinkType:
                 for node in self.nodes:
 
                     # If the node is a string, it's a Boolean connector.
-                    if isinstance(node, basestring):
+                    if isinstance(node, str):
                         connector = node
 
                         # If this is an "AND" and there's a sequence of "OR"
@@ -7513,7 +7488,7 @@ class Link:
         # Make sure the document we're linking to actually exists.
         if not self.target_doc:
             what = LinkType.CHECK_TYPES[self.chk_type]
-            message = "No {} found for link target".format(what)
+            message = f"No {what} found for link target"
             self.add_error(message)
             return
 
@@ -7539,8 +7514,7 @@ class Link:
 
         # Make sure we're allowed to link from this element.
         if not self.linktype:
-            message = "linking not allowed from {}".format(self.element)
-            self.add_error(message)
+            self.add_error(f"linking not allowed from {self.element}")
             return
 
         # Make sure we're linking to an allowed document type.
@@ -7714,12 +7688,12 @@ class FilterSet:
           client XML wrapper command CdrDelFilterSet
         """
 
-        self.session.log("FilterSet.delete({!r})".format(self.name))
+        self.session.log(f"FilterSet.delete({self.name!r})")
         if not self.session.can_do("DELETE FILTER SET"):
             raise Exception("User not authorized to delete filter sets.")
         if not self.id:
             if self.name:
-                raise Exception("Can't find filter set {}".format(self.name))
+                raise Exception(f"Can't find filter set {self.name}")
             else:
                 raise Exception("No filter set identified for deletion")
         query = Query("filter_set_member", "COUNT(*) AS n")
@@ -7745,7 +7719,7 @@ class FilterSet:
             ("filter_set", "id")
         ]
         for table, column in tables:
-            sql = "DELETE FROM {} WHERE {} = ?".format(table, column)
+            sql = f"DELETE FROM {table} WHERE {column} = ?"
             self.cursor.execute(sql, (self.id,))
         self.session.conn.commit()
 
@@ -7763,12 +7737,11 @@ class FilterSet:
           None
         """
 
-        self.session.log("FilterSet.save({!r})".format(self.name))
+        self.session.log(f"FilterSet.save({self.name!r})")
         action = "MODIFY FILTER SET" if self.id else "ADD FILTER SET"
         if not self.session.can_do(action):
             what = "modify" if self.id else "add"
-            message = "User not authorized to {} filter sets.".format(what)
-            raise Exception(message)
+            raise Exception(f"User not authorized to {what} filter sets.")
         try:
             return self.__save()
         except:
@@ -7808,13 +7781,13 @@ class FilterSet:
             for name in names:
                 value = fields[name]
                 if value is None:
-                    assignments.append("{} = NULL".format(name))
+                    assignments.append(f"{name} = NULL")
                 else:
-                    assignments.append("{} = ?".format(name))
+                    assignments.append(f"{name} = ?")
                     values.append(value)
             assignments = ", ".join(assignments)
             values.append(self.id)
-            sql = "UPDATE filter_set SET {} WHERE id = ?".format(assignments)
+            sql = f"UPDATE filter_set SET {assignments} WHERE id = ?"
 
         # Otherwise, create a new row in the `filter_set` table.
         else:
@@ -7828,7 +7801,7 @@ class FilterSet:
                     values.append(value)
             names = ", ".join(names)
             ph = ", ".join(placeholders)
-            sql = "INSERT INTO filter_set ({}) VALUES ({})".format(names, ph)
+            sql = f"INSERT INTO filter_set ({names}) VALUES ({ph})"
         self.session.logger.debug("sql=%s values=%s", sql, tuple(values))
         self.cursor.execute(sql, values)
 
@@ -7918,7 +7891,7 @@ class GlossaryTermName:
     """
 
     # Regular expressions uses to normalize the phrases for matching.
-    UNWANTED = re.compile(u"""['".,?!:;()[\]{}<>\u201C\u201D\u00A1\u00BF]+""")
+    UNWANTED = re.compile("""['".,?!:;()[\]{}<>\u201C\u201D\u00A1\u00BF]+""")
     TOKEN_SEP = re.compile(r"[\n\r\t -]+")
 
     def __init__(self, id, name):
@@ -7952,14 +7925,14 @@ class GlossaryTermName:
           sequence of `GlossaryTermName` objects
         """
 
-        session.log("GlossaryTermName.get_mappings({})".format(language))
+        session.log(f"GlossaryTermName.get_mappings({language})")
         names = dict()
         phrases = set()
         name_tag = "TermName" if language == "en" else "TranslatedName"
-        n_path = "/GlossaryTermName/{}/TermNameString".format(name_tag)
+        n_path = f"/GlossaryTermName/{name.tag}/TermNameString"
         s_path = "/GlossaryTermName/TermNameStatus"
-        e_path = "/GlossaryTermName/{}/@ExcludeFromGlossifier".format(name_tag)
-        e_cond = ["e.doc_id = n.doc_id", "e.path = '{}'".format(e_path)]
+        e_path = f"/GlossaryTermName/{name.tag}/@ExcludeFromGlossifier"
+        e_cond = "e.doc_id = n.doc_id", f"e.path = '{e_path}'"
         if language == "es":
             e_cond.append("LEFT(n.node_loc, 4) = LEFT(e.node_loc, 4)")
         query = Query("query_term n", "n.doc_id", "n.value")
@@ -8006,5 +7979,5 @@ class GlossaryTermName:
           normalized version of string
         """
 
-        phrase = cls.UNWANTED.sub(u"", cls.TOKEN_SEP.sub(u" ", phrase)).upper()
+        phrase = cls.UNWANTED.sub("", cls.TOKEN_SEP.sub(" ", phrase)).upper()
         return phrase.strip()

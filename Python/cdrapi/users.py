@@ -16,16 +16,6 @@ from cdrapi import db
 from cdrapi.settings import Tier
 
 
-# ----------------------------------------------------------------------
-# Try to make the module compatible with both Python 2 and 3.
-# ----------------------------------------------------------------------
-try:
-    basestring
-except:
-    basestring = str, bytes
-    unicode = str
-
-
 class Session:
     """
     Information from a row in the `session` table of the cdr database
@@ -492,13 +482,13 @@ class Session:
         uid, hashedpw = row
         if hashedpw is not None:
             hexhash = binascii.hexlify(hashedpw).upper()
-            if not isinstance(hexhash, unicode):
+            if not isinstance(hexhash, str):
                 hexhash = hexhash.decode("ascii")
             if hexhash != Session.User.EMPTY_PW:
                 password = opts.get("password")
                 if not password:
                     raise Exception("Missing password")
-                if isinstance(password, unicode):
+                if isinstance(password, str):
                     password = password.encode("utf-8")
                 submitted = hashlib.sha1(password).hexdigest().upper()
                 if hexhash != submitted:
@@ -1101,7 +1091,7 @@ class Session:
                         password = None
             else:
                 password = ""
-            if isinstance(password, unicode):
+            if isinstance(password, str):
                 password = password.encode("utf-8")
             query = db.Query("usr", "COUNT(*) AS n")
             query.where(query.Condition("name", self.name))
