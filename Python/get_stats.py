@@ -46,18 +46,18 @@ def runCommand(command):
 
 # Creating the ftp files to perform the download
 # ----------------------------------------------
-print 'Getting the statistics files...'
+print('Getting the statistics files...')
 
 ftpFile = '%s' % (rchanges)
 os.chdir(PDQLOG)
-print "FtpFile: %s" % ftpFile
+print("FtpFile: %s" % ftpFile)
 
 try:
     shutil.copy2('%s/%s' % (FTPDIR, ftpFile), '%s/%s' % (PDQLOG, ftpFile))
 except:
-    print '***Error in get_stats'
-    print '***   stats-file not found: %s' % ftpFile
-    print '***   Run fixISOweek in /u/ftp/cdr to recover'
+    print('***Error in get_stats')
+    print('***   stats-file not found: %s' % ftpFile)
+    print('***   Run fixISOweek in /u/ftp/cdr to recover')
     sys.exit(1)
 
 # Reading the data in
@@ -84,15 +84,14 @@ for line in lines:
 
 # Write the data to the log directory
 # -----------------------------------
-print 'Writing formatted changes file...'
+print('Writing formatted changes file...')
 sf = open(PDQLOG + '/' + lchanges, 'w')
 sf.write('\n\n       Changed Documents for %s\n' % WEEKHDR)
 sf.write('       ===================================\n\n')
 sf.write('Document Type            added  modified  removed\n')
 sf.write('---------------------  -------  --------  -------\n')
 
-docType = stat.keys()
-docType.sort()
+docType = sorted(stat.keys())
 
 for docs in docType:
    sf.write('%20s:  %7s  %8s  %7s\n' % (docs.replace('.' + WEEK, ''),
@@ -101,4 +100,4 @@ for docs in docType:
                                  stat[docs]['removed']))
 sf.write('\n')
 sf.close()
-print 'Done.'
+print('Done.')

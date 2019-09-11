@@ -267,7 +267,7 @@ class _Diff:
                                   docVer=docVer, inline=inline, parm=fltrParms)
 
             # Check result
-            if type(resp) == type("") or type(resp) == type(u""):
+            if isinstance(resp, type("")) or isinstance(resp, type(u"")):
                 errs = cdr.getErrors(resp, errorsExpected=False)
                 if errs:
                     raise Exception("_getDiffDoc filter error: %s" % errs)

@@ -7,7 +7,8 @@
 # BZIssue::4855 - Add GKTarget Parameter to Re-publishing Job Interface
 #
 #----------------------------------------------------------------------
-import cdr, cdr2gk, cdrdb, cdrcgi, time
+import cdr, cdr2gk, cdrcgi, time
+from cdrapi import db
 
 # Extra output to standard error file.
 DEBUG = False
@@ -38,7 +39,7 @@ class CdrRepublisher:
                          docList = docs,
                          email = 'klem@kadiddlehopper.us')
         except Exception, e:
-            cdr.logwrite('republish() failure: %s' % e)
+            cdr.LOGGER.exception("republish() failure")
             reportFailure(...)
         reportSuccess(...)
     """
@@ -94,9 +95,10 @@ class CdrRepublisher:
 
         self.__credentials = credentials
         self.__tier        = opts.get("host")
-        self.__conn        = cdrdb.connect()
+        self.__conn        = db.connect()
         self.__cursor      = self.__conn.cursor()
         self.__onCG        = self.__getDocsOnCG()
+        self.__logger      = cdr.Logging.get_logger("publish")
 
     def republish(self, addNewLinkedDocuments,
                   docList = None, jobList = None, docType = None,
@@ -204,10 +206,10 @@ class CdrRepublisher:
         """
 
         # Record the request.
-        cdr.logwrite("republish(): %d doc IDs, %d job IDs, docType: %s" %
-                     (docList and len(docList) or 0,
-                      jobList and len(jobList) or 0,
-                      docType or "None"), cdr.PUBLOG)
+        self.__logger.info("republish(): %d doc IDs, %d job IDs, docType: %s",
+                           docList and len(docList) or 0,
+                           jobList and len(jobList) or 0,
+                           docType or "None")
 
         # Gather the documents from the list of individual document IDs
         self.__docs = {}
@@ -221,14 +223,12 @@ class CdrRepublisher:
                     SELECT 'x'
                       FROM query_term
                      WHERE path = '/Summary/@ModuleOnly'
-                       AND doc_id = ?""",
-                                      docId, timeout = 300)
+                       AND doc_id = ?""", docId)
                 row = self.__cursor.fetchone()
                 if row:
-                    cdr.logwrite("republish(): *** Invalid document",
-                                                                 cdr.PUBLOG)
-                    cdr.logwrite("             *** Skipping module %s" % docId,
-                                                                 cdr.PUBLOG)
+                    self.__logger.error("republish(): *** Invalid document")
+                    self.__logger.error("             *** Skipping module %s",
+                                        docId)
                     continue
 
                 self.__addDocumentToSet(docId)
@@ -240,8 +240,7 @@ class CdrRepublisher:
                     SELECT doc_id, failure
                       FROM pub_proc_doc
                      WHERE pub_proc = ?
-                       AND (removed IS NULL or removed = 'N')""",
-                                      jobId, timeout = 300)
+                       AND (removed IS NULL or removed = 'N')""", jobId)
                 rows = self.__cursor.fetchall()
                 for docId, failure in rows:
                     if not failedOnly or failure == 'Y':
@@ -271,7 +270,7 @@ class CdrRepublisher:
                        AND d.active_status = 'A'
                        AND t.name = ?
                        AND q.value is null
-                  ORDER BY v.id""", docType, timeout = 300)
+                  ORDER BY v.id""", docType)
 
             # ... or just those already sent to Cancer.gov, as requested.
             else:
@@ -292,7 +291,7 @@ class CdrRepublisher:
                         ON t.id = a.doc_type
                      WHERE t.name = ?
                        AND q.value IS NULL
-                  ORDER BY a.id""", docType, timeout = 300)
+                  ORDER BY a.id""", docType)
             rows = self.__cursor.fetchall()
             for row in rows:
                 self.__addDocumentToSet(row[0])
@@ -302,22 +301,21 @@ class CdrRepublisher:
             raise Exception("republish(): no documents to publish")
 
         # Record the number of documents collected directly.
-        cdr.logwrite("republish(): %d documents collected" % len(self.__docs),
-                     cdr.PUBLOG)
+        self.__logger.info("republish(): %d documents collected",
+                           len(self.__docs))
 
         # If requested, include new docs linked to by the ones we will publish.
         if addNewLinkedDocuments:
             numOriginalDocs = len(self.__docs)
             self.__addNewLinkedDocuments()
-            cdr.logwrite("republish(): %d new linked documents added to set" %
-                         (len(self.__docs) - numOriginalDocs),
-                         cdr.PUBLOG)
+            self.__logger.info("republish(): %d new linked documents added "
+                               "to set", len(self.__docs) - numOriginalDocs)
 
         try:
 
             # Make sure we don't optimize away the push of any of these docs.
             self.__adjustPubProcCgTable()
-            cdr.logwrite("republish(): pub_proc_cg table adjusted", cdr.PUBLOG)
+            self.__logger.info("republish(): pub_proc_cg table adjusted")
 
             # Use the publishing job type appropriate for republishing.
             pubSystem = 'Primary'
@@ -331,12 +329,12 @@ class CdrRepublisher:
             parms = []
             if gkHost:
                 parms.append(('GKServer', gkHost))
-                cdr.logwrite("republish(): setting GateKeeper host to %s" %
-                             gkHost, cdr.PUBLOG)
+                message = "republish(): setting GateKeeper host to %s"
+                self.__logger.info(message, gkHost)
             if gkPubTarget:
                 parms.append(('GKPubTarget', gkPubTarget))
-                cdr.logwrite("republish(): setting GateKeeper target to %s" %
-                             gkPubTarget, cdr.PUBLOG)
+                message = "republish(): setting GateKeeper target to %s"
+                self.__logger.info(message, gkPubTarget)
             opts = dict(parms=parms, docList=docs, email=email)
             opts["tier"] = self.__tier
             resp = cdr.publish(self.__credentials, pubSystem, pubSubset, **opts)
@@ -345,8 +343,8 @@ class CdrRepublisher:
             jobId, errors = resp
             if jobId:
                 jobId = int(jobId)
-                cdr.logwrite("republish(): new publishing job %d created" %
-                             jobId, cdr.PUBLOG)
+                message = "republish(): new publishing job %d created"
+                self.__logger.info(message, jobId)
                 return jobId
             else:
                 self.__cleanupPubProcCgTable()
@@ -355,9 +353,9 @@ class CdrRepublisher:
         # Clean up in the event of failure, including resetting the
         # force_push and cg_new columns back to 'N'.  If we have an
         # email address, use it to notify the requestor of the bad news.
-        except Exception, e:
+        except Exception as e:
             try:
-                cdr.logwrite("republish(): %s" % e, cdr.PUBLOG, True)
+                self.__logger.exception("republish failure")
             except:
                 pass
             if email:
@@ -366,14 +364,13 @@ class CdrRepublisher:
                     subject = "Republication failure on %s" % self.__tier
                     body    = "Failure republishing CDR documents:\n%s\n" % e
                     cdr.sendMail(sender, [email], subject, body)
-                    cdr.logwrite("republish(): sent failure notification "
-                                 "to %s" % email, cdr.PUBLOG)
+                    message = "republish(): sent failure notification to %s"
+                    self.__logger.info(message, email)
                 except:
                     pass
             try:
                 self.__cleanupPubProcCgTable()
-                cdr.logwrite("republish(): pub_proc_cg table cleaned up",
-                             cdr.PUBLOG)
+                self.__logger.info("republish(): pub_proc_cg table cleaned up")
             except:
                 pass
             raise
@@ -450,12 +447,11 @@ class CdrRepublisher:
                         AND v.publishable = 'Y'
                         AND d.active_status = 'A'
                    GROUP BY ln.target_doc,
-                            ln.source_doc""", timeout = 300)
+                            ln.source_doc""")
         if DEBUG:
-            cdr.logwrite("republish(): populated #links table "
-                         "with %d rows in %.3f seconds" %
-                         (self.__cursor.rowcount, (time.time() - start)),
-                         cdr.PUBLOG)
+            self.__logger.info("republish(): populated #links table "
+                               "with %d rows in %.3f seconds",
+                               self.__cursor.rowcount, time.time() - start)
 
         # Seed a second temporary table with documents we already have
         # in the set to be published.
@@ -468,10 +464,9 @@ class CdrRepublisher:
             self.__cursor.execute("INSERT INTO #docs (id) VALUES(?)", docId)
         self.__conn.commit()
         if DEBUG:
-            cdr.logwrite("republish(): added %d rows to #docs table; "
-                         "elapsed: %.3f seconds" %
-                         (len(self.__docs), (time.time() - start)),
-                         cdr.PUBLOG)
+            self.__logger.info("republish(): added %d rows to #docs table; "
+                               "elapsed: %.3f seconds",
+                               len(self.__docs), time.time() - start)
 
         # Find linked documents to be added to the original set.
         done = False
@@ -490,9 +485,9 @@ class CdrRepublisher:
             if not self.__cursor.rowcount:
                 done = True
         if DEBUG:
-            cdr.logwrite("republish(): done adding linked documents; "
-                         "elapsed: %.3f seconds; passes: %d" %
-                         (time.time() - start, passes), cdr.PUBLOG)
+            self.__logger.info("republish(): done adding linked documents; "
+                               "elapsed: %.3f seconds; passes: %d",
+                               time.time() - start, passes)
 
         # Get the rows that were added to the table for linked documents.
         self.__cursor.execute("""\
@@ -501,19 +496,18 @@ class CdrRepublisher:
              WHERE doc_version IS NOT NULL""")
         linkedDocs = self.__cursor.fetchall()
         if DEBUG:
-            cdr.logwrite("republish(): added %d documents to #docs table; "
-                         "elapsed: %.3f seconds" %
-                         (len(linkedDocs), (time.time() - start)),
-                         cdr.PUBLOG)
+            self.__logger.info("republish(): added %d documents to #docs "
+                               "table; elapsed: %.3f seconds",
+                               len(linkedDocs), time.time() - start)
 
         # Pick up the linked documents that Cancer.gov doesn't already have.
         for docId, docVer in linkedDocs:
             if docId not in self.__docs and not self.__isOnCG(docId):
                 self.__docs[docId] = CdrRepublisher.Doc(docId, docVer, True)
         if DEBUG:
-            cdr.logwrite("republish(): set now contains %d documents; "
-                         "elapsed: %.3f seconds" %
-                         (len(self.__docs), time.time() - start), cdr.PUBLOG)
+            self.__logger.info("republish(): set now contains %d documents; "
+                               "elapsed: %.3f seconds",
+                               len(self.__docs), time.time() - start)
 
     #------------------------------------------------------------------
     # Find out whether the specified document is already on Cancer.gov.
@@ -560,7 +554,7 @@ class CdrRepublisher:
                     AND p.status = 'Success'
                     AND d.failure IS NULL
                     AND p.pub_subset LIKE 'Push_Documents_To_Cancer.Gov%'
-               GROUP BY d.doc_id""", timeout = 300)
+               GROUP BY d.doc_id""")
         self.__conn.commit()
 
         # Get the ones for which the last action wasn't removal.
@@ -571,11 +565,11 @@ class CdrRepublisher:
                 ON d.doc_id = p.id
                AND d.pub_proc = p.pub_job
              WHERE d.removed = 'N'""")
-        onCG = set([row[0] for row in self.__cursor.fetchall()])
+        onCG = {row[0] for row in self.__cursor.fetchall()}
         if DEBUG:
-            cdr.logwrite("republish(): found %d documents on Cancer.gov in "
-                         "%.3f seconds" % (len(onCG), time.time() - start),
-                         cdr.PUBLOG)
+            self.__logger.info("republish(): found %d documents on Cancer"
+                               ".gov in %.3f seconds", len(onCG),
+                               time.time() - start)
         return onCG
 
     #------------------------------------------------------------------
@@ -664,6 +658,6 @@ where arg is one of:
                                       docTypeAll = all,
                                       email = email)
         cdr.logout(session)
-    except Exception, e:
+    except Exception as e:
         cdr.logout(session)
         raise

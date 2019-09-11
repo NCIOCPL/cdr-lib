@@ -1,5 +1,8 @@
-import sys, re, time, cdr
-from cdrapi import db as cdrdb
+import sys
+import re
+import time
+from cdr import exNormalize
+from cdrapi import db
 
 #----------------------------------------------------------------------
 # class GroupNums
@@ -58,12 +61,12 @@ class GroupNums:
                      groupings will result.
 
         Raises:
-            cdr.Exception if failure.
+            Exception if failure.
         """
         self.__jobNum = jobNum
 
         # Read only access to the database
-        self.__conn   = cdrdb.connect(user='CdrGuest')
+        self.__conn   = db.connect(user='CdrGuest')
         self.__cursor = self.__conn.cursor()
 
         # Set of document IDs for all new documents (i.e., not on Cancer.gov)
@@ -98,11 +101,11 @@ SELECT id
 """ % jobNum
         try:
             self.__cursor.execute(qry)
-            self.__newDocs = set([row[0] for row in self.__cursor.fetchall()])
-        except cdrdb.Error as info:
-            raise cdr.Exception(
+            self.__newDocs = {row[0] for row in self.__cursor.fetchall()}
+        except Exception as e:
+            raise Exception(
                 "GroupNums: Database error fetching list of newly published "
-                "docs in job %d: %s" % (jobNum, str(info)))
+                "docs in job %d: %s" % (jobNum, str(e)))
 
         # Get a list of all docs in the run that aren't removals
         qry = """
@@ -114,10 +117,10 @@ SELECT id
         try:
             self.__cursor.execute(qry)
             docList = [row[0] for row in self.__cursor.fetchall()]
-        except cdrdb.Error as info:
-            raise cdr.Exception(
+        except Exception as e:
+            raise Exception(
              "GroupNums: Database error fetching list of docs in job %d: %s" %
-                (jobNum, str(info)))
+                (jobNum, str(e)))
 
         # Remember counts
         self.__newDocCount = len(self.__newDocs)
@@ -191,14 +194,14 @@ SELECT id
             self.__cursor.execute(qry)
             rows = self.__cursor.fetchall()
             if len(rows) != 1:
-                raise cdr.Exception(
+                raise Exception(
                   "GroupNums: Unable to fetch xml for doc %d, rowcount=%d" %
                    (docId, len(rows)))
             return rows[0][0]
-        except cdrdb.Error as info:
-            raise cdr.Exception(
+        except Exception as e:
+            raise Exception(
              "GroupNums: Database error fetching list of docs in job %d: %s" %
-                (jobNum, str(info)))
+                (jobNum, str(e)))
 
 
     def __getRefs(self, xml):
@@ -224,7 +227,7 @@ SELECT id
         refs = set()
         for match in self.__refPat.finditer(xml):
             cdrId = match.group(1)
-            refs.add(cdr.exNormalize(cdrId)[1])
+            refs.add(exNormalize(cdrId)[1])
 
         return refs
 
@@ -260,17 +263,14 @@ SELECT id
         """
         Return a list of docIds for newly published documents in the job.
         """
-        newDocs = list(self.__newDocs)
-        newDocs.sort()
+        newDocs = sorted(self.__newDocs)
         return newDocs
 
     def getAllDocs(self):
         """
         Return a list of all docIds, newly published or not.
         """
-        allDocs = self.__docs.keys()
-        allDocs.sort()
-        return allDocs
+        return sorted(self.__docs.keys())
 
     def getDocGroupNum(self, docId):
         """
@@ -323,14 +323,14 @@ if __name__ == "__main__":
     # Time this
     startTime = time.time()
     gn = GroupNums(int(jobNum))
-    endTime = time.time()
+    elapsed = time.time() - startTime
 
     # Processed
-    print("Completed assignment in %d seconds" % (endTime - startTime))
-    print("New docs = %s" % gn.getNewDocs())
+    print(f"Completed assignment in {elapsed:.0f} seconds")
+    print(f"New docs = {gn.getNewDocs()}")
     print("Doc groups:")
     for docId in gn.getAllDocs():
-        print("ID: %7d  isNew=%s groupNum=%d" % (docId, gn.isDocNew(docId),
-                                                 gn.getDocGroupNum(docId)))
-    print("Group IDs: %s" % str(gn.getGroupIds()))
-
+        new = gn.isDocNew(docId)
+        group = gn.getDocGroupNum(docId)
+        print(f"ID: {docId:7d}  isNew={new} groupNum={group:d}")
+    print(f"Group IDs: {gn.getGroupIds()}")

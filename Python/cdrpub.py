@@ -13,6 +13,7 @@ an overview of the logic for the other two job types, see the methods
 
 import argparse
 import base64
+import csv
 import datetime
 import glob
 import json
@@ -22,10 +23,9 @@ import subprocess
 import threading
 import time
 from lxml import etree, html
-import unicodecsv as csv
 import cdr
 import cdr2gk
-from cdrapi import db as cdrdb
+from cdrapi import db
 from cdrapi.docs import Doc
 from cdrapi.publishing import Job, DrupalClient
 from cdrapi.settings import Tier
@@ -418,7 +418,7 @@ class Control:
 
         if self.export_failed:
             raise Exception("Export multiprocessing failure")
-        query = cdrdb.Query("pub_proc_doc d", "t.name", "COUNT(*) AS errors")
+        query = db.Query("pub_proc_doc d", "t.name", "COUNT(*) AS errors")
         query.join("doc_version v", "v.id = d.doc_id", "v.num = d.doc_version")
         query.join("doc_type t", "t.id = v.doc_type")
         query.where("d.failure = 'Y'")
@@ -450,15 +450,15 @@ class Control:
         The information is stored using comma-separated value format
         """
 
-        query = cdrdb.Query("media_manifest", "filename", "blob_date", "title")
+        query = db.Query("media_manifest", "filename", "blob_date", "title")
         query.where(query.Condition("job_id", self.job.id))
         query.order("doc_id")
         rows = query.execute(self.cursor).fetchall()
         if rows and os.path.isdir(self.work_dir):
             values = [(row[0], str(row[1])[:10], row[2]) for row in rows]
             path = os.path.join(self.work_dir, "media_catalog.txt")
-            with open(path, "wb") as fp:
-                opts = dict(encoding="utf-8", delimiter=",", quotechar='"')
+            with open(path, "w", newline="", encoding="utf-8") as fp:
+                opts = dict(delimiter=",", quotechar='"')
                 writer = csv.writer(fp, **opts)
                 writer.writerows(values)
 
@@ -468,7 +468,7 @@ class Control:
         """
 
         # First make sure there's something to push.
-        query = cdrdb.Query("pub_proc_doc", "COUNT(*) AS exported")
+        query = db.Query("pub_proc_doc", "COUNT(*) AS exported")
         query.where(query.Condition("pub_proc", self.job.id))
         query.where("failure IS NULL")
         if query.execute(self.cursor).fetchone().exported:
@@ -568,7 +568,7 @@ class Control:
             args = self.job.id, self.PUSH_STAGE
             self.logger.info("Job %d populating %s for Hotfix (Remove)", *args)
             cols = "d.id", "p.doc_version", "p.pub_proc", push_id, "t.name"
-            query = cdrdb.Query("pub_proc_doc p", *cols)
+            query = db.Query("pub_proc_doc p", *cols)
             query.join("document d", "d.id = p.doc_id")
             query.join("doc_type t", "t.id = d.doc_type")
             query.where("p.pub_proc = {:d}".format(export_job.job_id))
@@ -583,7 +583,7 @@ class Control:
         # Compare what we sent last time with what we've got now for each doc.
         doc_type = "t.name AS doc_type"
         cols = "c.id", doc_type, "d.subdir", "d.doc_version", "c.force_push"
-        query = cdrdb.Query("pub_proc_cg c", *cols)
+        query = db.Query("pub_proc_cg c", *cols)
         query.join("pub_proc_doc d", "d.doc_id = c.id")
         query.join("doc_version v", "v.id = c.id", "v.num = d.doc_version")
         query.join("doc_type t", "t.id = v.doc_type")
@@ -617,11 +617,11 @@ class Control:
                 exported = self.wrap_media_file(directory, row.id)
             else:
                 path = "{}/CDR{:d}.xml".format(directory, row.id)
-                with open(path, "rb") as fp:
-                    exported = fp.read().decode("utf-8")
+                with open(path, encoding="utf-8") as fp:
+                    exported = fp.read()
             needs_push = push_all or row.force_push == "Y"
             if not needs_push:
-                query = cdrdb.Query("pub_proc_cg", "xml")
+                query = db.Query("pub_proc_cg", "xml")
                 query.where(query.Condition("id", row.id))
                 pushed = query.execute(self.cursor).fetchone().xml
                 if self.normalize(pushed) != self.normalize(exported):
@@ -644,7 +644,7 @@ class Control:
         # Queue up documents which the GateKeeper doesn't already have.
         self.logger.info("Queuing new documents for push")
         cols = "v.id", doc_type, "d.subdir", "d.doc_version"
-        query = cdrdb.Query("pub_proc_doc d", *cols)
+        query = db.Query("pub_proc_doc d", *cols)
         query.join("doc_version v", "v.id = d.doc_id", "v.num = d.doc_version")
         query.join("doc_type t", "t.id = v.doc_type")
         query.outer("pub_proc_cg c", "c.id = v.id")
@@ -664,8 +664,8 @@ class Control:
                 exported = self.wrap_media_file(directory, row.id)
             else:
                 path = "{}/CDR{:d}.xml".format(directory, row.id)
-                with open(path, "rb") as fp:
-                    exported = fp.read().decode("utf-8")
+                with open(path, encoding="utf-8") as fp:
+                    exported = fp.read()
             fields["id"] = row.id
             fields["doc_type"] = row.doc_type
             fields["xml"] = exported
@@ -689,7 +689,7 @@ class Control:
             return
 
         # Handle documents which have been dropped for doctypes published
-        query = cdrdb.Query("pub_proc_doc d", "v.doc_type").unique()
+        query = db.Query("pub_proc_doc d", "v.doc_type").unique()
         query.join("doc_version v", "v.id = d.doc_id", "v.num = d.doc_version")
         query.where(query.Condition("d.pub_proc", export_job.job_id))
         types = [row.doc_type for row in query.execute(self.cursor).fetchall()]
@@ -698,7 +698,7 @@ class Control:
         types = ", ".join([str(t) for t in types])
         export_id = str(export_job.job_id)
         cols = "v.id", "v.num", export_id, push_id, "t.name"
-        query = cdrdb.Query("pub_proc_doc d", *cols).unique()
+        query = db.Query("pub_proc_doc d", *cols).unique()
         query.join("doc_version v", "v.id = d.doc_id", "v.num = d.doc_version")
         query.join("all_docs a", "a.id = v.id")
         query.join("pub_proc_cg c", "c.id = v.id", "c.pub_proc = d.pub_proc")
@@ -756,7 +756,7 @@ class Control:
         """
 
         self.update_status(self.WAIT, "Waiting for push job release")
-        query = cdrdb.Query("pub_proc", "status")
+        query = db.Query("pub_proc", "status")
         query.where(query.Condition("id", self.job.id))
         body = "Push job {:d} is waiting for approval.".format(self.job.id)
         self.notify(body)
@@ -780,7 +780,7 @@ class Control:
 
         # Make sure we've got something to push.
         self.__num_pushed = 0
-        query = cdrdb.Query("pub_proc_cg_work", "COUNT(*) AS num_docs")
+        query = db.Query("pub_proc_cg_work", "COUNT(*) AS num_docs")
         num_docs = query.execute(self.cursor).fetchone().num_docs
         if not num_docs:
             self.update_status(self.SUCCESS, "Nothing to push")
@@ -819,7 +819,7 @@ class Control:
         # Send the GateKeeper each of the exported documents.
         send_to_cms = dict()
         start = datetime.datetime.now()
-        query = cdrdb.Query("pub_proc_cg_work", "id")
+        query = db.Query("pub_proc_cg_work", "id")
         query.where("xml IS NOT NULL")
         query.where(query.Condition("doc_type", self.EXCLUDED, "NOT IN"))
         ids = [row.id for row in query.execute(self.cursor).fetchall()]
@@ -833,7 +833,7 @@ class Control:
         self.logger.info("Grouped %d documents in %.2f seconds", *args)
         counter = 0
         for doc_id in ids:
-            query = cdrdb.Query("pub_proc_cg_work", "num", "doc_type", "xml")
+            query = db.Query("pub_proc_cg_work", "num", "doc_type", "xml")
             query.where(query.Condition("id", doc_id))
             row = query.execute(self.cursor).fetchone()
             doc_type = self.GK_TYPES.get(row.doc_type, row.doc_type)
@@ -852,7 +852,7 @@ class Control:
 
         # Tell the GateKeeper about the documents being removed.
         remove_from_cms = dict()
-        query = cdrdb.Query("pub_proc_cg_work", "id", "num", "doc_type")
+        query = db.Query("pub_proc_cg_work", "id", "num", "doc_type")
         query.where("xml IS NULL")
         query.where(query.Condition("doc_type", self.EXCLUDED, "NOT IN"))
         rows = query.execute(self.cursor).fetchall()
@@ -946,7 +946,7 @@ class Control:
         spanish = set()
         pushed = []
         table = opts.get("table", "pub_proc_cg")
-        query = cdrdb.Query("query_term_pub", "value")
+        query = db.Query("query_term_pub", "value")
         query.where("path = '/Summary/SummaryMetaData/SummaryLanguage'")
         query.where(query.Condition("doc_id", 0))
         query = str(query)
@@ -1290,7 +1290,7 @@ class Control:
           parsed XML document
         """
 
-        query = cdrdb.Query(table, "xml")
+        query = db.Query(table, "xml")
         query.where(query.Condition("id", doc_id))
         xml = query.execute(session.cursor).fetchone().xml
         return etree.fromstring(xml.encode("utf-8"))
@@ -1305,7 +1305,7 @@ class Control:
         """
 
         # Use a separate connection with a long timeout.
-        conn = cdrdb.connect(timeout=1000)
+        conn = db.connect(timeout=1000)
         cursor = conn.cursor()
 
         # Handle removed documents
@@ -1470,7 +1470,7 @@ class Control:
         if not hasattr(self, "_conn"):
             opts = dict(user="CdrPublishing", timeout=600)
             try:
-                self._conn = cdrdb.connect(**opts)
+                self._conn = db.connect(**opts)
             except Exception as e:
                 self.logger.exception("unable to connect to database")
                 raise Exception("Database connection failure: {}".format(e))
@@ -1517,7 +1517,7 @@ class Control:
 
         if not hasattr(self, "_last_push"):
             push = "{}%".format(self.PUSH)
-            query = cdrdb.Query("pub_proc p", "MAX(p.id) AS id")
+            query = db.Query("pub_proc p", "MAX(p.id) AS id")
             query.join("pub_proc_doc d", "d.pub_proc = p.id")
             query.where(query.Condition("p.status", self.SUCCESS))
             query.where(query.Condition("p.pub_subset", push, "LIKE"))
@@ -1559,7 +1559,7 @@ class Control:
         """
 
         if not hasattr(self, "_session"):
-            query = cdrdb.Query("usr u", "u.name")
+            query = db.Query("usr u", "u.name")
             query.join("pub_proc p", "p.usr = u.id")
             query.where(query.Condition("p.id", self.__job_id))
             row = query.execute(self.cursor).fetchone()
@@ -1576,7 +1576,7 @@ class Control:
         Current status of the publishing job
         """
 
-        query = cdrdb.Query("pub_proc", "status")
+        query = db.Query("pub_proc", "status")
         query.where(query.Condition("id", self.job.id))
         status = query.execute(self.cursor).fetchone().status
         return status
@@ -1749,7 +1749,7 @@ class Control:
 
             cursor = control.cursor
             subset_name = control.job.parms["SubSetName"]
-            query = cdrdb.Query("pub_proc", "id", "output_dir").limit(1)
+            query = db.Query("pub_proc", "id", "output_dir").limit(1)
             query.where(query.Condition("pub_system", control.job.system.id))
             query.where(query.Condition("pub_subset", subset_name))
             query.where(query.Condition("status", control.SUCCESS))
@@ -1762,7 +1762,7 @@ class Control:
             if push_job is not None and push_job > self.job_id:
                 message = "Export job {} has already been push by job {}"
                 raise Exception(message.format(self.job_id, push_job))
-            query = cdrdb.Query("pub_proc_doc", "COUNT(*) AS n")
+            query = db.Query("pub_proc_doc", "COUNT(*) AS n")
             query.where(query.Condition("pub_proc", self.job_id))
             self.doc_count = query.execute(cursor).fetchone().n
             assert self.doc_count, "No documents to push"
@@ -1780,7 +1780,7 @@ class Control:
               subset_name - string for the export job's type
             """
 
-            query = cdrdb.Query("pub_proc j", "MAX(j.id) AS job_id")
+            query = db.Query("pub_proc j", "MAX(j.id) AS job_id")
             push_name = "{}_{}".format(control.PUSH, subset_name)
             query.join("pub_proc_parm p", "p.pub_proc = j.id")
             query.where(query.Condition("j.id", self.job_id, ">"))

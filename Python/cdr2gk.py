@@ -31,14 +31,6 @@ import requests
 from lxml import etree
 from cdrapi.settings import Tier
 
-try:
-    basestring
-    PYTHON3 = False
-except:
-    basestring = str, bytes
-    unicode = str
-    PYTHON3 = True
-
 
 # ======================================================================
 # Module data.
@@ -104,7 +96,7 @@ class Fault:
         assert self.faultstring, "missing required faultstring"
     def __repr__(self):
         args = self.faultcode, self.faultstring
-        return u"Fault (faultcode: {}, faultstring: {}".format(*args)
+        return "Fault (faultcode: {}, faultstring: {})".format(*args)
 
 
 class DocumentLocation:
@@ -321,15 +313,15 @@ class PubEventResponse:
         except:
             self.docCount = docCount
             try:
-                totalPackets, highestDocNum = docCount.split(u"/")
+                totalPackets, highestDocNum = docCount.split("/")
                 self.totalPackets = int(totalPackets)
                 self.highestDocNum = int(highestDocNum)
             except:
                 pass
     def __repr__(self):
-        return (u"PubEventResponse "
-                u"(pubType: %s, lastJobId: %s, nextJobId: %s, docCount: %s, "
-                u"totalPackets: %s, highestDocNum: %s)"""
+        return ("PubEventResponse "
+                "(pubType: %s, lastJobId: %s, nextJobId: %s, docCount: %s, "
+                "totalPackets: %s, highestDocNum: %s)"""
                 % (self.pubType, self.lastJobId, self.nextJobId,
                    self.docCount, self.totalPackets, self.highestDocNum))
 
@@ -348,7 +340,7 @@ class PubDataResponse:
     def __init__(self, node):
         self.docNum = int(cdr.get_text(node.find("docNum")))
     def __repr__(self):
-        return u"PubDataResponse (docNum: %d)" % self.docNum
+        return "PubDataResponse (docNum: %d)" % self.docNum
 
 
 class Response:
@@ -436,7 +428,7 @@ class Response:
 
         if not hasattr(self, "_xml") or self._xml is None:
             return None
-        if isinstance(self._xml, unicode):
+        if isinstance(self._xml, str):
             return self._xml.encode("utf-8")
         else:
             return self._xml
@@ -446,21 +438,28 @@ class Response:
         Display for debugging/logging
         """
 
-        pieces = [u"cdr2gk.Response "]
+        pieces = ["cdr2gk.Response "]
         if self.publishing:
-            pieces.append(u"(type: %s, message: %s, details: %s" %
+            pieces.append("(type: %s, message: %s, details: %s" %
                           (self.type, self.message, self.details))
         else:
-            pieces.append(u"(publish preview document")
+            pieces.append("(publish preview document")
         if self.fault:
-            pieces.append(u", fault: %s" % self.fault)
-        pieces.append(u")")
-        return u"".join(pieces)
+            pieces.append(", fault: %s" % self.fault)
+        pieces.append(")")
+        return "".join(pieces)
 
 
 def _log(command_type, value, **opts):
     """
     Optionally write to the log file if `DEBUGLEVEL` is greater than zero
+
+    This would have been replaced by the standard library's logging tools,
+    except for the fact that GateKeeper will be going away very soon.
+    Just as well, as the use of the module's DEBUGLEVEL (and the modifying
+    of that value by outside code after the module was loaded) was not
+    a good idea. It would have been better to have a function (or better,
+    a class with a method) for modifying the logging level. Oh, well.
 
     Requred positional parameters:
         command_type - e.g., "SEND REQUEST"
@@ -472,11 +471,11 @@ def _log(command_type, value, **opts):
     """
 
     if opts.get("force") or DEBUGLEVEL > 0:
-        if not isinstance(value, unicode):
+        if not isinstance(value, str):
             value = value.decode("utf-8")
         host = (opts.get("host") or "").strip() or HOST
         args = time.ctime(), command_type, host, value.replace("\r", "")
-        message = u"==== {} {} (host={}) ====\n{!r}\n".format(*args)
+        message = "==== {} {} (host={}) ====\n{!r}\n".format(*args)
         with open(LOGFILE, "ab") as fp:
             fp.write(message.encode("utf-8"))
 
@@ -507,7 +506,7 @@ def sendRequest(body, **opts):
     node is attached to the SOAP document. But when the module's
     `tostring()` function is invoked, that information is lost, and
     the package fails to override the enclosing namespace. So the
-    document being handed to GateKeeper matches the spec (thought
+    document being handed to GateKeeper matches the spec (though
     possibly not what the author of the spec really intended).
 
     I considered filing a bug report for the lxml bug, but I don't
@@ -545,7 +544,7 @@ def sendRequest(body, **opts):
             tries = 0
         except Exception as e:
             message = "sendRequest({!r}) caught exception {}".format(url, e)
-            cdr.logwrite(message, LOGFILE, tback=True)
+            cdr.Logging.get_logger("cdr2gk").exception(message)
             wait = (MAX_RETRIES + 1 - tries) * RETRY_MULTIPLIER
             args = tries, wait
             message = "{} retries left; waiting {:f} seconds".format(*args)
@@ -842,16 +841,13 @@ class Test:
         filters = ["set:Vendor {} Set".format(setname)]
         opts = dict(ver="lastp", parms=[["isPP", "Y"]])
         result = cdr.filterDoc("guest", filters, self.opts.doc_id, **opts)
-        if isinstance(result, basestring):
+        if isinstance(result, (str, bytes)):
             raise Exception(result)
         xml, messages = result
         response = None
         try:
             response = pubPreview(xml, doctype, host=self.opts.host)
-            if PYTHON3:
-                print(response.xmlResult.decode("utf-8").strip())
-            else:
-                print(response.xmlResult.strip())
+            print(response.xmlResult.decode("utf-8").strip())
         except Exception as e:
             print(e)
             if response is not None:
@@ -945,7 +941,7 @@ class Test:
         # Filter the document and serialize it to utf-8 bytes.
         result = doc.filter(set_name)
         xml = str(result.result_tree)
-        if isinstance(xml, unicode):
+        if isinstance(xml, str):
             xml = xml.encode("utf-8")
 
         # Map our doctype name to GateKeeper's.

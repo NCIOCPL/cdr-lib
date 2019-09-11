@@ -12,7 +12,7 @@ import logging
 
 # Local modules
 import cdr
-import cdrdb2 as cdrdb
+from cdrapi import db
 
 
 class DocBase:
@@ -55,7 +55,7 @@ class DocBase:
         cols.append(Control.td(self.title))
         return Control.B.TR(*(cols + [Control.td(val) for val in extra]))
 
-    def __cmp__(self, other):
+    def __lt__(self, other):
         """
         Support sorting the rows in a table of CDR documents. Sort by
         document ID if the IDs are included in the table; otherwise
@@ -66,7 +66,7 @@ class DocBase:
         other    document object to be compared with this one
         """
 
-        return cmp(self.title.lower(), other.title.lower())
+        return self.title.lower() < other.title.lower()
 
     @staticmethod
     def fix_date_time(dt):
@@ -96,7 +96,7 @@ class Section:
 
     NEW_ONLY = False
     HEADERS = []
-    cursor = cdrdb.connect("CdrGuest", as_dict=True).cursor()
+    cursor = db.connect(user="CdrGuest").cursor()
 
     def show_counts(self):
         """
@@ -179,6 +179,22 @@ class Section:
             style=Control.TSTYLE
         )
 
+    @classmethod
+    def execute(cls, query):
+        """
+        Build a sequences of dictionaries from the query results set
+
+        Pass:
+          query - db.Query object
+
+        Return:
+          sequence of dictionaries of column name -> row value for column
+        """
+
+        rows = query.execute(cls.cursor).fetchall()
+        cols = [col[0] for col in cls.cursor.description]
+        return [dict(zip(cols, row)) for row in rows]
+
     @staticmethod
     def query(*cols):
         """
@@ -194,13 +210,13 @@ class Section:
                 by the query
         """
 
-        query = cdrdb.Query("document d", *cols)
+        query = db.Query("document d", *cols)
         query.where("d.active_status = 'A'")
         query.join("pub_proc_cg c", "c.id = d.id")
         return query
 
     @staticmethod
-    def count_row(label=u"\xa0", count=None):
+    def count_row(label="\xa0", count=None):
         """
         Create an object representing a two-column HTML table row, showing
         classes of documents in the first column and a count in the
@@ -268,7 +284,7 @@ class Summary(Section):
         query = self.query()
         query.where(control.date_check("d.first_pub"))
         control.logger.debug("new summary query:\n%s", query)
-        return [self.Doc(control, row) for row in query.execute(self.cursor)]
+        return [self.Doc(control, row) for row in self.execute(query)]
 
     def fetch_mod(self, control):
         """
@@ -285,7 +301,7 @@ class Summary(Section):
                    "m.path = '/Summary/DateLastModified'")
         query.where(control.date_check("m.value"))
         control.logger.debug("new summary query:\n%s", query)
-        return [self.Doc(control, row) for row in query.execute(self.cursor)]
+        return [self.Doc(control, row) for row in self.execute(query)]
 
     def query(self):
         """
@@ -529,7 +545,7 @@ class Glossary(Section):
         query.where("n.path = '/GlossaryTermName/TermName/TermNameString'")
         query.where(control.date_check("d.first_pub"))
         control.logger.debug("new glossary term query:\n%s", query)
-        return [self.NewTerm(control, v) for v in query.execute(self.cursor)]
+        return [self.NewTerm(control, v) for v in self.execute(query)]
 
     def fetch_mod_concepts(self, control):
         """
@@ -539,12 +555,12 @@ class Glossary(Section):
         individual definition blocks).
         """
 
-        query = cdrdb.Query("active_doc d", "d.id").unique()
+        query = db.Query("active_doc d", "d.id").unique()
         query.join("query_term_pub m", "m.doc_id = d.id")
         query.where("m.path LIKE '%s'" % self.DLM)
         query.where(control.date_check("m.value"))
         control.logger.debug("mod concepts query:\n%s", query)
-        rows = [row for row in query.execute(self.cursor)]
+        rows = self.execute(query)
         return [self.RevisedConcept(control, row) for row in rows]
 
     def fetch_new_genetics_terms(self, control):
@@ -586,7 +602,7 @@ class Glossary(Section):
 
         # Construct and return the sequence of objects for the documents.
         control.logger.debug("new genetics terms query:\n%s", query)
-        return [DocBase(control, row) for row in query.execute(self.cursor)]
+        return [DocBase(control, row) for row in self.execute(query)]
 
     def fetch_mod_genetics_concepts(self, control):
         """
@@ -595,7 +611,7 @@ class Glossary(Section):
         """
 
         # Create the query.
-        query = cdrdb.Query("active_doc d", "d.id").unique()
+        query = db.Query("active_doc d", "d.id").unique()
 
         # Make sure the definition is for the genetics dictionary.
         self.join_genetics_definition(query, "d.id")
@@ -606,7 +622,7 @@ class Glossary(Section):
 
         # Construct and return the sequence of objects for the documents.
         control.logger.debug("mod genetics concepts query:\n%s", query)
-        rows = [row for row in query.execute(self.cursor)]
+        rows = self.execute(query)
         return [self.RevisedConcept(control, row, True) for row in rows]
 
     def join_genetics_definition(self, query, id_column, status_date=False):
@@ -674,7 +690,7 @@ class Glossary(Section):
 
         # Construct and return the sequence of objects for the documents.
         control.logger.debug("audio query:\n%s", query)
-        return [DocBase(control, row) for row in query.execute(self.cursor)]
+        return [DocBase(control, row) for row in self.execute(query)]
 
     class NewTerm(DocBase):
         """
@@ -706,7 +722,7 @@ class Glossary(Section):
             DocBase.__init__(self, control, values)
 
             # Create the database query to find the Spanish name strings.
-            query = cdrdb.Query("query_term_pub", "value")
+            query = db.Query("query_term_pub", "value")
             query.where(query.Condition("doc_id", self.id))
             query.where(query.Condition("path", self.PATH))
 
@@ -783,7 +799,7 @@ class Glossary(Section):
             """
 
             # Create the query to find the GlossaryTermName documents.
-            query = cdrdb.Query("query_term_pub n", "n.value", "n.path")
+            query = db.Query("query_term_pub n", "n.value", "n.path")
 
             # Link those documents to the concept document.
             query.join("query_term_pub c", "c.doc_id = n.doc_id")
@@ -807,8 +823,8 @@ class Glossary(Section):
             self.en_names = []
             self.es_names = []
             for values in query.execute(Section.cursor):
-                name = values.get("value")
-                if "translated" in values.get("path").lower():
+                name = values.value
+                if "translated" in values.path.lower():
                     self.es_names.append(name)
                 else:
                     self.en_names.append(name)
@@ -829,7 +845,7 @@ class Glossary(Section):
             """
 
             # Select the definitions' DateLastModified values.
-            query = cdrdb.Query("query_term_pub", "path")
+            query = db.Query("query_term_pub", "path")
             query.where("doc_id = %d" % self.id)
             query.where("path LIKE '%s'" % Glossary.DLM)
 
@@ -839,7 +855,7 @@ class Glossary(Section):
             # Use the path name to distinguish between English and Spanish.
             control.logger.debug("revised definitions query:\n%s", query)
             for row in query.execute(Section.cursor):
-                if "translated" in row.get("path").lower():
+                if "translated" in row.path.lower():
                     Glossary.RevisedConcept.rev_es_defs += 1
                 else:
                     Glossary.RevisedConcept.rev_en_defs += 1
@@ -897,7 +913,7 @@ class DrugInformationSummary(Section):
 
         # Fetch the documents and save them.
         control.logger.debug("drug information summaries query:\n%s", query)
-        self.docs = [self.Doc(control, v) for v in query.execute(self.cursor)]
+        self.docs = [self.Doc(control, v) for v in self.execute(query)]
 
     def show_counts(self):
         """
@@ -994,7 +1010,7 @@ class GeneticsProfessional(Section):
 
         # Fetch and save the sequence of GP documents.
         control.logger.debug("genetics professionals query:\n%s", query)
-        self.docs = [self.Doc(control, v) for v in query.execute(self.cursor)]
+        self.docs = [self.Doc(control, v) for v in self.execute(query)]
 
 
 class Drug(Section):
@@ -1042,7 +1058,7 @@ class Drug(Section):
 
         # Fetch and save the sequence of NCI Drug Term documents.
         control.logger.debug("drug term query:\n%s", query)
-        self.docs = [self.Doc(control, v) for v in query.execute(self.cursor)]
+        self.docs = [self.Doc(control, v) for v in self.execute(query)]
 
 
 class BoardMember(Section):
@@ -1101,7 +1117,7 @@ class BoardMember(Section):
 
         # Create the selection query.
         cols = ("d.id", "d.title", "b.value AS board")
-        query = cdrdb.Query("active_doc d", *cols)
+        query = db.Query("active_doc d", *cols)
 
         # Add the join for the board's name.
         query.join("query_term b", "b.doc_id = d.id")
@@ -1127,7 +1143,7 @@ class BoardMember(Section):
 
         # Fetch and save the PDQ board member documents.
         control.logger.debug("pdq board member query:\n%s", query)
-        self.docs = [self.Doc(control, v) for v in query.execute(self.cursor)]
+        self.docs = [self.Doc(control, v) for v in self.execute(query)]
 
     def show_counts(self):
         """
@@ -1219,7 +1235,7 @@ class BoardMeeting(Section):
         # Start a new query for active documents.
         cols = ("d.id", "n.value AS title", "m.value AS date",
                 "w.value AS webex")
-        query = cdrdb.Query("active_doc d", *cols)
+        query = db.Query("active_doc d", *cols)
 
         # Add a join to get the PDQ board's name and to narrow down
         # the selection organization documents.
@@ -1238,7 +1254,7 @@ class BoardMeeting(Section):
 
         # Collect and save the meeting information.
         control.logger.debug("pdq board meeting query:\n%s", query)
-        rows = [row for row in query.execute(self.cursor)]
+        rows = self.execute(query)
         self.docs = [self.Meeting(control, row) for row in rows]
 
     def show_counts(self):
@@ -1357,7 +1373,7 @@ class Image(Section):
 
         # Fetch and save the image documents.
         control.logger.debug("image query:\n%s", query)
-        self.docs = [self.Doc(control, v) for v in query.execute(self.cursor)]
+        self.docs = [self.Doc(control, v) for v in self.execute(query)]
 
     def show_counts(self):
         """
@@ -1540,7 +1556,7 @@ class Control:
         self.end = str(options.get("end") or self.DEFAULT_END)
         self.test = self.mode == "test"
         self.title = self.get_title(options)
-        self.cursor = cdrdb.connect("CdrGuest").cursor()
+        self.cursor = db.connect(user="CdrGuest").cursor()
         self.logger = cdr.Logging.get_logger("cdr-stats", level=log_level)
 
     def run(self):
@@ -1778,7 +1794,7 @@ class Control:
         """
 
         d = dict(defaults, **styles)
-        s = ["%s:%s" % (k.replace("_", "-"), v) for k, v in d.items()]
+        s = [f"{k.replace('_', '-')}:{v}" for k, v in d.items()]
         return ";".join(s)
 
 

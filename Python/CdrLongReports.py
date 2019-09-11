@@ -27,7 +27,7 @@ import datetime
 import re
 import socket
 import sys
-import urlparse
+import urllib.parse
 
 # Third-party packages
 import lxml.etree as etree
@@ -37,7 +37,7 @@ import requests
 import cdr
 import cdrbatch
 import cdrcgi
-import cdrdb2 as cdrdb
+from cdrapi import db
 
 class BatchReport:
     """
@@ -139,7 +139,7 @@ class BatchReport:
             report = self.create_html_report()
             name += ".html"
             path = "%s/%s" % (self.REPORTS_BASE, name)
-            open(path, "w").write(report)
+            open(path, "wb").write(report)
         else:
             workbook = self.create_excel_report()
             name += ".xls"
@@ -282,7 +282,7 @@ class BatchReport:
         lines = []
         for selector in sorted(selectors):
             rules = selectors[selector]
-            rules = [("%s: %s;" % rule) for rule in rules.items()]
+            rules = [("%s: %s;" % rule) for rule in list(rules.items())]
             lines.append("%s { %s }" % (selector, " ".join(rules)))
         css = "\n".join(lines)
         if self.verbose:
@@ -374,11 +374,11 @@ class BatchReport:
         Find the CDR document type for a specific document.
         """
 
-        query = cdrdb.Query("doc_type t", "t.name")
+        query = db.Query("doc_type t", "t.name")
         query.join("document d", "d.doc_type = t.id")
         query.where(query.Condition("d.id", doc_id))
         rows = query.execute(self.cursor).fetchall()
-        return rows and rows[0][0]
+        return rows[0][0] if rows else None
 
     def log_query(self, query):
         """
@@ -402,7 +402,8 @@ class BatchReport:
         else:
             self.logger.info("Sending email report to %s", email)
             recips = email.replace(',', ' ').replace(';', ' ').split()
-            cdr.sendMail(self.EMAILFROM, recips, subject, message)
+            opts = dict(subject=subject, body=message)
+            cdr.EmailMessage(self.EMAILFROM, recips, **opts).send()
 
     @classmethod
     def summary_board_subquery(cls, boards, language=None):
@@ -423,18 +424,18 @@ class BatchReport:
             language - "English" or "Spanish" (optional)
 
         Return:
-            cdrdb.Query object
+            db.Query object
         """
 
         boards = ", ".join([str(board) for board in boards])
         if not language or language == "English":
-            english_query = cdrdb.Query("query_term", "doc_id")
+            english_query = db.Query("query_term", "doc_id")
             english_query.where("path = '%s'" % cls.SUMMARY_BOARD)
             english_query.where("int_val in (%s)" % boards)
             if language:
                 return english_query
         if not language or language == "Spanish":
-            spanish_query = cdrdb.Query("query_term s", "s.doc_id")
+            spanish_query = db.Query("query_term s", "s.doc_id")
             spanish_query.join("query_term e", "e.int_val = s.doc_id")
             spanish_query.where("s.path = '/Summary/TranslationOf/@cdr:ref'")
             spanish_query.where("e.path = '%s'" % cls.SUMMARY_BOARD)
@@ -495,7 +496,7 @@ class BatchReport:
         filename = args.pop("filename")
         job = CdrBatch(jobName=cls.NAME, command=cls.CMD, args=args.items())
         if format == "html":
-            open(filename, "w").write(cls(job).create_html_report())
+            open(filename, "wb").write(cls(job).create_html_report())
         else:
             cls(job).create_excel_report().save(filename)
         sys.stderr.write("\nsaved %s\n\n" % filename)
@@ -574,7 +575,7 @@ class URLChecker(BatchReport):
         }
         try:
             self.links = self.find_links()
-        except Exception, e:
+        except Exception as e:
             self.logger.exception("fetching external links for report")
             self.job.fail("Fetching external links for report: %s" % e)
         if self.verbose:
@@ -668,7 +669,7 @@ class URLChecker(BatchReport):
 
             self.url = url
             self.problem = self.response = None
-            components = urlparse.urlparse(url)
+            components = urllib.parse.urlparse(url)
             host = components.netloc
             if not host:
                 self.problem = "Malformed URL"
@@ -682,11 +683,11 @@ class URLChecker(BatchReport):
                     code = self.response.status_code
                     if code != 200:
                         try:
-                            reason = unicode(self.response.reason, "utf-8")
+                            reason = str(self.response.reason, "utf-8")
                         except:
-                            reason = unicode(self.response.reason)
-                        self.problem = u"%d: %s" % (code, reason)
-                except IOError, e:
+                            reason = str(self.response.reason)
+                        self.problem = "%d: %s" % (code, reason)
+                except IOError as e:
                     problem = str(e)
                     if "getaddrinfo failed" in problem:
                         self.problem = "host name lookup failure"
@@ -696,11 +697,11 @@ class URLChecker(BatchReport):
                     else:
                         self.problem = "IOError: %s" % e
                     report.logger.error("%s, %s", url, self.problem)
-                except socket.error, socketError:
+                except socket.error as socketError:
                     self.problem = "Host not responding"
                     self.remember_dead_host(host, self.problem)
                     report.logger.error("%s not responding", host)
-                except Exception, e:
+                except Exception as e:
                     self.problem = str(e)
                     report.logger.error("%s: %s", url, self.problem)
 
@@ -831,7 +832,7 @@ class BrokenExternalLinks(URLChecker):
         """
 
         fields = "u.doc_id", "d.title", "u.value", "u.path", "u.node_loc"
-        query = cdrdb.Query("query_term u", *fields).unique()
+        query = db.Query("query_term u", *fields).unique()
         query.where("u.value LIKE 'http%'")
         query.join("document d", "d.id = u.doc_id")
         if not self.doc_id:
@@ -849,7 +850,7 @@ class BrokenExternalLinks(URLChecker):
                     def_path = "/%s/%s" % (self.GTC, definition)
                 else:
                     def_path = "/GlossaryTermConcept%TermDefinition"
-                query2 = cdrdb.Query("query_term u", *fields)
+                query2 = db.Query("query_term u", *fields)
                 query2.where("u.path LIKE '%s%%/@cdr:xref'" % def_path)
                 query2.join("document d", "d.id = u.doc_id")
                 if not self.doc_id:
@@ -880,7 +881,7 @@ class BrokenExternalLinks(URLChecker):
                 query.where("a.path = '%s'" % self.SUMMARY_AUDIENCE)
                 query.where("a.value = '%ss'" % self.audience)
         self.log_query(query)
-        rows = query.execute(self.cursor, timeout=300).fetchall()
+        rows = query.execute(self.cursor).fetchall()
         return [self.Link(self, *row) for row in rows]
 
     def selectors(self):
@@ -930,9 +931,9 @@ class BrokenExternalLinks(URLChecker):
             if not hasattr(self, "_section_title"):
                 self._section_title = None
                 if self.path.startswith("/Summary/"):
-                    self._section_title = u""
+                    self._section_title = ""
                     top_loc = self.node_loc[:4]
-                    query = cdrdb.Query("query_term", "value", "node_loc")
+                    query = db.Query("query_term", "value", "node_loc")
                     query.where(query.Condition("LEFT(node_loc, 4)", top_loc))
                     query.where("path LIKE '/Summary/%SummarySection/Title'")
                     query.where(query.Condition("doc_id", self.doc_id))
@@ -1034,7 +1035,7 @@ class PageTitleMismatches(URLChecker):
 
         fields = "d.id", "u.value", "d.title", "t.value"
         wildcard = self.doc_id and "%" or ("/%s/%%" % self.doc_type)
-        query = cdrdb.Query("query_term t", *fields).unique()
+        query = db.Query("query_term t", *fields).unique()
         query.join("query_term u", "u.doc_id = t.doc_id",
                    "u.node_loc = t.node_loc")
         query.join("document d", "d.id = t.doc_id")
@@ -1064,7 +1065,7 @@ class PageTitleMismatches(URLChecker):
                 query.where("l.path = '%s'" % self.GTC_USE_WITH)
                 query.where("l.value = '%s'" % language)
         self.log_query(query)
-        rows = query.execute(self.cursor, timeout=300).fetchall()
+        rows = query.execute(self.cursor).fetchall()
         return [self.Link(self, *row) for row in rows]
 
     def selectors(self):
@@ -1163,7 +1164,7 @@ class PageTitleMismatches(URLChecker):
                     content_type = self.response.headers["content-type"]
                     if "html" not in content_type:
                         self.problem = "content is %s" % content_type
-                except Exception, e:
+                except Exception as e:
                     self.problem = "content type: %s" % e
             if not self.problem and not self.response.text:
                 self.problem = "no content returned by host"
@@ -1260,7 +1261,7 @@ class PublishedDocumentsCount(BatchReport):
 
     NAME = "Published Documents Count"
     BANNER = "Published Documents"
-    ACTIVE = set(["Active", "Not yet active"])
+    ACTIVE = {"Active", "Not yet active"}
 
     def __init__(self, job):
         """
@@ -1277,7 +1278,7 @@ class PublishedDocumentsCount(BatchReport):
         Find the ID of the last successful full export publishing job.
         """
 
-        query = cdrdb.Query("pub_proc", "MAX(id)")
+        query = db.Query("pub_proc", "MAX(id)")
         query.where("pub_subset = 'Export'")
         query.where("status = 'Success'")
         return query.execute(self.cursor).fetchone()[0]
@@ -1301,7 +1302,7 @@ class PublishedDocumentsCount(BatchReport):
 
         self.job.setProgressMsg("Counting by document types")
         self.logger.info("Counting by document types")
-        query = cdrdb.Query("doc_type t", "t.name", "COUNT(*)").order("t.name")
+        query = db.Query("doc_type t", "t.name", "COUNT(*)").order("t.name")
         query.join("document d", "d.doc_type = t.id")
         query.join("pub_proc_doc p", "p.doc_id = d.id")
         query.where(query.Condition("p.pub_proc", self.pub_job))
@@ -1318,7 +1319,7 @@ class PublishedDocumentsCount(BatchReport):
         count = self.B.TD(str(total), self.B.CLASS("strong right"))
         rows.append(self.B.TR(label, count))
         caption = self.B.CAPTION("Documents Exported By Job %s" % self.pub_job)
-        return self.B.TABLE( self.B.CLASS("pub-counts"), caption, cols, *rows)
+        return self.B.TABLE(self.B.CLASS("pub-counts"), caption, cols, *rows)
 
     def counts_by_trial_status(self):
         """
@@ -1328,7 +1329,7 @@ class PublishedDocumentsCount(BatchReport):
         # Collect the document IDs and version numbers.
         self.job.setProgressMsg("Counting CTGovProtocols by status")
         self.logger.info("Counting CTGovProtocols by status")
-        query = cdrdb.Query("pub_proc_doc p", "p.doc_id", "p.doc_version")
+        query = db.Query("pub_proc_doc p", "p.doc_id", "p.doc_version")
         query.join("active_doc d", "d.id = p.doc_id")
         query.join("doc_type t", "t.id = d.doc_type")
         query.where("t.name = 'CTGovProtocol'")
@@ -1396,7 +1397,7 @@ class PublishedDocumentsCount(BatchReport):
             Fetch and parse the document, extracting the status.
             """
 
-            query = cdrdb.Query("doc_version", "xml")
+            query = db.Query("doc_version", "xml")
             query.where(query.Condition("id", doc_id))
             query.where(query.Condition("num", doc_version))
             xml = query.execute(cursor).fetchone()[0]
@@ -1421,11 +1422,11 @@ class GlossaryTermSearch(BatchReport):
     """
 
     NAME = "Glossary Term Search"
-    TYPES = ("HPSummaries", "PatientSummaries")
-    LANGUAGES = ("English", "Spanish")
-    punct = u"]['.,?!:;\u201c\u201d(){}<>"
-    squeeze = re.compile(u"[%s]" % punct)
-    non_blanks = re.compile(u"[^\\s_-]+")
+    TYPES = "HPSummaries", "PatientSummaries"
+    LANGUAGES = "English", "Spanish"
+    punct = "]['.,?!:;\u201c\u201d(){}<>"
+    squeeze = re.compile("[{punct}]")
+    non_blanks = re.compile("[^\\s_-]+")
 
     def __init__(self, job):
         """
@@ -1435,7 +1436,7 @@ class GlossaryTermSearch(BatchReport):
         BatchReport.__init__(self, job, self.NAME)
         doc_id = job.getParm("id")
         self.types  = job.getParm("types") or self.TYPES
-        if isinstance(self.types, basestring):
+        if isinstance(self.types, str):
             self.types = self.types.split()
         digits = re.sub(r"[^\d]", "", doc_id)
         self.doc_id = int(digits)
@@ -1457,7 +1458,7 @@ class GlossaryTermSearch(BatchReport):
         self.tree = self.GlossaryTree(phrases)
         self.job.setProgressMsg(self.msg)
         if self.language == "Spanish":
-            names = u", ".join(term.spanish_names)
+            names = ", ".join(term.spanish_names)
         else:
             names = term.name
         body = self.B.BODY(
@@ -1478,7 +1479,7 @@ class GlossaryTermSearch(BatchReport):
         caption = "Cancer Information %s Summaries" % audience
         if self.msg:
             self.msg += "<br>"
-        cursor = cdrdb.connect("CdrGuest").cursor()
+        cursor = db.connect(user="CdrGuest").cursor()
         self.make_query(audience).execute(cursor)
         row = cursor.fetchone()
         num_rows = 0
@@ -1493,15 +1494,15 @@ class GlossaryTermSearch(BatchReport):
             doc_id, doc_xml, doc_title = row
             root = etree.fromstring(doc_xml.encode("utf-8"))
             for node in root.findall("SummarySection"):
-                text = u" ".join(node.itertext("*")).strip()
-                sec_title = cdr.get_text(node.find("Title")) or u"[None]"
+                text = " ".join(node.itertext("*")).strip()
+                sec_title = cdr.get_text(node.find("Title")) or "[None]"
                 self.tree.clear_flags()
                 for p in self.tree.find_phrases(text):
                     mp = self.MatchingPhrase(p, doc_title, doc_id, sec_title)
                     matches.append(mp)
             row = cursor.fetchone()
             num_rows += 1
-            new_msg = u"Searched %d %s" % (num_rows, caption)
+            new_msg = "Searched %d %s" % (num_rows, caption)
             self.job.setProgressMsg(self.msg + new_msg)
         self.msg += new_msg
         return GlossaryTermSearch.B.TABLE(
@@ -1521,7 +1522,7 @@ class GlossaryTermSearch(BatchReport):
         Build a DB query for finding summary documents.
         """
 
-        query = cdrdb.Query("active_doc d", "d.id", "d.xml", "d.title")
+        query = db.Query("active_doc d", "d.id", "d.xml", "d.title")
         query.join("query_term a", "a.doc_id = d.id")
         query.join("query_term l", "l.doc_id = d.id")
         query.where("a.path = '/Summary/SummaryMetaData/SummaryAudience'")
@@ -1560,7 +1561,7 @@ class GlossaryTermSearch(BatchReport):
             Assemble the names and variants for the glossary term.
             """
 
-            query = cdrdb.Query("query_term", "value")
+            query = db.Query("query_term", "value")
             query.where("path = '%s'" % self.ENGLISH_NAME_PATH)
             query.where(query.Condition("doc_id", id))
             rows = query.execute(cursor).fetchall()
@@ -1568,12 +1569,12 @@ class GlossaryTermSearch(BatchReport):
                 raise Exception("GlossaryTermName %d not found" % id)
             self.id = id
             self.name = rows[0][0]
-            query = cdrdb.Query("query_term", "value")
+            query = db.Query("query_term", "value")
             query.where("path = '%s'" % self.SPANISH_NAME_PATH)
             query.where(query.Condition("doc_id", id))
             rows = query.execute(cursor).fetchall()
             self.spanish_names = [row[0] for row in rows]
-            query = cdrdb.Query("external_map m", "m.value", "u.name")
+            query = db.Query("external_map m", "m.value", "u.name")
             query.join("external_map_usage u", "u.id = m.usage")
             query.where(query.Condition("m.doc_id", id))
             query.where("u.name LIKE '%GlossaryTerm Phrases'")
@@ -1607,7 +1608,7 @@ class GlossaryTermSearch(BatchReport):
         def __init__(self, match):
             self.match = match
             lower_word = match.group().lower()
-            self.value = GlossaryTermSearch.squeeze.sub(u"", lower_word)
+            self.value = GlossaryTermSearch.squeeze.sub("", lower_word)
 
     class Phrase:
         "Sequence of Word objects."
@@ -1638,7 +1639,7 @@ class GlossaryTermSearch(BatchReport):
             self.doc_id, self.node_map, self.seen = None, {}, False
         def clear_flags(self):
             self.seen = False
-            for node in self.node_map.values():
+            for node in list(self.node_map.values()):
                 node.clear_flags()
 
     class GlossaryTree(GlossaryNode):
@@ -1650,7 +1651,7 @@ class GlossaryTermSearch(BatchReport):
                 for word in phrase.words:
                     value = word.value
                     if value:
-                        if current_map.has_key(value):
+                        if value in current_map:
                             current_node = current_map[value]
                         else:
                             current_node = GlossaryTermSearch.GlossaryNode()
@@ -1755,7 +1756,7 @@ class PronunciationRecordingsReport(BatchReport):
 
         begin, end = self.begin, self.end
         fields = "t.doc_id", "t.value", "d.created"
-        query = cdrdb.Query("query_term t", *fields).unique()
+        query = db.Query("query_term t", *fields).unique()
         query.join("query_term c", "c.doc_id = t.doc_id")
         query.join("query_term e", "e.doc_id = t.doc_id")
         query.join("doc_created d", "d.doc_id = t.doc_id")
@@ -1769,7 +1770,7 @@ class PronunciationRecordingsReport(BatchReport):
             query.where("t.value NOT LIKE '%-Spanish'")
         elif self.language == 'es':
             query.where("t.value LIKE '%-Spanish'")
-        rows = query.execute(self.cursor, timeout=600).fetchall()
+        rows = query.execute(self.cursor).fetchall()
         self.logger.info("fetched %d rows from the database", len(rows))
         docs = []
         for doc_id, title, created in rows:
@@ -1841,21 +1842,21 @@ class PronunciationRecordingsReport(BatchReport):
             versions = cdr.lastVersions("guest", "CDR%010d" % doc_id)
             if versions[0] == versions[1] and versions[0] > 0:
                 self.last_ver_publishable = "Y"
-            query = cdrdb.Query("last_doc_publication", "dt")
+            query = db.Query("last_doc_publication", "dt")
             query.where(query.Condition("doc_id", doc_id))
-            rows = query.execute(cursor, timeout=60).fetchall()
+            rows = query.execute(cursor).fetchall()
             if rows:
                 self.pub_date = rows[0][0]
-            query = cdrdb.Query("query_term n", "n.value")
+            query = db.Query("query_term n", "n.value")
             query.join("query_term u", "u.int_val = n.doc_id")
             query.where(query.Condition("u.doc_id", doc_id))
             query.where("n.path = '/GlossaryTermName/TermName/TermNameString'")
             query.where("u.path = '/Media/ProposedUse/Glossary/@cdr:ref'")
             for row in query.order("n.value").execute(cursor).fetchall():
                 self.glossary_terms.append(row[0])
-            query = cdrdb.Query("document", "first_pub", "xml")
+            query = db.Query("document", "first_pub", "xml")
             query.where(query.Condition("id", doc_id))
-            self.first_pub, xml = query.execute(cursor, timeout=300).fetchone()
+            self.first_pub, xml = query.execute(cursor).fetchone()
             root = etree.fromstring(xml.encode('utf-8'))
             for node in root.findall('DateLastModified'):
                 self.last_mod = node.text
@@ -1876,10 +1877,10 @@ class PronunciationRecordingsReport(BatchReport):
 
             sheet.write(row, 0, self.doc_id, styles.center)
             sheet.write(row, 1, self.title, styles.left)
-            sheet.write(row, 2, u"; ".join(self.glossary_terms), styles.left)
+            sheet.write(row, 2, "; ".join(self.glossary_terms), styles.left)
             sheet.write(row, 3, self.status, styles.left)
             sheet.write(row, 4, self.fix_date(self.status_date), styles.center)
-            sheet.write(row, 5, u"; ".join(self.comments), styles.left)
+            sheet.write(row, 5, "; ".join(self.comments), styles.left)
             sheet.write(row, 6, self.last_ver_publishable, styles.center)
             sheet.write(row, 7, self.fix_date(self.first_pub), styles.center)
             sheet.write(row, 8, self.fix_date(self.last_mod), styles.center)
@@ -1906,7 +1907,7 @@ class PronunciationRecordingsReport(BatchReport):
             Prepare a date value for display on the report.
             """
 
-            return date and str(date)[:10] or u""
+            return date and str(date)[:10] or ""
 
     @classmethod
     def test_harness(cls):
@@ -1959,7 +1960,7 @@ class Control:
             job = cdrbatch.CdrBatch(job_id)
             try:
                 cls.get_job_class(job.getJobName())(job).run()
-            except Exception, e:
+            except Exception as e:
                 message = "Failure executing job %s: %s" % (job_id, e)
                 logger.exception("failure executing job %s", job_id)
                 job.fail("Caught exception: %s" % e)

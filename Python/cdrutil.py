@@ -609,7 +609,7 @@ def log(what, logfile='/usr/local/cdr/log/cdr.log'):
 # Wrap CGI fields in a dictionary (if not done already).
 #----------------------------------------------------------------------
 def wrapFieldsInMap(fields):
-    if type(fields) == type({}):
+    if isinstance(fields, type({})):
         return fields
     fieldMap = {}
     #for key in fields.keys():

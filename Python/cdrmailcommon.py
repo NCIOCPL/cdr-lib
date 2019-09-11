@@ -53,13 +53,14 @@ class RemailSelector:
         if (conn == None):
             try:
                 conn = cdrdb.connect("CdrPublishing")
-            except cdrdb.Error, info:
+            except cdrdb.Error as info:
                 raise "database connection error: %s" % info[1][0]
 
         # Save connection and job id
         self.__conn   = conn
         self.__cursor = conn.cursor()
         self.__jobId  = jobId
+        self.__logger = cdr.Logging.get_logger("mailer")
 
 
     def select(self, originalMailType, maxMailers=sys.maxint,
@@ -141,7 +142,7 @@ class RemailSelector:
                  ORDER BY mailer_sent.value DESC""" % (singleId,
                         singleId, singleId, originalMailType),
                                        timeout = 300)
-            except cdrdb.Error, info:
+            except cdrdb.Error as info:
                 raise 'db error creating temp table #remail_temp for %d: %s'\
                       % (singleId, str(info[1][0]))
             # Tell user how many hits there were
@@ -155,7 +156,7 @@ class RemailSelector:
         #   not primary documents that are mailed.
         try:
             # Log for timing reasons
-            cdr.logwrite ("Starting #orig_mailers remail selection", LOGFILE)
+            self.__logger.info("Starting #orig_mailers remail selection")
 
             self.__cursor.execute ("""
              SELECT mailer.doc_id
@@ -176,14 +177,14 @@ class RemailSelector:
                 AND CONVERT(CHAR(10), DATEADD(DAY, -%d,  GETDATE()), 121)
             """ % (originalMailType, earlyDays, lateDays),
                                    timeout = 300)
-        except cdrdb.Error, info:
+        except cdrdb.Error as info:
             raise 'db error creating temporary table #orig_mailers %s'\
                   % str(info[1][0])
 
         # Create another temporary table containing all mailers in the
         #   above table that received a response.
         try:
-            cdr.logwrite ("Starting #got_response remail selection", LOGFILE)
+            self.__logger.info("Starting #got_response remail selection")
             self.__cursor.execute ("""
              SELECT query_term.doc_id
                INTO #got_response
@@ -194,15 +195,14 @@ class RemailSelector:
                 AND query_term.value IS NOT NULL
                 AND query_term.value <> ''
             """, timeout = 300)
-        except cdrdb.Error, info:
+        except cdrdb.Error as info:
             raise 'db error creating temporary table #got_response %s'\
                   % str(info[1][0])
 
         # How many have we already sent out remailers for (might be some
         #   overlap with the previous set).
         try:
-            cdr.logwrite ("Starting #already_remailed remail selection",
-                           LOGFILE)
+            self.__logger.info("Starting #already_remailed remail selection")
             self.__cursor.execute ("""
              SELECT #orig_mailers.doc_id
                INTO #already_remailed
@@ -211,7 +211,7 @@ class RemailSelector:
                  ON #orig_mailers.doc_id = query_term.int_val
               WHERE query_term.path = '/Mailer/RemailerFor/@cdr:ref'
             """, timeout=180)
-        except cdrdb.Error, info:
+        except cdrdb.Error as info:
             raise 'db error creating temporary table #already_remailed %s'\
                   % str(info[1][0])
 
@@ -223,7 +223,7 @@ class RemailSelector:
         #    job to make sure we aren't creating a remailer for a mailer that,
         #    in fact, never went out.
         try:
-            cdr.logwrite ("Starting #remail_temp remail selection", LOGFILE)
+            self.__logger.info("Starting #remail_temp remail selection")
             self.__cursor.execute ("""
                  SELECT DISTINCT TOP %d document.id AS doc,
                         MAX(doc_version.num) AS ver,
@@ -248,12 +248,12 @@ class RemailSelector:
                         )
                GROUP BY document.id, #orig_mailers.doc_id
             """ % maxMailers, timeout = 300)
-            cdr.logwrite ("Completed all remail selection", LOGFILE)
+            self.__logger.info("Completed all remail selection")
 
             # Tell user how many hits there were
             return self.__cursor.rowcount
 
-        except cdrdb.Error, info:
+        except cdrdb.Error as info:
             raise 'db error creating #remail_temp id/ver/tracker table: %s' \
                   % str(info[1][0])
 
@@ -290,7 +290,7 @@ class RemailSelector:
 
             # self.__conn.commit()
 
-        except cdrdb.Error, info:
+        except cdrdb.Error as info:
             raise 'database error saving remailer_ids %s' % str(info[1][0])
 
     def getRelatedId(self, docId):
@@ -312,7 +312,7 @@ class RemailSelector:
             # Don't think this can happen, but not sure about the future
             return None
 
-        except cdrdb.Error, info:
+        except cdrdb.Error as info:
             raise 'database error getting related remailer_ids: %s' \
                   % str(info[1][0])
 
@@ -330,7 +330,7 @@ class RemailSelector:
             self.__conn  = None
             self.__jobId = None
 
-        except cdrdb.Error, info:
+        except cdrdb.Error as info:
             raise "database error deleting job %d from remailer_ids: %s" \
                   % (self.__jobId, str(info[1][0]))
 

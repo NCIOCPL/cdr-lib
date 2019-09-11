@@ -28,10 +28,12 @@
 import re
 import time
 
+MARKUP = dict(String="b", Emphasis="i", Superscript="super", Subscript="sub")
+
 #----------------------------------------------------------------------
 # Regular expression pattern to recognize non-ASCII characters.
 #----------------------------------------------------------------------
-_nonAsciiPattern = re.compile(u"([\u0080-\uFFFD])")
+_nonAsciiPattern = re.compile("([\u0080-\uFFFD])")
 
 def fix(text):
 
@@ -44,8 +46,6 @@ def fix(text):
     text = text.replace("\\", "\\\\")
     text = text.replace("{", "\\{").replace("}", "\\}")
     text = _nonAsciiPattern.sub(_replace, text)
-    if isinstance(text, unicode):
-        text = text.encode("ascii")
     return text
 
 def _replace(match):
@@ -310,14 +310,12 @@ class Document:
         object.
         """
 
-        if isinstance(file, (str, unicode)):
-            f = open(file, "wb")
-        else:
-            f = file
         rtf = self.getRtf()
-        if isinstance(file, (str, unicode)):
-            f.write(rtf)
-            f.close()
+        if isinstance(file, str):
+            with open(file, "w", newline="\n") as fp:
+                fp.write(rtf)
+        else:
+            file.write(rtf)
 
     def getRtf(self):
 
@@ -606,19 +604,18 @@ class FormLetter(Document):
         self.__addLetterHead(binImage)
         if template:
             try:
-                fp   = file(template, "rb")
-                body = fp.read()
-                fp.close()
-            except Exception, e:
+                with open(template) as fp:
+                    body = fp.read()
+            except Exception as e:
                 raise Exception("loading %s: %s" % (template, str(e)))
             if invitePara:
                 replacement = "@@MISCDOC:%s@@" % invitePara
                 body = body.replace("@@INVITATION@@", replacement)
-            pattern = re.compile(u"@@MISCDOC:(.*?)@@")
+            pattern = re.compile("@@MISCDOC:(.*?)@@")
             body    = pattern.sub(lambda p: self.__loadMiscDoc(p), body)
             self.addRawContent(body)
 
-    def __writeImageBytes(self, image, bin = False):
+    def __writeImageBytes(self, image):
 
         """
         Private method used to embed a serialized representation of
@@ -627,16 +624,12 @@ class FormLetter(Document):
 
         if not image:
             raise Exception("image not found")
-        if bin:
-            return "\\bin%d %s" % (len(image), image)
-        result = ""
-        i = 0
-        while i < len(image):
+        result = []
+        for i, b in enumerate(image):
             if i % 39 == 0:
-                result += "\n"
-            result += "%02X" % ord(image[i])
-            i += 1
-        return result
+                result.append("\n")
+            result.append(f"{b:02X}")
+        return "".join(result)
 
     def __addLetterHead(self, binImage):
 
@@ -644,9 +637,9 @@ class FormLetter(Document):
         Private method used to insert the letterhead as the start
         of the letter's body.
         """
-        f    = open(self.pngName, "rb")
-        logo = f.read()
-        f.close()
+
+        with open(self.pngName, "rb") as fp:
+            logo = f.read()
         dhhs = "DEPARTMENT OF HEALTH & HUMAN SERVICES"
         phs  = "\\tab Public Health Service\\par"
         nih  = "\\tab National Institutes of Health\\par"
@@ -713,20 +706,24 @@ class MiscellaneousDoc:
         title of the CDR document to be loaded.
         """
 
-        import xml.dom.minidom, cdr
+        import cdr
+        from lxml import etree
+
         self.letter = letter
-        path  = "/MiscellaneousDocument/MiscellaneousDocumentTitle"
-        query = "{}/value eq {}".format(path, name)
-        resp  = cdr.search('guest', query)
-        if isinstance(resp, (str, unicode)):
-            raise Exception("failure loading misc doc '%s': %s" % (name, resp))
+        path = "/MiscellaneousDocument/MiscellaneousDocumentTitle"
+        query = f"{path}/value eq {name}"
+        try:
+            resp  = cdr.search("guest", query)
+        except Exception as e:
+            raise Exception("failure loading misc doc {name!r}: {e}")
         if not resp:
-            raise Exception("Miscellaneous document '%s' not found" % name)
+            raise Exception(f"Miscellaneous document {name!r} not found")
         self.docId = resp[0].docId
-        doc = cdr.getDoc('guest', self.docId, getObject = True)
-        if isinstance(doc, (str, unicode)):
-            raise Exception("Retrieving %s: %s" % (self.docId, doc))
-        self.dom = xml.dom.minidom.parseString(doc.xml)
+        try:
+            doc = cdr.getDoc("guest", self.docId, getObject=True)
+        except Exception as e:
+            raise Exception(f"Retrieving {self.docId}: {e}")
+        self.root = etree.fromstring(doc.xml)
 
     def getRtf(self):
 
@@ -735,13 +732,12 @@ class MiscellaneousDoc:
         contents to RTF markup.
         """
         self.pieces = []
-        for node in self.dom.documentElement.childNodes:
-            if node.nodeName == "MiscellaneousDocumentText":
-                for child in node.childNodes:
-                    if child.nodeName == 'Para':
-                        self.__addPara(child)
-                    elif child.nodeName in ('ItemizedList', 'OrderedList'):
-                        self.__addList(child, child.nodeName)
+        for node in self.root.findall("MiscellaneousDocumentText"):
+            for child in node:
+                if child.tag == "Para":
+                    self.__addPara(child)
+                elif child.tag in ("ItemizedList", "OrderedList"):
+                    self.__addList(child, child.tag)
         return "".join(self.pieces)
 
     def __addPara(self, node):
@@ -754,6 +750,7 @@ class MiscellaneousDoc:
         self.pieces.append(MiscellaneousDoc.__getText(node).strip())
         self.pieces.append("\\par\\par\n")
 
+    @staticmethod
     def __getText(node):
 
         """
@@ -762,22 +759,17 @@ class MiscellaneousDoc:
         """
 
         pieces = []
-        for child in node.childNodes:
-            if child.nodeType == child.TEXT_NODE:
-                pieces.append(fix(child.nodeValue))
-            elif child.nodeName == 'Strong':
-                MiscellaneousDoc.__addMarkup(pieces, child, "b")
-            elif child.nodeName == "Emphasis":
-                MiscellaneousDoc.__addMarkup(pieces, child, "i")
-            elif child.nodeName == "Superscript":
-                MiscellaneousDoc.__addMarkup(pieces, child, "super")
-            elif child.nodeName == "Subscript":
-                MiscellaneousDoc.__addMarkup(pieces, child, "sub")
-            elif child.nodeName == "ExternalRef":
+        if node.text is not None:
+            pieces.append(fix(node.text))
+        for child in node:
+            code = MARKUP.get(child.tag)
+            if code is not None:
+                MiscellaneousDoc.__addMarkup(pieces, child, code)
+            elif child.tag == "ExternalRef":
                 MiscellaneousDoc.__addRef(child)
         return "".join(pieces)
-    __getText = staticmethod(__getText)
 
+    @staticmethod
     def __addMarkup(pieces, node, code):
 
         """
@@ -786,13 +778,11 @@ class MiscellaneousDoc:
         italic rendering for the text).
         """
 
-        pieces.append("{\\%s " % code)
-        for child in node.childNodes:
-            if child.nodeType == child.TEXT_NODE:
-                pieces.append(fix(child.nodeValue))
+        pieces.append(f"{{\\{code} ")
+        pieces.append(fix("".join(node.itertext("*"))))
         pieces.append("}")
-    __addMarkup = staticmethod(__addMarkup)
 
+    @staticmethodd
     def __addRef(self, node):
 
         """
@@ -801,7 +791,6 @@ class MiscellaneousDoc:
         """
 
         raise Exception("__addRef not yet implemented")
-    __addRef = staticmethod(__addRef)
 
     def __addList(self, node, name):
 
@@ -815,11 +804,10 @@ class MiscellaneousDoc:
             listId = self.letter.addList(List.ARABIC)
         else:
             listId = List.BULLETED
-        self.pieces.append("{\\li580{\\ls%d " % listId)
-        for child in node.childNodes:
-            if child.nodeName == "ListItem":
-                self.pieces.append(MiscellaneousDoc.__getText(child).strip())
-                self.pieces.append("\\par\n")
+        self.pieces.append(f"{{\\li580{{\\ls{listId:d} ")
+        for item in node.findall("ListItem"):
+            self.pieces.append(MiscellaneousDoc.__getText(item).strip())
+            self.pieces.append("\\par\n")
         self.pieces.append("}}\n\\par\n")
 
 #----------------------------------------------------------------------

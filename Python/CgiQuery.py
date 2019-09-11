@@ -3,17 +3,17 @@
 # Base class for CGI database query interface.
 # BZIssue::4710
 #----------------------------------------------------------------------
-import cgi, sys, time, cdrdb, cdrcgi
+import cgi, sys, time, cdrcgi
 import re
+from cdrapi import db
 
 class CgiQuery:
 
-    def __init__(self, conn, system, script, timeout = 30):
+    def __init__(self, conn, system, script):
         "Should be invoked by the derived class's constructor."
         self.conn          = conn
         self.system        = system
         self.script        = script
-        self.timeout       = timeout
         self.fields        = fields = cgi.FieldStorage()
         self.doWhat        = fields.getvalue("doWhat") or None
         self.queryName     = fields.getvalue("queries") or None
@@ -22,38 +22,39 @@ class CgiQuery:
         self.queryText     = fields.getvalue("queryText") or ""
         self.results       = ""
         if self.queryName:
-            self.queryName = unicode(self.queryName, 'utf-8')
+            self.queryName = str(self.queryName, 'utf-8')
         if self.newName:
-            self.newName = unicode(self.newName, 'utf-8')
+            self.newName = str(self.newName, 'utf-8')
 
     def run(self):
         if   self.doWhat == "addQuery"  and self.newName:   self.addQuery()
         elif self.doWhat == "saveQuery" and self.queryName: self.saveQuery()
         elif self.doWhat == "delQuery"  and self.queryName: self.delQuery()
         elif self.doWhat == "runQuery"  and self.queryText: self.runQuery()
+        elif self.doWhat == "sendJson"  and self.queryText: self.sendJson()
         elif self.doWhat == "createSS"  and self.queryText:
             self.createSS()
-            return
-        try:
-            page = self.createPage()
-        except Exception, e:
-            self.bail(e)
-        self.sendPage(page)
+        else:
+            try:
+                page = self.createPage()
+            except Exception as e:
+                self.bail(e)
+            self.sendPage(page)
 
     def sendPage(self, page):
         "Display the specified page and exit."
-        print """\
+        print("""\
 Content-type: text/html; charset=utf-8
 Cache-control: no-cache, must-revalidate
-"""
-        print page.encode('utf-8')
+""")
+        print(page.encode('utf-8'))
         sys.exit(0)
 
     def bail(self, message):
         "Display an error message and exit."
         sysName = cgi.escape(self.system)
         message = cgi.escape(message)
-        self.sendPage(u"""\
+        self.sendPage("""\
 <html>
  <head>
   <title>%s query failure</title>
@@ -68,26 +69,26 @@ Cache-control: no-cache, must-revalidate
     def getQueriesHtml(self, queryKeys):
         "Create <option> elements for the cached queries."
         current = self.queryName and cgi.escape(self.queryName, 1) or None
-        html = [u""]
+        html = [""]
         for q in queryKeys:
-            sel = q == current and u" SELECTED" or u""
-            html.append(u"""<option value = "%s"%s>%s</option>\n""" %
+            sel = q == current and " SELECTED" or ""
+            html.append("""<option value = "%s"%s>%s</option>\n""" %
                         (q, sel, q))
-        return u"".join(html)
+        return "".join(html)
 
     def getQueriesDict(self, queries):
-        html = [u""]
-        for q in queries.keys():
-            key = (q.replace(u"\r", u"").replace(u"\n", u"\\n").
-                   replace(u"&amp;", u"&").replace(u"&lt;", u"<").
-                   replace(u"&gt;", u">").replace(u"&quot;", u'"'))
+        html = [""]
+        for q in list(queries.keys()):
+            key = (q.replace("\r", "").replace("\n", "\\n").
+                   replace("&amp;", "&").replace("&lt;", "<").
+                   replace("&gt;", ">").replace("&quot;", '"'))
             if queries[q]:
-                val = queries[q].replace(u"\r", u"").replace(u"\n", u"\\n")
+                val = queries[q].replace("\r", "").replace("\n", "\\n")
             else:
-                val = u""
-            html.append(u'queries["%s"] = "%s";\n' %
-                        (key.replace(u'"', u'\\"'), val.replace(u'"', u'\\"')))
-        return u"".join(html)
+                val = ""
+            html.append('queries["%s"] = "%s";\n' %
+                        (key.replace('"', '\\"'), val.replace('"', '\\"')))
+        return "".join(html)
 
     def addQuery(self):
         "Default implementation.  Override as appropriate."
@@ -98,7 +99,7 @@ Cache-control: no-cache, must-revalidate
             self.conn.commit()
             self.queryName = self.newName
             self.queryText = self.newQuery
-        except Exception, info:
+        except Exception as info:
             self.bail("Failure adding query: %s" % cgi.escape(str(info)))
 
     def saveQuery(self):
@@ -108,7 +109,7 @@ Cache-control: no-cache, must-revalidate
             cursor.execute("UPDATE query SET value = ? WHERE name = ?",
                            (self.queryText, self.queryName))
             self.conn.commit()
-        except Exception, info:
+        except Exception as info:
             self.bail("Failure saving query: %s" % cgi.escape(str(info)))
 
     def delQuery(self):
@@ -117,7 +118,7 @@ Cache-control: no-cache, must-revalidate
             cursor = self.conn.cursor()
             cursor.execute("DELETE FROM query WHERE name = ?", self.queryName)
             self.conn.commit()
-        except Exception, info:
+        except Exception as info:
             self.bail("Failure deleting query: %s" % cgi.escape(str(info)))
 
     def getQueries(self):
@@ -133,47 +134,66 @@ Cache-control: no-cache, must-revalidate
             raise
             self.bail("Failure loading cached queries")
 
+    def sendJson(self):
+        try:
+            cursor = self.conn.cursor()
+            start = time.time()
+            cursor.execute(self.queryText)
+            elapsed = time.time() - start
+            if not cursor.description:
+                self.bail("No query results")
+            rows = [list(row) for row in cursor.fetchall()]
+            payload = dict(columns=cursor.description, rows=rows)
+        except Exception as e:
+            args = cgi.escape(self.queryText), cgi.escape(e)
+            self.bail("Failure executing query:\n{}\n{}".format(args))
+        try:
+            print("Content-type: application/json")
+            print()
+            print(json.dumps(payload, default=str, indent=2))
+        except Exception as e:
+            self.bail(f"Failure serializing json results: {e}")
+
     def runQuery(self):
         try:
             cursor = self.conn.cursor()
             start = time.time()
-            cursor.execute(self.queryText, timeout = self.timeout)
+            cursor.execute(self.queryText)
             elapsed = time.time() - start
-            html = [u"<table border = '0' cellspacing = '1' cellpadding = '1'>"]
-            html.append(u"<tr>\n")
+            html = ["<table border = '0' cellspacing = '1' cellpadding = '1'>"]
+            html.append("<tr>\n")
             if not cursor.description:
                 self.bail('No query results')
             for col in cursor.description:
-                col = col and cgi.escape(col[0]) or u"&nbsp;"
-                html.append(u"<th>%s</th>\n" % col)
-            html.append(u"</tr>\n")
+                col = col and cgi.escape(col[0]) or "&nbsp;"
+                html.append("<th>%s</th>\n" % col)
+            html.append("</tr>\n")
             row = cursor.fetchone()
-            classes = (u'odd', u'even')
+            classes = ('odd', 'even')
             rowNum = 1
             while row:
                 cls = classes[rowNum % 2]
                 rowNum += 1
-                html.append(u"<tr>\n")
+                html.append("<tr>\n")
                 for col in row:
                     if col is None:
-                        val = u"&nbsp;"
+                        val = "&nbsp;"
                     else:
-                        val = cgi.escape(u"%s" % col) or u"&nbsp;"
-                    html.append(u"<td valign='top' class='%s'>%s</td>\n" %
+                        val = cgi.escape("%s" % col) or "&nbsp;"
+                    html.append("<td valign='top' class='%s'>%s</td>\n" %
                                 (cls, val))
-                html.append(u"</tr>\n")
+                html.append("</tr>\n")
                 row = cursor.fetchone()
-            html.append(u"""\
+            html.append("""\
   <tr>
    <th class='total' colspan='99'>%d row(s) retrieved (%.3f seconds)</th>
   </tr>
 """ % (rowNum - 1, elapsed))
-            html.append(u"</table>\n")
-            self.results = u"".join(html)
-        except cdrdb.Error, info:
-            self.bail("Failure executing query:\n%s\n%s" % (
-                cgi.escape(self.queryText),
-                cgi.escape(info[1][0])))
+            html.append("</table>\n")
+            self.results = "".join(html)
+        except Exception as e:
+            args = cgi.escape(self.queryText), cgi.escape(e)
+            self.bail("Failure executing query:\n%s\n%s" % args)
 
     def createSS(self):
         "Create Excel spreadsheet from query results"
@@ -185,13 +205,13 @@ Cache-control: no-cache, must-revalidate
             sheet = styles.add_sheet("Ad-hoc Query Report")
             cursor = self.conn.cursor()
             start = time.time()
-            cursor.execute(self.queryText, timeout = self.timeout)
+            cursor.execute(self.queryText)
             secs = time.time() - start
             if not cursor.description:
                 raise Exception('No query results')
             colNum = 1
             for i, info in enumerate(cursor.description):
-                sheet.write(0, i, info and info[0] or u"", styles.bold)
+                sheet.write(0, i, info and info[0] or "", styles.bold)
             values = cursor.fetchone()
             row = 1
             while values:
@@ -199,7 +219,11 @@ Cache-control: no-cache, must-revalidate
                     sheet.write(row, i, value)
                 values = cursor.fetchone()
                 row += 1
-            footer = u"%d row(s) retrieved (%.3f seconds)" % (row - 1, secs)
+        except Exception as e:
+            args = cgi.escape(self.queryText), cgi.escape(e)
+            self.bail("Failure executing query:\n%s\n%s" % args)
+        try:
+            footer = "%d row(s) retrieved (%.3f seconds)" % (row - 1, secs)
             sheet.write_merge(row, row, 0, len(cursor.description) - 1, footer)
             now = time.strftime("%Y%m%d%H%M%S")
             if self.queryName:
@@ -208,21 +232,16 @@ Cache-control: no-cache, must-revalidate
             else:
                 name = "ad-hoc-query"
             name = "{}-{}.xls".format(name, now)
-            print "Content-type: application/vnd.ms-excel"
-            print "Content-Disposition: attachment; filename={}".format(name)
-            print
+            print("Content-type: application/vnd.ms-excel")
+            print("Content-Disposition: attachment; filename={}".format(name))
+            print()
             styles.book.save(sys.stdout)
-        except cdrdb.Error, info:
-            self.bail("Failure executing query:\n%s\n%s" % (
-                cgi.escape(self.queryText),
-                cgi.escape(info[1][0])))
-        except Exception, e:
+        except Exception as e:
             self.bail("Failure generating spreadsheet: %s" % e)
 
     def createPage(self):
         queries     = self.getQueries()
-        queryKeys   = queries.keys()
-        queryKeys.sort()
+        queryKeys   = sorted(queries.keys())
         queriesHtml = self.getQueriesHtml(queryKeys)
         queriesDict = self.getQueriesDict(queries)
 
@@ -231,7 +250,7 @@ Cache-control: no-cache, must-revalidate
         #    queryName = queryKeys[0]
         #    if queries.has_key(queryName):
         #        self.queryText = cgi.escape(queries[queryName])
-        html = u"""\
+        html = """\
 <html>
  <head>
   <title>%s Query Interface</title>
@@ -267,6 +286,12 @@ Cache-control: no-cache, must-revalidate
     function runQuery() {
         var frm = document.forms[0];
         frm.doWhat.value = "runQuery";
+        frm.submit();
+    }
+
+    function sendJson() {
+        var frm = document.forms[0];
+        frm.doWhat.value = "sendJson";
         frm.submit();
     }
 
@@ -333,16 +358,17 @@ Cache-control: no-cache, must-revalidate
     </tr>
     <tr>
      <td colspan = '2' align = 'center'>
-      <input type = 'button' onClick = 'runQuery()' value = 'Submit' />&nbsp;
-      <input type = 'button' onClick = 'excel()' value = 'Excel' />&nbsp;
-      <input type = 'button' onClick = 'saveQuery()' value = 'Save' />&nbsp;
-      <input type = 'button' onClick = 'delQuery()' value = 'Delete' />&nbsp;
-      <input type = 'button' onClick = 'addNewQuery()' value = 'New' />&nbsp;
-      <input type = 'button' onClick = 'cloneQuery()' value = 'Clone' />
-      <input type = 'hidden' name = 'doWhat' value = 'nothing' />
-      <input type = 'hidden' name = 'newName' value = '' />
-      <input type = 'hidden' name = 'newQuery' value = '' />
-      <input type = 'hidden' name = 'pageId' value = '%f' />
+      <input type="button" onClick="runQuery()" value="Submit">&nbsp;
+      <input type="button" onClick="excel()" value="Excel">&nbsp;
+      <input type="button" onClick="sendJson()" value="JSON">&nbsp;
+      <input type="button" onClick="saveQuery()" value="Save">&nbsp;
+      <input type="button" onClick="delQuery()" value="Delete">&nbsp;
+      <input type="button" onClick="addNewQuery()" value="New">&nbsp;
+      <input type="button" onClick="cloneQuery()" value="Clone">
+      <input type="hidden" name="doWhat" value="nothing">
+      <input type="hidden" name="newName" value="">
+      <input type="hidden" name="newQuery" value="">
+      <input type="hidden" name="pageId" value="%f">
      </td>
     </tr>
    </table>
@@ -351,5 +377,5 @@ Cache-control: no-cache, must-revalidate
  </body>
 </html>
 """ % (self.system, queriesDict, self.script, queriesHtml,
-       self.queryText.replace(u"\r", u""), time.clock(), self.results)
+       self.queryText.replace("\r", ""), time.clock(), self.results)
         return html

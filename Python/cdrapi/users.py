@@ -472,11 +472,11 @@ class Session:
         conn = cls.LoggingDBConnection()
         logger = Tier(tier).get_logger("session", rolling=True, dbconn=conn)
         conn = db.connect(tier=tier)
-        cursor = conn.cursor()
-        query = db.Query("usr", "id", "hashedpw")
-        query.where(query.Condition("name", user))
-        query.where("expired IS NULL")
-        row = query.execute(cursor).fetchone()
+        with conn.cursor() as cursor:
+            query = db.Query("usr", "id", "hashedpw")
+            query.where(query.Condition("name", user))
+            query.where("expired IS NULL")
+            row = query.execute(cursor).fetchone()
         if not row:
             raise Exception("Unknown or expired user: {}".format(user))
         uid, hashedpw = row

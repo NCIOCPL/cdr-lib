@@ -19,9 +19,7 @@
 #----------------------------------------------------------------------
 # Import external modules needed.
 #----------------------------------------------------------------------
-from builtins import range
 import cdr
-import cdrdb
 import cgi
 import copy
 import datetime
@@ -33,18 +31,12 @@ import re
 import sys
 import textwrap
 import time
-import urllib
+import urllib.request, urllib.parse, urllib.error
 import xlwt
 import xml.sax.saxutils
+from cdrapi import db
+from cdrapi.users import Session
 
-#----------------------------------------------------------------------
-# Make this work on Python 2 and 3.
-#----------------------------------------------------------------------
-try:
-    basestring
-except:
-    basestring = str, bytes
-    unicode = str
 
 #----------------------------------------------------------------------
 # Do this once, right after loading the module. Used in Report class.
@@ -78,7 +70,7 @@ def _getWebServerName():
 # useful (for example, ISPLAIN, or THISHOST) but are retained in case
 # older code relies on them.
 #----------------------------------------------------------------------
-VERSION = "201603211524"
+VERSION = "201909061106"
 CDRCSS = "/stylesheets/cdr.css?v=%s" % VERSION
 DATETIMELEN = len("YYYY-MM-DD HH:MM:SS")
 TAMPERING = "CGI parameter tampering detected"
@@ -101,7 +93,7 @@ DOMAIN   = "." + ".".join(SPLTNAME[1:])
 DAY_ONE  = cdr.URDATE
 NEWLINE  = "@@@NEWLINE-PLACEHOLDER@@@"
 BR       = "@@@BR-PLACEHOLDER@@@"
-HEADER   = u"""\
+HEADER   = """\
 <!DOCTYPE html>
 <HTML>
  <HEAD>
@@ -326,7 +318,7 @@ class ExcelStyles:
         Wrap the value inside a hyperlink to the specified url.
         """
 
-        return xlwt.Formula(u'HYPERLINK("%s";"%s")' % (url, label))
+        return xlwt.Formula('HYPERLINK("%s";"%s")' % (url, label))
 
     def adjust_color(self, name, rgb):
         """
@@ -494,7 +486,7 @@ class ExcelStyles:
             label - the value to be displayed for the cell
         """
 
-        return xlwt.Formula(u'HYPERLINK("%s";"%s")' % (url, label))
+        return xlwt.Formula('HYPERLINK("%s";"%s")' % (url, label))
 
     @staticmethod
     def clone(style):
@@ -585,7 +577,7 @@ class Page:
         form.send()
     """
 
-    INDENT = u"  "
+    INDENT = "  "
     CDN = "https://ajax.googleapis.com/ajax/libs/"
     JS = (
         CDN + "jquery/2.1.4/jquery.min.js",
@@ -664,8 +656,11 @@ class Page:
             post_indent - optional argument which can be used to suppress
                           the default indenting logic
         """
-        if not isinstance(line, basestring):
-            line = lxml.html.tostring(line)
+
+        if isinstance(line, bytes):
+            line = str(line, "utf-8")
+        if not isinstance(line, str):
+            line = lxml.html.tostring(line, encoding="unicode")
             post_indent = False
         elif line.startswith("</"):
             if self._level > 0:
@@ -783,7 +778,7 @@ class Page:
         """
         wrapper_classes = kwargs.get("wrapper_classes")
         if wrapper_classes:
-            if isinstance(wrapper_classes, basestring):
+            if isinstance(wrapper_classes, str):
                 wrapper_classes = wrapper_classes.split()
         else:
             wrapper_classes = []
@@ -818,7 +813,7 @@ class Page:
                 value, display = option
             else:
                 value = display = option
-            o = Page.B.OPTION(display, value=unicode(value))
+            o = Page.B.OPTION(display, value=str(value))
             if value in default:
                 o.set("selected", "selected")
             self.add(o)
@@ -849,7 +844,7 @@ class Page:
         """
         wrapper_classes = kwargs.get("wrapper_classes")
         if wrapper_classes:
-            if isinstance(wrapper_classes, basestring):
+            if isinstance(wrapper_classes, str):
                 wrapper_classes = wrapper_classes.split()
         else:
             wrapper_classes = []
@@ -868,7 +863,7 @@ class Page:
                 classes = " ".join(classes)
             field.set("class", classes)
         if "value" in kwargs:
-            field.set("value", unicode(kwargs["value"]))
+            field.set("value", str(kwargs["value"]))
         if kwargs.get("password"):
             field.set("type", "password")
         if kwargs.get("upload"):
@@ -902,7 +897,7 @@ class Page:
         """
         wrapper_classes = kwargs.get("wrapper_classes")
         if wrapper_classes:
-            if isinstance(wrapper_classes, basestring):
+            if isinstance(wrapper_classes, str):
                 wrapper_classes = wrapper_classes.split()
         else:
             wrapper_classes = []
@@ -911,7 +906,7 @@ class Page:
         self.add('<div class="%s">' % " ".join(wrapper_classes))
         label = Page.B.LABEL(Page.B.FOR(name), label)
         self.add(label)
-        value = unicode(kwargs.get("value", ""))
+        value = str(kwargs.get("value", ""))
         field = Page.B.TEXTAREA(value, id=name, name=name)
         tooltip = kwargs.get("tooltip")
         if tooltip:
@@ -944,17 +939,13 @@ class Page:
         if session:
             kwargs[SESSION] = session
         if kwargs:
-            url = "%s?%s" % (url, urllib.urlencode(kwargs))
+            url = "%s?%s" % (url, urllib.parse.urlencode(kwargs))
         link = Page.B.A(display, href=url)
         self.add(Page.B.LI(link))
 
     def add_hidden_field(self, name, value):
         "Utility method to insert a hidden CGI field."
-        if not value:
-            value = u""
-        if not isinstance(value, basestring):
-            value = str(value)
-        value = value and str(value) or ""
+        value = str(value) if value else ""
         self.add(Page.B.INPUT(name=name, value=value, type="hidden"))
 
     def add_script(self, script):
@@ -1007,7 +998,7 @@ class Page:
         """
 
         self._finish()
-        sendPage(u"".join(self._html))
+        sendPage("".join(self._html))
 
     @classmethod
     def _indent(class_, level, block):
@@ -1063,7 +1054,7 @@ class Page:
                     wrapper_classes = " ".join(wrapper_classes)
                 tag += ' class="%s"' % wrapper_classes
             self.add(tag + ">")
-        if not isinstance(value, basestring):
+        if not isinstance(value, str):
             value = str(value)
         field = Page.B.INPUT(
             id=widget_id,
@@ -1227,7 +1218,7 @@ class Report:
     Example usage:
 
         R = cdrcgi.Report
-        cursor = cdrdb.connect('CdrGuest').cursor()
+        cursor = db.connect('CdrGuest').cursor()
         cursor.execute('''\
             SELECT id, name
               FROM doc_type
@@ -1310,7 +1301,7 @@ class Report:
         page = self._create_html_page(**opts)
         css = self._options.get("css")
         if css:
-            if isinstance(css, basestring):
+            if isinstance(css, str):
                 css = [css]
             for c in css:
                 page.add_css(c)
@@ -1544,8 +1535,8 @@ class Report:
 
                 # Assemble the values to be written
                 values = Report.Cell._get_values(cell, True)
-                if type(values) is not int:
-                    values = u"\n".join(values)
+                if not isinstance(values, int):
+                    values = "\n".join(values)
                 style = self._data_style
                 if isinstance(cell, self.Cell):
                     if cell._sheet_style:
@@ -1557,8 +1548,8 @@ class Report:
                     elif cell._center:
                         style = self._center_data_style
                     if cell._href:
-                        vals = unicode(values).replace(u'"', u'""')
-                        formula = u'HYPERLINK("%s";"%s")' % (cell._href, vals)
+                        vals = str(values).replace('"', '""')
+                        formula = 'HYPERLINK("%s";"%s")' % (cell._href, vals)
                         values = xlwt.Formula(formula)
                     if cell._colspan or cell._rowspan:
                         colspan = cell._colspan and int(cell._colspan) or 1
@@ -1635,7 +1626,7 @@ class Report:
         Wouldn't hurt to add more testing to this method as we get time.
         """
         R = Report
-        cursor = cdrdb.connect("CdrGuest").cursor()
+        cursor = db.connect("CdrGuest").cursor()
         cursor.execute("""\
             SELECT id, name
               FROM doc_type
@@ -1762,11 +1753,11 @@ class Report:
             classes = options.get("classes")
             if not classes:
                 self._classes = []
-            elif isinstance(classes, basestring):
+            elif isinstance(classes, str):
                 self._classes = classes.split()
-            elif type(classes) in (set, tuple):
+            elif isinstance(classes, (set, tuple)):
                 self._classes = list(classes)
-            elif type(classes) is list:
+            elif isinstance(classes, list):
                 self._classes = classes
             else:
                 raise Exception("unexpected type %s for Cell classes: %s" %
@@ -1840,13 +1831,13 @@ class Report:
                 values = cell._value
             else:
                 values = cell
-            if type(values) is int and preserve_int:
+            if isinstance(values, int) and preserve_int:
                 return values
             if type(values) not in (list, tuple):
-                return [unicode(values)]
+                return [str(values)]
             elif not values:
                 return [""]
-            return [unicode(v) for v in values]
+            return [str(v) for v in values]
 
 class Control:
     """
@@ -1895,7 +1886,7 @@ class Control:
         self.subtitle = subtitle
         self.opts = opts
         if self.opts.get("open_cursor", True):
-            self.cursor = cdrdb.connect("CdrGuest").cursor()
+            self.cursor = db.connect("CdrGuest").cursor()
         else:
             self.cursor = None
         self.fields = cgi.FieldStorage()
@@ -2008,12 +1999,10 @@ function check_set(name, val) {
 
         value = self.fields.getvalue(name)
         if value is None:
-            return u""
-        if not isinstance(value, basestring):
-            return unicode(value)
-        if isinstance(value, unicode):
-            return value
-        return value.decode("utf-8")
+            return ""
+        if isinstance(value, bytes):
+            return str(value, "utf-8")
+        return str(value)
 
     @staticmethod
     def get_referer():
@@ -2036,7 +2025,7 @@ function check_set(name, val) {
         Expose this functionality to non-CGI code.
         """
 
-        query = cdrdb.Query("query_term n", "n.doc_id", "n.value")
+        query = db.Query("query_term n", "n.doc_id", "n.value")
         query.join("query_term t", "t.doc_id = n.doc_id")
         query.join("active_doc a", "a.id = n.doc_id")
         query.where("t.path = '/Organization/OrganizationType'")
@@ -2211,7 +2200,7 @@ function check_set(name, val) {
         Fetch the title column from the all_docs table for a CDR document.
         """
 
-        query = cdrdb.Query("document", "title")
+        query = db.Query("document", "title")
         query.where(query.Condition("id", doc_id))
         row = query.execute(self.cursor).fetchone()
         return row and row[0] or ""
@@ -2243,10 +2232,10 @@ function check_set(name, val) {
         """
 
         if doc_version:
-            query = cdrdb.Query("doc_version", "xml")
+            query = db.Query("doc_version", "xml")
             query.where(query.Condition("num", doc_version))
         else:
-            query = cdrdb.Query("document", "xml")
+            query = db.Query("document", "xml")
         query.where(query.Condition("id", doc_id))
         return query.execute(self.cursor).fetchone()[0]
 
@@ -2266,8 +2255,9 @@ function check_set(name, val) {
                 self.display = display
                 self.tooltip = tooltip
 
-        fragment = unicode(fragment, "utf-8")
-        query = cdrdb.Query("active_doc d", "d.id", "d.title")
+        if isinstance(fragment, bytes):
+            fragment = str(fragment, "utf-8")
+        query = db.Query("active_doc d", "d.id", "d.title")
         query.join("doc_type t", "t.id = d.doc_type")
         query.where("t.name = 'Summary'")
         query.where(query.Condition("d.title", fragment + "%", "LIKE"))
@@ -2473,7 +2463,7 @@ def getSession(fields, **opts):
             return "guest"
 
     # Make sure it's an active session.
-    query = cdrdb.Query("session", "id")
+    query = db.Query("session", "id")
     query.where(query.Condition("name", session))
     query.where("ended IS NULL")
     try:
@@ -2505,8 +2495,11 @@ def sendPage(page, textType = 'html', parms='', docId='', docType='',
     Send a completed page of text to stdout, assumed to be piped by a
     webserver to a web browser.
 
+    Note that _all_ the values passed in are Unicode strings. Any
+    encoding happens on the way out the door.
+
     Pass:
-        page     - Text to send, assumed to be 16 bit unicode.
+        page     - Text to send, assumed to be a unicode string (not bytes).
         textType - HTTP Content-type, assumed to be html.
         parms    - RowID storing all parameters if report needs to
                    be converted to Word, usually an empty string.
@@ -2516,17 +2509,19 @@ def sendPage(page, textType = 'html', parms='', docId='', docType='',
     Return:
         No return.  After writing to the browser, the process exits.
     """
-    if parms == "":
-        redirect = ""
-    else:
-        url = "https://{}{}/QCforWord.py".format(WEBSERVER, BASE)
+
+    # Handle redirect.
+    if parms:
+        url = f"https://{WEBSERVER}{BASE}/QCforWord.py"
         args = docId, docType, docVer, parms
         parms = "DocId={}&DocType={}&DocVersion={}&{}".format(*args)
-        redirect = "Location: {}?{}\n".format(url, parms)
-    print("""\
-{}Content-type: text/{}
+        parms = urllib.parse.quote_plus(parms)
+        print(f"Location: {url}?{parms}\n")
+    else:
+        sys.stdout.buffer.write(f"""\
+Content-type: text/{textType}
 
-{}""".format(redirect, textType, unicodeToLatin1(page)))
+{page}""".encode("utf-8"))
     sys.exit(0)
 
 #----------------------------------------------------------------------
@@ -2553,43 +2548,6 @@ def bail(message=TAMPERING, banner="CDR Web Interface", extra=None,
     if logfile:
         cdr.logwrite ("cdrcgi bailout:\n %s" % message, logfile)
     page.send()
-
-#----------------------------------------------------------------------
-# Encode XML for transfer to the CDR Server using utf-8.
-#----------------------------------------------------------------------
-def encode(xml): return unicode(xml, 'latin-1').encode('utf-8')
-
-#----------------------------------------------------------------------
-# Convert CDR Server's XML from utf-8 to latin-1 encoding.
-#----------------------------------------------------------------------
-decodePattern = re.compile(u"([\u0080-\uffff])")
-def decode(xml):
-    # Take input in utf-8:
-    #   Convert it to unicode.
-    #   Replace all chars above 127 with character entitites.
-    #   Convert from unicode back to 8 bit chars, ascii is fine since
-    #     anything above ascii is entity encoded.
-    return re.sub(decodePattern,
-                  lambda match: u"&#x%X;" % ord(match.group(0)[0]),
-                  unicode(xml, 'utf-8')).encode('ascii')
-
-def unicodeToLatin1(s):
-    # Same as above, but with unicode input instead of utf-8
-    # The unfortunate name is a historical artifact of our using 'latin-1'
-    #   as the final encoding, but it's really just 7 bit ascii.
-    # If something sends other than unicode, let's track who did it
-    if type(s) != unicode:
-        cdr.logwrite("cdrcgi.unicodeToLatin1 got non-unicode string.  "
-                     "Stack trace follows", stackTrace=True)
-    return re.sub(decodePattern,
-                  lambda match: u"&#x%X;" % ord(match.group(0)[0]),
-                  s).encode('ascii')
-
-def unicodeToJavaScriptCompatible(s):
-    # Same thing but with 4 char unicode syntax for Javascript
-    return re.sub(decodePattern,
-                  lambda match: u"\\u%04X" % ord(match.group(0)[0]),
-                  s).encode('ascii')
 
 #----------------------------------------------------------------------
 # Log out of the CDR session and put up a new login screen.
@@ -2620,11 +2578,11 @@ def logout(session):
 def mainMenu(session, news=None):
 
     try:
-        name = cdr.idSessionUser(session, session)[0]
+        name = Session(session).user_name
         user = cdr.getUser(session, name)
     except:
         user = ""
-    if isinstance(user, basestring):
+    if isinstance(user, (str, bytes)):
         bail("Missing or expired session")
     menus = (
         ("Board Manager Menu Users", "BoardManagers.py", "OCC Board Managers"),
@@ -2664,16 +2622,9 @@ def mainMenu(session, news=None):
 # Navigate to menu location or publish preview.
 #----------------------------------------------------------------------
 def navigateTo(where, session, **params):
-    args = WEBSERVER, BASE, where, SESSION, session
-    url = ["https://{}{}/{}?{}={}".format(*args)]
-
-    # Concatenate additional Parameters to URL for PublishPreview
-    # -----------------------------------------------------------
-    for param in params.keys():
-        args = cgi.escape(param), cgi.escape(params[param])
-        url.append("&{}={}".format(*args))
-
-    print("Location:{}\n".format("".join(url)))
+    params[SESSION] = session
+    params = urllib.parse.urlencode(parms)
+    print(f"Location:https://{WEBSERVER}{BASE}/{where}?{params}\n")
     sys.exit(0)
 
 #----------------------------------------------------------------------
@@ -2820,8 +2771,8 @@ SELECT DISTINCT value
         rows = cursor.fetchall()
         cursor.close()
         cursor = None
-    except cdrdb.Error as info:
-        bail('Failure retrieving misc type list from CDR: %s' % info[1][0])
+    except Exception as e:
+        bail('Failure retrieving misc type list from CDR: %s' % e)
     html = """\
       <SELECT NAME='%s'>
        <OPTION VALUE='' SELECTED>&nbsp;</OPTION>
@@ -3006,9 +2957,8 @@ def generateHtmlPicklist(conn, fieldName, query, pattern, selAttrs=None,
         rows = cursor.fetchall()
         cursor.close()
         cursor = None
-    except cdrdb.Error as info:
-        bail('Failure retrieving %s list from CDR: %s' % (fieldName,
-                                                          info[1][0]))
+    except Exception as e:
+        bail('Failure retrieving %s list from CDR: %s' % (fieldName, e))
 
     # For validation, we don't need HTML, just a list of valid values
     if valCol >= 0:
@@ -3093,81 +3043,48 @@ def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
         caller's responsibility to add anything else desired to the bottom of
         the form, then add the closing </FORM>, </BODY>, and </HTML> tags.
         The caller may then send the form page to the client.
-"""
-    html = """\
-<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
-<HTML>
- <HEAD>
-  <TITLE>%s</TITLE>
-  <META         HTTP-EQUIV  = "Content-Type"
-                CONTENT     = "text/html; charset=iso-8859-1">
-  <STYLE        TYPE        = "text/css">
-   <!--
-    *.header  { font-family: Arial, Helvietica, sans-serif;
-                font-size: x-large;
-                white-space: nowrap;
-                color: #000066 }
-    *.subhdr  { font-family: Arial, Helvietica, sans-serif;
-                font-size: large;
-                white-space: nowrap;
-                color: #000066 }
-    *.page    { font-family: Arial, Helvietica, sans-serif;
-                font-size: medium;
-                white-space: nowrap;
-                color: #000066 }
-   -->
-  </STYLE>
- </HEAD>
- <BODY          BGCOLOR     = "#CCCCFF">
-  <FORM         METHOD      = "GET"
-                ACTION      = "%s/%s">
-   <INPUT       TYPE        = "hidden"
-                NAME        = "%s"
-                VALUE       = "%s">
-   <TABLE       WIDTH       = "100%%"
-                BORDER      = "0"
-                CELLSPACING = "0">
-    <TR         BGCOLOR     = "#6699FF">
-     <TD        HEIGHT      = "26"
-                COLSPAN     = "2"
-                class       = "header">CDR Advanced Search
-     </TD>
-    </TR>
-    <TR         BGCOLOR     = "#FFFFCC">
-     <TD        COLSPAN     = "2"
-                class       = "subhdr">%s</TD>
-    <TR>
-    <TR>
-     <TD        style       = "white-space: nowrap;"
-                COLSPAN     = "2">&nbsp;</TD>
-    </TR>
-""" % (title, BASE, script, SESSION, session, subtitle)
+    """
 
+    html = [f"""\
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>{cgi.escape(title)}</title>
+    <link href="{CDRCSS}" rel="stylesheet">
+  </head>
+  <body id="advanced-search-form">
+    <form method="GET" action="{BASE}/{script}">
+      <header>
+        <h1>CDR Advanced Search
+          <span>
+          </span>
+        </h1>
+        <h2>{cgi.escape(subtitle)}</h2>
+      </header>
+      <input type="hidden" name="{SESSION}" value="{cgi.escape(session)}">
+"""]
     if errors:
-        html += """\
-    <TR>
-     <TD ALIGN="left" COLSPAN="2">
-      %s
-     </TD>
-    </TR>
-""" % errors
+        html.append(f"""\
+      <p class="error">{cgi.escape(errors)}</p>
+""")
+    html.append("""\
+      <fieldset>
+        <legend>Search Fields</legend>
+""")
 
     for field in fields:
         if len(field) == 2:
-            html += """\
-    <TR>
-     <TD        NOWRAP
-                ALIGN       = "right"
-                class       = "page">%s &nbsp; </TD>
-     <TD        WIDTH       = "55%%"
-                ALIGN       = "left">
-      <INPUT    TYPE        = "text"
-                NAME        = "%s"
-                SIZE        = "60">
-     </TD>
-    </TR>
-""" % field
+            label, name = field
+            html.append(f"""\
+        <div class="labeled-field">
+          <label for="{name}">{cgi.escape(label)}</label>
+          <input name="{name}" id="{name}">
+        </div>
+""")
         else:
+            label, name, values = field
+        if True: # XXXXXXXXXXXXXXXXXXXXXXXXelse:
             html += """\
     <TR>
      <TD        NOWRAP
@@ -3413,17 +3330,17 @@ def addNewFormOnPage(session, script, fields, buttons, subtitle,
 #       * selectors: this can be either a single string or a list;
 #                    the normal case is the list, each member of which
 #                    is a string identifying the path(s) to be matched
-#                    in the query_term table; if a string contains an
-#                    ampersand, then the WHERE clause to find the
+#                    in the query_term table; if a string contains a
+#                    wildcard, then the WHERE clause to find the
 #                    paths will use the SQL 'LIKE' keyword; otherwise
-#                    that clause with use '=' for an exact match.
+#                    that clause will use '=' for an exact match.
 #                    If the selector is a single string, rather than
 #                    a list, it represents a column in the document
 #                    table which is to be compared with the value of
 #                    the var member of the SearchField object (for an
 #                    example, see SummarySearch.py, which has a
 #                    SearchField object for checking a value in the
-#                    active_status column of the document table
+#                    active_status column of the document table)
 #
 #   boolOp
 #     the string value 'AND' or 'OR' - used as a boolean connector
@@ -3440,7 +3357,7 @@ def addNewFormOnPage(session, script, fields, buttons, subtitle,
 #   then for any string in that list, if the string ends in the
 #   substring "/@cdr:ref[int_val]" then instead of matching the
 #   contents of the `var' attribute against the `value' column of
-#   the query_term table, an lookup will be added to the SQL query
+#   the query_term table, a lookup will be added to the SQL query
 #   to find occurrences of the target string (in the var attribute)
 #   in the title column of the document table, joined to the int_val
 #   column of the query_term table.  This allow the users to perform
@@ -3467,6 +3384,85 @@ SELECT d.id
                    AND int_val IN (SELECT id
                                      FROM document
                                     WHERE title = 'Histopathology'))"""
+class AdvancedSearchQuery:
+    def __init__(self, fields, doctype, match_all=True):
+        self.fields = fields
+        self.match_all = match_all
+        self.doctype = doctype
+        self.criteria = []
+    def execute(self, cursor=None):
+        return self.query.execute(cursor)
+    @property
+    def query(self):
+        if not hasattr(self, "_query"):
+
+            # Set up some convenience aliases.
+            Query = db.Query
+            Condition = Query.Condition
+            Or = Query.Or
+
+            # Create a query object.
+            columns = f"d.id", "d.title", f"'{self.doctype}' AS doctype"
+            self._query = Query("document d", *columns).order("d.title")
+
+            # Add the conditions: one for each field with a value.
+            conditions = []
+            for field in self.fields:
+
+                # See if we got a value for this field.
+                value = field.var.strip() if field.var else None
+                if not value:
+                    continue
+
+                # Remember the criterion for display to the user.
+                self.criteria.append(value)
+
+                # If 'selectors' is a string, it's a column name in `document`.
+                value_op = getQueryOp(value)
+                if isinstance(field.selectors, str):
+                    column = f"d.{field.selectors}"
+                    conditions.append(Condition(column, value, value_op))
+                    continue
+
+                # Build up a subquery for the field.
+                subquery = Query("query_term", "doc_id").unique()
+
+                # These are ORd together.
+                selector_conditions = []
+                for path in field.selectors:
+                    path_op = "LIKE" if "%" in path else "="
+
+                    # Simple case: test for a string stored in the document.
+                    if not path.endswith("/@cdr:ref[int_val]"):
+                        path_test = Condition("path", path, path_op)
+                        value_test = Condition("value", value, value_op)
+                        selector_conditions.append((path_test, value_test))
+
+                    # Trickier case: find values in linked documents.
+                    else:
+                        path = path.replace("[int_val]", "")
+                        title_query = Query("document", "id").unique()
+                        title_query.where(Condition("title", value, value_op))
+                        title_test = Condition("int_val", title_query, "IN")
+                        path_test = Condition("path", path, path_op)
+                        selector_conditions.append((path_test, title_test))
+
+                # Add the conditions for this field's selectors to the mix.
+                subquery.where(Or(*selector_conditions))
+                conditions.append(Condition("d.id", subquery, "IN"))
+
+            # Sanity check.
+            if not conditions:
+                raise Exception("No search conditions specified")
+
+            # Plug the top-level conditions into the query.
+            if self.match_all:
+                for condition in conditions:
+                    self._query.where(condition)
+            else:
+                self._query.where(Or(*conditions))
+
+        return self._query
 
 def constructAdvancedSearchQuery(searchFields, boolOp, docType):
     where      = ""
@@ -3503,7 +3499,7 @@ def constructAdvancedSearchQuery(searchFields, boolOp, docType):
             # Handle special case of match against a column in the
             # document table.
             #----------------------------------------------------------
-            if type(searchField.selectors) == type(""):
+            if isinstance(searchField.selectors, type("")):
                 where += "(d.%s %s '%s')" % (searchField.selectors,
                                              queryOp,
                                              queryVal)
@@ -3562,7 +3558,7 @@ def constructAdvancedSearchQuery(searchFields, boolOp, docType):
     # may need to distinguish between InScope and CTGov protocols later
     # on.
     # -----------------------------------------------------------------
-    if type(docType) == type(""):
+    if isinstance(docType, type("")):
         query = ("SELECT DISTINCT d.id, d.title, '%s' FROM document d "
                  "JOIN doc_type t ON t.id = d.doc_type AND t.name = '%s'"
                  % (docType, docType))
@@ -3581,137 +3577,77 @@ def constructAdvancedSearchQuery(searchFields, boolOp, docType):
 #----------------------------------------------------------------------
 # Construct top of HTML page for advanced search results.
 #----------------------------------------------------------------------
-def advancedSearchResultsPageTop(subTitle, nRows, strings):
-    return u"""\
-<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
-<HTML>
- <HEAD>
-  <TITLE>CDR %s Search Results</TITLE>
-  <META   HTTP-EQUIV = "Content-Type"
-             CONTENT = "text/html; charset=iso-8859-1">
-  <STYLE        TYPE = "text/css">
-   <!--
-    *.header  { font-family: Arial, Helvietica, sans-serif;
-                font-size: x-large;
-                white-space: nowrap;
-                color: #000066 }
-    *.subhdr  { font-family: Arial, Helvietica, sans-serif;
-                font-size: large;
-                white-space: nowrap;
-                color: #000066 }
-    *.page    { font-family: Arial, Helvietica, sans-serif;
-                font-size: medium;
-                color: #000066 }
-    :link            { color: navy }
-    :link:visited    { color: navy }
-    :link:hover      { background: #FFFFCC; }
-    tr.rowitem:hover { background: #DDDDDD; } /* Does not work for IE */
-   -->
-  </STYLE>
- </HEAD>
- <BODY       BGCOLOR = "#CCCCFF">
-  <TABLE       WIDTH = "100%%"
-              BORDER = "0"
-         CELLSPACING = "0"
-               class = "page">
-   <TR       BGCOLOR = "#6699FF">
-    <TD       HEIGHT = "26"
-             COLSPAN = "4"
-               class = "header">CDR Advanced Search Results</TD>
-   </TR>
-   <TR       BGCOLOR = "#FFFFCC">
-    <TD      COLSPAN = "4">
-     <SPAN     class = "subhdr">%s</SPAN>
-    </TD>
-   </TR>
-   <TR>
-    <TD       NOWRAP
-             COLSPAN = "4"
-              HEIGHT = "20">&nbsp;</TD>
-   </TR>
-   <TR>
-    <TD       NOWRAP
-             COLSPAN = "4"
-               class = "page">
-     <span style="color: black;">%d documents match '%s'</span>
-    </TD>
-   </TR>
-   <TR>
-    <TD       NOWRAP
-             COLSPAN = "4"
-               class = "page">&nbsp;</TD>
-   </TR>
-""" % (subTitle, subTitle, nRows, cgi.escape(unicode(strings, 'latin-1')))
+def advancedSearchResultsPageStub(subTitle, nRows, strings):
+    if isinstance(strings, bytes):
+        strings = str(strings, "utf-8")
+    title = "CDR {} Search Results"
+    opts = dict(
+        body_id="advanced-search-results",
+        banner=title.format("Advanced"),
+        subtitle=subTitle,
+    )
+    page = HTMLPage(title.format(subTitle), **opts)
+    page.body.append(page.B.P(f"{nRows:d} documents match {strings}"))
+    page.body.append(page.B.TABLE())
+    return page
+    return f"""\
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>CDR {subTitle} Search Results</title>
+    <link href="{CDRCSS}" rel="stylesheet">
+  </head>
+  <body id="advanced-search-results">
+    <header>
+      <h1>CDR Advanced Search Results</h1>
+      <h2>{subTitle}</h2>
+    </header>
+    <p></p>
+    <table>
+"""
     # Note cgi.escape call above to block XSS attack vulnerability
     # discovered by Appscan
 
 #----------------------------------------------------------------------
 # Construct HTML page for advanced search results.
 #----------------------------------------------------------------------
-def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
+def advancedSearchResultsPage(docType, rows, strings, filt, session=None):
     # We like the display on the web to be pretty.  The docType has been
     # overloaded as title *and* docType.  I'm splitting the meaning here.
     # --------------------------------------------------------------------
     subTitle = docType
     docType  = docType.replace(' ', '')
 
-    html = advancedSearchResultsPageTop(subTitle, len(rows), strings)
+    html = [advancedSearchResultsPageTop(subTitle, len(rows), strings)]
 
-    session = session and ("&%s=%s" % (SESSION, session)) or ""
-    for i in range(len(rows)):
-        docId = "CDR%010d" % rows[i][0]
-        title = cgi.escape(rows[i][1])
-        dtcol = "<TD>&nbsp;</TD>"
-        filt  = filter
-        if docType == 'Protocol':
-            dt = rows[i][2]
-
-            # This block is only needed if the filter is of type
-            # dictionary rather than a string (the filter name).
-            # In that case we want to display the docType on the
-            # result page and pick the appropriate filter for
-            # echo docType
-            # --------------------------------------------------
-            if len(filter) < 10:
-               filt = filter[dt]
-               dtcol = """\
-    <TD        WIDTH = "10%%"
-              VALIGN = "top">%s</TD>
-""" % dt
+    session = f"&{SESSION}={session}" if session else ""
+    for i, row in enumerate(rows):
+        docId = cdr.normalize(row[0])
+        title = cgi.escape(row[1])
 
         # XXX Consider using QcReport.py for all advanced search results pages.
         if docType in ("Person", "Organization", "GlossaryTermConcept",
                        "GlossaryTermName"):
-            href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
-        elif docType == 'Protocol' and dt == "CTGovProtocol":
-            href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
+            url = f"{BASE}/QcReport.py?DocId={docId}{session}"
         elif docType == "Summary":
-            href = "%s/QcReport.py?DocId=%s&ReportType=nm%s" % (BASE, docId,
-                                                                session)
+            url = f"{BASE}/QcReport.py?DocId={docId}&ReportType=nm{session}"
         else:
-            href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId,
-                                                          filt, session)
-        html += u"""\
-   <TR class="rowitem">
-    <TD       NOWRAP
-               WIDTH = "5%%"
-              VALIGN = "top">
-     <DIV      ALIGN = "right">%d.</DIV>
-    </TD>
-    <TD        WIDTH = "65%%">%s</TD>
-%s
-    <TD        WIDTH = "10%%"
-              VALIGN = "top">
-     <A         HREF = "%s">%s</A>
-    </TD>
-   </TR>
-""" % (i + 1, title.replace(";", "; "), dtcol, href, docId)
+            url = f"{BASE}/Filter.py?DocId={docId}&Filter={filt}{session}"
+        html.append(f"""\
+      <tr class="row-item">
+        <td class="row-number">{i+1}.</td>
+        <td class="doc-link"><a href="{url}">{docId}</a></td>
+        <td class="doc-title">{title.replace(";","; ")}</td>
+      </tr>
+""")
+    html.append("""\
+    </table>
+  </body>
+</html>
+""")
 
-        # Requested by LG, Issue #193.
-        if docType == "Protocol":
-            html += "<TR><TD COLWIDTH='3'>&nbsp;</TD></TR>\n"
-
-    return html + "  </TABLE>\n </BODY>\n</HTML>\n"
+    return "".join(html)
 
 #----------------------------------------------------------------------
 # Get the full user name for a given session.
@@ -3778,12 +3714,12 @@ def int_to_roman(inNum):
    >>> print int_to_roman(1999)
    MCMXCIX
    """
-   if type(inNum) != type(1):
+   if not isinstance(inNum, type(1)):
       raise TypeError("expected integer, got {!r}".format(type(inNum)))
    if not 0 < inNum < 4000:
       raise ValueError("Argument must be between 1 and 3999")
-   ints = (1000, 900,  500, 400, 100,  90, 50,  40, 10,  9,   5,  4,   1)
-   nums = ('M',  'CM', 'D', 'CD','C', 'XC','L','XL','X','IX','V','IV','I')
+   ints = 1000, 900,  500, 400, 100,  90, 50,  40, 10,  9,   5,  4,   1
+   nums = 'M',  'CM', 'D', 'CD','C', 'XC','L','XL','X','IX','V','IV','I'
    result = ""
    for i in range(len(ints)):
       count = int(inNum / ints[i])
@@ -3827,31 +3763,30 @@ def colorDiffs(report, subColor='#FAFAD2', addColor='#F0E68C',
 
 def markupTagForPrettyXml(match):
     s = match.group(1)
-    if s.startswith('/'):
-        return "</@@TAG-START@@%s@@END-SPAN@@>" % s[1:]
-    trailingSlash = ''
-    if s.endswith('/'):
+    if s.startswith("/"):
+        return f"</@@TAG-START@@{s[1:]}@@END-SPAN@@>"
+    trailingSlash = ""
+    if s.endswith("/"):
         s = s[:-1]
-        trailingSlash = '/'
+        trailingSlash = "/"
     pieces = re.split("\\s", s, 1)
     if len(pieces) == 1:
-        return "<@@TAG-START@@%s@@END-SPAN@@%s>" % (s, trailingSlash)
+        return f"<@@TAG-START@@{s}@@END-SPAN@@{trailingSlash}>"
     tag, attrs = pieces
-    pieces = ["<@@TAG-START@@%s@@END-SPAN@@" % tag]
+    pieces = [f"<@@TAG-START@@{tag}@@END-SPAN@@"]
     for attr, delim in re.findall("(\\S+=(['\"]).*?\\2)", attrs):
         name, value = attr.split('=', 1)
-        pieces.append(" @@NAME-START@@%s=@@END-SPAN@@"
-                      "@@VALUE-START@@%s@@END-SPAN@@" % (name, value))
+        pieces.append(f" @@NAME-START@@{name}=@@END-SPAN@@"
+                      f"@@VALUE-START@@{value}@@END-SPAN@@")
     pieces.append(trailingSlash)
-    pieces.append('>')
+    pieces.append(">")
     return "".join(pieces)
 
 def makeXmlPretty(doc):
-    import lxml.etree as etree
-    if type(doc) is unicode:
+    if isinstance(doc, str):
         doc = doc.encode("utf-8")
     tree = etree.XML(doc)
-    doc = unicode(etree.tostring(tree, pretty_print=True))
+    doc = str(etree.tostring(tree, pretty_print=True))
     doc = re.sub("<([^>]+)>", markupTagForPrettyXml, doc)
     doc = cgi.escape(doc)
     doc = doc.replace('@@TAG-START@@', '<span class="xml-tag-name">')
@@ -3862,13 +3797,13 @@ def makeXmlPretty(doc):
 
 def makeCssForPrettyXml(tagNameColor="blue", attrNameColor="maroon",
                         attrValueColor="red", tagNameWeight="bold"):
-    return u"""\
-<style type="text/css">
- .xml-tag-name { color: %s; font-weight: %s; }
- .xml-attr-name { color: %s; }
- .xml-attr-value { color: %s; }
+    return f"""\
+<style>
+ .xml-tag-name {{ color: {tagNameColor}; font-weight: {tagNameWeight}; }}
+ .xml-attr-name {{ color: {attrNameColor}; }}
+ .xml-attr-value {{ color: {attrValueColor}; }}
 </style>
-""" % (tagNameColor, tagNameWeight, attrNameColor, attrValueColor)
+"""
 
 #----------------------------------------------------------------------
 # Determine whether a parameter is a valid ISO date.
@@ -3975,7 +3910,7 @@ def valParmVal(val, **opts):
             return True
     else:
         values = opts.get("valList") or opts.get("val_list") or []
-        if isinstance(values, basestring):
+        if isinstance(values, str):
             values = [values]
         cval = val
         if icase:
@@ -3983,9 +3918,8 @@ def valParmVal(val, **opts):
             cval = val.lower()
         if cval in values:
             return True
-        fp = open("d:/tmp/val-parm-val.log", "a")
-        fp.write("cval=%s values=%s\n" % (cval, values))
-        fp.close()
+        with open(f"{cdr.TMP}/val-parm-val.log", "a", encoding="utf-8") as fp:
+            fp.write("cval=%s values=%s\n" % (cval, values))
     return _valParmHelper(val, bailout, reveal, msg)
 
 def valParmEmail(val, **opts):
@@ -4122,3 +4056,935 @@ def log_fields(fields, **opts):
         cdr.logwrite(message, logfile)
     else:
         cdr.logwrite(message)
+
+
+class FormFieldFactory:
+    """Provide class methods for creating HTML form fields.
+
+    Also has a factory method for creating a fieldset (with an optional
+    legend) which isn't really a field, but it seemed to fit best here.
+
+    These methods are inherited by the HTMLPage class below, so that
+    users passed an object of that class have easy access to the
+    methods without having to import anything extra.
+
+    Here are the categories of fields supported:
+
+        text fields
+           - text_field()
+           - password_field()
+           - date_field()
+
+        clickable fields
+           - checkbox()
+           - radio_button()
+
+        other
+           - file_field()
+           - hidden_field()
+           - select()
+    """
+
+    EN_DASH = "\u2013"
+    CLICKABLE = "checkbox", "radio"
+    B = lxml.html.builder
+
+    @classmethod
+    def button(cls, label, **kwargs):
+        """Create a button to be added to an HTMLPage object.
+
+        Typically, one or more of these buttons will be passed as the
+        buttons keyword argument to the HTMLPage constructor, to be
+        displayed on the right side of the main banner, but it is also
+        possible to place a button elsewhere on the page.
+
+        These are called "buttons" even though the HTML element used
+        to create the widget is an "input" element with type of
+        "submit" or "reset" (and even though, confusingly, there is
+        another HTML element called "button," which is not being used
+        here).
+
+        Required positional argument:
+
+            label
+                string to be displayed on the button; also used by the
+                form submission handler to determine which button was
+                clicked
+
+        Optional keyword arguments:
+
+            button_type
+                set to "reset" to override the default of "submit"
+
+            onclick
+                optional JavaScript to be invoked when the button
+                is clicked
+
+        Return:
+
+            lxml object for an INPUT element
+
+        """
+
+        button = cls.B.INPUT(value=label, name="Request")
+        button.set("type", kwargs.get("button_type", "submit"))
+        onclick = kwargs.get("onclick")
+        if onclick:
+            button.set("onclick", onclick)
+        return button
+
+    @classmethod
+    def checkbox(cls, group, **kwargs):
+        """Create a checkbox field block with label.
+
+        Required positional argument:
+
+            group
+
+                string identifying the set of checkboxes whose checked
+                values will be returned to the form processor as a
+                single sequence
+
+        See the `__field()`, `__wrapper()`, and `__clickable()`
+        methods for a description of the available optional keyword
+        arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        return cls.__clickable(group, "checkbox", **kwargs)
+
+    @classmethod
+    def date_field(cls, name, **kwargs):
+
+        """Create a date field block with optional label.
+
+        A date picker is displayed for ease of choosing a value for the
+        field. The text widget is still editable directly.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        wrapper = cls.text_field(name, **kwargs)
+        field = wrapper.find("input")
+        classes = field.get("class", "").split()
+        if "CdrDateField" not in classes:
+            classes.append("CdrDateField")
+            field.set("class", " ".join(classes))
+        return wrapper
+
+    @classmethod
+    def date_range(cls, name, **kwargs):
+        """Date an inline pair of dates with a single label.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        Optional keyword arguments:
+
+            start_date
+                initial value for the first date field
+
+            end_date
+                initial value for the second date field
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of other available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing two INPUT elements
+            with a separating SPAN between
+        """
+
+        opts = dict(**kwargs, wrapper_classes="date-range")
+        wrapper = cls.__wrapper(name, **opts)
+        for which in ("start", "end"):
+            opts["value"] = opts.get(f"{which}_date")
+            field = cls.__field(f"{name}-{which}", "text", **opts)
+            classes = field.get("class", "").split()
+            if "CdrDateField" not in classes:
+                classes.append("CdrDateField")
+                field.set("class", " ".join(classes))
+            wrapper.append(field)
+            if which == "start":
+                separator = cls.B.SPAN(cls.EN_DASH)
+                separator.set("class", "date-range-sep")
+                wrapper.append(separator)
+        return wrapper
+
+    @classmethod
+    def fieldset(cls, legend=None):
+        """Create an HTML fieldset element with an optional legend child.
+
+        Optional keyword argument:
+
+            legend
+
+                string for optional legend to be displayed for the
+                fieldset
+
+        Return:
+
+            lxml object for a FIELDSET element
+        """
+
+        fieldset = cls.B.FIELDSET()
+        if legend:
+            fieldset.append(cls.B.LEGEND(legend))
+        return fieldset
+
+    @classmethod
+    def file_field(cls, name, **kwargs):
+        """Create a file upload field block with optional label.
+
+        The widget design for picking a field varies from browser to
+        browser.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        field = cls.__field(name, "file", **kwargs)
+        wrapper = cls.__wrapper(name, **kwargs)
+        wrapper.append(field)
+        return wrapper
+
+    @classmethod
+    def hidden_field(cls, name, value):
+        return cls.B.INPUT(name=name, value=str(value), type="hidden")
+
+    @classmethod
+    def password_field(cls, name, **kwargs):
+        """Create a password field block with optional label.
+
+        The value for the field is not displayed.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        field = cls.__field(name, "password", **kwargs)
+        wrapper = cls.__wrapper(name, **kwargs)
+        wrapper.append(field)
+        return wrapper
+
+    @classmethod
+    def radio_button(cls, group, **kwargs):
+        """Create a wrapped radio button field with label.
+
+        Required positional argument:
+
+            group
+
+                string identifying the set of radio buttons of which
+                at most only one can be checked
+
+        See the `__field()`, `__wrapper()`, and `__clickable()`
+        methods for a description of the available optional keyword
+        arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        return cls.__clickable(group, "radio", **kwargs)
+
+    @classmethod
+    def select(cls, name, **kwargs):
+        """Create a wrapped picklist field with optional label.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an SELECT element
+        """
+
+        # Create the widget and its wrapper element.
+        wrapper = cls.__wrapper(name, **kwargs)
+        field = cls.__field(name, "select", **kwargs)
+        wrapper.append(field)
+
+        # Add attributes unique to picklist fields.
+        multiple = True if kwargs.get("multiple") else False
+        if multiple:
+            field.set("multiple")
+        if kwargs.get("onchange"):
+            field.set("onchange", kwargs["onchange"])
+
+        # If we have any options, add them as children of the widget object.
+        options = kwargs.get("options")
+        if options:
+            default = kwargs.get("default")
+            if not isinstance(default, (list, tuple, set)):
+                default = [default] if default else []
+            if multiple and len(default) > 1:
+                error = "Multiple defaults specified for single picklist"
+                raise Exception(error)
+            if isinstance(options, dict):
+                options = sorted(options.items())
+            for option in options:
+                if isinstance(option, (list, tuple)):
+                    value, display = option
+                else:
+                    value = display = option
+                option = cls.B.OPTION(str(display), value=str(value))
+                if value in default:
+                    option.set("selected")
+                field.append(option)
+
+        # Done.
+        return wrapper
+
+    @classmethod
+    def textarea(cls, name, **kwargs):
+        """Create a textarea field block with optional label.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        field = cls.__field(name, "textarea", **kwargs)
+        wrapper = cls.__wrapper(name, **kwargs)
+        wrapper.append(field)
+        return wrapper
+
+    @classmethod
+    def text_field(cls, name, **kwargs):
+        """Create a text field block with optional label.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        field = cls.__field(name, "text", **kwargs)
+        wrapper = cls.__wrapper(name, **kwargs)
+        wrapper.append(field)
+        return wrapper
+
+    @classmethod
+    def __field(cls, name, field_type, **kwargs):
+        """Build an HTML form field widget.
+
+        Required positional arguments:
+
+            name
+                unique name of the field on the page (not just unique
+                to the form); be careful also to avoid clashes with
+                names generated for date range fields ({name}-start
+                and {name}-end)
+
+            field_type
+                one of the following string values:
+                   - text
+                   - password
+                   - file
+                   - textarea
+                   - select
+                   - checkbox
+                   - radio
+
+        Optional keyword arguments:
+
+            value
+                initial value for the field (default: "")
+                not used for "select" fields
+
+            widget_id
+                custom value for the field element's ID attribute
+                (default: normalized name-value string for radio
+                buttons and checkboxes, name for all other field
+                types)
+
+            classes
+                if present, used as the 'class' attribute for the
+                field element; may be passed as a list, tuple, or set,
+                or as a string value with one or more space-delimited
+                class names (default: no classes)
+
+            tooltip
+                if present, used as the 'title' attribute for the
+                field element (default: no tooltip)
+
+            readonly
+                if True, the field is not editable, but it can get the
+                UI focus, and it is still sent with the form submission
+                (default: False); not used for 'select' fields
+
+            disabled
+                like readonly, but the form element does not receive
+                focus, is skipped in tabbing navigation, and is not
+                passed to the form processor
+
+        Returns:
+
+            lxml HTML element object
+        """
+
+        # Create the object for the field element.
+        value = str(kwargs.get("value") or "")
+        if field_type == "textarea":
+            field = cls.B.TEXTAREA(value, name=name)
+        elif field_type == "select":
+            field = cls.B.SELECT(name=name)
+        else:
+            field = cls.B.INPUT(name=name, value=value)
+            field.set("type", field_type)
+
+        # Add the element's unique ID attribute.
+        if field_type in cls.CLICKABLE:
+            widget_id = kwargs.get("widget_id")
+            if not widget_id:
+                widget_id = f"{name}-{value}".replace(" ", "-").lower()
+        else:
+            widget_id = name
+        field.set("id", widget_id)
+
+        # Add the classes for the widget element.
+        classes = cls.__classes(kwargs.get("classes"))
+        if classes:
+            field.set("class", " ".join(classes))
+
+        # Tooltip for clickables goes on the label, not the widget.
+        elif kwargs.get("tooltip"):
+            field.set("title", kwargs["tooltip"])
+
+        # Add the attributes which (almost) any field can use, and we're done.
+        if kwargs.get("disabled"):
+            field.set("disabled")
+        if kwargs.get("readonly") and field_type != "select":
+            field.set("readonly")
+        return field
+
+    @classmethod
+    def __wrapper(cls, name, **kwargs):
+        """Create an enclosing element for a form field
+
+        Required positional argument:
+
+            name
+                unique name for the field
+
+        Optional keyword arguments:
+
+            clickable
+                True if the field is a checkbox or radio button
+
+            wrapper
+                string value for the name of the element to use
+                for the field's enclosing element (default: "div")
+
+            label
+                string for identify which field this is
+
+            wrapper_id
+                custom value for the enclosing element's ID attribute
+                (default: None)
+
+            wrapper_classes
+                one or more classes to be applied to the div
+                wrapper (as space-delimited string, or as list,
+                tuple, or set) or None if no additional classes
+                are to be applied; the "labeled-field" class
+                will be added to the set of classes for fields
+                labeled on the left
+
+        Returns:
+
+            lxml HTML element object
+        """
+
+        # Create the enclosing element.
+        wrapper = cls.B.E(kwargs.get("wrapper") or "div")
+
+        # Set the unique ID for the enclosing element.
+        if kwargs.get("wrapper_id"):
+            wrapper.set("id", kwargs["wrapper_id"])
+
+        # Determine the classes to be applied to the wrapper element.
+        classes = cls.__classes(kwargs.get("wrapper_classes"))
+        label = kwargs.get("label", name.title())
+        if label and not kwargs.get("clickable"):
+            classes.add("labeled-field")
+            widget_id = kwargs.get("widget_id") or name
+            wrapper.append(cls.B.LABEL(label, cls.B.FOR(widget_id)))
+        if classes:
+            wrapper.set("class", " ".join(classes))
+
+        # Done.
+        return wrapper
+
+    @classmethod
+    def __clickable(cls, group, field_type, **kwargs):
+        """Create a wrapped checkbox or radio button field.
+
+        Required positional arguments:
+
+            group
+                string identifying a set of related clickable fields
+                which will be returned as a sequence of checked
+                values to the form processor
+
+            field_type
+                one of "checkbox" or "radio"
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        # Create the field and its wrapper.
+        wrapper = cls.__wrapper(group, clickable=True, **kwargs)
+        widget = cls.__field(group, field_type, **kwargs)
+
+        # Add attributes unique to radio buttons and checkboxes.
+        if kwargs.get("checked"):
+            widget.set("checked")
+        value = str(kwargs.get("value", ""))
+        onclick = kwargs.get("onclick", f"check_{group}('{value}')")
+        if onclick:
+            widget.set("onclick", onclick.replace("-", "_"))
+
+        # For these fields, the label follows the widget.
+        label = kwargs.get("label", value.title())
+        label = cls.B.LABEL(cls.B.FOR(widget.get("id")), label)
+        label.set("class", "clickable")
+        wrapper.append(widget)
+        wrapper.append(label)
+        return wrapper
+
+    @classmethod
+    def __classes(cls, classes):
+        """Package the classes to be assigned to an element as a set
+
+        Required positional argument:
+
+            classes
+                one of the following:
+                   - None
+                   - a space-delimited string of class names
+                   - a `tuple` of class names
+                   - a `list` of class names
+                   - a `set` of class names
+
+        Returns:
+
+            a `set` of zero or more class name strings
+        """
+
+        if classes is None:
+            return set()
+        if isinstance(classes, str):
+            return set(classes.split())
+        return set(classes)
+
+
+class HTMLPage(FormFieldFactory):
+    """Web page for the CDR system.
+
+    Replacement for the old `Page` class, which built up a page as a
+    sequence of strings. This class does it the way it should always
+    have been done, by building an object tree, using the html.builder
+    support in the lxml package.
+
+    Sample usage:
+
+        buttons = HTMLPage.button("Submit"), HTMLPage.button("Reports")
+        page = HTMLPage("Advanced Search", subtitle="Drug", buttons=buttons)
+        fieldset = page.fieldset("Search Criteria")
+        fieldset.append(page.text_field("name", "Name"))
+        fieldset.append(page.date_field("since", "Since"))
+        page.form.append(fieldset)
+        page.send()
+    """
+
+    VERSION = "201909071039"
+    CDR_CSS = f"/stylesheets/cdr.css?v={VERSION}"
+    APIS = "https://ajax.googleapis.com/ajax/libs"
+    JQUERY = f"{APIS}/jquery/2.1.4/jquery.min.js"
+    JQUERY_UI = f"{APIS}/jqueryui/1.11.4/jquery-ui.min.js"
+    JQUERY_CSS = f"{APIS}/jqueryui/1.11.4/themes/smoothness/jquery-ui.css"
+    STYLESHEETS = JQUERY_CSS, CDR_CSS
+    SCRIPTS = JQUERY, JQUERY_UI
+    PRIMARY_FORM_ID = "primary-form"
+    STRING_OPTS = dict(pretty_print=True, doctype="<!DOCTYPE html>")
+    CALENDAR_SCRIPT = """\
+jQuery(function() {
+    jQuery('.CdrDateField').datepicker({
+        dateFormat: 'yy-mm-dd',
+        showOn: 'button',
+        buttonImageOnly: true,
+        buttonImage: "/images/calendar.png",
+        buttonText: "Select date",
+        dayNamesMin: [ "S", "M", "T", "W", "T", "F", "S" ]
+    });
+});"""
+
+    def __init__(self, title, **kwargs):
+        """Capture the initial settings for the page.
+
+        Required positional argument:
+
+            title
+                string representing the page's title
+
+        Optional keyword arguments:
+
+            actions
+                form submission handler (default: URL which draws form)
+
+            banner
+                string for main banner (default: page title)
+
+            body_id
+                ID attribute for body element (default: "cdr-page")
+
+            buttons
+                sequence of objects created by FormFieldFactory.button()
+
+            enctype
+                set to "multipart/form-data" if any file fields present
+
+            head_title
+                title for head block (default: page title)
+
+            icon
+                favicon path (defaults: "/favicon.ico")
+
+            method
+                set to "get" to override default of "post")
+
+            scripts
+                urls for js to load (default: jQuery and jQueryUI URLs)
+
+            subtitle
+                string for a smaller second banner
+
+            stylesheets
+                urls for CSS to load (default: CDR and jQueryUI CSS)
+        """
+
+        self.__title = title
+        self.__opts = kwargs
+
+    def tostring(self):
+        """Return the serialized Unicode string for the page object."""
+        opts = dict(self.STRING_OPTS, encoding="unicode")
+        return lxml.html.tostring(self.html, **opts)
+
+    def tobytes(self):
+        """Return the serialized page as ASCII bytes.
+
+        The Unicode characters contained on the page will have
+        been encoded as HTML entities.
+        """
+
+        return lxml.html.tostring(self.html, **self.STRING_OPTS)
+
+    @property
+    def action(self):
+        """URL for the form submission handler."""
+        if not hasattr(self, "_action"):
+            self._action = self.__opts.get("action")
+            if self._action is None:
+                self._action = os.path.basename(sys.argv[0])
+            if self._action == "flask":
+                self._action = ""
+        return self._action
+
+    @property
+    def banner_title(self):
+        """The title to be displayed in the main banner for the page."""
+        if not hasattr(self, "_banner_title"):
+            self._banner_title = self.__opts.get("banner_title")
+            if self._banner_title is None:
+                self._banner_title = self.title
+        return self._banner_title
+
+    @property
+    def body(self):
+        """The body content element for the page.
+
+        May or may not contain a form wrapper for the page's content,
+        depending on whether any buttons were passed to the HTMLPage's
+        constructor. Typically, the code creating an HTMLPage object
+        will then append to this object, or the enclosed form object,
+        or both.
+        """
+
+        if not hasattr(self, "_body"):
+            self._body = self.B.BODY(id=self.body_id)
+            banner = self.B.H1(self.banner_title)
+            header = self.B.E("header", banner)
+            if self.subtitle:
+                header.append(self.B.H2(self.subtitle))
+            if self.buttons:
+                banner.append(self.B.SPAN(*self.buttons))
+                form = self.B.FORM(action=self.action, method=self.method)
+                form.set("id", self.PRIMARY_FORM_ID)
+                self._body.append(form)
+                form.append(header)
+            else:
+                self._body.append(header)
+        return self._body
+
+    @property
+    def body_id(self):
+        """ID attribute to be applied to the page's body element."""
+        if not hasattr(self, "_body_id"):
+            self._body_id = self.__opts.get("body_id")
+            if not self._body_id:
+                self._body_id = "cdr-page"
+        return self._body_id
+
+    @property
+    def buttons(self):
+        """The buttons to appear on the right side of the main banner."""
+        return self.__opts.get("buttons")
+
+    @property
+    def form(self):
+        """The body's <form> element.
+
+        Only present if one or more buttons passed to the constructor,
+        or if the caller has added its own form(s). If the page has
+        more than one form, this only finds the first one (and it won't
+        even find that, if it was attached by the caller inside a
+        wrapper other than `body`). In these more complicated cases,
+        it will be the caller's responsibility to keep track of the
+        added forms.
+        """
+
+        return self.body.find("form")
+
+    @property
+    def head(self):
+        """Assemble the head block for the HTML page."""
+        if not hasattr(self, "_head"):
+            self._head = self.B.HEAD(
+                self.B.META(charset="utf-8"),
+                self.B.TITLE(self.head_title),
+                self.B.LINK(href="/favicon.ico", rel="icon")
+            )
+            for sheet in self.stylesheets:
+                self._head.append(self.B.LINK(href=sheet, rel="stylesheet"))
+            for script in self.scripts:
+                self._head.append(self.B.SCRIPT(src=script))
+        return self._head
+
+    @property
+    def header(self):
+        """The <header> element at the top of the body."""
+        header = self.body.find("form/header")
+        if header is not None:
+            return header
+        return self.body.find("header")
+
+    @property
+    def head_title(self):
+        """The title to be inserted into the head block of the page."""
+        if not hasattr(self, "_head_title"):
+            self._head_title = self.__opts.get("head_title")
+            if self._head_title is None:
+                self._head_title = self.title
+        return self._head_title
+
+    @property
+    def html(self):
+        """Top-level object for the page.
+
+        Slips in the calendar JavaScript if there are any date fields.
+        """
+
+        if not hasattr(self, "_has_calendar_js"):
+            self._has_calendar_js = False
+        if not self._has_calendar_js:
+            if self.body.xpath("//*[contains(@class, 'CdrDateField')]"):
+                self.body.append(self.B.SCRIPT(self.CALENDAR_SCRIPT))
+                self._has_calendar_js = True
+        return self.B.HTML(self.head, self.body)
+
+    @property
+    def title(self):
+        """Return the title string for the page.
+
+        Used by default in the head block and in the main banner, but
+        each can be overridden individually using keyword arguments
+        passed to the constructor.
+        """
+
+        return self.__title or ""
+
+    @property
+    def method(self):
+        """CGI verb to be used for form submission."""
+        return self.__opts.get("method", "post")
+
+    @property
+    def scripts(self):
+        """Client-side scripts to be loaded for the page."""
+        if not hasattr(self, "_scripts"):
+            self._scripts = self.__opts.get("scripts")
+            if self._scripts is None:
+                self._scripts = self.SCRIPTS
+        return self._scripts
+
+    @property
+    def stylesheets(self):
+        """CSS rules to be loaded for the page."""
+        if not hasattr(self, "_stylesheets"):
+            self._stylesheets = self.__opts.get("stylesheets")
+            if self._stylesheets is None:
+                self._stylesheets = self.STYLESHEETS
+        return self._stylesheets
+
+    @property
+    def subtitle(self):
+        """Optional title to be displayed in a second, smaller banner."""
+        if not hasattr(self, "_subtitle"):
+            self._subtitle = self.__opts.get("subtitle")
+        return self._subtitle
+
+
+class AdvancedSearchPage(HTMLPage):
+    BUTTONS = (
+        HTMLPage.button("Search"),
+        HTMLPage.button("Clear", button_type="reset"),
+    )
+    TITLE = "CDR Advanced Search"
+    def __init__(self, session, subtitle, fields, **kwargs):
+        if "buttons" not in kwargs:
+            buttons = self.BUTTONS
+        kwargs = dict(**kwargs, buttons=buttons)
+        HTMLPage.__init__(self, self.TITLE, **kwargs)
+        fieldset = self.fieldset("Search Fields")
+        self.form.append(fieldset)
+        fieldset.append(self.hidden_field("Session", session or "guest"))
+        for field in fields:
+            fieldset.append(field)
+        if len(fields) > 2:
+            opts = dict(label="Match All Criteria", checked=True, value="yes")
+            fieldset.append(self.checkbox("match_all", **opts))
+
+
+class AdvancedSearchResultsPage(HTMLPage):
+
+    TITLE = "CDR Advanced Search Results"
+    POG = "Person", "Organization", "GlossaryTermConcept", "GlossaryTermName"
+
+    def __init__(self, doctype, **kwargs):
+
+        # Let the base class get us started.
+        opts = dict(body_id="advanced-search-results", subtitle=doctype)
+        HTMLPage.__init__(self, self.TITLE, **opts)
+
+        # Add a summary line if we have the requisite information.
+        strings = kwargs.get("search_strings")
+        count = kwargs.get("count")
+        if strings and count:
+            self.body.append(self.B.P(f"{count:d} documents match {strings}"))
+
+        # Start the table for the results.
+        table = self.B.TABLE()
+        self.body.append(table)
+
+        # If we have the rows for the results set, add them to the table.
+        rows = kwargs.get("rows")
+        if rows:
+            session = kwargs.get("session") or "guest"
+            for i, row in enumerate(rows):
+                cdr_id = cdr.normalize(row[0])
+                title = row[1].replace(";", "; ")
+
+                # Create the link; person, org, or glossary docs are simplest.
+                if docType in POG:
+                    url = f"{BASE}/QcReport.py?DocId={cdr_id}"
+                elif docType == "Summary":
+                    url = f"{BASE}/QcReport.py?DocId={cdr_id}&ReportType=nm"
+                else:
+                    filtre = kwargs.get("filt")
+                    url = f"{BASE}/Filter.py?DocId={cdr_id}&Filter={filtre}"
+                url += f"&{SESSION}={session}"
+                link = self.B.A(cdr_id, href=url)
+
+                # Assemble the table row and attach it.
+                tr = self.B.TR(self.B.CLASS("row-item"))
+                tr.append(self.B.TD(f"{i+1}.", self.B.CLASS("row-number")))
+                tr.append(self.B.TD(link, self.B.CLASS("doc-link")))
+                tr.append(self.B.TD(title, self.B.CLASS("doc-title")))
+                table.append(tr)

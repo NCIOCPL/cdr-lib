@@ -5819,7 +5819,7 @@ class DTD:
             """
 
             for name in ("ID", "IDREFS", "NMTOKEN", "NMTOKENS"):
-                if schema_type == f"xsd:{name}"
+                if schema_type == f"xsd:{name}":
                     return name
             return "CDATA"
 

@@ -581,15 +581,14 @@ class Protocol:
                 #print "orgStatuses: %s" % repr(orgStatuses)
                 statuses.setdefault(startDate, []).append(val)
             i += 1
-        keys = statuses.keys()
-        keys.sort()
+        keys = sorted(statuses.keys())
         for startDate in keys:
             for i, orgStatus in statuses[startDate]:
                 try:
                     orgStatuses[i] = orgStatus
                 except:
-                    print "statuses: %s" % repr(statuses)
-                    print "orgStatuses: %s" % repr(orgStatuses)
+                    print("statuses: %s" % repr(statuses))
+                    print("orgStatuses: %s" % repr(orgStatuses))
                     raise
             protStatus = self.getProtStatus(orgStatuses)
             if protStatus == "Active" and not self.firstPub:

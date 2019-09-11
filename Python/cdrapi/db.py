@@ -2,6 +2,7 @@
 DB-SIG compliant module for CDR database access.
 """
 
+import platform
 import unittest
 import pyodbc
 from cdrapi import settings
@@ -24,23 +25,29 @@ def connect(**opts):
         tier = settings.Tier(tier.decode("utf-8"))
     elif isinstance(tier, str):
         tier = settings.Tier(tier)
+    timeout = opts.get("timeout", Query.DEFAULT_TIMEOUT)
     user = opts.get("user", Query.CDRSQLACCOUNT)
     if user == "cdr":
         user = Query.CDRSQLACCOUNT
     password = tier.password(user, Query.DB)
     if not password:
         raise Exception("user {!r} unknown on {!r}".format(user, tier.name))
-    parms = dict(
-        Driver="{ODBC Driver 13 for SQL Server}",
-        Server="{},{}".format(tier.sql_server, tier.port(Query.DB)),
-        Database=opts.get("database", Query.DB),
-        Uid=user,
-        Pwd=password,
-        Timeout=opts.get("timeout", Query.DEFAULT_TIMEOUT)
-    )
-    connection_string = ";".join(["{}={}".format(*p) for p in parms.items()])
-    opts = dict(timeout=parms["Timeout"])
-    return pyodbc.connect(connection_string, **opts)
+    if platform.system().lower() == "windows":
+        parms = dict(
+            Driver="{ODBC Driver 17 for SQL Server}",
+            Server="{},{}".format(tier.sql_server, tier.port(Query.DB)),
+            Database=opts.get("database", Query.DB),
+            Uid=user,
+            Pwd=password,
+            Timeout=timeout
+        )
+        conn_string = ";".join(["{}={}".format(*p) for p in parms.items()])
+    else:
+        conn_string = f"DSN=CDR{tier.name.upper()};UID={user};PWD={password}"
+    opts = dict(timeout=timeout)
+    conn = pyodbc.connect(conn_string, **opts)
+    conn.timeout = timeout
+    return conn
 
 
 class Query:

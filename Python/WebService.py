@@ -1,49 +1,44 @@
-#!/usr/bin/python
-#----------------------------------------------------------------------
-#
-# Simple Web service helper classes.
-#
-#----------------------------------------------------------------------
-import lxml.etree as etree
+"""
+Simple Web service helper classes.
+"""
+
 import os
-import re
 import sys
-import cdrdb2 as cdrdb
+from lxml import etree
+from cdrapi import db
 
-#----------------------------------------------------------------------
-# Custom exception class to let handlers catch problems with HTTP
-# method specification.
-#----------------------------------------------------------------------
 class WrongMethod(Exception):
-    pass
+    """
+    Custom exception class
 
-#----------------------------------------------------------------------
-# Windows needs stdio set for binary mode.
-#----------------------------------------------------------------------
-try:
-    import msvcrt, cdr
-    msvcrt.setmode (0, os.O_BINARY) # stdin  = 0
-    msvcrt.setmode (1, os.O_BINARY) # stdout = 1
-    WINDOWS = True
-except ImportError:
-    WINDOWS = False
+    Allows handlers catch problems with HTTP method specification.
+    """
 
-#----------------------------------------------------------------------
-# Object representing a client request, extracted from the XML
-# document used to transmit the request.
-#
-#   message  - the raw XML for the request
-#   doc      - the node for top-level element of the document
-#   type     - string for the name of the command
-#   logLevel - value controlling how much logging is performed
-#              by the server; set by the client using the HTTP
-#              headers.
-#
-# 2015-12-08: add option to use lxml.etree instead of minidom
-#----------------------------------------------------------------------
 class Request:
+    """
+    Object representing a client request, extracted from the XML
+    document used to transmit the request.
+
+    Attributes:
+      message  - raw XML for the request, UTF-8 encoded
+      doc      - the node for top-level element of the document
+      type     - string for the name of the command
+      logLevel - value controlling how much logging is performed
+                 by the server; set by the client using the HTTP
+                 headers.
+
+    2015-12-08: add option to use lxml.etree instead of minidom
+    """
 
     def __init__(self, standalone=False, logger=None):
+        """
+        Set the request object's attributes
+
+        Optional keyword arguments:
+          standalone  - set to True if debugging using redirected message
+          logger      - optional object for logging the service's activity
+        """
+
         self.message  = None
         self.doc      = None
         self.type     = None
@@ -65,104 +60,119 @@ class Request:
                 if debugLevel > "2":
                     self.dumpenv()
             if remoteHost and remoteHost != self.client:
-                self.client += " (%s)" % remoteHost
+                self.client += f" ({remoteHost})"
             if not requestMethod:
                 raise WrongMethod("Request method not specified")
             if requestMethod == "OPTIONS":
-                sys.stdout.write("""\
+                print("""\
 Content-Type: text/plain
 Content-Length: 0
 Access-Control-Allow-Headers: Content-Type,SOAPAction
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Methods: POST, GET, OPTIONS
-
 """)
                 sys.exit(0)
 
             if requestMethod != "POST":
-                raise WrongMethod("Request method should be POST; was %s" %
-                                  requestMethod)
+                message = f"Request method should be POST; was {requestMethod}"
+                raise WrongMethod(message)
             lenString = os.getenv("CONTENT_LENGTH")
             if not lenString:
                 raise Exception("Content length not specified")
             try:
                 contentLength = int(lenString)
             except:
-                raise Exception("Invalid content length: %s" % lenString)
+                raise Exception(f"Invalid content length: {lenString}")
             if contentLength < 1:
-                raise Exception("Invalid content length: %s" % lenString)
+                raise Exception(f"Invalid content length: {lenString}")
             try:
                 blocks = []
                 nRead = 0
                 while nRead < contentLength:
-                    block = sys.stdin.read(contentLength - nRead)
+                    block = sys.stdin.buffer.read(contentLength - nRead)
                     nRead += len(block)
                     blocks.append(block)
-            except Exception, e:
-                raise Exception("Failure reading request: %s" % str(e))
-            self.message = "".join(blocks)
+            except Exception as e:
+                raise Exception(f"Failure reading request: {e}")
+            self.message = b"".join(blocks)
             if logger:
                 logger.debug("message: %r", self.message)
         try:
-            self.doc = etree.XML(self.message)
+            self.doc = etree.fromstring(self.message)
             self.type = self.doc.tag
-        except Exception, e:
+        except Exception as e:
             if logger:
                 logger.exception("Failure parsing request")
-            raise Exception("Failure parsing request: %s" % e)
+            raise Exception(f"Failure parsing request: {e}")
         try:
             self.logLevel = int(debugLevel)
         except:
             self.logLevel = 1
 
     def defaultLevel(self):
-        query = cdrdb.Query("ctl", "val")
+        query = db.Query("ctl", "val")
         query.where("grp = 'WebService'")
         query.where("name = 'DebugLevel'")
         row = query.execute().fetchone()
-        return row and row[0] or "1"
+        return row.val if row else "1"
 
     def dumpenv(self):
         lines = ["WebService environment", "=" * 60]
         for e in sorted(os.environ):
-            lines.append("%s=%s" % (e, os.environ[e]))
+            lines.append(f"{e}={os.environ[e]}")
         self.logger.debug("\n".join(lines))
 
-#----------------------------------------------------------------------
-# Object for the server's response to the client's request.  Contains
-# a send() method for returning the request.
-#----------------------------------------------------------------------
+
 class Response:
+    """
+    Object for the server's response to the client's request.
+
+    Contains a send() method for returning the request.
+    """
 
     def __init__(self, body, logger=None):
-        self.logger = logger
-        if not isinstance(body, basestring):
-            body = etree.tostring(body, pretty_print=True)
-        self.body = body
+        """
+        Capture the response object's attributes
 
-    def send(self, contentType = 'text/xml'):
-        if type(self.body) == unicode:
-            self.body = self.body.encode('utf-8')
-        sys.stdout.write("Content-Type: %s; charset=utf-8\n" % contentType)
-        sys.stdout.write("Content-Length: %d\n" % len(self.body))
-        if not WINDOWS:
-            sys.stdout.write("Access-Control-Allow-Headers: ")
-            sys.stdout.write("Content-Type,SOAPAction\n")
-            sys.stdout.write("Access-Control-Allow-Origin: *\n")
-        sys.stdout.write("\n")
-        sys.stdout.write(self.body)
+        Ensure that the body attribute is UTF-8 encoded.
+        Pass:
+          body - xml tree or its serialization
+          logger - optional object for logging what we do
+        """
+        self.logger = logger
+        if isinstance(body, str):
+            self.body = body.encode("utf-8")
+        elif isinstance(body, bytes):
+            self.body = body
+        else:
+            self.body = etree.tostring(body, pretty_print=True)
+
+    def send(self, contentType="text/xml"):
+        headers = (
+            f"Content-Type: {contentType}; charset=utf-8",
+            f"Content-Length: {len(self.body):d}",
+        )
+        for header in headers:
+            sys.stdout.buffer.write(header.encode("utf-8"))
+            sys.stdout.buffer.write(b"\n")
+        sys.stdout.buffer.write("\n")
+        sys.stdout.buffer.write(self.body)
         if self.logger:
             self.logger.debug("sending %r", self.body)
         sys.exit(0)
 
-#----------------------------------------------------------------------
-# Object for the message the server sends back to the client if
-# a failure is detected.
-#----------------------------------------------------------------------
+
 class ErrorResponse(Response):
+    """Message sent back to the client if a failure is detected"""
 
     def __init__(self, error, logger=None):
+        """
+        Capture the object's attributes
+
+        Make sure the body is utf-8 encoded.
+        """
+
         self.logger = logger
-        if type(error) == unicode:
-            error = error.encode('utf-8')
-        self.body = "<ERROR>%s</ERROR>" % error
+        if isinstance(error, bytes):
+            error = error.decode("utf-8")
+        self.body = f"<ERROR>{error}</ERROR>".encode("utf-8")
