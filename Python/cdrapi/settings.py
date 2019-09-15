@@ -434,7 +434,7 @@ class Tier:
         """
 
         for letter in "DCEFGHIJKLMNOPQRSTUVWXYZ":
-            if os.path.exists(cls.APPHOSTS.format(letter)):
+            if os.path.exists(f"{letter}:/etc/{cls.APPHOSTS}"):
                 return letter
         raise Exception("CDR host file not found")
 

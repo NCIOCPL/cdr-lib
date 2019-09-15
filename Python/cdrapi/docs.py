@@ -139,6 +139,7 @@ class Doc(object):
 
         Optional keyword arguments
           id - optional unique identifier for existing CDR document
+          doctype - string for the type of this CDR document
           xml - serialized tree for the XML document
           blob - binary large object (BLOB) for the document
           version - legal values are:

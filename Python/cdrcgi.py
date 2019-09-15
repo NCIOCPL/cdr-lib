@@ -26,6 +26,7 @@ import datetime
 import lxml.etree as etree
 import lxml.html
 import lxml.html.builder
+from operator import itemgetter
 import os
 import re
 import sys
@@ -39,15 +40,15 @@ from cdrapi.users import Session
 
 
 #----------------------------------------------------------------------
-# Do this once, right after loading the module. Used in Report class.
-#----------------------------------------------------------------------
-xlwt.add_palette_colour("hdrbg", 0x21)
-
-#----------------------------------------------------------------------
 # Get some help tracking down CGI problems.
 #----------------------------------------------------------------------
 import cgitb
 cgitb.enable(display = cdr.isDevHost(), logdir = cdr.DEFAULT_LOGDIR)
+
+#----------------------------------------------------------------------
+# Do this once, right after loading the module. Used in Report class.
+#----------------------------------------------------------------------
+xlwt.add_palette_colour("hdrbg", 0x21)
 
 #----------------------------------------------------------------------
 # Now that we're migrating to CBIIT hosting, we'll need a more flexible
@@ -93,87 +94,6 @@ DOMAIN   = "." + ".".join(SPLTNAME[1:])
 DAY_ONE  = cdr.URDATE
 NEWLINE  = "@@@NEWLINE-PLACEHOLDER@@@"
 BR       = "@@@BR-PLACEHOLDER@@@"
-HEADER   = """\
-<!DOCTYPE html>
-<HTML>
- <HEAD>
-  <TITLE>%s</TITLE>
-  <meta http-equiv='Content-Type' content='text/html;charset=utf-8'>
-  <link rel='shortcut icon' href='/favicon.ico'>
-  <LINK TYPE='text/css' REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
-  <style type='text/css'>
-    body         { background-color: #%s; }
-    *.banner     { background-color: silver;
-                   background-image: url(/images/nav1.jpg); }
-    *.DTDerror   { color: red;
-                   font-weight: bold; }
-    *.DTDwarning { color: green; }
-    TD.ttext     { color: black; }
-    TD.tlabel    { font-weight: bold;
-                   text-align: right;
-                   white-space: nowrap;
-                   vertical-align: top; }
-    TH.theader   { font-weight: bold;
-                   font-size: small;
-                   text-align: left;
-                   white-space: nowrap;
-                   vertical-align: top; }
-  </style>
-  %s
- </HEAD>
- <BODY>
-  <FORM ACTION='/cgi-bin/cdr/%s' METHOD='%s'%s>
-   <TABLE WIDTH='100%%' CELLSPACING='0' CELLPADDING='0' BORDER='0'>
-    <TR>
-     <TH class='banner' NOWRAP ALIGN='left'>
-      <span style='color: white; font-size: xx-large;'>&nbsp;%s</span>
-     </TH>
-"""
-RPTHEADER   = """\
-<!DOCTYPE HTML PUBLIC '-//W3C//DTD HTML 4.01 Transitional//EN'
-                      'http://www.w3.org/TR/html4/loose.dtd'>
-<HTML>
- <HEAD>
-  <TITLE>%s</TITLE>
-  <meta http-equiv='Content-Type' content='text/html;charset=utf-8'>
-  <link rel='shortcut icon' href='/favicon.ico'>
-  <LINK TYPE='text/css' REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
-  <style type='text/css'>
-    body         { font-family: Arial;
-                   background-color: #%s; }
-    *.banner     { background-color: silver;
-                   background-image: url(/images/nav1.jpg); }
-    *.DTDerror   { color: red;
-                   font-weight: bold; }
-    *.DTDwarning { color: green; }
-    tr.odd        { background-color: #F7F7F7; }
-    tr.even       { background-color: #DFDFDF; }
-    th           { font-size: 12pt;
-                   font-weight: bold;
-                   text-align: center;
-                   background-color: #ADADAD; }
-  </style>
-%s
- </HEAD>
-"""
-B_CELL = """\
-     <TD class='banner'
-         VALIGN='middle'
-         ALIGN='right'
-         WIDTH='100%'>
-"""
-BUTTON = """\
-      <INPUT TYPE='submit' NAME='%s' VALUE='%s'>&nbsp;
-"""
-SUBBANNER = """\
-    </TR>
-    <TR>
-     <TD BGCOLOR='#FFFFCC' COLSPAN='3'>
-      <span style='color: navy; font-size: small;'>&nbsp;%s<BR></span>
-     </TD>
-    </TR>
-   </TABLE>
-"""
 
 class ExcelStyles:
     """
@@ -1218,7 +1138,7 @@ class Report:
     Example usage:
 
         R = cdrcgi.Report
-        cursor = db.connect('CdrGuest').cursor()
+        cursor = db.connect(user='CdrGuest').cursor()
         cursor.execute('''\
             SELECT id, name
               FROM doc_type
@@ -1264,7 +1184,7 @@ class Report:
         self._title = title
         self._tables = tables
         self._options = options
-        if isinstance(tables, Report.Table):
+        if not isinstance(tables, (list, tuple)):
             self._tables = [tables]
 
     def send(self, fmt="html"):
@@ -1468,15 +1388,18 @@ class Report:
         for table in self._tables:
             self._add_worksheet(book, table, count)
             count += 1
-        import msvcrt
+        #import msvcrt
         now = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         book_name = re.sub(r"\W", "_", self._title)
-        book_name += "-%s.xls" % now
-        msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
-        sys.stdout.write("Content-type: application/vnd.ms-excel\r\n")
-        sys.stdout.write("Content-disposition: attachment; ")
-        sys.stdout.write("filename=%s\r\n\r\n" % book_name)
-        book.save(sys.stdout)
+        book_name += f"-{now}s.xls"
+        #msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+        headers = (
+            "Content-type: application/vnd.ms-excel",
+            f"Content-disposition: attachment; filename={book_name}"
+        )
+        headers = "\r\n".join(headers) + "\r\n\r\n"
+        sys.stdout.buffer.write(headers.encode("utf-8"))
+        book.save(sys.stdout.buffer)
         if self._options.get("debug"):
             name = "d:/tmp/%s" % book_name
             fp = open(name, "wb")
@@ -1614,8 +1537,8 @@ class Report:
             return int((pixels - .446) / .0272)
         return None
 
-    @staticmethod
-    def test():
+    @classmethod
+    def test(cls):
         """
         Very crude little test to check for any obvious breakage.
 
@@ -1625,8 +1548,8 @@ class Report:
 
         Wouldn't hurt to add more testing to this method as we get time.
         """
-        R = Report
-        cursor = db.connect("CdrGuest").cursor()
+        R = cls
+        cursor = db.connect(user="CdrGuest").cursor()
         cursor.execute("""\
             SELECT id, name
               FROM doc_type
@@ -1639,7 +1562,7 @@ class Report:
         )
         rows = cursor.fetchall()
         table = R.Table(columns, rows, caption="Document Types")
-        report = R("Simple Report", [table])
+        report = R("Simple Report", table)
         report.send("html")
 
     class Column:
@@ -1737,6 +1660,9 @@ class Report:
         strings or numbers.  Each value in an array of values will
         be displayed on a separate line of the cell.
         """
+
+        B = lxml.html.builder
+
         def __init__(self, value, **options):
             self._value = value
             self._options = options
@@ -1774,9 +1700,9 @@ class Report:
                 td = self._callback(self, "html")
                 if td is not None:
                     return td
-            td = Page.B.TD()
+            td = self.B.TD()
             if self._href:
-                element = Page.B.A(href=self._href)
+                element = self.B.A(href=self._href)
                 if self._target:
                     element.set("target", self._target)
                 if self._bold:
@@ -1804,19 +1730,19 @@ class Report:
                 td.append(element)
             return td
 
-        @staticmethod
-        def set_values(element, cell):
-            values = Report.Cell._get_values(cell)
+        @classmethod
+        def set_values(cls, element, cell):
+            values = cls._get_values(cell)
             value = values.pop(0)
             element.text = value
             while values:
                 value = values.pop(0)
-                br = Page.B.BR()
+                br = cls.B.BR()
                 br.tail = value
                 element.append(br)
 
-        @staticmethod
-        def _get_values(cell, preserve_int=False):
+        @classmethod
+        def _get_values(cls, cell, preserve_int=False):
             """
             Returns the values for a table cell as an array
 
@@ -1827,17 +1753,387 @@ class Report:
                              _value member may in turn be a string, a number,
                              or an array of strings and/or numbers)
             """
-            if isinstance(cell, Report.Cell):
+            if isinstance(cell, cls):
                 values = cell._value
             else:
                 values = cell
             if isinstance(values, int) and preserve_int:
                 return values
+            if values is None:
+                return [""]
             if type(values) not in (list, tuple):
                 return [str(values)]
             elif not values:
                 return [""]
             return [str(v) for v in values]
+
+
+class Reporter(Report):
+    """New version of the Report class.
+
+    Uses the HTMLPage class for HTML report output, avoiding the ugly
+    and error-prone approach of creating web pages by direct string
+    juggling. When we have converted all of the existing reports to
+    use this new class, move the inherited functions in here, rename
+    `Reporter` to `Report` (here and for the users of this new class),
+    and delete the old class.
+
+    Example usage:
+
+        R = cdrcgi.Reporter
+        cursor = db.connect(user='CdrGuest').cursor()
+        cursor.execute('''\
+            SELECT id, name
+              FROM doc_type
+          ORDER BY name''')
+        columns = (
+            R.Column('Type ID', width='75px'),
+            R.Column('Type Name', width='300px')
+        )
+        rows = cursor.fetchall()
+        table = R.Table(columns, rows, caption='Document Types')
+        report = R('Simple Report', [table])
+        report.send('html')
+    """
+
+    def _create_html_page(self, **opts):
+        """
+        Separated out from _send_html() so it can be overridden.
+        """
+        return HTMLPage(self._title, **opts)
+
+    def _send_html(self):
+        """
+        Internal helper method for Reporter.send()
+        """
+        opts = {
+            "banner": self._options.get("banner"),
+            "subtitle": self._options.get("subtitle"),
+            "body_classes": "report",
+        }
+        opts.update(self._options.get("page_opts") or {})
+        page = self._create_html_page(**opts)
+        page.body.set("class", "report")
+        css = self._options.get("css")
+        if css:
+            if isinstance(css, str):
+                css = [css]
+            for c in css:
+                page.head.append(page.B.STYLE(c))
+        for table in self._tables:
+            children = []
+            if table._caption or table._show_report_date:
+                if not table._caption:
+                    lines = []
+                if type(table._caption) in (list, tuple):
+                    lines = list(table._caption)
+                else:
+                    lines = [table._caption]
+                if table._show_report_date:
+                    today = datetime.date.today()
+                    lines += ["", f"Report date: {datetime.date.today()}", ""]
+                line = lines.pop(0)
+                caption = page.B.CAPTION(line)
+                while lines:
+                    line = lines.pop(0)
+                    br = page.B.BR()
+                    br.tail = line
+                    caption.append(br)
+                children = [caption]
+            if table._columns:
+                tr = page.B.TR()
+                for column in table._columns:
+                    th = page.B.TH(column._name)
+                    width = style = ""
+                    for name, value in column._options.items():
+                        if value:
+                            if name == "width":
+                                width = value
+                            elif name == "style":
+                                style = value
+                            else:
+                                th.set(name, "value")
+                    rules = [r for r in style.rstrip(";").split(";") if r]
+                    if width:
+                        rules.append(f"min-width:{value}")
+                    if rules:
+                        th.set("style", f"{';'.join(rules)};")
+                    tr.append(th)
+                children.append(page.B.THEAD(tr))
+            if table._rows:
+                tbody = page.B.TBODY()
+                if table._stripe:
+                    prev_rowspan = 0
+                    cls = None
+                for row in table._rows:
+                    tr = page.B.TR()
+                    if table._stripe:
+                        if not prev_rowspan:
+                            cls = cls == "odd" and "even" or "odd"
+                        else:
+                            prev_rowspan -= 1
+                        tr.set("class", cls)
+                    else:
+                        page.add("<tr>")
+                    for cell in row:
+                        if isinstance(cell, self.Cell):
+                            td = cell.to_td()
+                            if table._stripe and cell._rowspan:
+                                extra_rows = int(cell._rowspan) - 1
+                                if extra_rows > prev_rowspan:
+                                    prev_rowspan = extra_rows
+                        else:
+                            td = page.B.TD()
+                            self.Cell.set_values(td, cell)
+                        tr.append(td)
+                    tbody.append(tr)
+                children.append(tbody)
+            if children:
+                page.body.append(page.B.TABLE(*children))
+            if table._html_callback_post:
+                table._html_callback_post(table, page)
+        elapsed = self._options.get("elapsed")
+        if elapsed:
+            footnote = page.B.P(f"elapsed: {elapsed}")
+            footnote.set("class", "footnote")
+            page.body.append(footnote)
+        page.send()
+
+
+class Controller:
+    """Base class for top-level controller for a CGI script.
+
+    Includes methods for displaying a form (typically for a report)
+    and for rendering the requested report.
+
+    This will gradually replace the older `Control` class, which
+    is built around the use of `Page` objects, which built up
+    HTML pages using direct string manipulation instead of real
+    HTML parser objects.
+    """
+
+    PAGE_TITLE = "CDR Administration"
+    SUBTITLE = None
+    REPORTS_MENU = SUBMENU = "Reports Menu"
+    ADMINMENU = MAINMENU
+    DEVMENU  = DEVTOP
+    SUBMIT = "Submit"
+    LOG_OUT = "Log Out"
+    FORMATS = "html", "excel"
+    LOGNAME = "reports"
+    LOGLEVEL = "INFO"
+
+    def __init__(self, title=None, subtitle=None, **opts):
+        """Set up a skeletal controller.
+
+        Derived class fleshes it out, including fetching and
+        validating options for the specific report.
+        """
+
+        self.__started = datetime.datetime.now()
+        self.__opts = opts
+
+    def run(self):
+        """Override in derived class if there are custom actions."""
+        try:
+            if self.request == self.ADMINMENU:
+                navigateTo("Admin.py", self.session.name)
+            elif self.request == self.REPORTS_MENU:
+                navigateTo("Reports.py", self.session.name)
+            elif self.request == self.DEVMENU:
+                navigateTo("DevSA.py", self.session.name)
+            elif self.request == self.LOG_OUT:
+                logout(self.session.name)
+            elif self.request == self.SUBMIT:
+                self.show_report()
+            else:
+                self.show_form()
+        except Exception as e:
+            bail(str(e))
+
+    def show_form(self):
+        """Populate an HTML page with a form and fields."""
+        opts = {
+            "action": self.script,
+            "buttons": [HTMLPage.button(b) for b in self.buttons],
+            "subtitle": self.subtitle,
+            "session": self.session
+        }
+        updated_opts = self.set_form_options(opts)
+        if updated_opts is None:
+            updated_opts = opts
+        page = HTMLPage(self.title, **updated_opts)
+        self.populate_form(page)
+        page.send()
+
+    def show_report(self):
+        """Override this method if you have a non-tabular report."""
+        tables = self.build_tables()
+        buttons = []
+        for button in (self.SUBMENU, self.ADMINMENU, self.LOG_OUT):
+            if button:
+                buttons.append(HTMLPage.button(button))
+        opts = {
+            "banner": self.title or "",
+            "subtitle": self.subtitle,
+            "page_opts": {
+                "buttons": buttons,
+                "action": self.script,
+                "session": self.session,
+                "action": buttons and self.script or None
+            }
+        }
+        updated_opts = self.set_report_options(opts)
+        if updated_opts is None:
+            updated_opts = opts
+        report = Reporter(self.title, tables, **updated_opts)
+        report.send(self.format)
+
+    def build_tables(self):
+        """Stub, to be overridden by real controllers."""
+        return []
+
+    def set_report_options(self, opts):
+        """Stub, to be overridden by real controllers."""
+        return opts
+
+    def set_form_options(self, opts):
+        """Stub, to be overridden by real controllers."""
+        return opts
+
+    def populate_form(self, page):
+        """Stub, to be overridden by real controllers."""
+        pass
+
+    def log_elapsed(self):
+        """Record how long this took."""
+        elapsed = datetime.datetime.now() - self.__started
+        self.logger.info(f"elapsed: {elapsed.total_seconds():f}")
+
+    @property
+    def title(self):
+        """Title to be used for the page."""
+        return self.__opts.get("title") or self.PAGE_TITLE
+
+    @property
+    def banner(self):
+        """Title displayed boldly at the top of the page."""
+        return self.__opts.get("banner") or self.title
+
+    @property
+    def subtitle(self):
+        """String to be displayed under the main banner, if supplied."""
+        return self.__opts.get("subtitle") or self.SUBTITLE
+
+    @property
+    def conn(self):
+        """Database connection for this controller."""
+        if not hasattr(self, "_conn"):
+            self._conn = db.connect()
+        return self._conn
+
+    @property
+    def cursor(self):
+        """Database cursor for this controller."""
+        if not hasattr(self, "_cursor"):
+            self._cursor = self.conn.cursor()
+        return self._cursor
+
+    @property
+    def fields(self):
+        """CGI fields for the web form."""
+        if not hasattr(self, "_fields"):
+            self._fields = cgi.FieldStorage()
+        return self._fields
+
+    @property
+    def logger(self):
+        """Object for recording what we do."""
+        if not hasattr(self, "_logger"):
+            self._logger = self.__opts.get("logger")
+            if self._logger is None:
+                opts = dict(level=self.LOGLEVEL)
+                self._logger = cdr.Logging.get_logger(self.LOGNAME, **opts)
+            if self.title:
+                self._logger.info("started %s", self.title)
+        return self._logger
+
+    @property
+    def session(self):
+        """Session object for this controller.
+
+        Note: this is an object, not a string. For the session name,
+        use `self.session.name` or `str(self.session)` or `f"{self.session}".
+
+        No need to specify a tier here, as web CGI scripts are only
+        intended to work on the local tier.
+        """
+
+        if not hasattr(self, "_session"):
+            session = self.__opts.get("session")
+            if not session:
+                session = self.fields.getvalue(SESSION) or "guest"
+            if isinstance(session, bytes):
+                session = str(session, "ascii")
+            if isinstance(session, str):
+                self._session = Session(session)
+            else:
+                self._session = session
+            if not isinstance(self._session, Session):
+                raise Exception("Not a session object")
+        return self._session
+
+    @property
+    def request(self):
+        """Name of clicked request button, if any."""
+        if not hasattr(self, "_request"):
+            self._request = getRequest(self.fields)
+        return self._request
+
+    @property
+    def buttons(self):
+        """Sequence of names for request buttons to be provided
+
+        By default, SUBMIT, SUBMENU, ADMINMENU and LOG_OUT will be used.
+        Any of these can be suppressed by setting the class value to None
+        in the derived class. Alternatively, the "buttons" keyword arg
+        can be passed with a list of button names. Downstream these
+        names will be converted to HTML input elements with the name
+        attribute set to "Submit". Pass an empty list to the constructor
+        for the "buttons" keyword argument to have no buttons displayed
+        (None won't have the same effect).
+        """
+
+        if not hasattr(self, "_buttons"):
+            buttons = self.SUBMIT, self.SUBMENU, self.ADMINMENU, self.LOG_OUT
+            self._buttons = self.__opts.get("buttons")
+            if self._buttons is None:
+                self._buttons = []
+                for button in buttons:
+                    if button:
+                        self._buttons.append(button)
+        return self._buttons
+
+    @property
+    def format(self):
+        """Either "html" (the default) or "excel"."""
+        return self.__opts.get("format") or self.FORMATS[0]
+
+    @property
+    def script(self):
+        """Name of form submission handler."""
+        if not hasattr(self, "_script"):
+            self._script = self.__opts.get("script")
+            if self._script is None:
+                self._script = os.path.basename(sys.argv[0])
+        return self._script
+
+        self.format = self.fields.getvalue("format", self.FORMATS[0])
+        self.buttons = []
+        for button in (self.SUBMIT, self.SUBMENU, self.ADMINMENU, self.LOG_OUT):
+            if button:
+                self.buttons.append(button)
+
 
 class Control:
     """
@@ -1872,7 +2168,7 @@ class Control:
     LANGUAGES = ("English", "Spanish")
     SUMMARY_SELECTION_METHODS = ("id", "title", "board")
     LOGNAME = "reports"
-    LOGLEVEL = "info"
+    LOGLEVEL = "INFO"
 
     def __init__(self, title=None, subtitle=None, **opts):
         """
@@ -1886,7 +2182,7 @@ class Control:
         self.subtitle = subtitle
         self.opts = opts
         if self.opts.get("open_cursor", True):
-            self.cursor = db.connect("CdrGuest").cursor()
+            self.cursor = db.connect(user="CdrGuest").cursor()
         else:
             self.cursor = None
         self.fields = cgi.FieldStorage()
@@ -2390,20 +2686,93 @@ jQuery(function() {
 #----------------------------------------------------------------------
 # Display the header for a CDR web form.
 #----------------------------------------------------------------------
-def header(title, banner, subBanner, script = '', buttons = None,
-           bkgd = 'DFDFDF', numBreaks = 2, method = 'POST', stylesheet='',
-           formExtra = ''):
-    html = HEADER % (title, bkgd, stylesheet, script,
-                     method, formExtra, banner)
-    if buttons:
-        html = html + B_CELL
-        for button in buttons:
-            if button == "Load":
-                html = html + "      <INPUT NAME='DocId' SIZE='14'>&nbsp;\n"
-            html = html + BUTTON % (REQUEST, button)
-        html = html + "     </TD>\n"
-    html = html + SUBBANNER % subBanner
-    return html + numBreaks * "   <BR>\n"
+def header(title, banner, subtitle, *args, **kwargs):
+    """Create the top portion of a serialized HTML form document.
+
+    This is an ancient function, and was how we created CDR web pages
+    back around the turn of the century. It needs to be retired, but
+    doing so will involve rewrites of around 60 scripts. The worst
+    of the function's numerous flaws was that it involved building
+    up HTML using string manipulation, mixing byte strings and unicode
+    strings, and throwing in some regular expression parsing for fun.
+    At least we have replaced strings splicing with a real HTML
+    object builder (from the lxml package). All strings must be real
+    `str` objects, not `bytes` or `bytearray` objects.
+
+    The existing code calling this function never went beyond passing
+    the first two of the keyword arguments as positional arguments,
+    so we catch those ("script" and "buttons") either way. The old
+    numBreaks, bkgd, and formExtra keyword arguments are now ignored.
+
+    Required positional arguments:
+
+        title
+            string used in the html/head/title
+
+        banner
+            string displayed in the header element's h1 child
+
+        subtitle
+            string displayed in the header element's h2 child
+
+    Optional keyword arguments:
+
+        script
+            file name for the script handling the form submission
+            (can also be passed as the 4th positional argument)
+
+        buttons
+            sequence of strings used for buttons placed on the left
+            side of the banner (can also be passed as the 5th positional
+            argument)
+
+        method
+            set to "get" to override the default ("post")
+
+        stylesheet
+            optional string containing serialized HTML fragments
+            to be placed at the end of html/head
+
+    Returns:
+        serialized HTML string with the closing tags for the form,
+        body, and html stripped off
+    """
+
+    # Assemble the optional keyword arguments.
+    script = args[0] if args else kwargs.get("script")
+    button_labels = args[1] if len(args) > 1 else kwargs.get("buttons")
+    method = kwargs.get("method") or "post"
+    head_extra = kwargs.get("stylesheet")
+
+    # Create the skeleton for the page (caller will add its own session).
+    opts = dict(
+        banner=banner,
+        subtitle=subtitle,
+        method=method,
+        body_id="legacy-page",
+        session=None,
+        stylesheets=["/stylesheets/dataform.css"],
+        scripts=[],
+    )
+    if script is not None:
+        opts["action"] = f"/cgi-bin/cdr/{script}"
+    if button_labels:
+        buttons = []
+        for label in button_labels:
+            if label == "Load":
+                buttons.append(HTMLPage.button(button))
+            buttons.append(HTMLPage.button(label))
+        opts["buttons"] = buttons
+    page = HTMLPage(title, **opts)
+
+    # Fold in any additional html/head child elements.
+    if head_extra:
+        for fragment in lxml.html.fragments_fromstring(head_extra):
+            page.head.append(fragment)
+
+    # Let the caller close out the form/body/html elements.
+    html = page.tostring()
+    return "".join(html.split("</form>")[:-1])
 
 #----------------------------------------------------------------------
 # Display the header for a CDR web report (no banner or buttons).
@@ -2412,6 +2781,35 @@ def header(title, banner, subBanner, script = '', buttons = None,
 def rptHeader(title, bkgd = 'FFFFFF', stylesheet=''):
     html = RPTHEADER % (title, bkgd, stylesheet)
     return html
+
+
+RPTHEADER   = """\
+<!DOCTYPE HTML PUBLIC '-//W3C//DTD HTML 4.01 Transitional//EN'
+                      'http://www.w3.org/TR/html4/loose.dtd'>
+<HTML>
+ <HEAD>
+  <TITLE>%s</TITLE>
+  <meta http-equiv='Content-Type' content='text/html;charset=utf-8'>
+  <link rel='shortcut icon' href='/favicon.ico'>
+  <LINK TYPE='text/css' REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
+  <style type='text/css'>
+    body         { font-family: Arial;
+                   background-color: #%s; }
+    *.banner     { background-color: silver;
+                   background-image: url(/images/nav1.jpg); }
+    *.DTDerror   { color: red;
+                   font-weight: bold; }
+    *.DTDwarning { color: green; }
+    tr.odd        { background-color: #F7F7F7; }
+    tr.even       { background-color: #DFDFDF; }
+    th           { font-size: 12pt;
+                   font-weight: bold;
+                   text-align: center;
+                   background-color: #ADADAD; }
+  </style>
+%s
+ </HEAD>
+"""
 
 #----------------------------------------------------------------------
 # Scrubber
@@ -2515,7 +2913,6 @@ def sendPage(page, textType = 'html', parms='', docId='', docType='',
         url = f"https://{WEBSERVER}{BASE}/QCforWord.py"
         args = docId, docType, docVer, parms
         parms = "DocId={}&DocType={}&DocVersion={}&{}".format(*args)
-        parms = urllib.parse.quote_plus(parms)
         print(f"Location: {url}?{parms}\n")
     else:
         sys.stdout.buffer.write(f"""\
@@ -2623,7 +3020,7 @@ def mainMenu(session, news=None):
 #----------------------------------------------------------------------
 def navigateTo(where, session, **params):
     params[SESSION] = session
-    params = urllib.parse.urlencode(parms)
+    params = urllib.parse.urlencode(params)
     print(f"Location:https://{WEBSERVER}{BASE}/{where}?{params}\n")
     sys.exit(0)
 
@@ -2747,14 +3144,6 @@ def sanitize(formStr, dType='str', maxLen=None, noSemis=True,
     return newStr
 
 #----------------------------------------------------------------------
-# Query components.
-#----------------------------------------------------------------------
-class SearchField:
-    def __init__(self, var, selectors):
-        self.var       = var
-        self.selectors = selectors
-
-#----------------------------------------------------------------------
 # Generate picklist for miscellaneous document types.
 #----------------------------------------------------------------------
 def miscTypesList(conn, fName):
@@ -2785,869 +3174,6 @@ SELECT DISTINCT value
       </SELECT>
 """
     return html
-
-#----------------------------------------------------------------------
-# Generate picklist for document publication status valid values.
-#----------------------------------------------------------------------
-def pubStatusList(conn, fName):
-    return """\
-      <SELECT NAME='%s'>
-       <OPTION VALUE='' SELECTED>&nbsp;</OPTION>
-       <OPTION VALUE='A'>Ready For Publication &nbsp;</OPTION>
-       <OPTION VALUE='I'>Not Ready For Publication &nbsp;</OPTION>
-      </SELECT>
-""" % fName
-
-#----------------------------------------------------------------------
-# Generate picklist for countries.  See generateHtmlPicklist() comments.
-#----------------------------------------------------------------------
-def countryList(conn, fName, valCol=-1):
-    query  = """\
-  SELECT d.id, d.title
-    FROM document d
-    JOIN doc_type t
-      ON t.id = d.doc_type
-   WHERE t.name = 'Country'
-ORDER BY d.title
-"""
-    pattern = "<option value='CDR%010d'>%s &nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern,
-                                valCol=valCol, valPat='CDR%010d')
-
-#----------------------------------------------------------------------
-# Generate picklist for states.
-#----------------------------------------------------------------------
-def stateList(conn, fName, valCol=-1):
-    query  = """\
-SELECT DISTINCT s.id,
-                s.title,
-                c.title
-           FROM document s
-           JOIN query_term clink
-             ON clink.doc_id = s.id
-           JOIN document c
-             ON clink.int_val = c.id
-          WHERE clink.path = '/PoliticalSubUnit/Country/@cdr:ref'
-       ORDER BY 2, 3"""
-    pattern = "<option value='CDR%010d'>%s [%s]&nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern,
-                                valCol=valCol, valPat='CDR%010d')
-
-#----------------------------------------------------------------------
-# Generate picklist for GlossaryAudience.
-#----------------------------------------------------------------------
-def glossaryAudienceList(conn, fName, valCol=-1):
-    defaultOpt = "<option value='' selected>Select an audience...</option>\n"
-    query  = """\
-SELECT DISTINCT value, value
-           FROM query_term
-          WHERE path IN ('/GlossaryTermConcept/TermDefinition/Audience',
-               '/GlossaryTermConcept/TranslatedTermDefinition/Audience')
-       ORDER BY 1"""
-    pattern = "<option value='%s'>%s&nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern,
-                    firstOpt=defaultOpt, valCol=valCol, valPat='CDR%010d')
-
-#----------------------------------------------------------------------
-# Generate picklist for GlossaryTermStatus.
-#----------------------------------------------------------------------
-def glossaryTermStatusList(conn, fName,
-                           path='/GlossaryTermName/TermNameStatus', valCol=-1):
-    defaultOpt = "<option value='' selected>Select a status...</option>\n"
-    query  = """\
-SELECT DISTINCT value, value
-           FROM query_term
-          WHERE path = '%s'
-       ORDER BY 1""" % path
-    pattern = "<option value='%s'>%s&nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern,
-                                firstOpt=defaultOpt, valCol=valCol)
-
-
-#----------------------------------------------------------------------
-# Generate picklist for GlossaryTermStatus.
-#----------------------------------------------------------------------
-def glossaryTermDictionaryList(conn, fName, valCol=-1):
-    defaultOpt = "<option value='' selected>Select a dictionary...</option>\n"
-    query  = """\
-SELECT DISTINCT value, value
-           FROM query_term
-          WHERE path IN ('/GlossaryTermConcept/TermDefinition/Dictionary',
-               '/GlossaryTermConcept/TranslatedTermDefinition/Dictionary')
-       ORDER BY 1"""
-    pattern = "<option value='%s'>%s&nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern,
-                                firstOpt=defaultOpt, valCol=valCol)
-
-
-#----------------------------------------------------------------------
-# Generate picklist for OrganizationType
-#----------------------------------------------------------------------
-def organizationTypeList(conn, fName, valCol=-1):
-    query  = """\
-  SELECT DISTINCT value, value
-    FROM query_term
-   WHERE path = '/Organization/OrganizationType'
-     AND value IS NOT NULL
-     AND value <> ''
-ORDER BY 1"""
-    pattern = "<option value='%s'>%s &nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern, valCol=valCol)
-
-#----------------------------------------------------------------------
-# Generic HTML picklist generator.
-#
-# Note: this only works if the query generates exactly as many
-# columns for each row as are needed by the % conversion placeholders
-# in the pattern argument, and in the correct order.
-#
-# For example invocations, see stateList and countryList above.
-#
-# Similarly, if valCol >= 0, there must be an actual column corresponding
-# to the valCol number.  See comments below.
-#----------------------------------------------------------------------
-def generateHtmlPicklist(conn, fieldName, query, pattern, selAttrs=None,
-                         firstOpt=None, lastOpt=None, valCol=-1, valPat=None):
-    """
-    Generate one of two outputs:
-
-     1) A string of HTML that implements a option list (picklist) for a
-        <select> element in an HTML form field, or
-     2) A list of values that the user might have picked from in order to
-        validate that nothing untoward happened betwixt list selection
-        and selection processing.
-
-    The goal is to enable a program to use identical software to create a
-    picklist and to validate a selection from that list in case of bugs or
-    hacking (or AppScan) attempts to upset it.
-
-    Pass:
-        conn      - Database connection.
-        fieldName - Name of the entire selection field, <select name=...
-        query     - Database query to generate options.
-        pattern   - Interpolation pattern for items in each row of query result
-                      e.g.: "<option value='%s'>%s&nbsp;</option>"
-        selAttrs  - Optional attributes to add to the select line
-                      e.g.: "multiple='1' size='5'"
-        firstOpt  - Optional line(s) at the beginning of the option list
-                      e.g.: "<option value='any' selected='1'>Any</option>\n"
-        lastOpt   - Optional line(s) at the end of the option list
-                      e.g.: "<option value='all'>All</option>\n"
-        valCol    - If valCol > -1, this call is not to generate a picklist,
-                    but to generate a validation list for checking the
-                    picklist.  valCol is the column number of the query rows.
-                      e.g.: query = SELECT id, name FROM ...
-                            if valCol == 0, return a list of ids.
-                            if valCol == 1, return a list of names.
-                    Bad things may happen if valCol >= the number of actual
-                    columns selected in the query.
-        valPat    - If not None, impose this string intepolation pattern on
-                    each returned valid value
-                      e.g., valPat='CDR%010d'
-
-    Return:
-        if valCol < 0:  Return a string of HTML containing a select option
-                        list from which a user can pick a value.
-        if valCol >= 0: Return a list of the values which may be picked.
-    """
-    # Select rows from the database
-    try:
-        cursor = conn.cursor()
-        cursor.execute(query, timeout=300)
-        rows = cursor.fetchall()
-        cursor.close()
-        cursor = None
-    except Exception as e:
-        bail('Failure retrieving %s list from CDR: %s' % (fieldName, e))
-
-    # For validation, we don't need HTML, just a list of valid values
-    if valCol >= 0:
-        if valPat:
-            return [valPat % row[valCol] for row in rows]
-        return [row[valCol] for row in rows]
-
-    # Else generate a picklist
-    html = "  <select name='%s'" % fieldName
-
-    # Add any requested attributes to the select
-    if selAttrs:
-        html += " " + selAttrs
-    html += ">\n"
-
-    # If there are user supplied options to put at the top
-    if firstOpt:
-        html += "   " + firstOpt
-    else:
-        # Backwards compatibity requires this default firstOpt
-        html += "   " + "<option value='' selected>&nbsp;</option>\n"
-
-    # Add data from the query
-    for row in rows:
-        option = pattern % tuple(row)
-        html += "   %s\n" % option
-
-    # Final options
-    if lastOpt:
-        html += lastOpt
-    # Termination
-    html += "  </select>\n"
-
-    return html
-
-#----------------------------------------------------------------------
-# Generate the top portion of an advanced search form.
-#----------------------------------------------------------------------
-def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
-                            conn, errors = "", extraField = None):
-    """
-    Create a form to take in parameters for advanced searches.
-    This routine creates many types of forms, based on passed parameters.
-
-    Pass:
-        session   - String identifying the CDR login session
-        title     - HTML TITLE of the form on screen.
-        script    - Name of the ACTION script in cgi-bin/cdr that will
-                    process the FORM node created by this script.
-        fields    - A sequence of sequences.  Each element of the containing
-                    sequence describes one field of the form.  The sequence
-                    with an individual field description contains:
-                        Label to display to the user.
-                        HTML form field name.
-                        Optional function identifier to invoke to generate
-                            additional information, such as a select list.
-                            If present, the function will be called, passing
-                            an active database connection and the name of
-                            the HTML form field for which the function is
-                            being invoked, i.e., field[1] of this sequence.
-                    Each field is displayed as a row in a table on the form.
-        buttons   - A sequence of sequences defining form buttons.
-                    Each inner sequence contains three elements:
-                        Button type, e.g., 'submit', 'reset'
-                        Button HTML element name, e.g., 'HelpButton'
-                        Button Label, e.g., 'Help'
-                    Buttons are displayed in a row at the bottom of the form.
-        subtitle  - A subtitle displayed to the user, immediately under the
-                    title "CDR Advanced Search"
-        conn      - An active database connection, passed back in a script
-                    function invocation if needed.  May be None if there
-                    are no function needing to be invoked.  See
-                    "Optional function identifier" above.
-        errors    - An optional error string, displayed near the top of the
-                    form page when it is desirable to tell a user that
-                    an error occurred.
-        extraField- Optional extra rows to add to the form table between the
-                    form fields and the buttons at the bottom.
-
-    Return:
-        A string of HTML containing the base content of the form.  It is the
-        caller's responsibility to add anything else desired to the bottom of
-        the form, then add the closing </FORM>, </BODY>, and </HTML> tags.
-        The caller may then send the form page to the client.
-    """
-
-    html = [f"""\
-<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>{cgi.escape(title)}</title>
-    <link href="{CDRCSS}" rel="stylesheet">
-  </head>
-  <body id="advanced-search-form">
-    <form method="GET" action="{BASE}/{script}">
-      <header>
-        <h1>CDR Advanced Search
-          <span>
-          </span>
-        </h1>
-        <h2>{cgi.escape(subtitle)}</h2>
-      </header>
-      <input type="hidden" name="{SESSION}" value="{cgi.escape(session)}">
-"""]
-    if errors:
-        html.append(f"""\
-      <p class="error">{cgi.escape(errors)}</p>
-""")
-    html.append("""\
-      <fieldset>
-        <legend>Search Fields</legend>
-""")
-
-    for field in fields:
-        if len(field) == 2:
-            label, name = field
-            html.append(f"""\
-        <div class="labeled-field">
-          <label for="{name}">{cgi.escape(label)}</label>
-          <input name="{name}" id="{name}">
-        </div>
-""")
-        else:
-            label, name, values = field
-        if True: # XXXXXXXXXXXXXXXXXXXXXXXXelse:
-            html += """\
-    <TR>
-     <TD        NOWRAP
-                ALIGN       = "right"
-                class       = "page">%s &nbsp; </TD>
-     <TD        WIDTH       = "55%%"
-                ALIGN       = "left">
-%s
-     </TD>
-    </TR>
-""" % (field[0], field[2](conn, field[1]))
-
-    if len(fields) > 1:
-        html += """\
-    <TR>
-     <TD        NOWRAP
-                WIDTH       = "15%"
-                class       = "page"
-                VALIGN      = "top"
-                ALIGN       = "right">Search Connector &nbsp; </TD>
-     <TD        WIDTH       = "30%"
-                ALIGN       = "left">
-      <SELECT   NAME        = "Boolean"
-                SIZE        = "1">
-       <OPTION  SELECTED>AND</OPTION>
-       <OPTION>OR</OPTION>
-      </SELECT>
-     </TD>
-    </TR>"""
-
-    if extraField:
-        if type(extraField[0]) not in (type([]), type(())):
-            extraField = [extraField]
-        for ef in extraField:
-            html += """\
-    <TR>
-     <TD        NOWRAP
-                class       = "page"
-                VALIGN      = "top"
-                ALIGN       = "right">%s &nbsp; </TD>
-     <TD        WIDTH       = "55%%">
-%s
-     </TD>
-    </TR>
-""" % (ef[0], ef[1])
-
-    html += """\
-    <TR>
-     <TD        WIDTH       = "15%">&nbsp;</TD>
-     <TD        WIDTH       = "55%">&nbsp;</TD>
-    </TR>
-   </TABLE>
-   <TABLE       WIDTH       = "100%"
-                BORDER      = "0">
-    <TR>
-     <TD        COLSPAN     = "2">&nbsp; </TD>
-"""
-
-    for button in buttons:
-        if button[0].lower() == 'button':
-            html += """\
-     <TD        WIDTH       = "13%%"
-                ALIGN       = "center">
-      <INPUT    TYPE        = "button"
-                ONCLICK     = %s
-                VALUE       = "%s">
-     </TD>
-""" % (xml.sax.saxutils.quoteattr(button[1]), button[2])
-        else:
-            html += """\
-     <TD        WIDTH       = "13%%"
-                ALIGN       = "center">
-      <INPUT    TYPE        = "%s"
-                NAME        = "%s"
-                VALUE       = "%s">
-     </TD>
-""" % button
-
-    html += """\
-     <TD        WIDTH       = "33%">&nbsp;</TD>
-    </TR>
-   </TABLE>
-   <BR>
-"""
-
-    return html
-
-
-#----------------------------------------------------------------------
-# Generate the top portion of an advanced search form.
-#----------------------------------------------------------------------
-def addNewFormOnPage(session, script, fields, buttons, subtitle,
-                            conn, errors = "", extraField = None):
-
-    html = """\
-  <FORM         METHOD      = "GET"
-                ACTION      = "%s/%s">
-   <INPUT       TYPE        = "hidden"
-                NAME        = "%s"
-                VALUE       = "%s">
-   <TABLE       WIDTH       = "100%%"
-                BORDER      = "0"
-                CELLSPACING = "0">
-    <!-- TR         BGCOLOR     = "#6699FF">
-     <TD        HEIGHT      = "26"
-                COLSPAN     = "2"
-                class       = "header">CDR Advanced Search</TD>
-    </TR -->
-    <TR         BGCOLOR     = "#FFFFCC">
-     <TD        COLSPAN     = "2"
-                class       = "subhdr">%s</TD>
-    <TR>
-    <TR>
-     <TD        NOWRAP
-                COLSPAN     = "2">&nbsp;</TD>
-    </TR>
-""" % (BASE, script, SESSION, session, subtitle)
-
-    if errors:
-        html += """\
-    <TR>
-     <TD ALIGN="left" COLSPAN="2">
-      %s
-     </TD>
-    </TR>
-""" % errors
-
-    for field in fields:
-        if len(field) == 2:
-            html += """\
-    <TR>
-     <TD        NOWRAP
-                ALIGN       = "right"
-                class       = "page">%s &nbsp; </TD>
-     <TD        WIDTH       = "55%%"
-                ALIGN       = "left">
-      <INPUT    TYPE        = "text"
-                NAME        = "%s"
-                SIZE        = "60">
-     </TD>
-    </TR>
-""" % field
-        else:
-            html += """\
-    <TR>
-     <TD        NOWRAP
-                ALIGN       = "right"
-                class       = "page">%s &nbsp; </TD>
-     <TD        WIDTH       = "55%%"
-                ALIGN       = "left">
-%s
-     </TD>
-    </TR>
-""" % (field[0], field[2](conn, field[1]))
-
-    if len(fields) > 1:
-        html += """\
-    <TR>
-     <TD        NOWRAP
-                WIDTH       = "15%"
-                class       = "page"
-                VALIGN      = "top"
-                ALIGN       = "right">Search Connector &nbsp; </TD>
-     <TD        WIDTH       = "30%"
-                ALIGN       = "left">
-      <SELECT   NAME        = "Boolean"
-                SIZE        = "1">
-       <OPTION  SELECTED>AND</OPTION>
-       <OPTION>OR</OPTION>
-      </SELECT>
-     </TD>
-    </TR>"""
-
-    if extraField:
-        if type(extraField[0]) not in (type([]), type(())):
-            extraField = [extraField]
-        for ef in extraField:
-            html += """\
-    <TR>
-     <TD        NOWRAP
-                class       = "page"
-                VALIGN      = "top"
-                ALIGN       = "right">%s &nbsp; </TD>
-     <TD        WIDTH       = "55%%">
-%s
-     </TD>
-    </TR>
-""" % (ef[0], ef[1])
-
-    html += """\
-    <TR>
-     <TD        WIDTH       = "15%">&nbsp;</TD>
-     <TD        WIDTH       = "55%">&nbsp;</TD>
-    </TR>
-   </TABLE>
-   <TABLE       WIDTH       = "100%"
-                BORDER      = "0">
-    <TR>
-     <TD        COLSPAN     = "2">&nbsp; </TD>
-"""
-
-    for button in buttons:
-        if button[0].lower() == 'button':
-            html += """\
-     <TD        WIDTH       = "13%%"
-                ALIGN       = "center">
-      <INPUT    TYPE        = "button"
-                ONCLICK     = %s
-                VALUE       = "%s">
-     </TD>
-""" % (xml.sax.saxutils.quoteattr(button[1]), button[2])
-        else:
-            html += """\
-     <TD        WIDTH       = "13%%"
-                ALIGN       = "center">
-      <INPUT    TYPE        = "%s"
-                NAME        = "%s"
-                VALUE       = "%s">
-     </TD>
-""" % button
-
-    html += """\
-     <TD        WIDTH       = "33%">&nbsp;</TD>
-    </TR>
-   </TABLE>
-   <BR>
-"""
-
-    return html
-
-
-#----------------------------------------------------------------------
-# XXX This functionality has become pretty crusty over time. Replace it.
-#
-# Construct query for advanced search page.
-#
-# The caller passes the following arguments:
-#
-#   searchFields
-#     a list of one or more objects with two attributes:
-#       * var:       a string containing the content of one of the
-#                    fields in the HTML search form
-#       * selectors: this can be either a single string or a list;
-#                    the normal case is the list, each member of which
-#                    is a string identifying the path(s) to be matched
-#                    in the query_term table; if a string contains a
-#                    wildcard, then the WHERE clause to find the
-#                    paths will use the SQL 'LIKE' keyword; otherwise
-#                    that clause will use '=' for an exact match.
-#                    If the selector is a single string, rather than
-#                    a list, it represents a column in the document
-#                    table which is to be compared with the value of
-#                    the var member of the SearchField object (for an
-#                    example, see SummarySearch.py, which has a
-#                    SearchField object for checking a value in the
-#                    active_status column of the document table)
-#
-#   boolOp
-#     the string value 'AND' or 'OR' - used as a boolean connector
-#     between the WHERE clauses for each of the search fields passed
-#     in by the first argument.
-#
-#   docType
-#     either a string identifying which document type the result
-#     set must come from, or a list of strings identifying a choice
-#     of document types from the which the result set can be drawn.
-#
-# Modified 2003-09-11 RMK as follows:
-#   If the `selectors' attribute of a SearchField object is a list,
-#   then for any string in that list, if the string ends in the
-#   substring "/@cdr:ref[int_val]" then instead of matching the
-#   contents of the `var' attribute against the `value' column of
-#   the query_term table, a lookup will be added to the SQL query
-#   to find occurrences of the target string (in the var attribute)
-#   in the title column of the document table, joined to the int_val
-#   column of the query_term table.  This allow the users to perform
-#   advanced searches which include matches against titles of linked
-#   documents.
-#----------------------------------------------------------------------
-exampleQuery = """\
-SELECT d.id
-  FROM document d
-  JOIN doc_type t
-    ON t.id = d.doc_type
-   AND t.name = 'Citation'
- WHERE d.id IN (SELECT doc_id
-                  FROM query_term
-                 WHERE value LIKE '%immunohistochemical%'
-                   AND path = '/Citation/PubmedArticle/%/Article/%Title'
-                    OR value LIKE '%immunohistochemical%'
-                   AND path = '/Citation/PDQCitation/CitationTitle')
-   AND d.id IN (SELECT doc_id
-                  FROM query_term
-                 WHERE value = 'Histopathology'
-                   AND path = '/Citation/PubmedArticle/MedlineCitation/MedlineJournalInfo/MedlineTA'
-                    OR path = '/Citation/PDQCitation/PublicationDetails/PublishedIn/@cdr:ref'
-                   AND int_val IN (SELECT id
-                                     FROM document
-                                    WHERE title = 'Histopathology'))"""
-class AdvancedSearchQuery:
-    def __init__(self, fields, doctype, match_all=True):
-        self.fields = fields
-        self.match_all = match_all
-        self.doctype = doctype
-        self.criteria = []
-    def execute(self, cursor=None):
-        return self.query.execute(cursor)
-    @property
-    def query(self):
-        if not hasattr(self, "_query"):
-
-            # Set up some convenience aliases.
-            Query = db.Query
-            Condition = Query.Condition
-            Or = Query.Or
-
-            # Create a query object.
-            columns = f"d.id", "d.title", f"'{self.doctype}' AS doctype"
-            self._query = Query("document d", *columns).order("d.title")
-
-            # Add the conditions: one for each field with a value.
-            conditions = []
-            for field in self.fields:
-
-                # See if we got a value for this field.
-                value = field.var.strip() if field.var else None
-                if not value:
-                    continue
-
-                # Remember the criterion for display to the user.
-                self.criteria.append(value)
-
-                # If 'selectors' is a string, it's a column name in `document`.
-                value_op = getQueryOp(value)
-                if isinstance(field.selectors, str):
-                    column = f"d.{field.selectors}"
-                    conditions.append(Condition(column, value, value_op))
-                    continue
-
-                # Build up a subquery for the field.
-                subquery = Query("query_term", "doc_id").unique()
-
-                # These are ORd together.
-                selector_conditions = []
-                for path in field.selectors:
-                    path_op = "LIKE" if "%" in path else "="
-
-                    # Simple case: test for a string stored in the document.
-                    if not path.endswith("/@cdr:ref[int_val]"):
-                        path_test = Condition("path", path, path_op)
-                        value_test = Condition("value", value, value_op)
-                        selector_conditions.append((path_test, value_test))
-
-                    # Trickier case: find values in linked documents.
-                    else:
-                        path = path.replace("[int_val]", "")
-                        title_query = Query("document", "id").unique()
-                        title_query.where(Condition("title", value, value_op))
-                        title_test = Condition("int_val", title_query, "IN")
-                        path_test = Condition("path", path, path_op)
-                        selector_conditions.append((path_test, title_test))
-
-                # Add the conditions for this field's selectors to the mix.
-                subquery.where(Or(*selector_conditions))
-                conditions.append(Condition("d.id", subquery, "IN"))
-
-            # Sanity check.
-            if not conditions:
-                raise Exception("No search conditions specified")
-
-            # Plug the top-level conditions into the query.
-            if self.match_all:
-                for condition in conditions:
-                    self._query.where(condition)
-            else:
-                self._query.where(Or(*conditions))
-
-        return self._query
-
-def constructAdvancedSearchQuery(searchFields, boolOp, docType):
-    where      = ""
-    strings    = ""
-    boolOp     = boolOp == "AND" and " AND " or " OR "
-
-    for searchField in searchFields:
-
-        #--------------------------------------------------------------
-        # Skip empty fields.
-        #--------------------------------------------------------------
-        if searchField.var:
-
-            queryOp  = getQueryOp(searchField.var)  # '=' or 'LIKE'
-            queryVal = getQueryVal(searchField.var) # escape single quotes
-
-            #----------------------------------------------------------
-            # Remember the fields' values in a single string so we can
-            # show it to the user later, reminding him what he searched
-            # for.
-            #----------------------------------------------------------
-            if strings: strings += ' '
-            strings += queryVal.strip()
-
-            #----------------------------------------------------------
-            # Start another portion of the WHERE clause.
-            #----------------------------------------------------------
-            if not where:
-                where = " WHERE "
-            else:
-                where += boolOp
-
-            #----------------------------------------------------------
-            # Handle special case of match against a column in the
-            # document table.
-            #----------------------------------------------------------
-            if isinstance(searchField.selectors, type("")):
-                where += "(d.%s %s '%s')" % (searchField.selectors,
-                                             queryOp,
-                                             queryVal)
-                continue
-
-            #----------------------------------------------------------
-            # Build up a portion of the WHERE clause to represent this
-            # search field.
-            #----------------------------------------------------------
-            where += "d.id IN (SELECT doc_id FROM query_term"
-            prefix = " WHERE "
-
-            #----------------------------------------------------------
-            # Build up a sub-select which checks to see if the value
-            # desired for this field can be found in any of the
-            # paths identified by the SearchField object's selectors
-            # attribute.
-            #----------------------------------------------------------
-            for selector in searchField.selectors:
-                pathOp = selector.find("%") == -1 and "=" or "LIKE"
-
-                #------------------------------------------------------
-                # Handle the normal case: a string stored in the doc.
-                #------------------------------------------------------
-                if not selector.endswith("/@cdr:ref[int_val]"):
-                    where += ("%spath %s '%s' AND value %s '%s'"
-                              % (prefix, pathOp, selector, queryOp, queryVal))
-                else:
-
-                    #--------------------------------------------------
-                    # Special code to handle searches for linked
-                    # documents.  We need a sub-subquery to look at
-                    # the title fields of the linked docs.
-                    #--------------------------------------------------
-                    where += ("%spath %s '%s' AND int_val IN "
-                              "(SELECT id FROM document WHERE title %s '%s')"
-                              % (prefix, pathOp, selector[:-9],
-                                 queryOp, queryVal))
-                prefix = " OR "
-            where += ")"
-
-    #------------------------------------------------------------------
-    # If the user didn't fill in any fields, we can't make a query.
-    #------------------------------------------------------------------
-    if not where:
-        return (None, None)
-
-    #------------------------------------------------------------------
-    # Join the document and doc_type tables.  We could be looking for
-    # a single document type or more than one document type.  If we're
-    # looking for more than one document type, the query has to get
-    # the document type in the result set for each of the documents
-    # found.
-    #------------------------------------------------------------------
-    # Adding the docytype as a string to the query output since we
-    # may need to distinguish between InScope and CTGov protocols later
-    # on.
-    # -----------------------------------------------------------------
-    if isinstance(docType, type("")):
-        query = ("SELECT DISTINCT d.id, d.title, '%s' FROM document d "
-                 "JOIN doc_type t ON t.id = d.doc_type AND t.name = '%s'"
-                 % (docType, docType))
-    else:
-        query = ("SELECT DISTINCT d.id, d.title, t.name FROM document d "
-                 "JOIN doc_type t ON t.id = d.doc_type AND t.name IN (")
-        sep = ""
-        for dt in docType:
-            query += "%s'%s'" % (sep, dt)
-            sep = ","
-        query += ")"
-
-    query += where + " ORDER BY d.title"
-    return (query, strings)
-
-#----------------------------------------------------------------------
-# Construct top of HTML page for advanced search results.
-#----------------------------------------------------------------------
-def advancedSearchResultsPageStub(subTitle, nRows, strings):
-    if isinstance(strings, bytes):
-        strings = str(strings, "utf-8")
-    title = "CDR {} Search Results"
-    opts = dict(
-        body_id="advanced-search-results",
-        banner=title.format("Advanced"),
-        subtitle=subTitle,
-    )
-    page = HTMLPage(title.format(subTitle), **opts)
-    page.body.append(page.B.P(f"{nRows:d} documents match {strings}"))
-    page.body.append(page.B.TABLE())
-    return page
-    return f"""\
-<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>CDR {subTitle} Search Results</title>
-    <link href="{CDRCSS}" rel="stylesheet">
-  </head>
-  <body id="advanced-search-results">
-    <header>
-      <h1>CDR Advanced Search Results</h1>
-      <h2>{subTitle}</h2>
-    </header>
-    <p></p>
-    <table>
-"""
-    # Note cgi.escape call above to block XSS attack vulnerability
-    # discovered by Appscan
-
-#----------------------------------------------------------------------
-# Construct HTML page for advanced search results.
-#----------------------------------------------------------------------
-def advancedSearchResultsPage(docType, rows, strings, filt, session=None):
-    # We like the display on the web to be pretty.  The docType has been
-    # overloaded as title *and* docType.  I'm splitting the meaning here.
-    # --------------------------------------------------------------------
-    subTitle = docType
-    docType  = docType.replace(' ', '')
-
-    html = [advancedSearchResultsPageTop(subTitle, len(rows), strings)]
-
-    session = f"&{SESSION}={session}" if session else ""
-    for i, row in enumerate(rows):
-        docId = cdr.normalize(row[0])
-        title = cgi.escape(row[1])
-
-        # XXX Consider using QcReport.py for all advanced search results pages.
-        if docType in ("Person", "Organization", "GlossaryTermConcept",
-                       "GlossaryTermName"):
-            url = f"{BASE}/QcReport.py?DocId={docId}{session}"
-        elif docType == "Summary":
-            url = f"{BASE}/QcReport.py?DocId={docId}&ReportType=nm{session}"
-        else:
-            url = f"{BASE}/Filter.py?DocId={docId}&Filter={filt}{session}"
-        html.append(f"""\
-      <tr class="row-item">
-        <td class="row-number">{i+1}.</td>
-        <td class="doc-link"><a href="{url}">{docId}</a></td>
-        <td class="doc-title">{title.replace(";","; ")}</td>
-      </tr>
-""")
-    html.append("""\
-    </table>
-  </body>
-</html>
-""")
-
-    return "".join(html)
 
 #----------------------------------------------------------------------
 # Get the full user name for a given session.
@@ -4372,7 +3898,7 @@ class FormFieldFactory:
                 error = "Multiple defaults specified for single picklist"
                 raise Exception(error)
             if isinstance(options, dict):
-                options = sorted(options.items())
+                options = sorted(options.items(), key=itemgetter(1))
             for option in options:
                 if isinstance(option, (list, tuple)):
                     value, display = option
@@ -4575,11 +4101,14 @@ class FormFieldFactory:
 
         # Determine the classes to be applied to the wrapper element.
         classes = cls.__classes(kwargs.get("wrapper_classes"))
-        label = kwargs.get("label", name.title())
+        label = kwargs.get("label", name.replace("_", " ").title())
         if label and not kwargs.get("clickable"):
             classes.add("labeled-field")
             widget_id = kwargs.get("widget_id") or name
-            wrapper.append(cls.B.LABEL(label, cls.B.FOR(widget_id)))
+            label = cls.B.LABEL(label, cls.B.FOR(widget_id))
+            if kwargs.get("tooltip"):
+                label.set("title", kwargs["tooltip"])
+            wrapper.append(label)
         if classes:
             wrapper.set("class", " ".join(classes))
 
@@ -4621,9 +4150,11 @@ class FormFieldFactory:
             widget.set("onclick", onclick.replace("-", "_"))
 
         # For these fields, the label follows the widget.
-        label = kwargs.get("label", value.title())
+        label = kwargs.get("label", value.replace("_", " ").title())
         label = cls.B.LABEL(cls.B.FOR(widget.get("id")), label)
         label.set("class", "clickable")
+        if kwargs.get("tooltip"):
+            label.set("title", kwargs["tooltip"])
         wrapper.append(widget)
         wrapper.append(label)
         return wrapper
@@ -4705,7 +4236,7 @@ jQuery(function() {
 
         Optional keyword arguments:
 
-            actions
+            action
                 form submission handler (default: URL which draws form)
 
             banner
@@ -4732,6 +4263,9 @@ jQuery(function() {
             scripts
                 urls for js to load (default: jQuery and jQueryUI URLs)
 
+            session
+                object representing the current CDR login context
+
             subtitle
                 string for a smaller second banner
 
@@ -4755,6 +4289,30 @@ jQuery(function() {
         """
 
         return lxml.html.tostring(self.html, **self.STRING_OPTS)
+
+    def send(self):
+        """Push the page back to the browser via the web server."""
+        sendPage(self.tostring())
+
+    def add_output_options(self, default=None, onclick=None):
+        """
+        Allow the user to decide between HTML and Excel.
+        """
+        choices = ("html", "Web Page"), ("excel", "Excel Workbook")
+        fieldset = self.fieldset("Report Format")
+        fieldset.set("id", "report-format-block")
+        self.form.append(fieldset)
+        for value, label in choices:
+            opts = dict(label=label, value=value, onclick=onclick)
+            if value == default:
+                opts["checked"] = True
+            fieldset.append(self.radio_button("format", **opts))
+
+    def add_session_field(self, session):
+        """Add hidden session field if it isn't there already."""
+        if self.form is not None:
+            if not self.form.xpath(f"//input[@name='{SESSION}']"):
+                self.form.append(self.hidden_field(SESSION, session))
 
     @property
     def action(self):
@@ -4794,8 +4352,12 @@ jQuery(function() {
             if self.subtitle:
                 header.append(self.B.H2(self.subtitle))
             if self.buttons:
-                banner.append(self.B.SPAN(*self.buttons))
+                buttons = self.B.SPAN(*self.buttons)
+                buttons.set("id", "header-buttons")
+                banner.append(buttons)
                 form = self.B.FORM(action=self.action, method=self.method)
+                if self.session:
+                    form.append(self.hidden_field(SESSION, self.session))
                 form.set("id", self.PRIMARY_FORM_ID)
                 self._body.append(form)
                 form.append(header)
@@ -4905,6 +4467,15 @@ jQuery(function() {
         return self._scripts
 
     @property
+    def session(self):
+        """CDR login context for this page."""
+        if not hasattr(self, "_session"):
+            self._session = self.__opts.get("session", "guest")
+            if isinstance(self._session, str):
+                self._session = Session(self._session)
+        return self._session
+
+    @property
     def stylesheets(self):
         """CSS rules to be loaded for the page."""
         if not hasattr(self, "_stylesheets"):
@@ -4921,70 +4492,349 @@ jQuery(function() {
         return self._subtitle
 
 
-class AdvancedSearchPage(HTMLPage):
-    BUTTONS = (
-        HTMLPage.button("Search"),
-        HTMLPage.button("Clear", button_type="reset"),
-    )
-    TITLE = "CDR Advanced Search"
-    def __init__(self, session, subtitle, fields, **kwargs):
-        if "buttons" not in kwargs:
-            buttons = self.BUTTONS
-        kwargs = dict(**kwargs, buttons=buttons)
-        HTMLPage.__init__(self, self.TITLE, **kwargs)
-        fieldset = self.fieldset("Search Fields")
-        self.form.append(fieldset)
-        fieldset.append(self.hidden_field("Session", session or "guest"))
-        for field in fields:
-            fieldset.append(field)
-        if len(fields) > 2:
-            opts = dict(label="Match All Criteria", checked=True, value="yes")
-            fieldset.append(self.checkbox("match_all", **opts))
+
+class AdvancedSearch(FormFieldFactory):
+    """Search for CDR documents of a specific type.
+
+    It is the responsibility of the derived classes to:
+       1. populate the search_fields member
+       2. populate the query_fields member
+       3. assign the class-level DOCTYPE value
+       4. assign the class-level FILTER value (if needed)
+       5. override customize_form() if appropriate
+       6. override customize_report() if appropriate
+
+    Public methods:
+
+        run()
+            top-level processing entry point
+    """
+
+    INCLUDE_ROWS = True
+    FILTER = None
+    DBQuery = db.Query
+
+    def __init__(self):
+        self.match_all = True if self.fields.getvalue("match_all") else False
+        self.session = Session(getSession(self.fields) or "guest")
+        self.request = self.fields.getvalue("Request")
+        self.search_fields = []
+
+    @property
+    def fields(self):
+        """Named values from the CGI form."""
+        if not hasattr(self, "_fields"):
+            self._fields = cgi.FieldStorage()
+        return self._fields
+
+    def run(self):
+        try:
+            if self.request == "Search":
+                self.show_report()
+            else:
+                self.show_form()
+        except Exception as e:
+            try:
+                message = "AdvancedSearch.run(request=%r)"
+                self.session.logger.exception(message, self.request)
+            except:
+                bail(f"Unable to log exception {e}")
+            bail(f"AdvancedSearch.run() failure: {e}")
+
+    def show_form(self, subtitle=None, error=None):
+        args = self.session.name, subtitle or self.SUBTITLE, self.search_fields
+        page = self.Form(*args, error=error)
+        self.customize_form(page)
+        sendPage(page.tostring())
+
+    def show_report(self):
+        args = self.query_fields, self.DOCTYPE, self.match_all
+        self.query = query = self.Query(*args)
+        self.rows = rows =query.execute(self.session.cursor).fetchall()
+        connector = " and " if self.match_all else " or "
+        strings = connector.join([repr(c) for c in query.criteria])
+        subtitle = self.SUBTITLE
+        opts = dict(search_strings=strings, count=len(rows), subtitle=subtitle)
+        if self.INCLUDE_ROWS:
+            opts["rows"] = rows
+        if self.FILTER:
+            opts["filter"] = self.FILTER
+        page = self.ResultsPage(self.DOCTYPE, **opts)
+        self.customize_report(page)
+        sendPage(page.tostring())
+
+    def customize_form(self, page):
+        """Override in derived class if default behavior isn't enough."""
+
+    def customize_report(self, page):
+        """Override in derived class if default behavior isn't enough."""
+
+    def values_for_paths(self, paths):
+        query = db.Query("query_term", "value").unique().order("value")
+        query.where(query.Condition("path", paths, "IN"))
+        rows = query.execute(self.session.cursor).fetchall()
+        return [row.value for row in rows if row.value.strip()]
+
+    @property
+    def valid_values(self):
+        if not hasattr(self, "_valid_values"):
+            doctype = cdr.getDoctype("guest", self.DOCTYPE)
+            self._valid_values = dict(doctype.vvLists)
+        return self._valid_values
+
+    @property
+    def countries(self):
+        query = db.Query("document d", "d.id", "d.title")
+        query.join("doc_type t", "t.id = d.doc_type")
+        query.where("t.name = 'Country'")
+        query.order("d.title")
+        rows = query.execute(self.session.cursor).fetchall()
+        return [(f"CDR{row.id:010d}", row.title) for row in rows]
+
+    @property
+    def states(self):
+        fields = "s.id AS i", "s.title AS s", "c.title as c"
+        query = db.Query("document s", *fields)
+        query.join("query_term r", "r.doc_id = s.id")
+        query.join("document c", "c.id = r.int_val")
+        query.where("r.path = '/PoliticalSubUnit/Country/@cdr:ref'")
+        query.order("s.title", "c.title")
+        rows = query.execute(self.session.cursor).fetchall()
+        return [(f"CDR{row.i:010d}", f"{row.s} [{row.c}]") for row in rows]
+
+    @property
+    def statuses(self):
+        """Valid active_status value for non-deleted CDR documents."""
+        return [("A", "Active"), ("I", "Inactive")]
 
 
-class AdvancedSearchResultsPage(HTMLPage):
+    class Form(HTMLPage):
+        BUTTONS = (
+            HTMLPage.button("Search"),
+            HTMLPage.button("Clear", button_type="reset"),
+        )
+        TITLE = "CDR Advanced Search"
+        MATCH_ALL_HELP = "If unchecked any field match will succeed."
+        def __init__(self, session, subtitle, fields, **kwargs):
+            if "buttons" not in kwargs:
+                buttons = self.BUTTONS
+            kwargs = dict(
+                **kwargs,
+                buttons=buttons,
+                subtitle=subtitle,
+                method="get",
+            )
+            HTMLPage.__init__(self, self.TITLE, **kwargs)
+            self.add_session_field(session or "guest")
+            fieldset = self.fieldset("Search Fields")
+            if kwargs.get("error"):
+                classes = self.B.CLASS("error center")
+                self.form.append(self.B.P(kwargs["error"], classes))
+            self.form.append(fieldset)
+            for field in fields:
+                fieldset.append(field)
+            if len(fields) > 1:
+                fieldset = self.fieldset("Options")
+                self.form.append(fieldset)
+                opts = dict(
+                    label="Match All Criteria",
+                    checked=True,
+                    value="yes",
+                    tooltip=self.MATCH_ALL_HELP,
+                )
+                fieldset.append(self.checkbox("match_all", **opts))
+            else:
+                self.form.append(self.hidden_field("match_all", "yes"))
 
-    TITLE = "CDR Advanced Search Results"
-    POG = "Person", "Organization", "GlossaryTermConcept", "GlossaryTermName"
 
-    def __init__(self, doctype, **kwargs):
+    class ResultsPage(HTMLPage):
 
-        # Let the base class get us started.
-        opts = dict(body_id="advanced-search-results", subtitle=doctype)
-        HTMLPage.__init__(self, self.TITLE, **opts)
+        TITLE = "CDR Advanced Search Results"
+        PERSONS_ORGS_GLOSSARY = (
+            "Person",
+            "Organization",
+            "GlossaryTermConcept",
+            "GlossaryTermName",
+        )
 
-        # Add a summary line if we have the requisite information.
-        strings = kwargs.get("search_strings")
-        count = kwargs.get("count")
-        if strings and count:
-            self.body.append(self.B.P(f"{count:d} documents match {strings}"))
+        def __init__(self, doctype, **kwargs):
 
-        # Start the table for the results.
-        table = self.B.TABLE()
-        self.body.append(table)
+            # Let the base class get us started.
+            subtitle = kwargs.get("subtitle", doctype)
+            opts = dict(body_id="advanced-search-results", subtitle=subtitle)
+            HTMLPage.__init__(self, self.TITLE, **opts)
 
-        # If we have the rows for the results set, add them to the table.
-        rows = kwargs.get("rows")
-        if rows:
-            session = kwargs.get("session") or "guest"
-            for i, row in enumerate(rows):
-                cdr_id = cdr.normalize(row[0])
-                title = row[1].replace(";", "; ")
-
-                # Create the link; person, org, or glossary docs are simplest.
-                if docType in POG:
-                    url = f"{BASE}/QcReport.py?DocId={cdr_id}"
-                elif docType == "Summary":
-                    url = f"{BASE}/QcReport.py?DocId={cdr_id}&ReportType=nm"
+            # Add a summary line if we have the requisite information.
+            strings = kwargs.get("search_strings")
+            count = kwargs.get("count")
+            if strings and isinstance(count, int):
+                if count == 1:
+                    summary = f"1 document matches {strings}"
                 else:
-                    filtre = kwargs.get("filt")
-                    url = f"{BASE}/Filter.py?DocId={cdr_id}&Filter={filtre}"
-                url += f"&{SESSION}={session}"
-                link = self.B.A(cdr_id, href=url)
+                    summary = f"{count:d} documents match {strings}"
+                self.body.append(self.B.P(summary))
 
-                # Assemble the table row and attach it.
-                tr = self.B.TR(self.B.CLASS("row-item"))
-                tr.append(self.B.TD(f"{i+1}.", self.B.CLASS("row-number")))
-                tr.append(self.B.TD(link, self.B.CLASS("doc-link")))
-                tr.append(self.B.TD(title, self.B.CLASS("doc-title")))
-                table.append(tr)
+            # Start the table for the results.
+            table = self.B.TABLE()
+            self.body.append(table)
+
+            # If we have the rows for the results set, add them to the table.
+            rows = kwargs.get("rows")
+            if rows:
+                for i, row in enumerate(rows):
+                    cdr_id = cdr.normalize(row[0])
+                    title = row[1].replace(";", "; ")
+
+                    # Create the link.
+                    base = f"{BASE}/QcReport.py"
+                    if doctype in self.PERSONS_ORGS_GLOSSARY:
+                        url = f"{base}?DocId={cdr_id}"
+                    elif doctype == "Summary":
+                        url = f"{base}?DocId={cdr_id}&ReportType=nm"
+                    else:
+                        base = f"{BASE}/Filter.py"
+                        filtre = kwargs.get("filter")
+                        url = f"{base}?DocId={cdr_id}&Filter={filtre}"
+                    url += f"&{SESSION}={self.session}"
+                    link = self.B.A(cdr_id, href=url)
+
+                    # Assemble the table row and attach it.
+                    tr = self.B.TR(self.B.CLASS("row-item"))
+                    tr.append(self.B.TD(f"{i+1}.", self.B.CLASS("row-number")))
+                    tr.append(self.B.TD(link, self.B.CLASS("doc-link")))
+                    tr.append(self.B.TD(title, self.B.CLASS("doc-title")))
+                    table.append(tr)
+
+
+    class QueryField:
+        """Information used to plug one field into the search query."""
+
+        def __init__(self, var, selectors):
+            """Capture the value and the paths used to look for it.
+
+            Pass:
+                var - the CGI variable's value for this search field
+                selectors - list of paths to look for in the query_term table
+
+            In some cases `selectors` is a single string, in which case it
+            is the name of a column in the `document` table.
+            """
+            self.var = var
+            self.selectors = selectors
+
+    class Query:
+        """Builds a database query for an advanced search.
+
+        Attributes:
+            fields - information on the search fields from the form
+            doctype - string identifying which documents we're looking for
+            match_all - if False then OR the field conditions together
+            criteria - list of all the field values being search for,
+                       so we can remind the user what she put on the form
+            query - db.Query object built on demand
+        """
+
+        def __init__(self, fields, doctype, match_all=True):
+            """Capture what we'll need to build the SQL query.
+
+            Pass:
+                fields - sequence of `QueryField` objects
+                doctype - string for the CDR document type (e.g., 'Summary')
+                match_all - if set to `False` then _any_ field match works
+            """
+
+            self.fields = fields
+            self.match_all = match_all
+            self.doctype = doctype
+            self.criteria = []
+
+        def execute(self, cursor=None):
+            """Convenience method to make the code cleaner."""
+            return self.query.execute(cursor)
+
+        @property
+        def query(self):
+            """Build the query for the search if it's not already cached."""
+
+            if not hasattr(self, "_query"):
+
+                # Set up some convenience aliases.
+                Query = db.Query
+                Condition = Query.Condition
+                Or = Query.Or
+
+                # Create a query object.
+                columns = f"d.id", "d.title" #, f"'{self.doctype}' AS doctype"
+                self._query = Query("document d", *columns).order("d.title")
+
+                # Add the conditions: one for each field with a value.
+                conditions = []
+                have_doctype = False
+                for field in self.fields:
+
+                    # See if we got a value for this field.
+                    value = field.var.strip() if field.var else None
+                    if not value:
+                        continue
+
+                    # Remember the criterion for display to the user.
+                    self.criteria.append(value)
+
+                    # If 'selectors' is a string, it's a column in `document`.
+                    value_op = getQueryOp(value)
+                    if isinstance(field.selectors, str):
+                        column = f"d.{field.selectors}"
+                        conditions.append(Condition(column, value, value_op))
+                        continue
+
+                    # Build up a subquery for the field.
+                    have_doctype = True
+                    subquery = Query("query_term", "doc_id").unique()
+
+                    # These are ORd together.
+                    selector_conditions = []
+                    for path in field.selectors:
+                        path_op = "LIKE" if "%" in path else "="
+
+                        # Simple case: test for a string stored in the doc.
+                        if not path.endswith("/@cdr:ref[int_val]"):
+                            path_test = Condition("path", path, path_op)
+                            value_test = Condition("value", value, value_op)
+                            selector_conditions.append((path_test, value_test))
+
+                        # Trickier case: find values in linked documents.
+                        else:
+                            path = path.replace("[int_val]", "")
+                            title_query = Query("document", "id").unique()
+                            args = "title", value, value_op
+                            title_query.where(Condition(*args))
+                            args = "int_val", title_query, "IN"
+                            title_test = Condition(*args)
+                            path_test = Condition("path", path, path_op)
+                            selector_conditions.append((path_test, title_test))
+
+                    # Add the conditions for this field's selectors to the mix.
+                    subquery.where(Or(*selector_conditions))
+                    conditions.append(Condition("d.id", subquery, "IN"))
+
+                # Sanity check.
+                if not conditions:
+                    raise Exception("No search conditions specified")
+
+                # If all the selectors are from the document table (or,
+                # view, to be precise), then we still need to narrow
+                # the search to this document type.
+                if not have_doctype:
+                    self._query.join("doc_type t", "t.id = d.doc_type")
+                    self._query.where(Condition("t.name", self.doctype))
+                # Plug the top-level conditions into the query.
+                if self.match_all:
+                    for condition in conditions:
+                        self._query.where(condition)
+                else:
+                    self._query.where(Or(*conditions))
+
+            # All the fields with values have been folded into the query.
+            #bail(str(self._query))
+            return self._query
+

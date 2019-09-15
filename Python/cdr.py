@@ -3894,6 +3894,10 @@ def mailerCleanup(credentials, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+def bail(why):
+    """Complain to web client and exit."""
+    print(f"Content-type: text/plain\n\n{why}\n")
+    exit(0)
 
 class Logging:
     """
@@ -5936,7 +5940,7 @@ def prepare_pubmed_article_for_import(node):
     which means our own schema can be much more stable.
 
     Pass:
-      node - parsed XML object for an PubmedArticle block
+      node - parsed XML object for a PubmedArticle block
 
     Return:
       transformed PubmedArticle node object

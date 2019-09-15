@@ -16,7 +16,7 @@ import sys
 import lxml.etree as etree
 import requests
 import cdr
-import cdrdb
+from cdrapi import db
 
 class NamedValue:
     """
@@ -534,7 +534,7 @@ class Concept:
         """
 
         start = datetime.datetime.now()
-        query = cdrdb.Query("query_term", "doc_id", "value")
+        query = db.Query("query_term", "doc_id", "value")
         query.where("path = '/Term/NCIThesaurusConcept'")
         query.where("value LIKE 'C%'")
         query.where("value NOT LIKE 'CDR%'")
@@ -879,7 +879,7 @@ class TermDoc:
                         vals.used.add(key)
         etree.strip_elements(self.root, "OtherName")
         position = self.find_position(Concept.OtherName.SKIP)
-        for key in reversed(nodes):
+        for key in reversed(list(nodes)):
             self.root.insert(position, nodes[key])
         for key in (set(vals.original) - vals.used):
             self.changes.add("dropped name %r" % vals.original[key])
@@ -986,7 +986,7 @@ class TermDoc:
             integer CDR document ID for the Term document; None if not found
         """
 
-        query = cdrdb.Query("query_term", "doc_id").unique()
+        query = db.Query("query_term", "doc_id").unique()
         query.where("path = '/Term/NCIThesaurusConcept'")
         query.where(query.Condition("value", code))
         row = query.execute().fetchone()
