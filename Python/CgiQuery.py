@@ -3,6 +3,7 @@
 # Base class for CGI database query interface.
 # BZIssue::4710
 #----------------------------------------------------------------------
+from html import escape as html_escape
 import cgi, sys, time, cdrcgi
 import re
 from cdrapi import db
@@ -52,8 +53,8 @@ Cache-control: no-cache, must-revalidate
 
     def bail(self, message):
         "Display an error message and exit."
-        sysName = cgi.escape(self.system)
-        message = cgi.escape(message)
+        sysName = html_escape(self.system)
+        message = html_escape(message)
         self.sendPage("""\
 <html>
  <head>
@@ -68,7 +69,7 @@ Cache-control: no-cache, must-revalidate
 
     def getQueriesHtml(self, queryKeys):
         "Create <option> elements for the cached queries."
-        current = self.queryName and cgi.escape(self.queryName, 1) or None
+        current = self.queryName and html_escape(self.queryName, 1) or None
         html = [""]
         for q in queryKeys:
             sel = q == current and " SELECTED" or ""
@@ -100,7 +101,7 @@ Cache-control: no-cache, must-revalidate
             self.queryName = self.newName
             self.queryText = self.newQuery
         except Exception as info:
-            self.bail("Failure adding query: %s" % cgi.escape(str(info)))
+            self.bail("Failure adding query: %s" % html_escape(str(info)))
 
     def saveQuery(self):
         "Default implementation.  Override as appropriate."
@@ -110,7 +111,7 @@ Cache-control: no-cache, must-revalidate
                            (self.queryText, self.queryName))
             self.conn.commit()
         except Exception as info:
-            self.bail("Failure saving query: %s" % cgi.escape(str(info)))
+            self.bail("Failure saving query: %s" % html_escape(str(info)))
 
     def delQuery(self):
         "Default implementation.  Override as appropriate."
@@ -119,7 +120,7 @@ Cache-control: no-cache, must-revalidate
             cursor.execute("DELETE FROM query WHERE name = ?", self.queryName)
             self.conn.commit()
         except Exception as info:
-            self.bail("Failure deleting query: %s" % cgi.escape(str(info)))
+            self.bail("Failure deleting query: %s" % html_escape(str(info)))
 
     def getQueries(self):
         "Default implementation.  Override as appropriate."
@@ -128,7 +129,7 @@ Cache-control: no-cache, must-revalidate
             cursor.execute("SELECT name, value FROM query")
             queries = {}
             for row in cursor.fetchall():
-                queries[cgi.escape(row[0], 1)] = row[1]
+                queries[html_escape(row[0], 1)] = row[1]
             return queries
         except:
             raise
@@ -145,7 +146,7 @@ Cache-control: no-cache, must-revalidate
             rows = [list(row) for row in cursor.fetchall()]
             payload = dict(columns=cursor.description, rows=rows)
         except Exception as e:
-            args = cgi.escape(self.queryText), cgi.escape(e)
+            args = html_escape(self.queryText), html_escape(e)
             self.bail("Failure executing query:\n{}\n{}".format(args))
         try:
             print("Content-type: application/json")
@@ -165,7 +166,7 @@ Cache-control: no-cache, must-revalidate
             if not cursor.description:
                 self.bail('No query results')
             for col in cursor.description:
-                col = col and cgi.escape(col[0]) or "&nbsp;"
+                col = col and html_escape(col[0]) or "&nbsp;"
                 html.append("<th>%s</th>\n" % col)
             html.append("</tr>\n")
             row = cursor.fetchone()
@@ -179,7 +180,7 @@ Cache-control: no-cache, must-revalidate
                     if col is None:
                         val = "&nbsp;"
                     else:
-                        val = cgi.escape("%s" % col) or "&nbsp;"
+                        val = html_escape("%s" % col) or "&nbsp;"
                     html.append("<td valign='top' class='%s'>%s</td>\n" %
                                 (cls, val))
                 html.append("</tr>\n")
@@ -192,7 +193,7 @@ Cache-control: no-cache, must-revalidate
             html.append("</table>\n")
             self.results = "".join(html)
         except Exception as e:
-            args = cgi.escape(self.queryText), cgi.escape(e)
+            args = html_escape(self.queryText), html_escape(e)
             self.bail("Failure executing query:\n%s\n%s" % args)
 
     def createSS(self):
@@ -220,7 +221,7 @@ Cache-control: no-cache, must-revalidate
                 values = cursor.fetchone()
                 row += 1
         except Exception as e:
-            args = cgi.escape(self.queryText), cgi.escape(e)
+            args = html_escape(self.queryText), html_escape(e)
             self.bail("Failure executing query:\n%s\n%s" % args)
         try:
             footer = "%d row(s) retrieved (%.3f seconds)" % (row - 1, secs)
@@ -249,7 +250,7 @@ Cache-control: no-cache, must-revalidate
         #if queryKeys and not self.queryText and not self.queryName:
         #    queryName = queryKeys[0]
         #    if queries.has_key(queryName):
-        #        self.queryText = cgi.escape(queries[queryName])
+        #        self.queryText = html_escape(queries[queryName])
         html = """\
 <html>
  <head>

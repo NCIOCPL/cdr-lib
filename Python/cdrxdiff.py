@@ -30,6 +30,7 @@
 # them.
 #---------------------------------------------------------
 import os, sys, cgi, re, difflib, textwrap, cdr, cdrcgi
+from html import escape as html_escape
 
 _DEBUG = False
 
@@ -200,7 +201,7 @@ class _Diff:
             # Only if text is not empty
             if txt:
                 self.buf.append("<span class='%s'>%s</span>" % \
-                            (txtType, cgi.escape(txt)))
+                            (txtType, html_escape(txt)))
             if endNew:
                 self.buf.append("<br />\n")
         else:
@@ -538,7 +539,7 @@ class UDiff(_Diff):
         if not result.output:
             diffText = None
         else:
-            diffText = "<pre>\n"+cdrcgi.colorDiffs(cgi.escape(result.output)) \
+            diffText = "<pre>\n"+cdrcgi.colorDiffs(html_escape(result.output)) \
                      + "\n</pre>\n"
         return diffText
 

@@ -23,6 +23,7 @@ import cdr
 import cgi
 import copy
 import datetime
+from html import escape as html_escape
 import lxml.etree as etree
 import lxml.html
 import lxml.html.builder
@@ -3314,7 +3315,7 @@ def makeXmlPretty(doc):
     tree = etree.XML(doc)
     doc = str(etree.tostring(tree, pretty_print=True))
     doc = re.sub("<([^>]+)>", markupTagForPrettyXml, doc)
-    doc = cgi.escape(doc)
+    doc = html_escape(doc)
     doc = doc.replace('@@TAG-START@@', '<span class="xml-tag-name">')
     doc = doc.replace('@@NAME-START@@', '<span class="xml-attr-name">')
     doc = doc.replace('@@VALUE-START@@', '<span class="xml-attr-value">')
