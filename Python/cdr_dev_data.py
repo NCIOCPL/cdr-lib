@@ -2,6 +2,7 @@
 # Assembles information about data preserved on the CDR DEV tier.
 # JIRA::OCECDR-3733
 #----------------------------------------------------------------------
+import datetime
 import glob
 import os
 
@@ -77,7 +78,7 @@ class Data:
             for name in old.tables:
                 try:
                     self.tables[name] = Table(name, source)
-                except:
+                except Exception as e:
                     pass
             for name in old.docs:
                 self.docs[name] = DocType(name, source)
@@ -177,7 +178,15 @@ class Table:
         else:
             source.execute(f"SELECT * FROM {name}")
             self.cols = tuple([col[0] for col in source.description])
-            self.values = [tuple(row) for row in source.fetchall()]
+            #self.values = [tuple(row) for row in source.fetchall()]
+            self.values = []
+            for row in source.fetchall():
+                values = []
+                for value in row:
+                    if isinstance(value, datetime.datetime):
+                        value = str(value)
+                    values.append(value)
+                self.values.append(values)
         self.rows = [self._row_dict(row) for row in self.values]
         if "name" in self.cols:
             names = [row["name"] for row in self.rows]

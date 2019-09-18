@@ -4,7 +4,6 @@
 # specific to the CDR Linux servers.
 #
 #----------------------------------------------------------------------
-import MySQLdb
 import time
 import os
 import socket
@@ -93,23 +92,12 @@ class Settings:
             for package in env[name]:
                 settings[package.project_name] = package.version
         return settings
-    def get_mysql_settings(self):
-        if not self.db:
-            return {}
-        try:
-            cursor = getConnection(self.db).cursor()
-            cursor.execute("SHOW VARIABLES")
-            return dict(cursor.fetchall())
-        except Exception as e:
-            log("Settings.get_mysql_settings(): %s" % e)
-            return {}
     def serialize(self, indent=None):
         return json.dumps({
             "release": self.release,
             "environ": self.environ,
             "python": self.python,
             "path": self.path,
-            "mysql": self.mysql,
             "tier": self.tier,
             "hosts": self.hosts,
             "org": self.org,
@@ -619,24 +607,6 @@ def wrapFieldsInMap(fields):
     for field in fields.list:
         fieldMap[field.name] = unicode(field.value, "utf-8")
     return fieldMap
-
-#----------------------------------------------------------------------
-# Connect to the emailers database.
-#----------------------------------------------------------------------
-def getConnection(db='emailers', drive_prefix=""):
-    env = getEnvironment()
-    tier = getTier()
-    pw = cdrpw.password(env, tier, db)
-    host_file = drive_prefix + "/etc/cdrapphosts.rc"
-    appHost = AppHost(env, tier, filename=host_file)
-    port = 3631
-    if db == "glossifier":
-        host = appHost.host["GLOSSIFIERDB"][0]
-    else:
-        host = appHost.host["EMAILERSDB"][0]
-    conn = MySQLdb.connect(user=db, host=host, port=port, passwd=pw, db=db)
-    conn.cursor().execute("SET NAMES utf8")
-    return conn
 
 #----------------------------------------------------------------------
 # Print page to standard output and exit.

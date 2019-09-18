@@ -4433,6 +4433,7 @@ SMTP_RELAY = "MAILFWD.NIH.GOV"
 DEFAULT_LOGDIR = f"{BASEDIR}/Log"
 DEFAULT_LOGFILE = f"{DEFAULT_LOGDIR}/debug.log"
 PUBLOG = f"{DEFAULT_LOGDIR}/publish.log"
+MAILER_LOGFILE = f"{DEFAULT_LOGDIR}/mailer.log"
 MANIFEST_NAME = "CdrManifest.xml"
 CLIENT_FILES_DIR = f"{BASEDIR}/ClientFiles"
 MANIFEST_PATH = f"{CLIENT_FILES_DIR}/{MANIFEST_NAME}"
@@ -5063,7 +5064,7 @@ def getSchemaEnumVals(schemaTitle, typeName, **opts):
         Array of string values.
 
     Raises:
-        cdr.Exception if schemaTitle or simpleName not found.
+        Exception if schemaTitle or simpleName not found.
     """
 
     # Fetch and parse the schema

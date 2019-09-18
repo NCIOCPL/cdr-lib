@@ -3109,9 +3109,9 @@ def sanitize(formStr, dType='str', maxLen=None, noSemis=True,
         elif dType == 'cdrID':
             try:
                 cdr.exNormalize(newStr)
-            except cdr.Exception as info:
+            except Exception as e:
                 if excp:
-                    raise ValueError(info)
+                    raise ValueError(e)
                 return None
 
     # Maximum string length
@@ -3417,7 +3417,7 @@ def valParmVal(val, **opts):
     Return:
         True = passed, False = failed, or no return if bailout.
     """
-    if hasattr(val, "__iter__"):
+    if isinstance(val, (list, set, tuple)):
         return all([valParmVal(v, **opts) for v in val])
     if not val and (opts.get("emptyOK") or opts.get("empty_ok")):
         return True
