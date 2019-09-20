@@ -1487,6 +1487,22 @@ class Doc(object):
             query.limit(limit)
         return list(query.execute(self.cursor).fetchall())
 
+    def normalize(self):
+        """Make the document's XML easier to read and compare.
+
+        Removes unnecessary white space and normalizes attribute serialization.
+        """
+
+        args = self.session, self.doctype.name
+        element_only = Doctype.element_only_list(*args)
+        if element_only:
+            for node in self.root.iter("*"):
+                if node.tag in element_only:
+                    node.text = None
+                    for child in node.findall("*"):
+                        child.tail = None
+            self.xml = etree.tostring(self.root, encoding="unicode")
+
     def reindex(self):
         """
         Repopulate the search support tables for this document
@@ -4818,6 +4834,10 @@ class Doctype:
     Class of CDR documents controlled by a schema
     """
 
+    # Cache of elements for each doctype which have no #PCDATA nodes.
+    # Used by Doc.normalize().
+    ELEMENT_ONLY = {}
+
     def __init__(self, session, **opts):
         """
         Construct a new `Doctype` argument
@@ -5467,6 +5487,27 @@ class Doctype:
         query.join("doc_type t", "t.id = d.doc_type")
         query.where("t.name = 'schema'")
         return [row.title for row in query.execute(session.cursor).fetchall()]
+
+    @classmethod
+    def element_only_list(cls, session, doctype):
+        """Get the list of elements without #PCDATA for a doctype.
+
+        Pass:
+            doctype - string naming document type; index into cache
+
+        Return:
+            set of strings for element tags
+        """
+
+        element_only = cls.ELEMENT_ONLY.get(doctype)
+        if element_only is None:
+            element_only = set()
+            schema = cls(session, name=doctype).schema
+            for line in str(DTD(session, name=schema)).splitlines():
+                if line.startswith("<!ELEMENT") and "#PCDATA" not in line:
+                    element_only.add(line.split()[1])
+            cls.ELEMENT_ONLY[doctype] = element_only
+        return element_only
 
 
 class DTD:
