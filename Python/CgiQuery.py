@@ -4,6 +4,7 @@
 # BZIssue::4710
 #----------------------------------------------------------------------
 from html import escape as html_escape
+import json
 import cgi, sys, time, cdrcgi
 import re
 from cdrapi import db
@@ -22,10 +23,6 @@ class CgiQuery:
         self.newQuery      = fields.getvalue("newQuery") or ""
         self.queryText     = fields.getvalue("queryText") or ""
         self.results       = ""
-        if self.queryName:
-            self.queryName = str(self.queryName, 'utf-8')
-        if self.newName:
-            self.newName = str(self.newName, 'utf-8')
 
     def run(self):
         if   self.doWhat == "addQuery"  and self.newName:   self.addQuery()
@@ -35,20 +32,21 @@ class CgiQuery:
         elif self.doWhat == "sendJson"  and self.queryText: self.sendJson()
         elif self.doWhat == "createSS"  and self.queryText:
             self.createSS()
-        else:
-            try:
-                page = self.createPage()
-            except Exception as e:
-                self.bail(e)
-            self.sendPage(page)
+            return
+        try:
+            page = self.createPage()
+        except Exception as e:
+            self.bail(e)
+        self.sendPage(page)
 
     def sendPage(self, page):
         "Display the specified page and exit."
-        print("""\
+        sys.stdout.buffer.write(b"""\
 Content-type: text/html; charset=utf-8
 Cache-control: no-cache, must-revalidate
+
 """)
-        print(page.encode('utf-8'))
+        sys.stdout.buffer.write(page.encode('utf-8'))
         sys.exit(0)
 
     def bail(self, message):
@@ -152,6 +150,7 @@ Cache-control: no-cache, must-revalidate
             print("Content-type: application/json")
             print()
             print(json.dumps(payload, default=str, indent=2))
+            sys.exit(0)
         except Exception as e:
             self.bail(f"Failure serializing json results: {e}")
 
@@ -233,10 +232,12 @@ Cache-control: no-cache, must-revalidate
             else:
                 name = "ad-hoc-query"
             name = "{}-{}.xls".format(name, now)
-            print("Content-type: application/vnd.ms-excel")
-            print("Content-Disposition: attachment; filename={}".format(name))
-            print()
-            styles.book.save(sys.stdout)
+            sys.stdout.buffer.write(f"""\
+Content-type: application/vnd.ms-excel
+Content-Disposition: attachment; filename={name}
+
+""".encode("utf-8"))
+            styles.book.save(sys.stdout.buffer)
         except Exception as e:
             self.bail("Failure generating spreadsheet: %s" % e)
 

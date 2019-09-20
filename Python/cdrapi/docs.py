@@ -286,7 +286,7 @@ class Doc(object):
         Give the document object its own cursor
         """
 
-        if not hasattr(self, "_cursor"):
+        if not hasattr(self, "_cursor") or self._cursor is None:
             self._cursor = self.session.conn.cursor()
         return self._cursor
 
@@ -1588,7 +1588,7 @@ class Doc(object):
             self.__save(**opts)
             self.session.conn.commit()
             self.cursor.close()
-            self._cursor = None
+            self._cursor = self.session.conn.commit()
         except:
             self.session.logger.exception("Doc.save() failure")
             self.cursor.execute("SELECT @@TRANCOUNT AS tc")
