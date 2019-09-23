@@ -2917,7 +2917,7 @@ def sendPage(page, textType = 'html', parms='', docId='', docType='',
         print(f"Location: {url}?{parms}\n")
     else:
         sys.stdout.buffer.write(f"""\
-Content-type: text/{textType}
+Content-type: text/{textType};charset=utf-8
 
 {page}""".encode("utf-8"))
     sys.exit(0)
@@ -2944,7 +2944,10 @@ def bail(message=TAMPERING, banner="CDR Web Interface", extra=None,
         for arg in extra:
             page.add(Page.B.P(arg, Page.B.CLASS("error")))
     if logfile:
-        cdr.logwrite ("cdrcgi bailout:\n %s" % message, logfile)
+        if logfile.lower().endswith(".log"):
+            logfile = logfile[:-4]
+        logger = cdr.Logging.get_logger(logfile)
+        logger.error("cdrcgi bailout: %s", message)
     page.send()
 
 #----------------------------------------------------------------------
@@ -3561,12 +3564,13 @@ def log_fields(fields, **opts):
         fields    - from cgi.FieldStorage()
         program   - name of script to be logged (optional)
         logfile   - optional override of cdr.DEFAULT_LOGFILE
+        logname   - alias for logfile
 
     Return:
         nothing
     """
     program = opts.get("program")
-    logfile = opts.get("logfile")
+    logname = opts.get("logfile") or opts.get("logname")
     values = []
     for name in fields.keys():
         field = fields[name]
@@ -3576,13 +3580,16 @@ def log_fields(fields, **opts):
             value = [item.value for item in field]
         values.append((name, value))
     if program:
-        message = "%s called with %s" % (repr(program), repr(dict(values)))
+        message = f"{program!r} called with {dict(values)!r}"
     else:
-        message = repr(dict(values))
-    if logfile:
-        cdr.logwrite(message, logfile)
+        message = f"{dict(values)!r}"
+    if logname:
+        if logname.lower().endswith(".log"):
+            logname = logfile[:-4]
+        logger = cdr.Logging.get_logger(logname)
     else:
-        cdr.logwrite(message)
+        logger = cdr.LOGGER
+    logger.info(message)
 
 
 class FormFieldFactory:

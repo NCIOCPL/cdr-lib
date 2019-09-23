@@ -32,14 +32,6 @@ from cdrapi.settings import Tier
 from cdrapi.users import Session
 from AssignGroupNums import GroupNums
 
-try:
-    basestring
-    base64encode = base64.encodestring
-except:
-    base64encode = base64.encodebytes
-    basestring = str, bytes
-    unicode = str
-
 
 class Control:
     """
@@ -100,7 +92,7 @@ class Control:
             self.__publish()
         except Exception as e:
             self.logger.exception("Job %d failure", self.job.id)
-            self.update_status(self.FAILURE, unicode(e))
+            self.update_status(self.FAILURE, str(e))
             if self.work_dir and os.path.isdir(self.work_dir):
                 os.rename(self.work_dir, self.failure_dir)
             if self.__gk_prolog_sent:
@@ -746,7 +738,7 @@ class Control:
         media_type = self.MEDIA_TYPES[extension]
         with open(path, "rb") as fp:
             media_bytes = fp.read()
-        encoded = base64encode(media_bytes)
+        encoded = base64.encodebytes(media_bytes)
         template = "<Media Type='{}' Size='{:d}' Encoding='base64'>{}</Media>"
         return template.format(media_type, len(media_bytes), encoded)
 
@@ -1061,10 +1053,10 @@ class Control:
         audience = Doc.get_text(meta.find("SummaryAudience"))
         description = Doc.get_text(meta.find("SummaryDescription"))
         if len(description) > cls.DESCRIPTION_MAX:
-            session.logger.warning(u"Truncating description %r", description)
+            session.logger.warning("Truncating description %r", description)
             description = description[:cls.DESCRIPTION_MAX]
         if len(short_title) > cls.SHORT_TITLE_MAX:
-            session.logger.warning(u"Truncating short title %r", short_title)
+            session.logger.warning("Truncating short title %r", short_title)
             short_title = short_title[:cls.SHORT_TITLE_MAX]
         return dict(
             cdr_id=doc_id,
@@ -1120,7 +1112,7 @@ class Control:
         prefix = "https://www.cancer.gov"
         description = Doc.get_text(meta.find("DrugInfoDescription"))
         if len(description) > cls.DESCRIPTION_MAX:
-            session.logger.warning(u"Truncating description %r", description)
+            session.logger.warning("Truncating description %r", description)
             description = description[:cls.DESCRIPTION_MAX]
         return dict(
             cdr_id=doc_id,
@@ -1177,8 +1169,7 @@ class Control:
         links = []
         for link in root.iter("a"):
             href = link.get("href")
-            if href is not None and href.startswith(u"#cit/section"):
-                #link.set("href", href.replace(u"#cit/section", u"#section"))
+            if href is not None and href.startswith("#cit/section"):
                 links.append(link)
 
         # Collect links which are only separated by optional whitespace.
@@ -1228,13 +1219,13 @@ class Control:
         parent = links[0].getparent()
         if prev is not None:
             if prev.tail is not None:
-                prev.tail += u"["
+                prev.tail += "["
             else:
-                prev.tail = u"["
+                prev.tail = "["
         elif parent.text is not None:
-            parent.text += u"["
+            parent.text += "["
         else:
-            parent.text = u"["
+            parent.text = "["
 
         # Pull out the integers for the reference lines.
         refs = [int(link.text) for link in links]
@@ -1253,8 +1244,8 @@ class Control:
             # If range is three or more integers, collapse it.
             if range_len > 2:
                 if i > 0:
-                    links[i-1].tail = u","
-                links[i].tail = u"-"
+                    links[i-1].tail = ","
+                links[i].tail = "-"
                 j = 1
                 while j < range_len - 1:
                     parent.remove(links[i+j])
@@ -1265,16 +1256,16 @@ class Control:
             else:
                 while range_len > 0:
                     if i > 0:
-                        links[i-1].tail = u","
+                        links[i-1].tail = ","
                     i += 1
                     range_len -= 1
 
         # Add closing bracket, preserving the last node's tail text.
         tail = links[-1].tail
         if tail is None:
-            links[-1].tail = u"]"
+            links[-1].tail = "]"
         else:
-            links[-1].tail = u"]{}".format(tail)
+            links[-1].tail = f"]{tail}"
 
     @classmethod
     def fetch_exported_doc(cls, session, doc_id, table):
@@ -1617,9 +1608,7 @@ class Control:
 
         with open(dtd_path) as fp:
             dtd = etree.DTD(fp)
-        if isinstance(doc, basestring):
-            if isinstance(doc, unicode):
-                doc = doc.encode("utf-8")
+        if isinstance(doc, (str, bytes)):
             doc = etree.fromstring(doc)
         dtd.validate(doc)
         return dtd.error_log.filter_from_errors()

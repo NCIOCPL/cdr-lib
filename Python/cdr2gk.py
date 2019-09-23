@@ -573,7 +573,7 @@ def pubPreview(xml, template_type, **opts):
     Ask the service to create a simulation of a CDR document's web page
 
     Pass:
-      xml - utf-8 bytes for the filtered CDR document
+      xml - serialized XML for the filtered CDR document
       template_type - e.g., "Summary", "GlossaryTerm, "DrugInfoSummary", etc.
       host - defaults to `HOST`
 

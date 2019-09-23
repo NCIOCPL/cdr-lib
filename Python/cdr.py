@@ -1773,10 +1773,10 @@ def filterDoc(credentials, filter, docId=None, **opts):
                     version selection; filterDate is legacy alias
       tier - optional; one of DEV, QA, STAGE, PROD
       host - deprecated alias for tier
+      encoding - return document and errors as bytes with specified encoding
 
     Return:
         tuple of document, messages if successful, else error string
-        document is serialized as utf-8 bytes
     """
 
     xml = opts.get("doc")
@@ -1786,6 +1786,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
     filter_ver = opts.get("filter_ver") or opts.get("filterVer")
     filter_date = opts.get("filter_date") or opts.get("filterDate") or date
     no_output = opts.get("no_output", "N") == "Y"
+    encoding = opts.get("encoding") or "unicode"
     output = not no_output
     parms = opts.get("parms") or opts.get("parm")
     parms = dict(parms) if parms else {}
@@ -1812,15 +1813,17 @@ def filterDoc(credentials, filter, docId=None, **opts):
             messages = etree.Element("Messages")
             for message in result.messages:
                 etree.SubElement(messages, "message").text = message
-            messages = etree.tostring(messages, encoding="utf-8")
+            messages = etree.tostring(messages, encoding=encoding)
         else:
             messages = ""
         if output:
             # Don't know why, but lxml isn't consistent in filter results.
             if isinstance(result.result_tree, etree._Element):
-                result = etree.tostring(result.result_tree, encoding="utf-8")
+                result = etree.tostring(result.result_tree, encoding=encoding)
             else:
-                result = str(result.result_tree).encode("utf-8")
+                result = str(result.result_tree)
+                if encoding.lower() != "unicode":
+                    result = result.encode(encoding)
             return result, messages
         else:
             return messages
@@ -1874,11 +1877,13 @@ def filterDoc(credentials, filter, docId=None, **opts):
             document = get_text(response.node.find("Document"))
             messages = response.node.find("Messages")
             if messages is not None:
-                messages = etree.tostring(messages, encoding="utf-8")
+                messages = etree.tostring(messages, encoding=encoding)
             else:
                 messages = ""
             if output:
-                return document.encode("utf-8"), messages
+                if encoding.lower() != "unicode":
+                    document = document.encode(encoding)
+                return document, messages
             else:
                 return messages
         error = ";".join(response.errors) or "missing response"
@@ -5175,7 +5180,7 @@ class EmailMessage:
           sender - string in the form user@example.com (only ascii characters);
                    we can't do anything fancier for now because of bugs in
                    the Python libraries
-                     -  https://bugs.python.org/issue33398
+                     - https://bugs.python.org/issue33398
                      - https://bugs.python.org/issue24218
                      - https://bugs.python.org/issue34424
           recips - one or more recipient addresses; same format (and
@@ -5346,74 +5351,48 @@ class CommandResult:
 #----------------------------------------------------------------------
 # Run an external command.
 #----------------------------------------------------------------------
-def runCommand(command, joinErr2Out=True, returnNoneOnSuccess=True):
+def run_command(command, **opts):
     """
     Run a shell command
 
-    Pass:
-        command     - The string of the shell command to be run
-        joinErr2Out - optional value, default TRUE
-                      This parameter, when true (for backward compatibility)
-                      pipes both stdout and stderr to stdout.
-                      Otherwise stdout and stderr are split.
-        returnNoneOnSuccess
-                    - optional value, default TRUE
-                      This parameter, when true (for backward compatibility)
-                      returns `None` as a successful returncode.
-                      Otherwise the `code` for a successful command is 0.
-                      Note:  This is the return code of the command
-                             submitted and not the return code of runCommand()
-                             itself!
+    Required positional argument:
+
+        command
+             string of the command to be run, with arguments as appropriate
+
+    Optional keyword arguments:
+
+        binary
+            if True, use bytes for io instead of text
+
+        merge_output
+            if True, combine stdin and stderr into a single stream; default
+            is False
+
+        shell
+            if False, don't invoke a separate command shell to process
+            the command (safer); default is True
+
     Return:
-        CommandResult object
-            output  - output from stdout (or stdout and stderr if joinErr2Out
-                      is True)
-            error   - output from stderr (or a warning message if joinErr2Out
-                      is True)
-            code    - 0 or None (see notes above) for successful completion
+        subprocess.CompletedProcess object
     """
 
     import subprocess
 
-    # Default mode - Pipe stdout and stderr to stdout
-    # -----------------------------------------------
-    if joinErr2Out:
-        try:
-            commandStream = subprocess.Popen(command, shell=True,
-                                             stdin =subprocess.PIPE,
-                                             stdout=subprocess.PIPE,
-                                             stderr=subprocess.STDOUT)
-            output, error = commandStream.communicate()
-            code          = commandStream.returncode
-            error         = '*** Warning: stderr piped to stdout'
-
-            # For backward compatibility we return None for a successful
-            # command return code
-            # ----------------------------------------------------------
-            if returnNoneOnSuccess and code == 0:
-                return CommandResult(None, output)
-        except Exception as e:
-            LOGGER.exception("failure running command %s:\n%s", command, e)
-            return None
+    spopts = dict(stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    if not opts.get("binary"):
+        spopts["encoding"] = "utf-8"
+    if opts.get("merge_output"):
+        spopts["stderr"] = subprocess.STDOUT
     else:
-        try:
-            commandStream = subprocess.Popen(command, shell=True,
-                                             stdin =subprocess.PIPE,
-                                             stdout=subprocess.PIPE,
-                                             stderr=subprocess.PIPE)
-            output, error = commandStream.communicate()
-            code = commandStream.returncode
-
-            # For backward compatibility we return None for a successful
-            # command return code
-            # ----------------------------------------------------------
-            if returnNoneOnSuccess and code == 0:
-                return CommandResult(None, output, error)
-        except Exception as e:
-            LOGGER.exception("failure running command: %s\n%s", command, e)
-            return None
-
-    return CommandResult(code, output, error)
+        spopts["stderr"] = subprocess.PIPE
+    if opts.get("shell", True):
+        spopts["shell"] = True
+    try:
+        return subprocess.run(command, **spopts)
+    except:
+        LOGGER.exception("failure running command %s", command)
+        raise
 
 #----------------------------------------------------------------------
 # Create a temporary working area.

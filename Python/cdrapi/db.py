@@ -26,6 +26,7 @@ def connect(**opts):
     elif isinstance(tier, str):
         tier = settings.Tier(tier)
     timeout = opts.get("timeout", Query.DEFAULT_TIMEOUT)
+    autocommit = opts.get("autocommit", False)
     user = opts.get("user", Query.CDRSQLACCOUNT)
     if user == "cdr":
         user = Query.CDRSQLACCOUNT
@@ -44,7 +45,7 @@ def connect(**opts):
         conn_string = ";".join(["{}={}".format(*p) for p in parms.items()])
     else:
         conn_string = f"DSN=CDR{tier.name.upper()};UID={user};PWD={password}"
-    opts = dict(timeout=timeout)
+    opts = dict(timeout=timeout, autocommit=autocommit)
     conn = pyodbc.connect(conn_string, **opts)
     conn.timeout = timeout
     return conn

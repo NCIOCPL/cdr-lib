@@ -398,7 +398,7 @@ if FULL:
         def test_26_filter_doc__(self):
             filt = ["set:QC Summary Set"]
             result = cdr.filterDoc(self.session, filt, 62902, tier=self.TIER)
-            self.assertTrue(b"small intestine cancer" in result[0])
+            self.assertTrue("small intestine cancer" in result[0])
 
         def test_27_val_doc_____(self):
             opts = dict(doc=u"<x>\uEBAD<x>", tier=self.TIER)

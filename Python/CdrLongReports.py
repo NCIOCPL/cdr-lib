@@ -139,7 +139,7 @@ class BatchReport:
             report = self.create_html_report()
             name += ".html"
             path = "%s/%s" % (self.REPORTS_BASE, name)
-            open(path, "wb").write(report)
+            open(path, "wb").write(report.encode("utf-8"))
         else:
             workbook = self.create_excel_report()
             name += ".xls"
@@ -167,7 +167,7 @@ class BatchReport:
 
         report = self.B.HTML(self.head(), self.body())
         opts = {
-            "encoding": "utf-8",
+            "encoding": "unicode",
             "pretty_print": True,
             "method": "html",
             "doctype": "<!DOCTYPE html>"
@@ -1401,7 +1401,7 @@ class PublishedDocumentsCount(BatchReport):
             query.where(query.Condition("id", doc_id))
             query.where(query.Condition("num", doc_version))
             xml = query.execute(cursor).fetchone()[0]
-            root = etree.fromstring(xml.encode("utf-8"))
+            root = etree.fromstring(xml)
             self.status = cdr.get_text(root.find("OverallStatus"))
 
     @classmethod
@@ -1492,7 +1492,7 @@ class GlossaryTermSearch(BatchReport):
                 break
             self.tree.clear_flags()
             doc_id, doc_xml, doc_title = row
-            root = etree.fromstring(doc_xml.encode("utf-8"))
+            root = etree.fromstring(doc_xml)
             for node in root.findall("SummarySection"):
                 text = " ".join(node.itertext("*")).strip()
                 sec_title = cdr.get_text(node.find("Title")) or "[None]"
@@ -1857,7 +1857,7 @@ class PronunciationRecordingsReport(BatchReport):
             query = db.Query("document", "first_pub", "xml")
             query.where(query.Condition("id", doc_id))
             self.first_pub, xml = query.execute(cursor).fetchone()
-            root = etree.fromstring(xml.encode('utf-8'))
+            root = etree.fromstring(xml)
             for node in root.findall('DateLastModified'):
                 self.last_mod = node.text
             for node in root.findall('ProcessingStatuses/ProcessingStatus'):

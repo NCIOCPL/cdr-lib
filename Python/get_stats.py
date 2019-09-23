@@ -9,7 +9,7 @@
 # ------------------------------------------------------------------
 # Created:              Volker Englisch  - 2006-03-20
 # ******************************************************************
-import sys, os, ftplib, time, shutil, cdrutil, datetime
+import sys, os, ftplib, time, shutil, datetime
 
 # Setting the variables
 # ---------------------

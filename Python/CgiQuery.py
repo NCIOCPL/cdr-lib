@@ -192,8 +192,7 @@ Cache-control: no-cache, must-revalidate
             html.append("</table>\n")
             self.results = "".join(html)
         except Exception as e:
-            args = html_escape(self.queryText), html_escape(e)
-            self.bail("Failure executing query:\n%s\n%s" % args)
+            self.bail(f"Failure executing query:\n{self.queryText}\n{e}")
 
     def createSS(self):
         "Create Excel spreadsheet from query results"

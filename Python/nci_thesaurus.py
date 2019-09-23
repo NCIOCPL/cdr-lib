@@ -819,7 +819,7 @@ class TermDoc:
             Concept.fail("%s has no preferred name" % cdr_id)
         cdr_name, ncit_name = node.text, self.concept.preferred_name
         if Concept.normalize(cdr_name) != Concept.normalize(ncit_name):
-            why = u"%s is for %r, not %r" % (cdr_id, cdr_name, ncit_name)
+            why = "%s is for %r, not %r" % (cdr_id, cdr_name, ncit_name)
             Concept.fail(why)
         return root
 
@@ -1075,7 +1075,7 @@ class TermDoc:
                 a normalized version of the string, and save both.
                 """
 
-                self.text = u"".join(node.itertext())
+                self.text = "".join(node.itertext())
                 self.normalized = Concept.normalize(self.text)
 
 if __name__ == "__main__":

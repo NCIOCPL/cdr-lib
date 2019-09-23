@@ -1773,7 +1773,7 @@ class Doc(object):
         Transform the document using an XSL/T filter
 
         Pass:
-          filter_xml - utf-8 bytes for serialized XSL/T document
+          filter_xml - serialized XSL/T document
           doc - parse tree object for document to be filtered
           parser - optional object capable of resolving URLs
           parms - dictionary of  parameters to be passed to the filtering
@@ -4796,7 +4796,7 @@ class Filter:
         """
 
         self.doc_id = doc_id
-        self.xml = xml.encode("utf-8") if isinstance(xml, str) else xml
+        self.xml = xml #.encode("utf-8") if isinstance(xml, str) else xml
         self.now = time.time()
 
 
