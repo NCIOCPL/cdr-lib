@@ -68,7 +68,7 @@ class Session:
         self.logger = self.tier.get_logger("session", **opts)
         try:
             self.cursor.execute(self.SELECT)
-            if self.cursor.fetchone()[0] > 0:
+            if self.cursor.fetchall()[0][0] > 0:
                 self.cursor.execute(self.UPDATE)
                 self.conn.commit()
         except:
@@ -79,12 +79,12 @@ class Session:
         query.join("open_usr u", "u.id = s.usr")
         query.where(query.Condition("s.name", name))
         query.where("s.ended IS NULL")
-        row = query.execute(self.cursor).fetchone()
-        if row is None:
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
             self.logger.warning("query: %s (%s)", query, name)
             raise Exception("Invalid or expired session: {!r}".format(name))
         self.active = True
-        self.id, self.user_id, self.user_name = row
+        self.id, self.user_id, self.user_name = rows[0]
         self.cache = self.Cache()
         update = "UPDATE session SET last_act = GETDATE() WHERE id = ?"
         try:
@@ -150,9 +150,10 @@ class Session:
         query.join("session s", "s.usr = u.id")
         query.where("s.ended IS NULL")
         query.where(query.Condition("s.name", self.name))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
             raise Exception("Can't duplicate invalid or expired session")
+        row = rows[0]
         name = row.name
         comment = "Session duplicated from id={}".format(self.name)
         opts = dict(comment=comment, tier=self.tier.name)
@@ -190,7 +191,7 @@ class Session:
         query.where(query.Condition("grp_usr.usr", self.user_id))
         query.where(query.Condition("action.name", action))
         query.where(query.Condition("doc_type.name", doctype or ""))
-        return query.execute(self.cursor).fetchone()[0] > 0
+        return query.execute(self.cursor).fetchall()[0][0] > 0
 
     def get_permissions(self):
         """
@@ -300,9 +301,10 @@ class Session:
         self.log("Session.get_action({})".format(name))
         query = db.Query("action", "id", "name", "doctype_specific", "comment")
         query.where(query.Condition("name", name))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
             return None
+        row = rows[0]
         action = self.Action(*row[1:])
         action.id = row[0]
         return action
@@ -327,10 +329,10 @@ class Session:
         self.log("Session.get_group({})".format(name))
         query = db.Query("grp", "id", "name", "comment")
         query.where(query.Condition("name", name))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
             return None
-        group_id, group_name, comment = row
+        group_id, group_name, comment = rows[0]
         query = db.Query("usr u", "name").order("name")
         query.join("grp_usr g", "g.usr = u.id")
         query.where(query.Condition("g.grp", group_id))
@@ -431,7 +433,7 @@ class Session:
         self.cursor.execute(insert.format(fields), values)
         self.conn.commit()
         self.cursor.execute("SELECT @@IDENTITY AS id")
-        return int(self.cursor.fetchone().id)
+        return int(self.cursor.fetchall()[0].id)
 
     def __str__(self):
         """
@@ -476,10 +478,10 @@ class Session:
             query = db.Query("usr", "id", "hashedpw")
             query.where(query.Condition("name", user))
             query.where("expired IS NULL")
-            row = query.execute(cursor).fetchone()
-        if not row:
-            raise Exception("Unknown or expired user: {}".format(user))
-        uid, hashedpw = row
+            rows = query.execute(cursor).fetchall()
+        if not rows:
+            raise Exception(f"Unknown or expired user: {user}")
+        uid, hashedpw = rows[0]
         if hashedpw is not None:
             hexhash = binascii.hexlify(hashedpw).upper()
             if not isinstance(hexhash, str):
@@ -570,7 +572,7 @@ class Session:
                 raise Exception("Missing action name")
             query = db.Query("action", "COUNT(*)")
             query.where(query.Condition("name", self.name.strip()))
-            if query.execute(session.cursor).fetchone()[0] > 0:
+            if query.execute(session.cursor).fetchall()[0][0] > 0:
                 raise Exception("Action already exists")
             if self.doctype_specific not in "YN":
                 error = "DoctypeSpecific element must contain 'Y' or 'N'"
@@ -603,7 +605,7 @@ class Session:
                 query = db.Query("grp_action", "COUNT(*)")
                 query.where("doc_type <> 1")
                 query.where(query.Condition("action", self.id))
-                if query.execute(session.cursor).fetchone()[0] > 0:
+                if query.execute(session.cursor).fetchall()[0][0] > 0:
                     raise Exception("Cannot set doctype_specific flag to 'N' "
                                     "because action has been assigned to "
                                     "groups for specific doctypes")
@@ -611,7 +613,7 @@ class Session:
                 query = db.Query("grp_action", "COUNT(*)")
                 query.where("doc_type = 1")
                 query.where(query.Condition("action", self.id))
-                if query.execute(session.cursor).fetchone()[0] > 0:
+                if query.execute(session.cursor).fetchall()[0][0] > 0:
                     raise Exception("Cannot set doctype_specific flag to 'Y' "
                                     "because doctype-independent assignments "
                                     "of this action have been made to groups")
@@ -709,12 +711,12 @@ class Session:
             if not self.name or not self.name.strip():
                 raise Exception("Missing group name")
             query.where(query.Condition("name", self.name.strip()))
-            if query.execute(session.cursor).fetchone()[0] > 0:
+            if query.execute(session.cursor).fetchall()[0][0] > 0:
                 raise Exception("Group name already exists")
             insert = "INSERT INTO grp(name, comment) VALUES(?, ?)"
             session.cursor.execute(insert, (self.name, self.comment))
             session.cursor.execute("SELECT @@IDENTITY AS id")
-            self.id = session.cursor.fetchone().id
+            self.id = session.cursor.fetchall()[0].id
             self.save_users(session)
             self.save_actions(session)
             session.conn.commit()
@@ -787,11 +789,11 @@ class Session:
                 session.logger.debug(message.format(user, self.name))
                 query = db.Query("usr", "id")
                 query.where(query.Condition("name", user.strip()))
-                row = query.execute(cursor).fetchone()
-                if not row:
+                rows = query.execute(cursor).fetchall()
+                if not rows:
                     raise Exception("Unknown user {}".format(user))
                 insert = "INSERT INTO grp_usr(grp, usr) VALUES(?, ?)"
-                cursor.execute(insert, (self.id, row[0]))
+                cursor.execute(insert, (self.id, rows[0][0]))
 
         def save_actions(self, session):
             """
@@ -813,16 +815,16 @@ class Session:
                     session.logger.debug(message.format(what, self.name))
                     query = db.Query("action", "id")
                     query.where(query.Condition("name", action))
-                    row = query.execute(cursor).fetchone()
-                    if not row:
+                    rows = query.execute(cursor).fetchall()
+                    if not rows:
                         raise Exception("Unknown action: {}".format(action))
-                    action_id = row[0]
+                    action_id = row[0][0]
                     query = db.Query("doc_type", "id")
                     query.where(query.Condition("name", doctype or ""))
-                    row = query.execute(cursor).fetchone()
-                    if not row:
+                    rows = query.execute(cursor).fetchall()
+                    if not rows:
                         raise Exception("Unknown doc type: {}".format(doctype))
-                    doctype_id = row[0]
+                    doctype_id = row[0][0]
                     insert = "INSERT INTO grp_action(grp, action, doc_type)"
                     insert += " VALUES(?, ?, ?)"
                     cursor.execute(insert, (self.id, action_id, doctype_id))
@@ -904,8 +906,8 @@ class Session:
                     if name:
                         query = db.Query("usr", "id")
                         query.where(query.Condition("name", name))
-                        row = query.execute(self.session.cursor).fetchone()
-                        self._id = row.id if row else None
+                        rows = query.execute(self.session.cursor).fetchall()
+                        self._id = rows[0].id if rows else None
                     else:
                         self._id = None
                         self.session.logger.warning("User.id: NO NAME!!!")
@@ -922,8 +924,8 @@ class Session:
                 if not self._name and self.id:
                     query = db.Query("usr", "name")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.session.cursor).fetchone()
-                    self._name = row.name if row else None
+                    rows = query.execute(self.session.cursor).fetchall()
+                    self._name = rows[0].name if rows else None
             return self._name
 
         @property
@@ -947,8 +949,8 @@ class Session:
                         "ELSE 'local' END FROM usr WHERE id = ?"
                     ]
                     self.session.cursor.execute(" ".join(lines), (self.id,))
-                    row = self.session.cursor.fetchone()
-                    self._authmode = row.authmode if row else None
+                    rows = self.session.cursor.fetchall()
+                    self._authmode = rows[0].authmode if rows else None
                 else:
                     self._authmode = None
             return self._authmode
@@ -965,8 +967,8 @@ class Session:
                 elif self.id:
                     query = db.Query("usr", "fullname")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.session.cursor).fetchone()
-                    self._fullname = row.fullname if row else None
+                    rows = query.execute(self.session.cursor).fetchall()
+                    self._fullname = rows[0].fullname if rows else None
                 else:
                     self._fullname = None
             return self._fullname
@@ -983,8 +985,8 @@ class Session:
                 elif self.id:
                     query = db.Query("usr", "office")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.session.cursor).fetchone()
-                    self._office = row.office if row else None
+                    rows = query.execute(self.session.cursor).fetchall()
+                    self._office = rows[0].office if rows else None
                 else:
                     self._office = None
             return self._office
@@ -1001,8 +1003,8 @@ class Session:
                 elif self.id:
                     query = db.Query("usr", "email")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.session.cursor).fetchone()
-                    self._email = row.email if row else None
+                    rows = query.execute(self.session.cursor).fetchall()
+                    self._email = rows[0].email if rows else None
                 else:
                     self._email = None
             return self._email
@@ -1019,8 +1021,8 @@ class Session:
                 elif self.id:
                     query = db.Query("usr", "phone")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.session.cursor).fetchone()
-                    self._phone = row.phone if row else None
+                    rows = query.execute(self.session.cursor).fetchall()
+                    self._phone = rows[0].phone if rows else None
                 else:
                     self._phone = None
             return self._phone
@@ -1037,8 +1039,8 @@ class Session:
                 elif self.id:
                     query = db.Query("usr", "comment")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.session.cursor).fetchone()
-                    self._comment = row.comment if row else None
+                    rows = query.execute(self.session.cursor).fetchall()
+                    self._comment = rows[0].comment if rows else None
                 else:
                     self._comment = None
             return self._comment
@@ -1097,7 +1099,7 @@ class Session:
             query.where(query.Condition("name", self.name))
             if self.id:
                 query.where(query.Condition("id", self.id, "<>"))
-            if query.execute(self.session.cursor).fetchone().n > 0:
+            if query.execute(self.session.cursor).fetchall()[0].n > 0:
                 raise Exception("Name used by another account")
             try:
                 self.__save(password)
@@ -1105,7 +1107,7 @@ class Session:
             except:
                 self.session.logger.exception("User.save() failure")
                 self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
-                if self.session.cursor.fetchone().tc:
+                if self.session.cursor.fetchall()[0].tc:
                     self.session.cursor.execute("ROLLBACK TRANSACTION")
                 raise
 
@@ -1157,15 +1159,16 @@ class Session:
             self.session.cursor.execute(sql, tuple(values))
             if not self.id:
                 self.session.cursor.execute("SELECT @@IDENTITY AS id")
-                user_id = self.session.cursor.fetchone().id
+                user_id = self.session.cursor.fetchall()[0].id
             insert = "INSERT INTO grp_usr(grp, usr) VALUES(?, ?)"
             groups = set()
             for name in (self.groups or []):
                 query = db.Query("grp", "id")
                 query.where(query.Condition("name", name))
-                row = query.execute(self.session.cursor).fetchone()
-                if not row:
+                rows = query.execute(self.session.cursor).fetchall()
+                if not rows:
                     raise Exception("Unknown group {}".format(name))
+                row = rows[0]
                 if row.id not in groups:
                     self.session.cursor.execute(insert, (row.id, user_id))
                     groups.add(row.id)

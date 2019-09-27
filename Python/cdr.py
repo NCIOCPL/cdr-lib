@@ -4423,8 +4423,6 @@ def exNormalize(id):
 CBIIT_HOSTING = True
 BASEDIR = _Control.TIER.basedir
 ETC = _Control.TIER.etc
-GPMAILER = _Control.TIER.hosts["EMAILERS"]
-GPMAILERDB = _Control.TIER.hosts["DBNIX"]
 APPC = _Control.TIER.hosts["APPC"]
 FQDN = open(f"{BASEDIR}/etc/hostname").read().strip()
 HOST_NAMES = FQDN.split(".")[0], FQDN, "https://" + FQDN
@@ -5374,7 +5372,11 @@ def run_command(command, **opts):
             the command (safer); default is True
 
     Return:
-        subprocess.CompletedProcess object
+        subprocess.CompletedProcess object, with properties:
+           - args
+           - returncode
+           - stdout
+           - stderr
     """
 
     import subprocess

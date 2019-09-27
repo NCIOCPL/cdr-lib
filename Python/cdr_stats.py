@@ -1440,8 +1440,7 @@ class Control:
     DEFAULT_END     Fall back on this for end of date range.
     CLASSES         Classes implementing the sections of the report
     SECTIONS        Default list of sections to be shown (all of them)
-    SENDER          First argument to cdr.sendMail().
-    CHARSET         Encoding used by cdr.sendMail().
+    SENDER          Account the mail comes from
     TSTYLE          CSS formatting rules for table elements.
     CSTYLES         Dictionary of default CSS rules for table cells
     TO_STRING_OPTS  Options used for serializing HTML report object.
@@ -1480,8 +1479,6 @@ class Control:
                DrugInformationSummary, BoardMember, BoardMeeting, Image]
     SECTIONS = [c.ABBR for c in CLASSES] + ["audio"]
     SENDER = "PDQ Operator <NCIPDQoperator@mail.nih.gov>"
-    CHARSET = "iso-8859-1"
-    CHARSET = "ascii"
     TSTYLE = (
         "min-width: 350px",
         "border: 1px solid #999",
@@ -1499,7 +1496,7 @@ class Control:
     }
     TO_STRING_OPTS = {
         "pretty_print": True,
-        "encoding": CHARSET,
+        "encoding": "unicode",
         "doctype": "<!DOCTYPE html>"
     }
 
@@ -1605,7 +1602,7 @@ class Control:
         p_style = "font-size: .9em; font-style: italic; font-family: Arial"
         html = Control.B.HTML(
             Control.B.HEAD(
-                Control.B.META(charset=self.CHARSET),
+                Control.B.META(charset="utf-8"),
                 Control.B.TITLE(self.title),
             ),
             Control.B.BODY(
@@ -1632,11 +1629,14 @@ class Control:
         else:
             recips = cdr.getEmailList('ICRDB Statistics Notification')
         subject = "[%s] %s" %(self.TIER.name, self.title)
-        error = cdr.sendMail(self.SENDER, recips, subject, report, html=True)
-        self.logger.info("sent %s", subject)
+        self.logger.info("sending %s", subject)
         self.logger.info("recips: %s", ", ".join(recips))
-        if error:
-            self.logger.error(error)
+        opts = dict(subject=subject, subtype="html", body=report)
+        try:
+            message = cdr.EmailMessage(self.SENDER, recips, **opts)
+            message.send()
+        except:
+            self.logger.exception("Failure sending report")
 
     def save_report(self, report):
         """
@@ -1650,9 +1650,8 @@ class Control:
         test = self.test and ".test" or ""
         name = "cdr-stats-%s%s.html" % (stamp, test)
         path = "%s/reports/%s" % (cdr.BASEDIR, name)
-        fp = open(path, "wb")
-        fp.write(report)
-        fp.close()
+        with open(path, "w", encoding="utf-8") as fp:
+            fp.write(report)
         self.logger.info("created %s", path)
 
     def get_title(self, options):

@@ -56,7 +56,7 @@ class Request:
             debugLevel    = os.getenv("HTTP_X_DEBUG_LEVEL") or defaultLevel
             if debugLevel > "1" and logger is not None:
                 logger.setLevel("DEBUG")
-                logger.debug("debugging level set to %s", debugLevel)
+                logger.info("debugging level set to %s", debugLevel)
                 if debugLevel > "2":
                     self.dumpenv()
             if remoteHost and remoteHost != self.client:
@@ -95,8 +95,12 @@ Access-Control-Allow-Methods: POST, GET, OPTIONS
             except Exception as e:
                 raise Exception(f"Failure reading request: {e}")
             self.message = b"".join(blocks)
-            if logger:
-                logger.debug("message: %r", self.message)
+            try:
+                self.message_text = str(self.message, "utf-8")
+            except:
+                self.message_text = None
+            if logger and self.message_text:
+                logger.debug("WebService message: %s", self.message_text)
         try:
             self.doc = etree.fromstring(self.message)
             self.type = self.doc.tag
@@ -113,6 +117,7 @@ Access-Control-Allow-Methods: POST, GET, OPTIONS
         query = db.Query("ctl", "val")
         query.where("grp = 'WebService'")
         query.where("name = 'DebugLevel'")
+        query.where("inactivated IS NULL")
         row = query.execute().fetchone()
         return row.val if row else "1"
 
@@ -140,25 +145,29 @@ class Response:
           logger - optional object for logging what we do
         """
         self.logger = logger
-        if isinstance(body, str):
-            self.body = body.encode("utf-8")
-        elif isinstance(body, bytes):
+        if isinstance(body, bytes):
+            self.body = str(body, "utf-8")
+        elif isinstance(body, str):
             self.body = body
         else:
-            self.body = etree.tostring(body, pretty_print=True)
+            opts = dict(pretty_print=True, encoding="unicode")
+            self.body = etree.tostring(body, **opts)
 
     def send(self, contentType="text/xml"):
+        body = self.body
+        if isinstance(body, str):
+            body = body.encode("utf-8")
         headers = (
             f"Content-Type: {contentType}; charset=utf-8",
-            f"Content-Length: {len(self.body):d}",
+            f"Content-Length: {len(body):d}",
         )
         for header in headers:
             sys.stdout.buffer.write(header.encode("utf-8"))
             sys.stdout.buffer.write(b"\n")
-        sys.stdout.buffer.write("\n")
-        sys.stdout.buffer.write(self.body)
+        sys.stdout.buffer.write(b"\n")
+        sys.stdout.buffer.write(body)
         if self.logger:
-            self.logger.debug("sending %r", self.body)
+            self.logger.debug("sending %s", self.body)
         sys.exit(0)
 
 
@@ -175,4 +184,4 @@ class ErrorResponse(Response):
         self.logger = logger
         if isinstance(error, bytes):
             error = error.decode("utf-8")
-        self.body = f"<ERROR>{error}</ERROR>".encode("utf-8")
+        self.body = f"<ERROR>{error}</ERROR>"

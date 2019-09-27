@@ -2773,7 +2773,10 @@ def header(title, banner, subtitle, *args, **kwargs):
 
     # Let the caller close out the form/body/html elements.
     html = page.tostring()
-    return "".join(html.split("</form>")[:-1])
+    if "</form>" in html:
+        return "".join(html.split("</form>")[:-1])
+    return "".join(html.split("</body>")[:-1])
+
 
 #----------------------------------------------------------------------
 # Display the header for a CDR web report (no banner or buttons).
@@ -4629,6 +4632,7 @@ class AdvancedSearch(FormFieldFactory):
             kwargs = dict(
                 **kwargs,
                 buttons=buttons,
+                session=session,
                 subtitle=subtitle,
                 method="get",
             )

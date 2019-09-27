@@ -65,6 +65,10 @@ class Tier:
 
         self.name = self.__get_tier_name(tier)
 
+    def __str__(self):
+        """Show the tier's name in string formatting."""
+        return self.name
+
     @property
     def basedir(self):
         """
