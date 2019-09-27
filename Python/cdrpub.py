@@ -1396,7 +1396,9 @@ class Control:
                 body = "{}\n\n{}".format(message, link)
             else:
                 body = message
-            cdr.sendMailMime(self.SENDER, recips, subject, body)
+            opts = dict(subject=subject, body=body)
+            message = cdr.EmailMessage(self.SENDER, recips, **opts)
+            message.send()
         else:
             args = self.job.id, message
             self.logger.warning("Job %d: no recips for notification %r", *args)

@@ -363,7 +363,9 @@ class CdrRepublisher:
                     sender  = "cdr@%s" % cdrcgi.WEBSERVER
                     subject = "Republication failure on %s" % self.__tier
                     body    = "Failure republishing CDR documents:\n%s\n" % e
-                    cdr.sendMail(sender, [email], subject, body)
+                    opts = dict(subject=subject, body=body)
+                    message = cdr.EmailMessage(sender, [email], **opts)
+                    message.send()
                     message = "republish(): sent failure notification to %s"
                     self.__logger.info(message, email)
                 except:
