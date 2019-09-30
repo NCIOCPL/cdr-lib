@@ -23,11 +23,14 @@ import cdr
 import cgi
 import copy
 import datetime
+from io import BytesIO
 from html import escape as html_escape
 import lxml.etree as etree
 import lxml.html
 import lxml.html.builder
 from operator import itemgetter
+import openpyxl
+import xlsxwriter
 import os
 import re
 import sys
@@ -95,6 +98,314 @@ DOMAIN   = "." + ".".join(SPLTNAME[1:])
 DAY_ONE  = cdr.URDATE
 NEWLINE  = "@@@NEWLINE-PLACEHOLDER@@@"
 BR       = "@@@BR-PLACEHOLDER@@@"
+
+class Excel:
+    """Build workbooks using OpenPyXl
+
+    See https://openpyxl.readthedocs.io/en/stable/
+
+    We have created most of our Excel reports in the past using
+    the pre-2007 formats. This package uses the current, more
+    capable Excel format, and is the recommended package for
+    generating Excel workbooks in Python.
+
+    In rare cases it will be necessary to use the XlsxWriter
+    package (https://xlsxwriter.readthedocs.io). See, for example,
+    the MediaCaptionContent.py web admin report. One drawback of
+    the XlsxWriter package is that it cannot read Excel workbooks,
+    only create them.
+    TODO: document the limitations of the OpenPyXl package which
+    require the use of XlsxWriter.
+
+    Note that an object of this class has properties for commonly
+    used styles. It caches these properties, rather that creating
+    a new style object for each call, so be careful that you not
+    alter the returned property unless you are sure that you will
+    want _all_ uses of that style property to have that change.
+    """
+
+    MIME_SUBTYPE = "vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    MIME_TYPE = f"application/{MIME_SUBTYPE}"
+    from openpyxl.utils import get_column_letter
+
+    def __init__(self, title, **opts):
+        self.__title = title
+        self.__opts = opts
+
+    def add_sheet(self, name=None):
+        if not name:
+            name = f"Sheet{len(self.book.worksheets)+1}"
+        sheet = self.book.create_sheet(title=name)
+        sheet.print_options.gridLines = True
+        return sheet
+
+    def merge(self, start_row, start_column, end_row, end_column):
+        self.sheet.merge_cells(
+            start_row=start_row,
+            start_column=start_column,
+            end_row=end_row,
+            end_column=end_column
+        )
+
+    def save(self, directory=None):
+        path = self.filename
+        if directory:
+            path = f"{directory}/{path}"
+        with open(path, "wb") as fp:
+            self.book.save(fp)
+
+    def send(self):
+        headers = (
+            f"Content-type: {self.book.mime_type}",
+            f"Content-disposition: attachment; filename={self.filename}"
+        )
+        headers = "\r\n".join(headers) + "\r\n\r\n"
+        sys.stdout.buffer.write(headers.encode("utf-8"))
+        self.book.save(sys.stdout.buffer)
+
+    def set_width(self, col, width):
+        letter = Excel.get_column_letter(col)
+        self.sheet.column_dimensions[letter].width = width
+
+    def write(self, row, column, value, styles):
+        cell = self.sheet.cell(row=row, column=column, value=value)
+        for name in styles:
+            setattr(cell, name, styles[name])
+        return cell
+
+    @property
+    def hyperlink(self):
+        """Font styling we want for links."""
+        if not hasattr(self, "_hyperlink"):
+            opts = dict(color = "000000FF", underline="single")
+            self._hyperlink = openpyxl.styles.Font(**opts)
+        return self._hyperlink
+
+    @property
+    def bold(self):
+        if not hasattr(self, "_bold"):
+            self._bold = openpyxl.styles.Font(bold=True)
+        return self._bold
+
+    @property
+    def center(self):
+        if not hasattr(self, "_center"):
+            opts = dict(horizontal="center", vertical="top", wrapText=True)
+            self._center = openpyxl.styles.Alignment(**opts)
+        return self._center
+
+    @property
+    def right(self):
+        if not hasattr(self, "_right"):
+            opts = dict(horizontal="right", vertical="top", wrapText=True)
+            self._right = openpyxl.styles.Alignment(**opts)
+        return self._right
+
+    @property
+    def left(self):
+        if not hasattr(self, "_left"):
+            opts = dict(horizontal="left", vertical="top", wrapText=True)
+            self._left = openpyxl.styles.Alignment(**opts)
+        return self._left
+
+    @property
+    def center_middle(self):
+        """Center both horizontally and vertically."""
+        if not hasattr(self, "_center_middle"):
+            opts = dict(horizontal="center", vertical="center")
+            self._center_middle = openpyxl.styles.Alignment(**opts)
+        return self._center_middle
+
+    @property
+    def book(self):
+        """Create a workbook with no sheets."""
+        if not hasattr(self, "_book"):
+            self._book = openpyxl.Workbook() #write_only=True)
+            if not self.__opts.get("keep_initial_sheet"):
+                for sheet in self._book.worksheets:
+                    self._book.remove(sheet)
+        return self._book
+
+    @property
+    def sheet(self):
+        """The most recently added sheet if any, else None."""
+        return self.book.worksheets[-1] if self.book.worksheets else None
+
+    @property
+    def title(self):
+        return self.__title
+
+    @property
+    def filename(self):
+        if not hasattr(self, "_filename"):
+            stamp = ""
+            if self.__opts.get("stamp"):
+                stamp = datetime.datetime.now().strftime("-%Y%m%d%H%M%S")
+            title = re.sub(r"\W", "_", self.title)
+            self._filename = f"{title}{stamp}.xlsx"
+        return self._filename
+
+    @classmethod
+    def pixels_to_chars(cls, pixels):
+        """Convert pixels to characters for column widths, etc.
+
+        See https://docs.microsoft.com/en-us/previous-versions/office\
+        /developer/office-2010/cc802410(v=office.14)
+
+        In particular:
+          "To translate from pixels to character width, use this calculation:
+            =Truncate(({pixels}-5)/{Maximum Digit Width} * 100+0.5)/100
+
+        The following code gets the maximum digit width for the default
+        font in a new Excel installation:
+
+        >>> from PIL import ImageFont
+        >>> font = ImageFont.truetype('d:/Windows/Fonts/calibri.ttf', 11)
+        >>> font.getsize("0")
+        (6, 9)
+
+        In other words, 6 pixels wide.
+        """
+        max_digit_width = 6
+        pixels = int(re.sub("[^0-9]+", "", pixels))
+        return int((pixels - 5) / max_digit_width * 100 + 0.5) / 100
+
+
+class Excel2:
+    """Try xslxwriter, because openpylx is slow with big workbooks."""
+    MIME_SUBTYPE = "vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    MIME_TYPE = f"application/{MIME_SUBTYPE}"
+    def __init__(self, title, **opts):
+        self.__title = title
+        self.__opts = opts
+    @property
+    def book(self):
+        if not hasattr(self, "_book"):
+            self.__fp = BytesIO()
+            self._book = xlsxwriter.Workbook(self.__fp)
+        return self._book
+    def add_sheet(self, name=None):
+        self._sheet = self.book.add_worksheet()
+    @property
+    def sheet(self):
+        return self._sheet if hasattr(self, "_sheet") else None
+    def merge(self, start_row, start_column, end_row, end_column):
+        self.sheet.merge_cells(
+            start_row=start_row,
+            start_column=start_column,
+            end_row=end_row,
+            end_column=end_column
+        )
+
+    def save(self, directory=None):
+        path = self.filename
+        if directory:
+            path = f"{directory}/{path}"
+        with open(path, "wb") as fp:
+            fp.write(self.book_bytes)
+
+    @property
+    def book_bytes(self):
+        if not hasattr(self, "_book_bytes"):
+            self.__io.seek(0)
+            self._book_bytes = self.__io.read()
+        return self._book_bytes
+
+    def send(self):
+        headers = (
+            f"Content-type: {self.book.mime_type}",
+            f"Content-disposition: attachment; filename={self.filename}"
+        )
+        headers = "\r\n".join(headers) + "\r\n\r\n"
+        sys.stdout.buffer.write(headers.encode("utf-8"))
+        sys.stdout.buffer.write(self.book_bytes)
+
+    def set_width(self, col, width):
+        letter = Excel.get_column_letter(col)
+        self.sheet.column_dimensions[letter].width = width
+
+    def write(self, row, column, value, styles):
+        cell = self.sheet.cell(row=row, column=column, value=value)
+        for name in styles:
+            setattr(cell, name, styles[name])
+        return cell
+
+    @property
+    def hyperlink(self):
+        """Font styling we want for links."""
+        if not hasattr(self, "_hyperlink"):
+            opts = dict(color = "000000FF", underline="single")
+            self._hyperlink = openpyxl.styles.Font(**opts)
+        return self._hyperlink
+
+    @property
+    def bold(self):
+        if not hasattr(self, "_bold"):
+            self._bold = openpyxl.styles.Font(bold=True)
+        return self._bold
+
+    @property
+    def center(self):
+        if not hasattr(self, "_center"):
+            opts = dict(horizontal="center", vertical="top")
+            self._center = openpyxl.styles.Alignment(**opts)
+        return self._center
+
+    @property
+    def right(self):
+        if not hasattr(self, "_right"):
+            opts = dict(horizontal="right", vertical="top")
+            self._center = openpyxl.styles.Alignment(**opts)
+        return self._right
+
+    @property
+    def center_middle(self):
+        """Center both horizontally and vertically."""
+        if not hasattr(self, "_center_middle"):
+            opts = dict(horizontal="center", vertical="center")
+            self._center_middle = openpyxl.styles.Alignment(**opts)
+        return self._center_middle
+
+    @property
+    def title(self):
+        return self.__title
+
+    @property
+    def filename(self):
+        if not hasattr(self, "_filename"):
+            stamp = ""
+            if self.__opts.get("stamp"):
+                stamp = datetime.datetime.now().strftime("-%Y%m%d%H%M%S")
+            title = re.sub(r"\W", "_", self.title)
+            self._filename = f"{title}{stamp}.xlsx"
+        return self._filename
+
+    @classmethod
+    def pixels_to_chars(cls, pixels):
+        """Convert pixels to characters for column widths, etc.
+
+        See https://docs.microsoft.com/en-us/previous-versions/office\
+        /developer/office-2010/cc802410(v=office.14)
+
+        In particular:
+          "To translate from pixels to character width, use this calculation:
+            =Truncate(({pixels}-5)/{Maximum Digit Width} * 100+0.5)/100
+
+        The following code gets the maximum digit width for the default
+        font in a new Excel installation:
+
+        >>> from PIL import ImageFont
+        >>> font = ImageFont.truetype('d:/Windows/Fonts/calibri.ttf', 11)
+        >>> font.getsize("0")
+        (6, 9)
+
+        In other words, 6 pixels wide.
+        """
+        max_digit_width = 6
+        pixels = int(re.sub("[^0-9]+", "", pixels))
+        return int((pixels - 5) / max_digit_width * 100 + 0.5) / 100
+
+EXCEL_CLASS = Excel2
 
 class ExcelStyles:
     """
@@ -1769,7 +2080,7 @@ class Report:
             return [str(v) for v in values]
 
 
-class Reporter(Report):
+class Reporter:
     """New version of the Report class.
 
     Uses the HTMLPage class for HTML report output, avoiding the ugly
@@ -1782,123 +2093,598 @@ class Reporter(Report):
     Example usage:
 
         R = cdrcgi.Reporter
-        cursor = db.connect(user='CdrGuest').cursor()
-        cursor.execute('''\
-            SELECT id, name
-              FROM doc_type
-          ORDER BY name''')
         columns = (
-            R.Column('Type ID', width='75px'),
-            R.Column('Type Name', width='300px')
+            R.Column("Type ID", width="75px"),
+            R.Column("Type Name", width="300px"),
         )
-        rows = cursor.fetchall()
-        table = R.Table(columns, rows, caption='Document Types')
-        report = R('Simple Report', [table])
-        report.send('html')
+        query = db.Query("doc_type", "id", "name").order("name")
+        rows = query.execute().fetchall()
+        table = R.Table(rows, columns=columns, caption="Document Types")
+        report = R("Simple Report", table)
+        report.send("html")
     """
 
-    def _create_html_page(self, **opts):
-        """
-        Separated out from _send_html() so it can be overridden.
-        """
-        return HTMLPage(self._title, **opts)
+    def __init__(self, title, tables, **opts):
+        """Capture the values for the report."""
+        self.__title = title
+        self.__tables = tables
+        self.__opts = opts
 
-    def _send_html(self):
+    def send(self, format="html"):
+        """Send the web page or Excel workbook to the browser."""
+        if format == "excel":
+            self.workbook.send()
+            if self.debug:
+                self.workbook.save(cdr.TMP)
+        else:
+            self.page.send()
+        sys.exit(0)
+
+    @property
+    def banner(self):
+        """Banner for the top of an HTML report (unused for Excel output)."""
+        return self.__opts.get("banner")
+
+    @property
+    def css(self):
+        """Sequence of string for <style> elements on HTML reports."""
+        if not hasattr(self, "_css"):
+            self._css = self.__opts.get("css")
+            if isinstance(self._css, str):
+                self._css = [self._css]
+            elif not self._css:
+                self._css = []
+        return self._css
+
+    @property
+    def debug(self):
+        """Boolean; if True, save the workbook to the file system."""
+        return self.__opts.get("debug")
+
+    @property
+    def elapsed(self):
+        """Optional length of time the report took to generate.
+
+        Will be converted to a string at render time.
         """
-        Internal helper method for Reporter.send()
+
+        return self.__opts.get("elapsed")
+
+    @property
+    def page(self):
+        """HTML version of report."""
+        if not hasattr(self, "_page"):
+            opts = {
+                "banner": self.banner,
+                "subtitle": self.subtitle,
+                "body_classes": "report",
+                "styles": self.css,
+            }
+            opts.update(self.page_opts)
+            self._page = HTMLPage(self.title, **opts)
+            if self.css:
+                self._page.add_css(self.css)
+            for table in self.tables:
+                if table.node is not None:
+                    self._page.body.append(table.node)
+            if self.elapsed:
+                footnote = page.B.P(f"elapsed: {self.elapsed}")
+                footnote.set("class", "footnote")
+                self._page.body.append(footnote)
+        return self._page
+
+    @property
+    def page_opts(self):
+        """Dictionary of options passed to HTMLPage class's constructor."""
+        return self.__opts.get("page_opts") or {}
+
+    @property
+    def subtitle(self):
+        """String for display under the primary banner of the web report.
+
+        Not used for Excel reports.
         """
-        opts = {
-            "banner": self._options.get("banner"),
-            "subtitle": self._options.get("subtitle"),
-            "body_classes": "report",
-        }
-        opts.update(self._options.get("page_opts") or {})
-        page = self._create_html_page(**opts)
-        page.body.set("class", "report")
-        css = self._options.get("css")
-        if css:
-            if isinstance(css, str):
-                css = [css]
-            for c in css:
-                page.head.append(page.B.STYLE(c))
-        for table in self._tables:
-            children = []
-            if table._caption or table._show_report_date:
-                if not table._caption:
-                    lines = []
-                if type(table._caption) in (list, tuple):
-                    lines = list(table._caption)
+
+        return self.__opts.get("subtitle")
+
+    @property
+    def tables(self):
+        """Sequence of tables to be included in the report.
+
+        A single table will be converted to a list.
+        """
+        if not hasattr(self, "_tables"):
+            self._tables = self.__tables
+            if isinstance(self._tables, Reporter.Table):
+                self._tables = [self._tables]
+        return self._tables
+
+    @property
+    def title(self):
+        """Title of the report.
+
+        Used for the workbook filename or the /html/head/title element.
+        """
+
+        return self.__title
+
+    @property
+    def workbook(self):
+        """Wrapper for Excel workbook."""
+        if not hasattr(self, "_workbook"):
+            self._workbook = Excel(self.title, stamp=True)
+            for table in self.tables:
+                table.add_worksheet(self._workbook)
+        return self._workbook
+
+
+    class Cell:
+        """Data for one cell in a report table."""
+
+        B = lxml.html.builder
+
+        def __init__(self, *values, **opts):
+            """Capture the information needed to show this cell on the report.
+            """
+
+            self.__vals = values
+            self.__opts = opts
+
+        def write(self, book, rownum, colnum, columns):
+            """Add this cell's data to the worksheet.
+
+            Only used for the Excel flavor of the report.
+
+            Pass:
+                book - `Excel` object
+                rownum - integer position for the row we're on
+                colnum - starting column for this cell's data
+                columns - sequence of `Reporter.Column` objects for the table
+
+            Return:
+                integer position for the next cell to be written
+            """
+
+            # May have to skip columns if there were previous rowspans.
+            while colnum <= len(columns):
+                if columns[colnum-1].skip > 0:
+                    columns[colnum-1].skip -= 1
+                    colnum += 1
                 else:
-                    lines = [table._caption]
-                if table._show_report_date:
-                    today = datetime.date.today()
-                    lines += ["", f"Report date: {datetime.date.today()}", ""]
-                line = lines.pop(0)
-                caption = page.B.CAPTION(line)
-                while lines:
-                    line = lines.pop(0)
-                    br = page.B.BR()
-                    br.tail = line
-                    caption.append(br)
-                children = [caption]
-            if table._columns:
-                tr = page.B.TR()
-                for column in table._columns:
-                    th = page.B.TH(column._name)
-                    width = style = ""
-                    for name, value in column._options.items():
-                        if value:
-                            if name == "width":
-                                width = value
-                            elif name == "style":
-                                style = value
+                    break
+            if colnum > len(columns):
+                raise Exception(f"too many cells for row {rownum:d}")
+
+            # Assemble the values to be written
+            if len(self.values) == 1:
+                values = self.values[0]
+            else:
+                values = "\n".join([str(value) for value in self.values])
+
+            # Determine the styles to be applied.
+            styles = self.sheet_styles
+            if self.right:
+                styles["alignment"] = book.right
+            elif self.center:
+                styles["alignment"] = book.center
+            elif "alignment" not in styles:
+                styles["alignment"] = book.left
+            if self.href:
+                values = f'=HYPERLINK("{self.href}", "{values}")'
+                styles["font"] = book.hyperlink
+            elif self.bold:
+                styles["font"] = book.bold
+
+            # Handle the case of writing to more than one cell.
+            nextcol = colnum + 1
+            if self.colspan or self.rowspan:
+                colspan = self.colspan or 1
+                rowspan = self.rowspan or 1
+                r1, c1 = r2, c2 = rownum, colnum
+                if colspan > 1:
+                    c2 += colspan - 1
+                    if c2 > len(columns):
+                        msg = "not enough room for colspan on row {rownum:d}"
+                        raise Exception(msg)
+                if rowspan > 1:
+                    extra_rows = rowspan - 1
+                    r2 += extra_rows
+                    while colnum <= c2:
+                        if columns[colnum-1].skip > 0:
+                            msg = "overlapping rowspan at row {rownum:d}"
+                            raise Exception(msg)
+                        columns[colnum-1].skip = extra_rows
+                        colnum += 1
+                nextcol = c2 + 1
+                book.merge(r1, c1, r2, c2)
+                colnum = c1
+            cell = book.write(rownum, colnum, values, styles)
+            # This resulted in horrible performance. Use formula instead.
+            #if self.href:
+            #    cell.hyperlink = self.href
+            return nextcol
+
+        @property
+        def bold(self):
+            """Boolean indicating whether the cell values should be bolded."""
+            return self.__opts.get("bold")
+
+        @property
+        def center(self):
+            """Boolean indicating whether to center the cell's content."""
+            return self.__opts.get("center")
+
+        @property
+        def classes(self):
+            """Sequence of class names for this cell."""
+            if not hasattr(self, "_classes"):
+                classes = self.__opts.get("classes")
+                if not classes:
+                    self._classes = set()
+                elif isinstance(classes, set):
+                    self._classes = classes
+                elif isinstance(classes, str):
+                    self._classes = {classes}
+                elif isinstance(classes, (tuple, list)):
+                    self._classes = set(classes)
+                else:
+                    message = "unexpected type {} for Cell classes: {}"
+                    args = type(classes), repr(classes)
+                    raise Exception(message.format(args))
+                if self.bold and not self.href:
+                    self._classes.add("strong")
+                if self.center:
+                    self._classes.add("center")
+                elif self.right:
+                    self._classes.add("right")
+            return self._classes
+
+        @property
+        def colspan(self):
+            """How many columns does this cell span horizontally?
+
+            Default is 1.
+            """
+
+            if not hasattr(self, "_colspan"):
+                self._colspan = self.__opts.get("colspan")
+                if self._colspan:
+                    self._colspan = int(self._colspan)
+            return self._colspan
+
+        @property
+        def href(self):
+            """URL value for link."""
+            return self.__opts.get("href")
+
+        @property
+        def middle(self):
+            """Override vertical alignment."""
+            return self.__opts.get("middle")
+
+        @property
+        def right(self):
+            """Boolean indicating whether the values should be right aligned.
+            """
+
+            return self.__opts.get("right")
+
+        @property
+        def rowspan(self):
+            """How many rows does this cell span vertically?
+
+            Default is 1.
+            """
+
+            if not hasattr(self, "_rowspan"):
+                self._rowspan = self.__opts.get("rowspan")
+                if self._rowspan:
+                    self._rowspan = int(self._rowspan)
+            return self._rowspan
+
+        @property
+        def sheet_styles(self):
+            """Optional dictionary of style attributes for the Excel report."""
+            if not hasattr(self, "_sheet_styles"):
+                self._sheet_styles = self.__opts.get("sheet_styles") or {}
+            return self._sheet_styles
+
+        @property
+        def target(self):
+            """Target for links.
+
+            Only used for web output, when the `href` option has been set.
+            """
+
+            return self.__opts.get("target")
+
+        @property
+        def td(self):
+            """HTML node for this cell in a web report."""
+            if not hasattr(self, "_td"):
+                self._td = container = self.B.TD()
+                if self.href:
+                    container = self.B.A(href=self.href)
+                    if self.target:
+                        container.set("target", self.target)
+                    if self.bold:
+                        container.set("class", "strong")
+                    self._td.append(container)
+                if len(self.values) == 1:
+                    container.text = str(self.values[0])
+                else:
+                    values = list(self.values)
+                    container.append(self.B.SPAN(str(values.pop(0))))
+                    while values:
+                        container.append(self.B.BR())
+                        container.append(self.B.SPAN(str(values.pop(0))))
+                if self.colspan:
+                    self._td.set("colspan", str(self.colspan))
+                if self.rowspan:
+                    self._td.set("rowspan", str(self.rowspan))
+                if self.classes:
+                    self._td.set("class", " ".join(self.classes))
+                if self.title:
+                    self._td.set("title", self.title)
+            return self._td
+
+        @property
+        def title(self):
+            """Optional string to be shown in popup when hovering."""
+            if not hasattr(self, "_title"):
+                if "title" in self.__opts:
+                    self._title = self.__opts["title"]
+                elif "tooltip" in self.__opts:
+                    self._title = self.__opts["tooltip"]
+                else:
+                    self._title = None
+            return self._title
+
+        @property
+        def tooltip(self):
+            """Alias for the title property."""
+            return self.title
+
+        @property
+        def values(self):
+            """Collect the values for the cell into a sequence."""
+            if not hasattr(self, "_values"):
+                self._values = []
+                for value in self.__vals:
+                    if isinstance(value, (list, tuple)):
+                        self._values += list(value)
+                    elif value is not None:
+                        self._values.append(value)
+                if not self._values:
+                    self._values = [""]
+            return self._values
+
+
+    class Column:
+        """Header and properties for one column in a report table."""
+
+        def __init__(self, name, **opts):
+            """Save what we need to render this column in the report."""
+            self.__name = name
+            self.__opts = opts
+
+        @property
+        def name(self):
+            """What we display at the top of the column."""
+            return self.__name
+
+        @property
+        def skip(self):
+            """Keep track of rows to be skipped when rowspan is set."""
+            if not hasattr(self, "_skip"):
+                self._skip = 0
+            return self._skip
+
+        @skip.setter
+        def skip(self, other):
+            """Let table rendering modify this value."""
+            self._skip = other
+
+        @property
+        def style(self):
+            """HTML style attribute for column element on web page."""
+            if not hasattr(self, "_style"):
+                self._style = None
+                style = self.__opts.get("style") or ""
+                rules = [r for r in style.rstrip(";").split(";") if r]
+                if self.width:
+                    rules.append(f"min-width: {self.width}")
+                if rules:
+                    self._style = ";".join(rules)
+            return self._style
+
+        @property
+        def width(self):
+            """Minimum width of column (e.g., '40px')."""
+            return self.__opts.get("width")
+
+
+    class Table:
+        """Grid of rows and columns for the report.
+
+        A report can have more than one table.
+        """
+
+        B = lxml.html.builder
+
+        def __init__(self, rows, **opts):
+            """Capture the information we need to render the table."""
+            self.__rows = rows
+            self.__opts = opts
+
+        def add_worksheet(self, book):
+            """Create an Excel worksheet and add it to the workbook.
+
+            Pass:
+                book
+                    `Excel` object
+            """
+
+            # Create a new worksheet.
+            self.sheet = book.add_sheet(self.sheet_name)
+            self.sheet.sheet_format.defaultRowHeight = 200
+
+            # Add the rows for the caption strings.
+            rownum = 1
+            styles = dict(alignment=book.center, font=book.bold)
+            for caption in self.caption:
+                book.merge(rownum, 1, rownum, len(self.columns))
+                book.write(rownum, 1, caption, styles)
+                rownum += 1
+            book.merge(rownum, 1, rownum, len(self.columns))
+            rownum += 1
+
+            # Set the column headers and widths.
+            colnum = 1
+            styles["alignment"] = book.center_middle
+            for column in self.columns:
+                if column.width:
+                    width = book.pixels_to_chars(column.width)
+                    book.set_width(colnum, width)
+                book.write(rownum, colnum, column.name, styles)
+                colnum += 1
+
+            # Add each of the data rows to the worksheet.
+            for row in self.rows:
+                rownum += 1
+                colnum = 1
+                for cell in row:
+                    if not isinstance(cell, Reporter.Cell):
+                        cell = Reporter.Cell(cell)
+                    colnum = cell.write(book, rownum, colnum, self.columns)
+
+        @property
+        def caption(self):
+            """Sequence of strings to be displayed for the table's caption.
+
+            If more than one string, each will be rendered on a separate line.
+            """
+
+            if not hasattr(self, "_caption"):
+                self._caption = self.__opts.get("caption")
+                if not self._caption:
+                    self._caption = []
+                elif isinstance(self._caption, str):
+                    self._caption = [self._caption]
+            return self._caption
+
+        @property
+        def cols(self):
+            """Alias for `columns` property."""
+            return self.columns
+
+        @property
+        def columns(self):
+            """Sequence of `Reporter.Column` objects for this table."""
+            if not hasattr(self, "_columns"):
+                self._columns = []
+                columns = self.__opts.get("columns") or self.__opts.get("cols")
+                if columns:
+                    self._columns = []
+                    for column in columns:
+                        if isinstance(column, str):
+                            column = Reporter.Column(column)
+                        self._columns.append(column)
+            return self._columns
+
+        @property
+        def rows(self):
+            """Sequence of data cells displayed by the table."""
+            return self.__rows
+
+        @property
+        def sheet_name(self):
+            """Optional name of the sheet.
+
+            Not used for HTML reports. Defaults to "SheetN" where
+            N is the number of existing sheets plus 1.
+            """
+
+            return self.__opts.get("sheet_name")
+
+        @property
+        def stripe(self):
+            """Alias for the `striping` property."""
+            return self.striping
+
+        @property
+        def striping(self):
+            """Boolean (True: use different colors for alternating rows.
+
+            Default is False.
+            """
+
+            if not hasattr(self, "_striping"):
+                stripes = self.__opts.get("striping")
+                if stripes is None:
+                    stripes = self.__opts.get("stripe")
+                self._striping = True if stripes else False
+            return self._striping
+
+        @property
+        def node(self):
+            """HTML object for table."""
+            if not hasattr(self, "_node"):
+
+                # Hold off until we know we have child nodes for the table.
+                self._node = None
+                children = []
+
+                # Add the caption strings to the table if we have any.
+                if self.caption:
+                    nodes = [self.B.SPAN(self.caption[0])]
+                    for line in self.caption[1:]:
+                        nodes.append(self.B.BR())
+                        nodes.append(self.B.SPAN(line))
+                    children.append(self.B.CAPTION(*nodes))
+
+                # Add the column headers if they have been provided.
+                if self.columns:
+                    tr = self.B.TR()
+                    for column in self.columns:
+                        th = self.B.TH(column.name)
+                        if column.style:
+                            th.set("style", column.style)
+                        tr.append(th)
+                    children.append(self.B.THEAD(tr))
+
+                # Only create the <tbody> element if there are data rows.
+                if self.rows:
+                    tbody = self.B.TBODY()
+                    if self.striping:
+                        prev_rowspan = 0
+                        tr_class = None
+                    for row in self.rows:
+                        tr = self.B.TR()
+                        if self.striping:
+                            if prev_rowspan:
+                                prev_rowspan -= 1
                             else:
-                                th.set(name, "value")
-                    rules = [r for r in style.rstrip(";").split(";") if r]
-                    if width:
-                        rules.append(f"min-width:{value}")
-                    if rules:
-                        th.set("style", f"{';'.join(rules)};")
-                    tr.append(th)
-                children.append(page.B.THEAD(tr))
-            if table._rows:
-                tbody = page.B.TBODY()
-                if table._stripe:
-                    prev_rowspan = 0
-                    cls = None
-                for row in table._rows:
-                    tr = page.B.TR()
-                    if table._stripe:
-                        if not prev_rowspan:
-                            cls = cls == "odd" and "even" or "odd"
-                        else:
-                            prev_rowspan -= 1
-                        tr.set("class", cls)
-                    else:
-                        page.add("<tr>")
-                    for cell in row:
-                        if isinstance(cell, self.Cell):
-                            td = cell.to_td()
-                            if table._stripe and cell._rowspan:
-                                extra_rows = int(cell._rowspan) - 1
+                                if tr_class == "odd":
+                                    tr_class = "even"
+                                else:
+                                    tr_class = "odd"
+                            tr.set("class", tr_class)
+                        for cell in row:
+                            if not isinstance(cell, Reporter.Cell):
+                                cell = Reporter.Cell(cell)
+                            tr.append(cell.td)
+                            if self.striping and cell.rowspan:
+                                extra_rows = cell.rowspan - 1
                                 if extra_rows > prev_rowspan:
                                     prev_rowspan = extra_rows
-                        else:
-                            td = page.B.TD()
-                            self.Cell.set_values(td, cell)
-                        tr.append(td)
-                    tbody.append(tr)
-                children.append(tbody)
-            if children:
-                page.body.append(page.B.TABLE(*children))
-            if table._html_callback_post:
-                table._html_callback_post(table, page)
-        elapsed = self._options.get("elapsed")
-        if elapsed:
-            footnote = page.B.P(f"elapsed: {elapsed}")
-            footnote.set("class", "footnote")
-            page.body.append(footnote)
-        page.send()
+                        tbody.append(tr)
+                    children.append(tbody)
+
+                # Create the table element if we found any child nodes.
+                if children:
+                    self._node = self.B.TABLE(*children)
+            return self._node
 
 
 class Controller:
@@ -1914,6 +2700,7 @@ class Controller:
     """
 
     PAGE_TITLE = "CDR Administration"
+    TITLE = PAGE_TITLE
     SUBTITLE = None
     REPORTS_MENU = SUBMENU = "Reports Menu"
     ADMINMENU = MAINMENU
@@ -1924,11 +2711,22 @@ class Controller:
     LOGNAME = "reports"
     LOGLEVEL = "INFO"
 
-    def __init__(self, title=None, subtitle=None, **opts):
+    def __init__(self, **opts):
         """Set up a skeletal controller.
 
         Derived class fleshes it out, including fetching and
         validating options for the specific report.
+
+        Pass:
+            title
+                string
+            banner
+            subtitle
+            script
+            format
+            logger
+            session
+            buttons
         """
 
         self.__started = datetime.datetime.now()
@@ -1937,16 +2735,19 @@ class Controller:
     def run(self):
         """Override in derived class if there are custom actions."""
         try:
-            if self.request == self.ADMINMENU:
-                navigateTo("Admin.py", self.session.name)
-            elif self.request == self.REPORTS_MENU:
-                navigateTo("Reports.py", self.session.name)
-            elif self.request == self.DEVMENU:
-                navigateTo("DevSA.py", self.session.name)
-            elif self.request == self.LOG_OUT:
-                logout(self.session.name)
-            elif self.request == self.SUBMIT:
-                self.show_report()
+            if self.request:
+                if self.request == self.ADMINMENU:
+                    navigateTo("Admin.py", self.session.name)
+                elif self.request == self.REPORTS_MENU:
+                    navigateTo("Reports.py", self.session.name)
+                elif self.request == self.DEVMENU:
+                    navigateTo("DevSA.py", self.session.name)
+                elif self.request == self.LOG_OUT:
+                    logout(self.session.name)
+                elif self.request and self.request == self.SUBMIT:
+                    self.show_report()
+                else:
+                    self.show_form()
             else:
                 self.show_form()
         except Exception as e:
@@ -2014,7 +2815,7 @@ class Controller:
     @property
     def title(self):
         """Title to be used for the page."""
-        return self.__opts.get("title") or self.PAGE_TITLE
+        return self.__opts.get("title") or self.TITLE or self.PAGE_TITLE
 
     @property
     def banner(self):
@@ -4305,6 +5106,10 @@ jQuery(function() {
         """Push the page back to the browser via the web server."""
         sendPage(self.tostring())
 
+    def add_css(self, css):
+        """Add style rules directly to the page."""
+        self.page.head.append(self.B.STYLE(css))
+
     def add_output_options(self, default=None, onclick=None):
         """
         Allow the user to decide between HTML and Excel.
@@ -4324,6 +5129,18 @@ jQuery(function() {
         if self.form is not None:
             if not self.form.xpath(f"//input[@name='{SESSION}']"):
                 self.form.append(self.hidden_field(SESSION, session))
+
+    def menu_link(self, script, display, **params):
+        """
+        Add a list item containing a CDR admin menu link.
+        """
+
+        url = script
+        if self.session and SESSION not in params:
+            params[SESSION] = self.session
+        if params:
+            url = f"{url}?{urllib.parse.urlencode(params)}"
+        return self.B.A(display, href=url)
 
     @property
     def action(self):
@@ -4358,6 +5175,8 @@ jQuery(function() {
 
         if not hasattr(self, "_body"):
             self._body = self.B.BODY(id=self.body_id)
+            if self.body_classes:
+                self._body.set("class", " ".join(self.body_classes))
             banner = self.B.H1(self.banner_title)
             header = self.B.E("header", banner)
             if self.subtitle:
@@ -4384,6 +5203,18 @@ jQuery(function() {
             if not self._body_id:
                 self._body_id = "cdr-page"
         return self._body_id
+
+    @property
+    def body_classes(self):
+        if not hasattr(self, "_body_classes"):
+            classes = self.__opts.get("body_classes")
+            if classes:
+                if isinstance(classes, str):
+                    classes = classes.strip().split()
+                self._body_classes = set(classes)
+            else:
+                self._body_classes = set()
+        return self._body_classes
 
     @property
     def buttons(self):
