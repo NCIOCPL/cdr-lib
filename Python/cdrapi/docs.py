@@ -2088,7 +2088,7 @@ class Doc(object):
             query.where("c.dt_in IS NULL")
             rows = query.execute(self.cursor).fetchall()
             if rows:
-                user_id, name, fullname, checked_out = row[0]
+                user_id, name, fullname, checked_out = rows[0]
                 if user_id != self.session.user_id:
                     args = self.session.user_name, name, fullname, checked_out
                     message = "User {} cannot check-in document checked out "

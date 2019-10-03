@@ -33,6 +33,108 @@ from cdrapi.searches import QueryTermDef, Search
 
 
 # ======================================================================
+# CDR Board information
+# ======================================================================
+
+class Board:
+    NAME_PATH = "/Organization/OrganizationNameInformation/OfficialName/Name"
+    ORG_TYPE_PATH = "/Organization/OrganizationType"
+    PREFIX = "PDQ "
+    SUFFIXES = " Editorial Board", " Advisory Board"
+    EDITORIAL = "Editorial"
+    ADVISORY = "Advisory"
+    BOARD_TYPES = EDITORIAL, ADVISORY
+    def __init__(self, id, **opts):
+        self.__id = id
+        self.__opts = opts
+    def __str__(self):
+        return self.short_name
+    def __repr__(self):
+        return f"{self.name} (CDR{self.id})"
+    @property
+    def id(self):
+        return self.__id
+    @property
+    def cursor(self):
+        if not hasattr(self, "_cursor"):
+            self._cursor = self.__opts.get("cursor")
+            if not self._cursor:
+                self._cursor = cdrdb.connect().cursor()
+        return self._cursor
+    @property
+    def name(self):
+        if not hasattr(self, "_name"):
+            self._name = self.__opts.get("name")
+            if not self._name and self.id:
+                query = cdrdb.Query("query_term", "value")
+                query.where(query.Condition("path", self.NAME_PATH))
+                query.where(query.Condition("doc_id", self.id))
+                for row in query.execute(self.cursor):
+                    self._name = row.value
+        return self._name
+    @property
+    def type(self):
+        if not hasattr(self, "_type"):
+            self._type = self.__opts.get("type")
+            if not self._type:
+                if self.name is not None:
+                    if self.EDITORIAL.lower() in self.name.lower():
+                        self._type = self.EDITORIAL
+                    elif self.ADVISORY.lower() in self.name.lower():
+                        self._type = self.ADVISORY
+        return self._type
+    @property
+    def short_name(self):
+        """Trimmed version of the name, suitable for web form picklists."""
+        if not hasattr(self, "_short_name"):
+            self._short_name = self.name
+            if self._short_name:
+                if self._short_name.startswith(self.PREFIX):
+                    self._short_name = self._short_name[len(self.PREFIX):]
+                for suffix in self.SUFFIXES:
+                    if self._short_name.endswith(suffix):
+                        self._short_name = self._short_name[:-len(suffix)]
+        return self._short_name
+    @property
+    def tab_name(self):
+        """Version of the name short enough to fit on an Excel tab."""
+        if not self.short_name:
+            return None
+        if "alternative" in self.short_name.lower():
+            return "IACT"
+        return self.short_name
+    def __lt__(self, other):
+        return (self.name or "") < (other.name or "")
+    @classmethod
+    def get_boards(cls, board_type=EDITORIAL, cursor=None):
+        """Dictionary of PDQ boards, indexed by Organization document ID.
+
+        Pass:
+            board_type:
+                None for all boards
+                "Editorial" for the editorial boards only (the default)
+                "Advisory" for the advisory boards only
+            cursor:
+                optional database cursor object
+        """
+        query = cdrdb.Query("query_term n", "n.doc_id", "n.value").unique()
+        query.join("query_term t", "t.doc_id = n.doc_id")
+        query.join("active_doc a", "a.id = n.doc_id")
+        query.where(query.Condition("n.path", cls.NAME_PATH))
+        query.where(query.Condition("t.path", cls.ORG_TYPE_PATH))
+        if board_type in cls.BOARD_TYPES:
+            query.where(query.Condition("t.value", f"PDQ {board_type} Board"))
+        else:
+            types = [f"PDQ {bt} Board" for bt in cls.BOARD_TYPES]
+            query.where(query.Condition("t.value", types, "IN"))
+        boards = {}
+        for board_id, board_name in query.execute():
+            boards[board_id] = cls(board_id, name=board_name)
+        return boards
+
+
+
+# ======================================================================
 # Manage CDR control values
 # ======================================================================
 
