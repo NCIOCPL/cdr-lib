@@ -639,7 +639,7 @@ class FormLetter(Document):
         """
 
         with open(self.pngName, "rb") as fp:
-            logo = f.read()
+            logo = fp.read()
         dhhs = "DEPARTMENT OF HEALTH & HUMAN SERVICES"
         phs  = "\\tab Public Health Service\\par"
         nih  = "\\tab National Institutes of Health\\par"
@@ -653,7 +653,7 @@ class FormLetter(Document):
                            "\\picscalex25"   # reduce to 1/4 size ...
                            "\\picscaley25"   # ... in both dimensions
                            "%s}\\par}\n"     # the image data
-                           % self.__writeImageBytes(logo, binImage))
+                           % self.__writeImageBytes(logo)) #, binImage))
         self.addRawContent("{\\pard"         # clear out paragraph settings
                            "\\pvpg\\phpg"    # page-relative positioning
                            "\\posx2300"      # left edge of logo text
@@ -693,6 +693,13 @@ class FormLetter(Document):
         return miscDoc.getRtf()
 
 class MiscellaneousDoc:
+
+    MARKUP = dict(
+        Strong="b",
+        Emphasis="i",
+        Superscript="super",
+        Subscript="sub",
+    )
 
     "Object that knows how to convert a CDR Miscellaneous document to RTF."
 
@@ -747,11 +754,11 @@ class MiscellaneousDoc:
         RTF markup.
         """
 
-        self.pieces.append(MiscellaneousDoc.__getText(node).strip())
+        self.pieces.append(self.__getText(node).strip())
         self.pieces.append("\\par\\par\n")
 
-    @staticmethod
-    def __getText(node):
+    @classmethod
+    def __getText(cls, node):
 
         """
         Private method to extract the text nodes from the XML
@@ -759,38 +766,18 @@ class MiscellaneousDoc:
         """
 
         pieces = []
+        code = cls.MARKUP.get(node.tag)
+        if code:
+            pieces.append(f"{{\\{code} ")
         if node.text is not None:
             pieces.append(fix(node.text))
-        for child in node:
-            code = MARKUP.get(child.tag)
-            if code is not None:
-                MiscellaneousDoc.__addMarkup(pieces, child, code)
-            elif child.tag == "ExternalRef":
-                MiscellaneousDoc.__addRef(child)
+        for child in node.findall("*"):
+            pieces.append(cls.__getText(child))
+            if child.tail is not None:
+                pieces.append(child.tail)
+        if code:
+            pieces.append("}")
         return "".join(pieces)
-
-    @staticmethod
-    def __addMarkup(pieces, node, code):
-
-        """
-        Private method to wrap a string of text with RTF markup to
-        alter its appearance (for example, to apply boldface or
-        italic rendering for the text).
-        """
-
-        pieces.append(f"{{\\{code} ")
-        pieces.append(fix("".join(node.itertext("*"))))
-        pieces.append("}")
-
-    @staticmethodd
-    def __addRef(self, node):
-
-        """
-        Private method to convert an XML ExternalRef element to the
-        RTF equivalent.  Not yet implemented.
-        """
-
-        raise Exception("__addRef not yet implemented")
 
     def __addList(self, node, name):
 
@@ -806,7 +793,7 @@ class MiscellaneousDoc:
             listId = List.BULLETED
         self.pieces.append(f"{{\\li580{{\\ls{listId:d} ")
         for item in node.findall("ListItem"):
-            self.pieces.append(MiscellaneousDoc.__getText(item).strip())
+            self.pieces.append(self.__getText(item).strip())
             self.pieces.append("\\par\n")
         self.pieces.append("}}\n\\par\n")
 

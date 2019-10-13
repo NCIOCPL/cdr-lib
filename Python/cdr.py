@@ -197,7 +197,7 @@ def updateCtl(credentials, action, **opts):
                   "Create"
                       add a new row to the table, assigning a value for
                       a group/name combination; any existing rows for
-                      that comibinaty will be inactivated
+                      that combination will be inactivated
                   "Inactivate"
                       mark the row for a group/name combination as
                       inactivated
@@ -4053,7 +4053,7 @@ class Logging:
 
         logger = logging.getLogger(name)
         level = opts.get("level", "info")
-        logger.setLevel(cls.LEVELS.get(level, logging.INFO))
+        logger.setLevel(cls.LEVELS.get(level.lower(), logging.INFO))
         logger.propagate = opts.get("propagate", False)
         if not logger.handlers or opts.get("multiplex"):
             path = opts.get("path", "%s/%s.log" % (DEFAULT_LOGDIR, name))
@@ -4547,7 +4547,7 @@ SENDCMDS_SLEEP = 3
 PDQDTDPATH = f"{BASEDIR}/licensee".replace("/", os.path.sep)
 DEFAULT_DTD = f"{PDQDTDPATH}/pdqCG.dtd".replace("/", os.path.sep)
 NAMESPACE = "cips.nci.nih.gov/cdr"
-LOGGER = Logging.get_logger("cdr-client", level="debug", console=True)
+LOGGER = Logging.get_logger("cdr-client", level="debug")
 Group = Session.Group
 Action = Session.Action
 try:

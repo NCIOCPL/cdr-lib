@@ -595,6 +595,20 @@ class Doc(object):
         return None
 
     @property
+    def last_valid_version(self):
+        """
+        Integer for the most recently created publishable version, if any
+        """
+
+        if not self.id:
+            return None
+        query = Query("doc_version", "MAX(num) AS n")
+        query.where(query.Condition("id", self.id))
+        query.where("val_status = 'V'")
+        rows = query.execute(self.cursor).fetchall()
+        return rows[0].n if rows else None
+
+    @property
     def last_version(self):
         """
         Integer for the most recently saved version, if any; else None
@@ -823,6 +837,8 @@ class Doc(object):
                     if not version:
                         raise Exception(self.NO_PUBLISHABLE_VERSIONS)
                     self._version = version
+                elif version.startswith("lastv"):
+                    self._version = self.last_valid_version
 
                 # Version labels have never been used, but you never know!
                 elif version.startswith("label "):
@@ -927,7 +943,7 @@ class Doc(object):
         bogus = (opts.get("bogus") or "N").upper()
         mappable = (opts.get("mappable") or "Y").upper()
         assert bogus in "YN", "Bogus 'bogus' option"
-        assert mappable in "YN", "Invalidate 'mappable' options"
+        assert mappable in "YN", "Invalid 'mappable' options"
 
         # Find the usage ID and action name.
         query = Query("external_map_usage u", "u.id", "a.name")
@@ -2701,6 +2717,16 @@ class Doc(object):
             for node in root.iter("*"):
                 node.set("cdr-eid", f"_{eid:d}")
                 eid += 1
+
+    def __lt__(self, other):
+        """
+        Allow sorting of documents by normalized title.
+
+        Pass:
+            other - `Doc` object with which we are comparing this one.
+        """
+
+        return self.title.lower().strip() < other.title.lower().strip()
 
     def __namespaces_off(self, root):
         """
@@ -4885,6 +4911,10 @@ class Doctype:
         self.__session = session
         self.__opts = opts
 
+    def __str__(self):
+        """How to display the document type."""
+        return self.name
+
     @property
     def active(self):
         """
@@ -4986,9 +5016,7 @@ class Doctype:
                 rows = query.execute(self.cursor).fetchall()
                 if rows:
                     self._format, self._format_id = rows[0]
-                else:
-                    self._format = "xml"
-            else:
+            if not self._format:
                 self._format = "xml"
         return self._format
 
@@ -5151,7 +5179,7 @@ class Doctype:
                 query.where(query.Condition("t.id", self.id))
                 rows = query.execute(self.cursor).fetchall()
                 if rows:
-                    self._title_filter_id, self._title_filter = row[0]
+                    self._title_filter_id, self._title_filter = rows[0]
             else:
                 self.session.logger.warning("@title_filter: no doctype id")
                 self._title_filter = None
@@ -5486,6 +5514,20 @@ class Doctype:
         return [row.name for row in query.execute(session.cursor).fetchall()]
 
     @staticmethod
+    def list_formats(session):
+        """Assemble the list of CDR document type format names.
+
+        Pass:
+          session - reference to object representing user's login
+
+        Return:
+          sequence of document type format names, sorted alphabetically
+        """
+
+        query = Query("format", "name").order("name")
+        return [row.name for row in query.execute(session.cursor).fetchall()]
+
+    @staticmethod
     def list_schema_docs(session):
         """
         Assemble the list of schema documents currently stored in the CDR
@@ -5505,6 +5547,22 @@ class Doctype:
         query = Query("document d", "d.title").order("d.title")
         query.join("doc_type t", "t.id = d.doc_type")
         query.where("t.name = 'schema'")
+        return [row.title for row in query.execute(session.cursor).fetchall()]
+
+    @staticmethod
+    def list_title_filters(session):
+        """Assemble the list of CDR document type format names.
+
+        Pass:
+          session - reference to object representing user's login
+
+        Return:
+          sequence of document type format names, sorted alphabetically
+        """
+
+        query = Query("document d", "d.title").order("d.title")
+        query.join("doc_type t", "t.id = d.doc_type")
+        query.where(query.Condition("d.title", "DocTitle for %", "LIKE"))
         return [row.title for row in query.execute(session.cursor).fetchall()]
 
     @classmethod
@@ -7619,7 +7677,7 @@ class FilterSet:
         Optional positional arguments:
           id - primary key into the `filter_set` table
           name - string by which the set is known
-          desc - brief description of the set, used for UI
+          description - brief description of the set, used for UI
           notes - more extensive optional notes on the use of the filter set
           members - sequence of `Doc` and/or nested `FilterSet` objects
 
@@ -7630,6 +7688,10 @@ class FilterSet:
         self.__session = session
         self.__opts = opts
         self.session.logger.debug("FilterSet(opts=%s)", opts)
+
+    def __lt__(self, other):
+        """Make the filter sets sortable by name."""
+        return self.name.lower().strip() < other.name.lower().strip()
 
     @property
     def cursor(self):

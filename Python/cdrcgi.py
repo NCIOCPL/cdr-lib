@@ -91,6 +91,7 @@ ISPLAIN  = "." not in THISHOST
 DOMAIN   = "." + ".".join(SPLTNAME[1:])
 DAY_ONE  = cdr.URDATE
 
+
 #----------------------------------------------------------------------#
 #                        NEW CLASSES -- USE THESE                      #
 #----------------------------------------------------------------------#
@@ -131,6 +132,7 @@ class Controller:
     FORMATS = "html", "excel"
     LOGNAME = "reports"
     LOGLEVEL = "INFO"
+    METHOD = "post"
 
     def __init__(self, **opts):
         """Set up a skeletal controller."""
@@ -188,8 +190,22 @@ class Controller:
 
     def log_elapsed(self):
         """Record how long this took."""
-        elapsed = datetime.datetime.now() - self.__started
-        self.logger.info(f"elapsed: {elapsed.total_seconds():f}")
+        self.logger.info(f"elapsed: {self.elapsed.total_seconds():f}")
+
+    @property
+    def HTMLPage(self):
+        """Allow overriding of page class."""
+        return HTMLPage
+
+    @property
+    def Query(self):
+        """Convenience reference to database query class object."""
+        return db.Query
+
+    @property
+    def Reporter(self):
+        """Allow overriding of page class."""
+        return Reporter
 
     @property
     def banner(self):
@@ -235,6 +251,11 @@ class Controller:
         return self._cursor
 
     @property
+    def elapsed(self):
+        """How long have we been running?"""
+        return datetime.datetime.now() - self.started
+
+    @property
     def fields(self):
         """CGI fields for the web form."""
         if not hasattr(self, "_fields"):
@@ -269,11 +290,21 @@ class Controller:
         if not hasattr(self, "_logger"):
             self._logger = self.__opts.get("logger")
             if self._logger is None:
-                opts = dict(level=self.LOGLEVEL)
+                opts = dict(level=self.loglevel)
                 self._logger = cdr.Logging.get_logger(self.LOGNAME, **opts)
-            if self.title:
-                self._logger.info("started %s", self.title)
+            if self.subtitle:
+                self._logger.info("started %s", self.subtitle)
         return self._logger
+
+    @property
+    def loglevel(self):
+        """Override this to provide runtime control of logging."""
+        return self.LOGLEVEL
+
+    @property
+    def method(self):
+        """Allow override of form method."""
+        return self.fields.getvalue("method") or self.METHOD
 
     @property
     def report(self):
@@ -290,7 +321,6 @@ class Controller:
                 "subtitle": self.subtitle,
                 "page_opts": {
                     "buttons": buttons,
-                    "action": self.script,
                     "session": self.session,
                     "action": buttons and self.script or None
                 }
@@ -340,6 +370,11 @@ class Controller:
         return self._session
 
     @property
+    def started(self):
+        """When did we start processing?"""
+        return self.__started
+
+    @property
     def subtitle(self):
         """String to be displayed under the main banner, if supplied."""
         return self.__opts.get("subtitle") or self.SUBTITLE
@@ -349,6 +384,32 @@ class Controller:
         """Title to be used for the page."""
         return self.__opts.get("title") or self.TITLE or self.PAGE_TITLE
 
+    @staticmethod
+    def bail(message=TAMPERING, banner="CDR Web Interface", extra=None,
+             logfile=None):
+        """
+        Send an error page to the browser with a specific banner and title.
+        Pass:
+            message - Display this.
+            banner  - Optional changed line for page banner.
+            extra   - Optional sequence of extra lines to append.
+            logfile - Optional name of logfile to write to.
+        Return:
+            No return. Exits here.
+        """
+
+        opts = dict(banner=banner, subtitle="An error has occurred", scripts=[])
+        page = HTMLPage("CDR Error", **opts)
+        page.body.append(page.B.P(message, page.B.CLASS("error")))
+        if extra:
+            for arg in extra:
+                page.body.append(page.B.P(str(arg), page.B.CLASS("error")))
+        if logfile:
+            if logfile.lower().endswith(".log"):
+                logfile = logfile[:-4]
+            logger = cdr.Logging.get_logger(logfile)
+            logger.error("cdrcgi bailout: %s", message)
+        page.send()
 
 class FormFieldFactory:
     """Provide class methods for creating HTML form fields.
@@ -596,6 +657,8 @@ class FormFieldFactory:
 
     @classmethod
     def hidden_field(cls, name, value):
+        if value is None:
+            value = ""
         return cls.B.INPUT(name=name, value=str(value), type="hidden")
 
     @classmethod
@@ -720,6 +783,8 @@ class FormFieldFactory:
                     value, display = option
                 else:
                     value = display = option
+                if value is None:
+                    value = ""
                 option = cls.B.OPTION(str(display), value=str(value))
                 if value in default:
                     option.set("selected")
@@ -748,6 +813,8 @@ class FormFieldFactory:
         """
 
         field = cls.__field(name, "textarea", **kwargs)
+        if "rows" in kwargs:
+            field.set("rows", str(kwargs["rows"]))
         wrapper = cls.__wrapper(name, **kwargs)
         wrapper.append(field)
         return wrapper
@@ -836,7 +903,10 @@ class FormFieldFactory:
         """
 
         # Create the object for the field element.
-        value = str(kwargs.get("value") or "")
+        value = kwargs.get("value")
+        if value is None:
+            value = ""
+        value = str(value)
         if field_type == "textarea":
             field = cls.B.TEXTAREA(value, name=name)
         elif field_type == "select":
@@ -956,11 +1026,15 @@ class FormFieldFactory:
         # Create the field and its wrapper.
         wrapper = cls.__wrapper(group, clickable=True, **kwargs)
         widget = cls.__field(group, field_type, **kwargs)
+        widget.tail = " "
 
         # Add attributes unique to radio buttons and checkboxes.
         if kwargs.get("checked"):
             widget.set("checked")
-        value = str(kwargs.get("value", ""))
+        value = kwargs.get("value")
+        if value is None:
+            value = ""
+        value = str(value)
         onclick = kwargs.get("onclick", f"check_{group}('{value}')")
         if onclick:
             widget.set("onclick", onclick.replace("-", "_"))
@@ -972,6 +1046,7 @@ class FormFieldFactory:
         if kwargs.get("tooltip"):
             label.set("title", kwargs["tooltip"])
         wrapper.append(widget)
+        #wrapper.append(cls.B.SPAN(" "))
         wrapper.append(label)
         return wrapper
 
@@ -1108,6 +1183,17 @@ jQuery(function() {
 
     def send(self):
         """Push the page back to the browser via the web server."""
+        if self.body.get("class") == "admin-menu" and self.news:
+            header = self.body.find("form/header")
+            if header is not None:
+                for name in reversed(sorted(self.news, key=str.lower)):
+                    news = self.news[name]
+                    p = self.B.P(news)
+                    if "error" in name.lower() or "failure" in name.lower():
+                        p.set("class", "failure news")
+                    else:
+                        p.set("class", "info news")
+                    header.addnext(p)
         sendPage(self.tostring())
 
     def add_css(self, css):
@@ -1127,6 +1213,8 @@ jQuery(function() {
         fieldset.set("id", "report-format-block")
         self.form.append(fieldset)
         for value, label in choices:
+            if value is None:
+                value = ""
             opts = dict(label=label, value=value, onclick=onclick)
             if value == default:
                 opts["checked"] = True
@@ -1308,6 +1396,13 @@ jQuery(function() {
         return self.__opts.get("method", "post")
 
     @property
+    def news(self):
+        """Information to be displayed at the top of the menu pages."""
+        if not hasattr(self, "_news"):
+            self._news = cdr.getControlGroup("news")
+        return self._news
+
+    @property
     def scripts(self):
         """Client-side scripts to be loaded for the page."""
         if not hasattr(self, "_scripts"):
@@ -1477,10 +1572,17 @@ class Reporter:
     def workbook(self):
         """Wrapper for Excel workbook."""
         if not hasattr(self, "_workbook"):
-            self._workbook = Excel(self.title, stamp=True)
+            opts = dict(stamp=True)
+            if self.wrap is not None:
+                opts["wrap"] = self.wrap
+            self._workbook = Excel(self.title, stamp=True, wrap=self.wrap)
             for table in self.tables:
                 table.add_worksheet(self._workbook)
         return self._workbook
+
+    @property
+    def wrap(self):
+        return self.__opts.get("wrap")
 
 
     class Cell:
@@ -1737,6 +1839,16 @@ class Reporter:
             self.__opts = opts
 
         @property
+        def classes(self):
+            """Optional classes for the th element (HTML only)."""
+            return self.__opts.get("classes")
+
+        @property
+        def id(self):
+            """Optional unique ID for the th element (HTML only)."""
+            return self.__opts.get("id")
+
+        @property
         def name(self):
             """What we display at the top of the column."""
             return self.__name
@@ -1826,6 +1938,12 @@ class Reporter:
                         cell = Reporter.Cell(cell)
                     colnum = cell.write(book, rownum, colnum, self.columns)
 
+        def debug(self, message, *args):
+            """If we have a logger, use it for debugging."""
+
+            if self.logger:
+                self.logger.debug(message, *args)
+
         @property
         def caption(self):
             """Sequence of strings to be displayed for the table's caption.
@@ -1840,6 +1958,11 @@ class Reporter:
                 elif isinstance(self._caption, str):
                     self._caption = [self._caption]
             return self._caption
+
+        @property
+        def classes(self):
+            """Optional classes for the table element (HTML only)."""
+            return self.__opts.get("classes")
 
         @property
         def cols(self):
@@ -1861,19 +1984,14 @@ class Reporter:
             return self._columns
 
         @property
-        def rows(self):
-            """Sequence of data cells displayed by the table."""
-            return self.__rows
+        def id(self):
+            """Optional id attribute for the table element (HTML only)."""
+            return self.__opts.get("id")
 
         @property
-        def sheet_name(self):
-            """Optional name of the sheet.
-
-            Not used for HTML reports. Defaults to "SheetN" where
-            N is the number of existing sheets plus 1.
-            """
-
-            return self.__opts.get("sheet_name")
+        def logger(self):
+            """Access to logging."""
+            return self.__opts.get("logger")
 
         @property
         def node(self):
@@ -1899,6 +2017,13 @@ class Reporter:
                         th = self.B.TH(column.name)
                         if column.style:
                             th.set("style", column.style)
+                        if column.id:
+                            th.set("id", column.ids)
+                        if column.classes:
+                            if isinstance(column.classes, str):
+                                th.set("class", column.classes)
+                            else:
+                                th.set("class", " ".join(column.classes))
                         tr.append(th)
                     children.append(self.B.THEAD(tr))
 
@@ -1907,17 +2032,43 @@ class Reporter:
                     tbody = self.B.TBODY()
                     for row in self.rows:
                         tr = self.B.TR()
+                        self.debug("row has %d cells", len(row))
                         for cell in row:
                             if not isinstance(cell, Reporter.Cell):
                                 cell = Reporter.Cell(cell)
+                            self.debug("cell values: %s", cell.values)
+                            self.debug("td: %s", cell.td)
                             tr.append(cell.td)
+                        self.debug("tr: %s", lxml.html.tostring(tr))
                         tbody.append(tr)
                     children.append(tbody)
 
                 # Create the table element if we found any child nodes.
                 if children:
                     self._node = self.B.TABLE(*children)
+                    if self.id:
+                        self._node.set("id", self.id)
+                    if self.classes:
+                        if isinstance(self.classes, str):
+                            self._node.set("class", self.classes)
+                        else:
+                            self._node.set("class", " ".join(self.classes))
             return self._node
+
+        @property
+        def rows(self):
+            """Sequence of data cells displayed by the table."""
+            return self.__rows
+
+        @property
+        def sheet_name(self):
+            """Optional name of the sheet.
+
+            Not used for HTML reports. Defaults to "SheetN" where
+            N is the number of existing sheets plus 1.
+            """
+
+            return self.__opts.get("sheet_name")
 
 
 class Excel:
@@ -2011,21 +2162,21 @@ class Excel:
     @property
     def center(self):
         if not hasattr(self, "_center"):
-            opts = dict(horizontal="center", vertical="top", wrapText=True)
+            opts = dict(horizontal="center", vertical="top", wrapText=self.wrap)
             self._center = openpyxl.styles.Alignment(**opts)
         return self._center
 
     @property
     def right(self):
         if not hasattr(self, "_right"):
-            opts = dict(horizontal="right", vertical="top", wrapText=True)
+            opts = dict(horizontal="right", vertical="top", wrapText=self.wrap)
             self._right = openpyxl.styles.Alignment(**opts)
         return self._right
 
     @property
     def left(self):
         if not hasattr(self, "_left"):
-            opts = dict(horizontal="left", vertical="top", wrapText=True)
+            opts = dict(horizontal="left", vertical="top", wrapText=self.wrap)
             self._left = openpyxl.styles.Alignment(**opts)
         return self._left
 
@@ -2041,7 +2192,7 @@ class Excel:
     def book(self):
         """Create a workbook with no sheets."""
         if not hasattr(self, "_book"):
-            self._book = openpyxl.Workbook() #write_only=True)
+            self._book = openpyxl.Workbook()
             if not self.__opts.get("keep_initial_sheet"):
                 for sheet in self._book.worksheets:
                     self._book.remove(sheet)
@@ -2065,6 +2216,10 @@ class Excel:
             title = re.sub(r"\W", "_", self.title)
             self._filename = f"{title}{stamp}.xlsx"
         return self._filename
+
+    @property
+    def wrap(self):
+        return self.__opts.get("wrap", True)
 
     @classmethod
     def pixels_to_chars(cls, pixels):
@@ -2445,7 +2600,7 @@ class AdvancedSearch(FormFieldFactory):
 
 NEWLINE  = "@@@NEWLINE-PLACEHOLDER@@@"
 BR       = "@@@BR-PLACEHOLDER@@@"
-
+bail     = Controller.bail
 
 class Control:
     """
@@ -4671,7 +4826,7 @@ class Report:
 
 
 #----------------------------------------------------------------------#
-# LEGACY GLOBAL FUNCTION -- USE NEW CDRAPI MODULES INSTEAD IF YOU CAN  #
+# LEGACY GLOBAL FUNCTIONS -- USE NEW CDRAPI MODULES INSTEAD IF YOU CAN #
 #----------------------------------------------------------------------#
 
 
@@ -4680,7 +4835,7 @@ def header(title, banner, subtitle, *args, **kwargs):
 
     This is an ancient function, and was how we created CDR web pages
     back around the turn of the century. It needs to be retired, but
-    doing so will involve rewrites of around 60 scripts. The worst
+    doing so will involve rewrites of around 40 scripts. The worst
     of the function's numerous flaws was that it involved building
     up HTML using string manipulation, mixing byte strings and unicode
     strings, and throwing in some regular expression parsing for fun.
@@ -4877,34 +5032,6 @@ Content-type: text/{textType};charset=utf-8
     sys.exit(0)
 
 #----------------------------------------------------------------------
-# Emit an HTML page containing an error message and exit.
-#----------------------------------------------------------------------
-def bail(message=TAMPERING, banner="CDR Web Interface", extra=None,
-         logfile=None):
-    """
-    Send an error page to the browser with a specific banner and title.
-    Pass:
-        message - Display this.
-        banner  - Optional changed line for page banner.
-        extra   - Optional sequence of extra lines to append.
-        logfile - Optional name of logfile to write to.
-    Return:
-        No return. Exits here.
-    """
-    page = Page("CDR Error", banner=banner, subtitle="An error has occurred",
-                js=[], stylesheets=["/stylesheets/cdr.css"])
-    page.add(Page.B.P(message, Page.B.CLASS("error")))
-    if extra:
-        for arg in extra:
-            page.add(Page.B.P(arg, Page.B.CLASS("error")))
-    if logfile:
-        if logfile.lower().endswith(".log"):
-            logfile = logfile[:-4]
-        logger = cdr.Logging.get_logger(logfile)
-        logger.error("cdrcgi bailout: %s", message)
-    page.send()
-
-#----------------------------------------------------------------------
 # Log out of the CDR session and put up a new login screen.
 #----------------------------------------------------------------------
 def logout(session):
@@ -4925,52 +5052,6 @@ def logout(session):
     action="/cgi-bin/secure/admin.py"
     page = Page(title, subtitle=message, buttons=buttons, action=action)
     page.add(Page.B.P("Thanks for spending quality time with the CDR!"))
-    page.send()
-
-#----------------------------------------------------------------------
-# Display the CDR Administation Main Menu.
-#----------------------------------------------------------------------
-def mainMenu(session, news=None):
-
-    try:
-        name = Session(session).user_name
-        user = cdr.getUser(session, name)
-    except:
-        user = ""
-    if isinstance(user, (str, bytes)):
-        bail("Missing or expired session")
-    menus = (
-        ("Board Manager Menu Users", "BoardManagers.py", "OCC Board Managers"),
-        ("CIAT/OCCM Staff Menu Users", "CiatCipsStaff.py", "CIAT/OCC Staff"),
-        ("Developer/SysAdmin Menu Users", "DevSA.py",
-         "Developers/System Administrators")
-    )
-    available = []
-    for group, script, label in menus:
-        if group in user.groups:
-            available.append((script, label))
-    if available:
-        available.append(("Logout.py", "Log Out"))
-    else:
-        available = [("GuestUsers.py", "Guest User")]
-
-    # If user is only in one of the groups above (with 'Logout' added),
-    # make the menu for that group the landing page and jump directly to
-    # it. The navigateTo() call doesn't return. But don't bypass this
-    # page if there's news to show.
-    if len(available) < 3 and not news:
-        navigateTo(available[0][0], session)
-
-    opts = { "subtitle": "Main Menu", "body_classes": "admin-menu" }
-    page = Page("CDR Administration", **opts)
-    section  = "Main Menu"
-    if news:
-        style = "color: green; font-weight: bold; font-style: italic;"
-        page.add(page.B.P(news, style=style))
-    page.add("<ol>")
-    for script, label in available:
-         page.add_menu_link(script, label, session)
-    page.add("</ol>")
     page.send()
 
 #----------------------------------------------------------------------

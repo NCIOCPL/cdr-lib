@@ -272,9 +272,7 @@ class Session:
           client XML wrapper command CdrListActions
 
         Return:
-          dictionary of authorizable actions, indexed by action name, with
-          the value of a flag ("Y" or "N") indicating whether the action
-          must be authorized on a per-doctype basis
+          sequence of `Session.Action` objects
         """
 
         if not self.can_do("LIST ACTIONS"):
@@ -681,11 +679,116 @@ class Session:
             Save the caller's values for the `Group` object
             """
 
-            self.id = opts.get("id")
-            self.name = opts.get("name")
-            self.comment = opts.get("comment")
-            self.users = opts.get("users") or []
-            self.actions = opts.get("actions") or {}
+            self.__opts = opts
+
+        @property
+        def session(self):
+            """Optional `Session` object."""
+            return self.__opts.get("session")
+
+        @property
+        def cursor(self):
+            """Optional database cursor."""
+
+            if not hasattr(self, "_cursor"):
+                self._cursor = self.__opts.get("cursor")
+                if not self._cursor:
+                    if self.session:
+                        self._cursor = self.session.cursor
+                    else:
+                        self._cursor = db.connect().cursor()
+            return self._cursor
+
+        @property
+        def id(self):
+            """Determine and cache the group's ID (if any)."""
+
+            if not hasattr(self, "_id"):
+                if "id" in self.__opts:
+                    self._id = self.__opts["id"]
+                else:
+                    if hasattr(self, "_name"):
+                        name = self._name
+                    else:
+                        name = self.__opts.get("name")
+                    if name:
+                        query = db.Query("grp", "id")
+                        query.where(query.Condition("name", name))
+                        rows = query.execute(self.cursor).fetchall()
+                        self._id = rows[0].id if rows else None
+                    else:
+                        self._id = None
+            return self._id
+
+        @property
+        def name(self):
+            """Determine and cache the group's name (if any)."""
+
+            if not hasattr(self, "_name"):
+                if "name" in self.__opts:
+                    self._name = self.__opts["name"]
+                elif self.id:
+                    query = db.Query("grp", "name")
+                    query.where(query.Condition("id", self.id))
+                    rows = query.execute(self.cursor).fetchall()
+                    self._name = rows[0].name if rows else None
+                else:
+                    self._name = None
+            return self._name
+
+        @property
+        def comment(self):
+            """Cached property for the group's description."""
+
+            if not hasattr(self, "_comment"):
+                if "comment" in self.__opts:
+                    self._comment = self.__opts["comment"]
+                elif self.id:
+                    query = db.Query("grp", "comment")
+                    query.where(query.Condition("id", self.id))
+                    rows = query.execute(self.cursor).fetchall()
+                    self._comment = rows[0].comment if rows else None
+                else:
+                    self._comment = None
+            return self._comment
+
+        @property
+        def users(self):
+            """Cached sequence of names of users in this group (if any)."""
+
+            if not hasattr(self, "_users"):
+                if "users" in self.__opts:
+                    self._users = self.__opts["users"]
+                elif self.id:
+                    query = db.Query("usr u", "u.name").unique().order("u.name")
+                    query.join("grp_usr g", "g.usr = u.id")
+                    query.where(query.Condition("g.grp", self.id))
+                    self._users = [u.name for ur in query.execute(self.cursor)]
+                else:
+                    self._users = None
+            return self._users
+
+        @property
+        def actions(self):
+            """Cached dictionary of actions allowed for this group."""
+
+            if not hasattr(self, "_actions"):
+                if "actions" in self.__opts:
+                    self._actions = self.__opts["actions"]
+                elif self.id:
+                    query = db.Query("grp_action g", "a.name", "t.name").order(2)
+                    query.join("action a", "a.id = g.action")
+                    query.join("doc_type t", "t.id = g.doc_type")
+                    query.where(query.Condition("g.grp", self.id))
+                    self._actions = {}
+                    for action, doc_type in query.execute(self.cursor):
+                        if action not in self._actions:
+                            self._actions[action] = [doc_type]
+                        else:
+                            self._actions[action].append(doc_type)
+                else:
+                    self._actions = None
+            return self._actions
 
         def add(self, session):
             """
@@ -716,7 +819,7 @@ class Session:
             insert = "INSERT INTO grp(name, comment) VALUES(?, ?)"
             session.cursor.execute(insert, (self.name, self.comment))
             session.cursor.execute("SELECT @@IDENTITY AS id")
-            self.id = session.cursor.fetchall()[0].id
+            self._id = session.cursor.fetchall()[0].id
             self.save_users(session)
             self.save_actions(session)
             session.conn.commit()
@@ -818,13 +921,13 @@ class Session:
                     rows = query.execute(cursor).fetchall()
                     if not rows:
                         raise Exception("Unknown action: {}".format(action))
-                    action_id = row[0][0]
+                    action_id = rows[0][0]
                     query = db.Query("doc_type", "id")
                     query.where(query.Condition("name", doctype or ""))
                     rows = query.execute(cursor).fetchall()
                     if not rows:
                         raise Exception("Unknown doc type: {}".format(doctype))
-                    doctype_id = row[0][0]
+                    doctype_id = rows[0][0]
                     insert = "INSERT INTO grp_action(grp, action, doc_type)"
                     insert += " VALUES(?, ?, ?)"
                     cursor.execute(insert, (self.id, action_id, doctype_id))
@@ -894,7 +997,6 @@ class Session:
             """
             Primary key for the user's row in the `usr` table
             """
-
             if not hasattr(self, "_id"):
                 if "id" in self.__opts:
                     self._id = self.__opts["id"]
@@ -1156,6 +1258,7 @@ class Session:
                 placeholders = ", ".join(["?"] * len(fields) + extras)
                 args = names, placeholders
                 sql = "INSERT INTO usr ({}) VALUES ({})".format(*args)
+            self.session.logger.debug("sql=%s, values=%s", sql, values)
             self.session.cursor.execute(sql, tuple(values))
             if not self.id:
                 self.session.cursor.execute("SELECT @@IDENTITY AS id")

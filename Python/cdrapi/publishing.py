@@ -255,7 +255,8 @@ class Job:
                 undefined = set(requested) - set(defined)
                 if undefined:
                     messages = "Paramater(s) {} undefined"
-                    raise Exception(messages.format(", ".join(undefined)))
+                    #raise Exception(messages.format(", ".join(undefined)))
+                    raise Exception(messages.format(undefined))
                 defined.update(requested)
                 self.session.logger.info("job parms: %r", defined)
                 self._parms = defined
@@ -407,7 +408,7 @@ class Job:
         try:
             job_id = self.__create()
             self.session.conn.commit()
-            self._job_id = job_id
+            self._id = job_id
             return job_id
         except:
             self.session.logger.exception("Job creation failed")
