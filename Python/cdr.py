@@ -785,7 +785,8 @@ def getGroup(credentials, name, **opts):
     etree.SubElement(command, "GrpName").text = name
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == command.tag + "Resp":
-            group = Session.Group()
+            group = Session.Group(actions={}, users=[])
+            #LOGGER.info("starting with actions=%s", group.actions)
             for child in response.node.findall("*"):
                 if child.tag == "GrpName":
                     group.name = child.text
@@ -798,9 +799,16 @@ def getGroup(credentials, name, **opts):
                 elif child.tag == "Auth":
                     action = get_text(child.find("Action"))
                     doctype = get_text(child.find("DocType"))
+                    if group.actions is None:
+                        #LOGGER.info("setting actions->{}")
+                        group.actions = {}
+                    #else:
+                        #LOGGER.info("no, actions is already %s", group.actions)
                     if action not in group.actions:
                         group.actions[action] = []
                     group.actions[action].append(doctype or "")
+                    #LOGGER.info("added action %s -> %s", action, group.actions)
+            #LOGGER.info("return group with actions=%s", group.actions)
             return group
         raise Exception(";".join(response.errors) or "missing response")
     raise Exception("missing response")
@@ -2865,7 +2873,7 @@ class FilterSet:
     def __init__(self, name, desc, notes=None, members=None, expanded=False):
         self.name = toUnicode(name)
         self.desc = toUnicode(desc)
-        self.notes = toUnicode(notes)
+        self.notes = toUnicode(notes) or None
         self.members = members or []
         self.expanded = expanded
 
@@ -4524,6 +4532,7 @@ def exNormalize(id):
 # ======================================================================
 CBIIT_HOSTING = True
 BASEDIR = _Control.TIER.basedir
+FIX_PERMISSIONS = f"{BASEDIR}/Bin/fix-permissions.cmd".replace("/", "\\")
 ETC = _Control.TIER.etc
 APPC = _Control.TIER.hosts["APPC"]
 FQDN = open(f"{BASEDIR}/etc/hostname").read().strip()

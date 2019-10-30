@@ -952,7 +952,7 @@ class Doc(object):
         rows = query.execute(self.cursor).fetchall()
         if not rows:
             raise Exception(f"Unknown usage {usage!r}")
-        usage_id, action = list(row[0])
+        usage_id, action = list(rows[0])
 
         # Make sure the user is allowed to add a row for this usage.
         if not self.session.can_do(action):
@@ -1145,6 +1145,8 @@ class Doc(object):
                 self.cursor.execute(update, (self.id,))
                 self.__audit_action("Doc.delete", "DELETE DOCUMENT", reason)
                 self.session.conn.commit()
+            else:
+                raise Exception(f"{self.cdr_id} has incoming links")
         except:
             try:
                 self.session.logger.exception("Deletion failed")
@@ -1530,6 +1532,7 @@ class Doc(object):
 
         Called by:
           cdr.reindex()
+          self.set_status()
           client XML wrapper command CdrReindexDoc
 
         Return:
@@ -1650,6 +1653,7 @@ class Doc(object):
             raise Exception("Status must be {} or {}".format(*valid))
         args = self.active_status, status
         self.session.logger.debug("Old status=%r new status=%r", *args)
+        need_to_reindex = self.active_status == self.DELETED
         if status != self.active_status:
             try:
                 self.__audit_trail_delay()
@@ -1666,6 +1670,8 @@ class Doc(object):
                 except:
                     pass
                 raise
+            if need_to_reindex:
+                self.reindex()
 
     def unlabel(self, label):
         """
@@ -2465,6 +2471,7 @@ class Doc(object):
 
         # Tell the caller not to proceed with the deletion (links were found).
         if opts.get("validate"):
+            self.session.logger.warning("Deletion of %s blocked", self.id)
             return False
 
         # Delete the links and tell the caller to proceed with the 'deletion'.
@@ -2641,7 +2648,7 @@ class Doc(object):
         rows = query.execute(self.cursor).fetchall()
         if not rows[0].n:
             raise Exception(f"no version labeled {label}")
-        return row.n
+        return rows[0].n
 
     def __get_schema(self):
         """
@@ -8058,10 +8065,10 @@ class GlossaryTermName:
         names = dict()
         phrases = set()
         name_tag = "TermName" if language == "en" else "TranslatedName"
-        n_path = f"/GlossaryTermName/{name.tag}/TermNameString"
+        n_path = f"/GlossaryTermName/{name_tag}/TermNameString"
         s_path = "/GlossaryTermName/TermNameStatus"
-        e_path = f"/GlossaryTermName/{name.tag}/@ExcludeFromGlossifier"
-        e_cond = "e.doc_id = n.doc_id", f"e.path = '{e_path}'"
+        e_path = f"/GlossaryTermName/{name_tag}/@ExcludeFromGlossifier"
+        e_cond = ["e.doc_id = n.doc_id", f"e.path = '{e_path}'"]
         if language == "es":
             e_cond.append("LEFT(n.node_loc, 4) = LEFT(e.node_loc, 4)")
         query = Query("query_term n", "n.doc_id", "n.value")

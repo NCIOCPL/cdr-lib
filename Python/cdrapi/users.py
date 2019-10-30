@@ -720,6 +720,11 @@ class Session:
                         self._id = None
             return self._id
 
+        @id.setter
+        def id(self, value):
+            """The legacy wrapper uses this when populating the object."""
+            self._id = value
+
         @property
         def name(self):
             """Determine and cache the group's name (if any)."""
@@ -735,6 +740,11 @@ class Session:
                 else:
                     self._name = None
             return self._name
+
+        @name.setter
+        def name(self, value):
+            """Allow a group's name to be changed."""
+            self._name = value
 
         @property
         def comment(self):
@@ -752,6 +762,11 @@ class Session:
                     self._comment = None
             return self._comment
 
+        @comment.setter
+        def comment(self, value):
+            """Change a group's description."""
+            self._comment = value
+
         @property
         def users(self):
             """Cached sequence of names of users in this group (if any)."""
@@ -763,10 +778,15 @@ class Session:
                     query = db.Query("usr u", "u.name").unique().order("u.name")
                     query.join("grp_usr g", "g.usr = u.id")
                     query.where(query.Condition("g.grp", self.id))
-                    self._users = [u.name for ur in query.execute(self.cursor)]
+                    self._users = [u.name for u in query.execute(self.cursor)]
                 else:
                     self._users = None
             return self._users
+
+        @users.setter
+        def users(self, value):
+            """Change the composition of the group."""
+            self._users = value
 
         @property
         def actions(self):
@@ -776,12 +796,14 @@ class Session:
                 if "actions" in self.__opts:
                     self._actions = self.__opts["actions"]
                 elif self.id:
-                    query = db.Query("grp_action g", "a.name", "t.name").order(2)
+                    query = db.Query("grp_action g", "a.name", "t.name")
+                    query.order("t.name")
                     query.join("action a", "a.id = g.action")
                     query.join("doc_type t", "t.id = g.doc_type")
                     query.where(query.Condition("g.grp", self.id))
                     self._actions = {}
-                    for action, doc_type in query.execute(self.cursor):
+                    rows = query.execute(self.cursor).fetchall()
+                    for action, doc_type in rows:
                         if action not in self._actions:
                             self._actions[action] = [doc_type]
                         else:
@@ -789,6 +811,11 @@ class Session:
                 else:
                     self._actions = None
             return self._actions
+
+        @actions.setter
+        def actions(self, value):
+            """Adjust the permissions of the group."""
+            self._actions = value
 
         def add(self, session):
             """
@@ -907,9 +934,10 @@ class Session:
             """
 
             cursor = session.cursor
+            session.logger.debug("save_actions(%s)", self.actions)
             for action in self.actions:
                 doctypes = self.actions[action] or [""]
-                for doctype in self.actions[action]:
+                for doctype in doctypes:
                     if doctype:
                         what = "action {} ({})".format(action, doctype)
                     else:
@@ -1344,10 +1372,6 @@ class Session:
             self.__dict__.update(kw)
             self.conn = db.connect(tier=self.tier.name)
             self.cursor = self.conn.cursor()
-            #self.logger = self.tier.get_logger("session", **kw)
-            #formatter = Session.Formatter(self.LOG_FORMAT)
-            #for handler in self.logger.handlers:
-            #    handler.setFormatter(formatter)
 
 
     class LoggingDBConnection(threading.local):

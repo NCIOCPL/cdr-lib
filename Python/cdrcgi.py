@@ -158,6 +158,7 @@ class Controller:
             else:
                 self.show_form()
         except Exception as e:
+            self.logger.exception("Controller.run() failure")
             bail(str(e))
 
     def show_form(self):
@@ -191,6 +192,59 @@ class Controller:
     def log_elapsed(self):
         """Record how long this took."""
         self.logger.info(f"elapsed: {self.elapsed.total_seconds():f}")
+
+    def make_url(self, script, **params):
+        """Create a URL.
+
+        Pass:
+            script - string for base of url (can be relative or absolute)
+            params - dictionary of named parameters for the URL
+
+        Return:
+            value appropriate for the href attribute of a link
+        """
+
+        if SESSION not in params:
+            params[SESSION] = self.session.name
+        params = urllib.parse.urlencode(params)
+        return f"{script}?{params}"
+
+    @staticmethod
+    def add_date_range_to_caption(caption, start, end):
+        """Format caption with date range (we do this a lot).
+
+        Pass:
+            caption - base string for the start of the caption
+            start - optional beginning of the date range
+            end - optional finish of the date range
+
+        Return:
+            possibly altered string for the table caption
+        """
+
+        if start:
+            if end:
+                return f"{caption} Between {start} and {end}"
+            return f"{caption} Since {start}"
+        elif end:
+            return f"{caption} Through {end}"
+        return caption
+
+    @staticmethod
+    def parse_date(iso_date):
+        """Convert a date string to a `datetime.date` object.
+
+        Pass:
+            iso_date - optional string for the date
+
+        Return:
+            None if the string is None or empty, otherwise a date object
+        """
+
+        if iso_date is None or not iso_date.strip():
+            return None
+        year, month, date = iso_date.strip().split("-")
+        return datetime.date(int(year), int(month), int(date))
 
     @property
     def HTMLPage(self):
@@ -263,6 +317,20 @@ class Controller:
         return self._fields
 
     @property
+    def footer(self):
+        """Override to alter or suppress the default report footer."""
+
+        if not hasattr(self, "_footer"):
+            user = self.session.User(self.session, id=self.session.user_id)
+            name = user.fullname or user.name
+            today = datetime.date.today()
+            generated = f"Report generated {today} by {name}"
+            elapsed = HTMLPage.B.SPAN(f"Elapsed: {self.elapsed}")
+            para = HTMLPage.B.P(generated, HTMLPage.B.BR(), elapsed)
+            self._footer = HTMLPage.B.E("footer", para)
+        return self._footer
+
+    @property
     def form_page(self):
         """Create a form page.
 
@@ -274,7 +342,8 @@ class Controller:
                 "action": self.script,
                 "buttons": [HTMLPage.button(b) for b in self.buttons],
                 "subtitle": self.subtitle,
-                "session": self.session
+                "session": self.session,
+                "method": self.method,
             }
             self._form_page = HTMLPage(self.title, **opts)
         return self._form_page
@@ -282,7 +351,11 @@ class Controller:
     @property
     def format(self):
         """Either "html" (the default) or "excel"."""
-        return self.__opts.get("format") or self.FORMATS[0]
+        if not hasattr(self, "_format"):
+            self._format = self.fields.getvalue("format")
+            if not self._format:
+                self._format = self.__opts.get("format") or self.FORMATS[0]
+        return self._format
 
     @property
     def logger(self):
@@ -307,6 +380,11 @@ class Controller:
         return self.fields.getvalue("method") or self.METHOD
 
     @property
+    def no_results(self):
+        """Message to display if no result tables are returned."""
+        return "No report results found."
+
+    @property
     def report(self):
         """Create the `Reporter` object for this job."""
 
@@ -318,11 +396,13 @@ class Controller:
                     buttons.append(HTMLPage.button(button))
             opts = {
                 "banner": self.title or "",
+                "footer": self.footer,
                 "subtitle": self.subtitle,
+                "no_results": self.no_results,
                 "page_opts": {
                     "buttons": buttons,
                     "session": self.session,
-                    "action": buttons and self.script or None
+                    "action": buttons and self.script or None,
                 }
             }
             self._report = Reporter(self.title, tables, **opts)
@@ -349,7 +429,7 @@ class Controller:
         """Session object for this controller.
 
         Note: this is an object, not a string. For the session name,
-        use `self.session.name` or `str(self.session)` or `f"{self.session}".
+        use `self.session.name` or `str(self.session)` or `f"{self.session}"`.
 
         No need to specify a tier here, as web CGI scripts are only
         intended to work on the local tier.
@@ -368,6 +448,11 @@ class Controller:
             if not isinstance(self._session, Session):
                 raise Exception("Not a session object")
         return self._session
+
+    @property
+    def timestamp(self):
+        """String used to distinguish multiple instances of named items."""
+        return self.started.strftime("%Y%m%d%H%M%S")
 
     @property
     def started(self):
@@ -400,7 +485,7 @@ class Controller:
 
         opts = dict(banner=banner, subtitle="An error has occurred", scripts=[])
         page = HTMLPage("CDR Error", **opts)
-        page.body.append(page.B.P(message, page.B.CLASS("error")))
+        page.body.append(page.B.P(str(message), page.B.CLASS("error")))
         if extra:
             for arg in extra:
                 page.body.append(page.B.P(str(arg), page.B.CLASS("error")))
@@ -1139,9 +1224,6 @@ jQuery(function() {
             buttons
                 sequence of objects created by FormFieldFactory.button()
 
-            enctype
-                set to "multipart/form-data" if any file fields present
-
             head_title
                 title for head block (default: page title)
 
@@ -1511,6 +1593,22 @@ class Reporter:
         return self.__opts.get("elapsed")
 
     @property
+    def footer(self):
+        """Optional footer to appear on the HTML report."""
+        return self.__opts.get("footer")
+
+    @property
+    def no_results(self):
+        """What to say if no result tables are found."""
+
+        if not hasattr(self, "_no_results"):
+            if "no_results" in self.__opts:
+                self._no_results = self.__opts.get("no_results")
+            else:
+                self._no_results = "No report results found."
+        return self._no_results
+
+    @property
     def page(self):
         """HTML version of report."""
         if not hasattr(self, "_page"):
@@ -1524,11 +1622,17 @@ class Reporter:
             self._page = HTMLPage(self.title, **opts)
             if self.css:
                 self._page.add_css(self.css)
+            if not self.tables and self.no_results:
+                no_results = self._page.B.P(self.no_results)
+                no_results.set("class", "no-results")
+                self._page.body.append(no_results)
             for table in self.tables:
                 if table.node is not None:
                     self._page.body.append(table.node)
+            if self.footer is not None:
+                self._page.body.append(self.footer)
             if self.elapsed:
-                footnote = page.B.P(f"elapsed: {self.elapsed}")
+                footnote = self._page.B.P(f"elapsed: {self.elapsed}")
                 footnote.set("class", "footnote")
                 self._page.body.append(footnote)
         return self._page
@@ -1866,6 +1970,11 @@ class Reporter:
             self._skip = other
 
         @property
+        def tooltip(self):
+            """Popup string for help when the user hovers over the column."""
+            return self.__opts.get("tooltip")
+
+        @property
         def style(self):
             """HTML style attribute for column element on web page."""
             if not hasattr(self, "_style"):
@@ -2019,6 +2128,8 @@ class Reporter:
                             th.set("style", column.style)
                         if column.id:
                             th.set("id", column.ids)
+                        if column.tooltip:
+                            th.set("title", column.tooltip)
                         if column.classes:
                             if isinstance(column.classes, str):
                                 th.set("class", column.classes)
@@ -2100,7 +2211,7 @@ class Excel:
     MIME_TYPE = f"application/{MIME_SUBTYPE}"
     from openpyxl.utils import get_column_letter
 
-    def __init__(self, title, **opts):
+    def __init__(self, title=None, **opts):
         self.__title = title
         self.__opts = opts
 
@@ -2139,10 +2250,11 @@ class Excel:
         letter = Excel.get_column_letter(col)
         self.sheet.column_dimensions[letter].width = width
 
-    def write(self, row, column, value, styles):
+    def write(self, row, column, value, styles=None):
         cell = self.sheet.cell(row=row, column=column, value=value)
-        for name in styles:
-            setattr(cell, name, styles[name])
+        if styles:
+            for name in styles:
+                setattr(cell, name, styles[name])
         return cell
 
     @property
@@ -2211,9 +2323,12 @@ class Excel:
     def filename(self):
         if not hasattr(self, "_filename"):
             stamp = ""
-            if self.__opts.get("stamp"):
+            if self.__opts.get("stamp") or not self.title:
                 stamp = datetime.datetime.now().strftime("-%Y%m%d%H%M%S")
-            title = re.sub(r"\W", "_", self.title)
+            if self.title:
+                title = re.sub(r"\W", "_", self.title)
+            else:
+                title = "workbook"
             self._filename = f"{title}{stamp}.xlsx"
         return self._filename
 
@@ -4997,8 +5112,7 @@ def getRequest(fields):
 # and run the QCforWord.py script to properly convert the HTML output
 # to Word.
 #----------------------------------------------------------------------
-def sendPage(page, textType = 'html', parms='', docId='', docType='',
-             docVer=''):
+def sendPage(page, textType='html', parms='', docId='', docType='', docVer=''):
     """
     Send a completed page of text to stdout, assumed to be piped by a
     webserver to a web browser.

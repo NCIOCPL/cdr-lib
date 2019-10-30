@@ -1302,13 +1302,13 @@ class BoardMeeting(Section):
 
             return DocBase.row(self, self.date, self.webex and "Yes" or "")
 
-        def __cmp__(self, other):
+        def __lt__(self, other):
             """
             Add custom sorting logic so we can arrange the meetings
             chronologically, grouped by board.
             """
 
-            return cmp((self.title, self.date), (other.title, other.date))
+            return (self.title, self.date) < (other.title, other.date)
 
 
 class Image(Section):

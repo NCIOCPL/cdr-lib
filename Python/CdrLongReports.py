@@ -146,6 +146,10 @@ class BatchReport:
             path = "%s/%s" % (self.REPORTS_BASE, name)
             workbook.save(path)
         self.logger.info("Saved %s", path)
+        path = path.replace("/", "\\")
+        command = f"{cdr.FIX_PERMISSIONS} {path}"
+        cdr.run_command(command)
+        self.logger.info("Adjusted report permissions")
         return name
 
     def create_report_url(self, name):
@@ -1247,174 +1251,6 @@ class PageTitleMismatches(URLChecker):
                 B.TD(title, B.CLASS(title_class))
             )
 
-class PublishedDocumentsCount(BatchReport):
-    """
-    Generate report of statistics on most recent weekly export job.
-
-    Two tables are created:
-      1. counts of all documents by document type
-      2. counts of all CTGovProtocol documents by trial status
-
-    Note that this report has been optimized so much that it doesn't really
-    need to be a batch job any more.
-    """
-
-    NAME = "Published Documents Count"
-    BANNER = "Published Documents"
-    ACTIVE = {"Active", "Not yet active"}
-
-    def __init__(self, job):
-        """
-        Collect the options stored for this report job and find the export job.
-        """
-
-        BatchReport.__init__(self, job, self.NAME, self.NAME, self.BANNER)
-        self.job = job
-        self.limit = int(self.job.getParm("limit") or 0)
-        self.pub_job = self.last_pub_job()
-
-    def last_pub_job(self):
-        """
-        Find the ID of the last successful full export publishing job.
-        """
-
-        query = db.Query("pub_proc", "MAX(id)")
-        query.where("pub_subset = 'Export'")
-        query.where("status = 'Success'")
-        return query.execute(self.cursor).fetchone()[0]
-
-    def fill_body(self, body):
-        """
-        Add the two tables for the report.
-        """
-
-        tables = self.B.CENTER(
-            self.counts_by_doctype(),
-            self.counts_by_trial_status()
-        )
-        body.append(tables)
-        return body
-
-    def counts_by_doctype(self):
-        """
-        Create the table showing how many documents of each type were exported.
-        """
-
-        self.job.setProgressMsg("Counting by document types")
-        self.logger.info("Counting by document types")
-        query = db.Query("doc_type t", "t.name", "COUNT(*)").order("t.name")
-        query.join("document d", "d.doc_type = t.id")
-        query.join("pub_proc_doc p", "p.doc_id = d.id")
-        query.where(query.Condition("p.pub_proc", self.pub_job))
-        query.where("p.failure IS NULL")
-        query.group("t.name")
-        cols = self.B.TR(self.B.TH("Document Type"), self.B.TH("Count"))
-        rows = []
-        total = 0
-        for doctype, count in query.execute(self.cursor).fetchall():
-            total += count
-            count = self.B.TD(str(count), self.B.CLASS("right"))
-            rows.append(self.B.TR(self.B.TD(doctype), count))
-        label = self.B.TD("TOTAL", self.B.CLASS("strong"))
-        count = self.B.TD(str(total), self.B.CLASS("strong right"))
-        rows.append(self.B.TR(label, count))
-        caption = self.B.CAPTION("Documents Exported By Job %s" % self.pub_job)
-        return self.B.TABLE(self.B.CLASS("pub-counts"), caption, cols, *rows)
-
-    def counts_by_trial_status(self):
-        """
-        Create the table showing how many trials of each status were exported.
-        """
-
-        # Collect the document IDs and version numbers.
-        self.job.setProgressMsg("Counting CTGovProtocols by status")
-        self.logger.info("Counting CTGovProtocols by status")
-        query = db.Query("pub_proc_doc p", "p.doc_id", "p.doc_version")
-        query.join("active_doc d", "d.id = p.doc_id")
-        query.join("doc_type t", "t.id = d.doc_type")
-        query.where("t.name = 'CTGovProtocol'")
-        query.where(query.Condition("p.pub_proc", self.pub_job))
-        rows = query.execute(self.cursor).fetchall()
-        self.logger.info("%d published CTGovProtocols", len(rows))
-        if self.limit and self.limit < len(rows):
-            self.logger.info("test limiting that to %d", self.limit)
-            rows = rows[:self.limit]
-
-        # Roll up the counts for each status
-        counts = {}
-        for doc_id, doc_version in rows:
-            if self.quitting_time():
-                self.logger.info("test concluded after %s seconds",
-                                 self.elapsed)
-                break
-            doc = self.Doc(self.cursor, doc_id, doc_version)
-            if doc.status:
-                counts[doc.status] = counts.get(doc.status, 0) + 1
-
-        # Assemble the table.
-        cols = self.B.TR(self.B.TH("Status"), self.B.TH("Count"))
-        rows = []
-        active = closed = 0
-        for status in sorted(counts):
-            count = counts[status]
-            if status in self.ACTIVE:
-                active += count
-            else:
-                closed += count
-            count = self.B.TD(str(count), self.B.CLASS("right"))
-            rows.append(self.B.TR(self.B.TD(status), count))
-        for group, count in (("ACTIVE", active), ("CLOSED", closed)):
-            label = self.B.TD("TOTAL %s" % group, self.B.CLASS("strong"))
-            count = self.B.TD(str(count), self.B.CLASS("strong right"))
-            rows.append(self.B.TR(label, count))
-        caption = self.B.CAPTION("CTGovProtocol By Status")
-        if self.limit:
-            red = self.B.CLASS("red")
-            caption.append(self.B.SPAN(" (COUNTS LIMITED BY TESTING)", red))
-        return self.B.TABLE(self.B.CLASS("pub-counts"), caption, cols, *rows)
-
-    def selectors(self):
-        """
-        Customize the style rules applied the report's display.
-        """
-
-        selectors = BatchReport.selectors(self)
-        selectors[".pub-counts"] = { "margin-bottom": "25px" }
-        selectors[".pub-counts caption"] = {
-            "white-space": "nowrap",
-            "padding": "10px",
-            "font-weight": "bold"
-        }
-        return selectors
-
-    class Doc:
-        """
-        CTGovProtocol document with current trial status.
-        """
-
-        def __init__(self, cursor, doc_id, doc_version):
-            """
-            Fetch and parse the document, extracting the status.
-            """
-
-            query = db.Query("doc_version", "xml")
-            query.where(query.Condition("id", doc_id))
-            query.where(query.Condition("num", doc_version))
-            xml = query.execute(cursor).fetchone()[0]
-            root = etree.fromstring(xml)
-            self.status = cdr.get_text(root.find("OverallStatus"))
-
-    @classmethod
-    def test_harness(cls):
-        """
-        Perform a test run from the command line.
-        """
-
-        parser = cls.arg_parser()
-        parser.add_argument("--limit", type=int, default=500,
-                            help="maximum number of documents to process for "
-                            "each document type")
-        cls.run_test(parser)
 
 class GlossaryTermSearch(BatchReport):
     """
@@ -1630,8 +1466,8 @@ class GlossaryTermSearch(BatchReport):
                 GlossaryTermSearch.B.TD(str(self.doc_id)),
                 GlossaryTermSearch.B.TD(self.section)
             )
-        def __cmp__(self, other):
-            return cmp((self.title, self.phrase), (other.title, other.phrase))
+        def __lt__(self, other):
+            return (self.title, self.phrase) < (other.title, other.phrase)
 
     class GlossaryNode:
         "Node in the tree of known glossary terms and their variant phrases."
@@ -1857,7 +1693,10 @@ class PronunciationRecordingsReport(BatchReport):
             query = db.Query("document", "first_pub", "xml")
             query.where(query.Condition("id", doc_id))
             self.first_pub, xml = query.execute(cursor).fetchone()
-            root = etree.fromstring(xml)
+            try:
+                root = etree.fromstring(xml)
+            except:
+                root = etree.fromstring(xml.encode("utf-8"))
             for node in root.findall('DateLastModified'):
                 self.last_mod = node.text
             for node in root.findall('ProcessingStatuses/ProcessingStatus'):
@@ -1887,19 +1726,23 @@ class PronunciationRecordingsReport(BatchReport):
             sheet.write(row, 9, self.fix_date(self.pub_date), styles.center)
             return row + 1
 
-        def __cmp__(self, other):
+        def __lt__(self, other):
             """
             Support sorting of the Media documents.
             """
 
-            diff = cmp(self.status, other.status)
-            if diff:
-                return diff
-            if self.last_ver_publishable == other.last_ver_publishable:
-                return cmp(self.last_mod, other.last_mod)
-            if self.last_ver_publishable == "Y":
-                return -1
-            return 1
+            return self.sortkey < other.sortkey
+
+        @property
+        def sortkey(self):
+            """
+            Articulated sort key for a media document.
+            """
+
+            last_ver_publishable = 0 if self.last_ver_publishable == "Y" else 1
+            last_mod = self.last_mod or "0000-00-00"
+            status = self.status or ""
+            return status, last_ver_publishable, last_mod
 
         @staticmethod
         def fix_date(date):
@@ -1944,7 +1787,6 @@ class Control:
         PageTitleMismatches,
         GlossaryTermSearch,
         PronunciationRecordingsReport,
-        PublishedDocumentsCount
     )
 
     @classmethod

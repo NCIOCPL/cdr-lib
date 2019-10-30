@@ -645,11 +645,11 @@ class Protocol:
             self.name      = name
             self.startDate = startDate
             self.endDate   = endDate
-        def __cmp__(self, other):
-            diff = cmp(self.startDate, other.startDate)
-            if diff:
-                return diff
-            return cmp(self.endDate, other.endDate)
+        def __lt__(self, other):
+            return self.sortkey < other.sortkey
+        @property
+        def sortkey(self):
+            return self.startDate, self.endDate
 
     class LeadOrg:
         "Lead Organization for a protocol, with all its status history."
