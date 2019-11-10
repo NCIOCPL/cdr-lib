@@ -382,7 +382,7 @@ class Report:
                    "LEFT(d.node_loc, 8) = LEFT(t.node_loc, 8)")
         query.outer("query_term p", "p.doc_id = t.doc_id",
                     "p.path = '{}'".format(p_path),
-                   "LEFT(d.node_loc, 8) = LEFT(t.node_loc, 8)")
+                   "LEFT(p.node_loc, 8) = LEFT(t.node_loc, 8)")
         query.outer("query_term k", "k.doc_id = t.doc_id",
                     "k.path = '{}'".format(k_path),
                    "LEFT(k.node_loc, 8) = LEFT(t.node_loc, 8)")

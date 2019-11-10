@@ -1328,7 +1328,10 @@ class GlossaryTermSearch(BatchReport):
                 break
             self.tree.clear_flags()
             doc_id, doc_xml, doc_title = row
-            root = etree.fromstring(doc_xml)
+            try:
+                root = etree.fromstring(doc_xml)
+            except:
+                root = etree.fromstring(doc_xml.encode("utf-8"))
             for node in root.findall("SummarySection"):
                 text = " ".join(node.itertext("*")).strip()
                 sec_title = cdr.get_text(node.find("Title")) or "[None]"

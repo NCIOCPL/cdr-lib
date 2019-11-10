@@ -138,6 +138,7 @@ class Controller:
         """Set up a skeletal controller."""
         self.__started = datetime.datetime.now()
         self.__opts = opts
+        self.logger.info("started %s", self.subtitle or "controller")
 
     def run(self):
         """Override in derived class if there are custom actions."""
@@ -179,6 +180,9 @@ class Controller:
         would be if you have a non-tabular report to be sent.
         """
 
+        elapsed = self.report.page.html.get_element_by_id("elapsed", None)
+        if elapsed is not None:
+            elapsed.text = str(self.elapsed)
         self.report.send(self.format)
 
     def populate_form(self, page):
@@ -325,9 +329,9 @@ class Controller:
             name = user.fullname or user.name
             today = datetime.date.today()
             generated = f"Report generated {today} by {name}"
-            elapsed = HTMLPage.B.SPAN(f"Elapsed: {self.elapsed}")
-            para = HTMLPage.B.P(generated, HTMLPage.B.BR(), elapsed)
-            self._footer = HTMLPage.B.E("footer", para)
+            elapsed = HTMLPage.B.SPAN(str(self.elapsed), id="elapsed")
+            args = generated, HTMLPage.B.BR(), "Elapsed: ", elapsed
+            self._footer = HTMLPage.B.E("footer", HTMLPage.B.P(*args))
         return self._footer
 
     @property
@@ -365,8 +369,6 @@ class Controller:
             if self._logger is None:
                 opts = dict(level=self.loglevel)
                 self._logger = cdr.Logging.get_logger(self.LOGNAME, **opts)
-            if self.subtitle:
-                self._logger.info("started %s", self.subtitle)
         return self._logger
 
     @property
@@ -414,6 +416,11 @@ class Controller:
         if not hasattr(self, "_request"):
             self._request = getRequest(self.fields)
         return self._request
+
+    @request.setter
+    def request(self, value):
+        """Support re-routing."""
+        self._request = value
 
     @property
     def script(self):
@@ -1190,17 +1197,17 @@ class HTMLPage(FormFieldFactory):
     SCRIPTS = JQUERY, JQUERY_UI
     PRIMARY_FORM_ID = "primary-form"
     STRING_OPTS = dict(pretty_print=True, doctype="<!DOCTYPE html>")
-    CALENDAR_SCRIPT = """\
-jQuery(function() {
-    jQuery('.CdrDateField').datepicker({
-        dateFormat: 'yy-mm-dd',
-        showOn: 'button',
-        buttonImageOnly: true,
-        buttonImage: "/images/calendar.png",
-        buttonText: "Select date",
-        dayNamesMin: [ "S", "M", "T", "W", "T", "F", "S" ]
-    });
-});"""
+    CALENDAR_SCRIPT = "\n".join([
+        "jQuery(function() {",
+        "    jQuery('.CdrDateField').datepicker({",
+        "        dateFormat: 'yy-mm-dd',",
+        "        showOn: 'button',",
+        "        buttonImageOnly: true,",
+        "        buttonImage: '/images/calendar.png',",
+        "        buttonText: 'Select date',",
+        "        dayNamesMin: [ 'S', 'M', 'T', 'W', 'T', 'F', 'S' ]",
+        "    });",
+        "});"])
 
     def __init__(self, title, **kwargs):
         """Capture the initial settings for the page.
@@ -1453,13 +1460,15 @@ jQuery(function() {
         Slips in the calendar JavaScript if there are any date fields.
         """
 
-        if not hasattr(self, "_has_calendar_js"):
-            self._has_calendar_js = False
-        if not self._has_calendar_js:
-            if self.body.xpath("//*[contains(@class, 'CdrDateField')]"):
-                self.body.append(self.B.SCRIPT(self.CALENDAR_SCRIPT))
-                self._has_calendar_js = True
-        return self.B.HTML(self.head, self.body)
+        if not hasattr(self, "_html"):
+            if not hasattr(self, "_has_calendar_js"):
+                self._has_calendar_js = False
+            if not self._has_calendar_js:
+                if self.body.xpath("//*[contains(@class, 'CdrDateField')]"):
+                    self.body.append(self.B.SCRIPT(self.CALENDAR_SCRIPT))
+                    self._has_calendar_js = True
+            self._html = self.B.HTML(self.head, self.body)
+        return self._html
 
     @property
     def title(self):
@@ -1686,7 +1695,7 @@ class Reporter:
 
     @property
     def wrap(self):
-        return self.__opts.get("wrap")
+        return self.__opts.get("wrap", True)
 
 
     class Cell:
@@ -2017,6 +2026,8 @@ class Reporter:
             # Create a new worksheet.
             self.sheet = book.add_sheet(self.sheet_name)
             self.sheet.sheet_format.defaultRowHeight = 200
+            if self.freeze_panes:
+                self.sheet.freeze_panes = self.freeze_panes
 
             # Add the rows for the caption strings.
             rownum = 1
@@ -2091,6 +2102,11 @@ class Reporter:
                             column = Reporter.Column(column)
                         self._columns.append(column)
             return self._columns
+
+        @property
+        def freeze_panes(self):
+            """Optional cell marking row/col freezing (Excel only)."""
+            return self.__opts.get("freeze_panes")
 
         @property
         def id(self):
@@ -2274,21 +2290,23 @@ class Excel:
     @property
     def center(self):
         if not hasattr(self, "_center"):
-            opts = dict(horizontal="center", vertical="top", wrapText=self.wrap)
+            opts = dict(horizontal="center", vertical="top",
+                        wrap_text=self.wrap)
             self._center = openpyxl.styles.Alignment(**opts)
         return self._center
 
     @property
     def right(self):
         if not hasattr(self, "_right"):
-            opts = dict(horizontal="right", vertical="top", wrapText=self.wrap)
+            opts = dict(horizontal="right", vertical="top",
+                        wrap_text=self.wrap)
             self._right = openpyxl.styles.Alignment(**opts)
         return self._right
 
     @property
     def left(self):
         if not hasattr(self, "_left"):
-            opts = dict(horizontal="left", vertical="top", wrapText=self.wrap)
+            opts = dict(horizontal="left", vertical="top", wrap_text=self.wrap)
             self._left = openpyxl.styles.Alignment(**opts)
         return self._left
 
@@ -2296,7 +2314,8 @@ class Excel:
     def center_middle(self):
         """Center both horizontally and vertically."""
         if not hasattr(self, "_center_middle"):
-            opts = dict(horizontal="center", vertical="center")
+            opts = dict(horizontal="center", vertical="center",
+                        wrap_text=self.wrap)
             self._center_middle = openpyxl.styles.Alignment(**opts)
         return self._center_middle
 
@@ -2334,7 +2353,7 @@ class Excel:
 
     @property
     def wrap(self):
-        return self.__opts.get("wrap", True)
+        return self.__opts.get("wrap")
 
     @classmethod
     def pixels_to_chars(cls, pixels):
@@ -3901,9 +3920,9 @@ class Page:
             open_tag += ' onchange="%s"' % onchange.replace('"', "&quot;")
         self.add(open_tag + ">")
         for option in options:
-            if type(option) in (list, tuple):
+            try:
                 value, display = option
-            else:
+            except:
                 value = display = option
             o = Page.B.OPTION(display, value=str(value))
             if value in default:

@@ -26,6 +26,7 @@ ST_STOP       = 'Stop'          # Stop cleanly if possible
 ST_STOPPED    = 'Stopped'       # Job stopped cleanly before end
 ST_COMPLETED  = 'Completed'     # Job ran to completion
 ST_ABORTED    = 'Aborted'       # Abnormal termination due to internal error
+STATUSES = sorted([i[1] for i in vars().items() if i[0].startswith("ST_")])
 
 # Process type identifiers, see sendSignal()
 PROC_DAEMON   = 'daemon'        # Process is the batch job daemon
