@@ -1367,7 +1367,9 @@ class Doc:
         control_wrapper = etree.SubElement(doc, "CdrDocCtl")
         if self.ctrl:
             for key in self.ctrl:
-                value = self.ctrl[key].decode(self.encoding)
+                value = self.ctrl[key]
+                if isinstance(value, bytes):
+                    value = self.ctrl[key].decode(self.encoding)
                 etree.SubElement(control_wrapper, key).text = value
         xml = self.xml
         if not isinstance(xml, str):
