@@ -1019,11 +1019,16 @@ class Control:
             translation_of = Doc.extract_id(node.get("ref"))
 
         # Munging of image URLs based on instructions from Blair in
-        # Slack message to Volker and me 2019-02-18 11:20.
+        # Slack message to Volker and me 2019-02-28 11:20.
         # Possibly a temporary solution?
-        tier_extras = dict(DEV="-blue-dev", PROD="")
-        suffix = tier_extras.get(session.tier.name, "-qa")
-        replacement = "https://www{}.cancer.gov/images/cdr/live".format(suffix)
+        # Now that QA is broken (indefinitely?) this advice no longer
+        # seems very attractive. Using what's in the host configuration
+        # file instead.
+        #tier_extras = dict(DEV="-blue-dev", PROD="")
+        #suffix = tier_extras.get(session.tier.name, "-qa")
+        #replacement = f"https://www{suffix}.cancer.gov/images/cdr/live"
+        host = session.tier.hosts["CG"]
+        replacement = f"https://{host}/images/cdr/live"
         target = "/images/cdr/live"
 
         # Pull out the summary sections into sequence of separate dictionaries.
