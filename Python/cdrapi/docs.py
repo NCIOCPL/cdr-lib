@@ -4336,7 +4336,8 @@ class Resolver(etree.Resolver):
         try:
             return self.resolve_string(doc.xml, context)
         except:
-            self.doc.session.logger.exception("resolve_string() failure")
+            msg = "resolve_string() [context=%r, scheme=%r]"
+            self.doc.session.logger.exception(msg, context, scheme)
             if scheme == "cdrx":
                 return self.resolve_string("<empty/>", context)
             raise Exception(message)
