@@ -6493,7 +6493,7 @@ class LinkType:
                      oddly, the custom logic in the properties does not
                      use this flag; I have not changed this behavior,
                      not knowing what such a change might break, but
-                     I susspect such a change would be a good idea
+                     I suspect such a change would be a good idea
         """
 
         self.__session = session
@@ -6552,6 +6552,13 @@ class LinkType:
         def __init__(self, doctype, element):
             self.doctype = doctype
             self.element = element
+
+        def __lt__(self, other):
+            """Support sorting type document type name and element name."""
+
+            mine = self.doctype.name, self.element
+            hers = other.doctype.name, other.element
+            return mine < hers
 
     @property
     def sources(self):
