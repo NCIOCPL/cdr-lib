@@ -2036,8 +2036,9 @@ class Reporter:
                 book.merge(rownum, 1, rownum, len(self.columns))
                 book.write(rownum, 1, caption, styles)
                 rownum += 1
-            book.merge(rownum, 1, rownum, len(self.columns))
-            rownum += 1
+            if self.caption:
+                book.merge(rownum, 1, rownum, len(self.columns))
+                rownum += 1
 
             # Set the column headers and widths.
             colnum = 1
