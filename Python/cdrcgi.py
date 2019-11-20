@@ -1308,6 +1308,7 @@ class HTMLPage(FormFieldFactory):
             if value == default:
                 opts["checked"] = True
             fieldset.append(self.radio_button("format", **opts))
+        return fieldset
 
     def add_session_field(self, session):
         """Add hidden session field if it isn't there already."""
