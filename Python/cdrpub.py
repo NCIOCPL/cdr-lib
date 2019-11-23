@@ -383,7 +383,7 @@ class Control:
         numprocs = cdr.getControlValue(self.PUB, name, default=default)
         numprocs = min(int(numprocs), len(self.docs))
         if self.batchsize * numprocs > len(self.docs):
-            self.batchsize = len(self.docs) / numprocs
+            self.batchsize = len(self.docs) // numprocs
         if "batchsize" in self.__opts:
             self.batchsize = self.__opts["batchsize"]
         if "numprocs" in self.__opts:
