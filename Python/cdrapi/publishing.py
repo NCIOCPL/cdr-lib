@@ -655,7 +655,9 @@ class Job:
 
         class Specification:
             """
+            Instructions for processing the publishing job
             """
+
             def __init__(self, node):
                 self.__node = node
 
@@ -766,6 +768,7 @@ class Job:
                             value = Doc.get_text(node.find("ParmValue"), "")
                             self._parameters[name] = value
                     return self._parameters
+
 
 class DrupalClient:
     """
