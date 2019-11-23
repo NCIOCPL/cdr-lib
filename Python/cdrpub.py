@@ -549,9 +549,13 @@ class Control:
           export_job - reference to `Control.ExportJob` object
         """
 
+        # Use a separate connection with a long timeout.
+        conn = db.connect(timeout=1000)
+        cursor = conn.cursor()
+
         self.logger.info("Job %d clearing %s", self.job.id, self.PUSH_STAGE)
-        self.cursor.execute("DELETE FROM {}".format(self.PUSH_STAGE))
-        self.conn.commit()
+        cursor.execute(f"DELETE FROM {self.PUSH_STAGE}")
+        conn.commit()
         push_id = str(self.job.id)
 
         # For 'Hotfix (Remove)' jobs all docs in pub_proc_doc are removals.
