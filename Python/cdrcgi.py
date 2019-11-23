@@ -1138,7 +1138,6 @@ class FormFieldFactory:
         if kwargs.get("tooltip"):
             label.set("title", kwargs["tooltip"])
         wrapper.append(widget)
-        #wrapper.append(cls.B.SPAN(" "))
         wrapper.append(label)
         return wrapper
 
