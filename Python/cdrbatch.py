@@ -767,7 +767,7 @@ class CdrBatch:
         """Write a message to our logfile.
 
         Pass:
-            msg     - message string (or sequence of strings to write.
+            msg     - message string (or sequence of strings) to write.
             logfile - where to write.
         """
         if self.__jobId:
