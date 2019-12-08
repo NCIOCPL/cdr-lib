@@ -523,6 +523,8 @@ class Control:
         export_job = self.ExportJob(self)
 
         # If this is a (drastic and VERY rare) full load, clear the decks.
+        # By 'rare' I mean there have only been three in the past couple of
+        # decades, and the last one was in 2007.
         if self.job.parms.get("PubType") == "Full Load":
             self.cursor.execute("DELETE pub_proc_cg")
             self.conn.commit()
@@ -742,7 +744,7 @@ class Control:
         media_type = self.MEDIA_TYPES[extension]
         with open(path, "rb") as fp:
             media_bytes = fp.read()
-        encoded = base64.encodebytes(media_bytes)
+        encoded = base64.encodebytes(media_bytes).decode("ascii")
         template = "<Media Type='{}' Size='{:d}' Encoding='base64'>{}</Media>"
         return template.format(media_type, len(media_bytes), encoded)
 
@@ -1760,7 +1762,7 @@ class Control:
             self.directory = directory.strip().rstrip("/")
             push_job = self.__push_job(control, cursor, subset_name)
             if push_job is not None and push_job > self.job_id:
-                message = "Export job {} has already been push by job {}"
+                message = "Export job {} has already been pushed by job {}"
                 raise Exception(message.format(self.job_id, push_job))
             query = db.Query("pub_proc_doc", "COUNT(*) AS n")
             query.where(query.Condition("pub_proc", self.job_id))
