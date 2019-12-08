@@ -4882,6 +4882,7 @@ def getErrors(xmlFragment, **opts):
         return errors
 
     elif use_dom and root is not None:
+        errors = b""
         for node in root.iter("Errors"):
             errors = etree.tostring(node, encoding="utf-8")
         if not errors and expected:
