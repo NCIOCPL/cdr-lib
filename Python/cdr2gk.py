@@ -756,7 +756,7 @@ class Test:
 
     For example:
       cdr2gk.py status --job-id 15115 --source CDR-PROD --status-type Summary
-      cdr2gk.py preview --doc-id 44000 --doctype GlossaryTerm
+      cdr2gk.py preview --doc-id 44000 --doc-type GlossaryTerm
     """
 
     from cdrapi.db import Query
@@ -800,7 +800,7 @@ class Test:
         parser.add_argument("--debug-level", type=int, default=1)
         parser.add_argument("--host", default=HOST)
         parser.add_argument("--source", default=SOURCE_TIER)
-        parser.add_argument("--doctype", default="GlossaryTerm")
+        parser.add_argument("--doc-type", default="GlossaryTerm")
         parser.add_argument("--count", help="doc count for 'complete' action")
         parser.add_argument("--last-id", help="for testing 'prolog' command")
         parser.add_argument("--desc", default=self.DESC, help="job desc")
@@ -826,16 +826,16 @@ class Test:
 
         Required:
           --doc-id (which document to preview; default 44000, a GTN doc)
-          --doctype (what name does GK know this type by?)
+          --doc-type (what name does GK know this type by?)
 
         Optional:
           --host
         """
 
-        setname = doctype = self.opts.doctype
-        assert doctype, "--doctype required for preview action"
-        if doctype == "GlossaryTermName":
-            setname = doctype = "GlossaryTerm"
+        setname = doc_type = self.opts.doc_type
+        assert doc_type, "--doc-type required for preview action"
+        if doc_type == "GlossaryTermName":
+            setname = doc_type = "GlossaryTerm"
         if setname == "Person":
             setname = "GeneticsProfessional"
         filters = ["set:Vendor {} Set".format(setname)]
@@ -846,7 +846,7 @@ class Test:
         xml, messages = result
         response = None
         try:
-            response = pubPreview(xml, doctype, host=self.opts.host)
+            response = pubPreview(xml, doc_type, host=self.opts.host)
             print(response.xmlResult.decode("utf-8").strip())
         except Exception as e:
             print(e)
@@ -930,13 +930,13 @@ class Test:
 
         # Find the filter set with some mapping of document type names.
         ver = doc.version
-        doctype = doc.doctype.name
+        doc_type = doc.doc_type
         sets = dict(
             GlossaryTermName="GlossaryTerm",
             DrugInformationSummary="DrugInfoSummary",
             Person="GeneticsProfessional"
         )
-        set_name = "set:Vendor {} Set".format(sets.get(doctype, doctype))
+        set_name = "set:Vendor {} Set".format(sets.get(doc_type, doc_type))
 
         # Filter the document and serialize it to utf-8 bytes.
         result = doc.filter(set_name)
@@ -944,16 +944,16 @@ class Test:
         if isinstance(xml, str):
             xml = xml.encode("utf-8")
 
-        # Map our doctype name to GateKeeper's.
-        doctypes = dict(
+        # Map our doc_type name to GateKeeper's.
+        doc_types = dict(
             GlossaryTermName="GlossaryTerm",
             Person="GENETICSPROFESSIONAL",
             DrugInformationSummary="DrugInfoSummary"
         )
-        doctype = doctypes.get(doctype, doctype)
+        doc_type = doctypes.get(doc_type, doc_type)
 
         # Push the filtered document.
-        args = job_id, num, "Export", doctype, doc.id, ver, group, xml
+        args = job_id, num, "Export", doc_type, doc.id, ver, group, xml
         opts = dict(host=self.opts.host, source=self.opts.source)
         response = sendDocument(*args, **opts)
         etree.dump(response.root)
@@ -961,7 +961,6 @@ class Test:
     def _remove(self):
         """
         Tell GateKeeper to remove a cdr document
-
         Required:
           --job-id
           --doc-id
@@ -978,7 +977,7 @@ class Test:
         assert job_id, "--job-id required for 'remove' command"
         assert doc_id, "--doc-id required for 'remove' command"
         assert doc_type, "--doc-type required for 'remove' command"
-        args = job_id, 1, "Remove", doc_type.name, doc_id, 1, 1
+        args = job_id, 1, "Remove", doc_type, doc_id, 1, 1
         opts = dict(host=self.opts.host, source=self.opts.source)
         response = sendDocument(*args, **opts)
         etree.dump(response.root)
