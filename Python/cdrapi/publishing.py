@@ -354,10 +354,13 @@ class Job:
                     query.join("doc_type t", "t.id = d.doc_type")
                     query.where("t.name = 'PublishingSystem'")
                     query.where(query.Condition("d.title", name))
-                    row = query.execute(self.cursor).fetchone()
-                    if not row:
+                    rows = query.execute(self.cursor).fetchall()
+                    if len(rows) > 1:
+                        raise Exception(f"multiple {name} docs")
+                    if not rows:
                         message = "Publishing system {!r} not found"
-                        raise Exception(message.format(self.system))
+                        raise Exception(message.format(name))
+                    row = rows[0]
                     opts["id"] = row.id
                     opts["title"] = name
             if opts["id"]:
