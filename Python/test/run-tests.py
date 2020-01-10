@@ -36,6 +36,7 @@ class Tests(unittest.TestCase):
     def setUp(self):
         password = cdr.getpw(self.USERNAME)
         opts = dict(comment="unit testing", tier=self.TIER, password=password)
+        self.logger = cdr.Logging.get_logger("unit-tests")
         Tests.session = Session.create_session(self.USERNAME, **opts).name
         Tests.TEST_DIR = os.path.dirname(os.path.realpath(__file__))
     def tearDown(self):
@@ -181,7 +182,6 @@ if FULL:
             auth = cdr.checkAuth(self.session, pairs, tier=self.TIER)
             self.assertTrue(len(auth) == 2)
 
-
     class _03GroupTests_____(Tests):
 
         NAME = "Test Group"
@@ -205,7 +205,6 @@ if FULL:
                 actions=actions
             )
             group = cdr.Group(**args)
-            group.actions = actions
             self.assertIsNone(cdr.putGroup(self.session, None, group, **opts))
 
         def test_12_get_group___(self):
@@ -217,6 +216,8 @@ if FULL:
         def test_13_mod_group___(self):
             opts = dict(tier=self.TIER)
             group = cdr.getGroup(self.session, self.NAME, **opts)
+            self.logger.debug("got group %d (%s)", group.id, group.name)
+            self.logger.debug("actions are %s", group.actions)
             group.name = self.NEWNAME
             group.users = self.NEWUSERS
             result = cdr.putGroup(self.session, self.NAME, group, **opts)
@@ -398,7 +399,7 @@ if FULL:
         def test_26_filter_doc__(self):
             filt = ["set:QC Summary Set"]
             result = cdr.filterDoc(self.session, filt, 62902, tier=self.TIER)
-            self.assertTrue(b"small intestine cancer" in result[0])
+            self.assertTrue("small intestine cancer" in result[0])
 
         def test_27_val_doc_____(self):
             opts = dict(doc=u"<x>\uEBAD<x>", tier=self.TIER)

@@ -13,7 +13,7 @@ from os import makedirs
 from random import random
 
 import cdr
-from cdrapi import db as cdrdb
+from cdrapi import db
 
 
 class Job:
@@ -88,7 +88,7 @@ class Job:
         """
 
         if not hasattr(self, "_cursor"):
-            conn = cdrdb.connect(user="CdrGuest", tier=self.tier)
+            conn = db.connect(user="CdrGuest", tier=self.tier)
             self._cursor = conn.cursor()
         return self._cursor
 
@@ -628,7 +628,7 @@ Run completed.
                 if "lastp" in self.doc_objects:
                     self._ever_validated = True
             if not hasattr(self, "_ever_validated"):
-                query = cdrdb.Query("document", "val_status")
+                query = db.Query("document", "val_status")
                 query.where(query.Condition("id", self.id))
                 row = query.execute(self.job.cursor).fetchone()
                 if not row:
@@ -637,7 +637,7 @@ Run completed.
                 if row.val_status in ("I", "V"):
                     self._ever_validated = True
             if not hasattr(self, "_ever_validated"):
-                query = cdrdb.Query("doc_version", "COUNT(*) AS n")
+                query = db.Query("doc_version", "COUNT(*) AS n")
                 query.where(query.Condition("id", self.id))
                 query.where("val_status IN ('I', 'V')")
                 row = query.execute(self.job.cursor).fetchone()

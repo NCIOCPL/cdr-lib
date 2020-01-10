@@ -24,28 +24,114 @@ from cdrapi import db as cdrdb
 from cdrapi.settings import Tier
 from cdrapi.users import Session
 from cdrapi.docs import Doc as APIDoc
-from cdrapi.docs import Doctype, GlossaryTermName, Schema
+from cdrapi.docs import Doctype, GlossaryTermName, Schema, DTD
 from cdrapi.docs import LinkType as APILinkType
 from cdrapi.docs import FilterSet as APIFilterSet
 from cdrapi.publishing import Job as PublishingJob
 from cdrapi.reports import Report
 from cdrapi.searches import QueryTermDef, Search
 
+
 # ======================================================================
-# Make sure we can run on both Python 2 and Python 3
+# CDR Board information
 # ======================================================================
-from six import itervalues
-try:
-    basestring
-    is_python3 = False
-    base64encode = base64.encodestring
-    base64decode = base64.decodestring
-except:
-    base64encode = base64.encodebytes
-    base64decode = base64.decodebytes
-    basestring = (str, bytes)
-    unicode = str
-    is_python3 = True
+
+class Board:
+    NAME_PATH = "/Organization/OrganizationNameInformation/OfficialName/Name"
+    ORG_TYPE_PATH = "/Organization/OrganizationType"
+    PREFIX = "PDQ "
+    SUFFIXES = " Editorial Board", " Advisory Board"
+    EDITORIAL = "Editorial"
+    ADVISORY = "Advisory"
+    BOARD_TYPES = EDITORIAL, ADVISORY
+    def __init__(self, id, **opts):
+        self.__id = id
+        self.__opts = opts
+    def __str__(self):
+        return self.short_name
+    def __repr__(self):
+        return f"{self.name} (CDR{self.id})"
+    @property
+    def id(self):
+        return self.__id
+    @property
+    def cursor(self):
+        if not hasattr(self, "_cursor"):
+            self._cursor = self.__opts.get("cursor")
+            if not self._cursor:
+                self._cursor = cdrdb.connect().cursor()
+        return self._cursor
+    @property
+    def name(self):
+        if not hasattr(self, "_name"):
+            self._name = self.__opts.get("name")
+            if not self._name and self.id:
+                query = cdrdb.Query("query_term", "value")
+                query.where(query.Condition("path", self.NAME_PATH))
+                query.where(query.Condition("doc_id", self.id))
+                for row in query.execute(self.cursor):
+                    self._name = row.value
+        return self._name
+    @property
+    def type(self):
+        if not hasattr(self, "_type"):
+            self._type = self.__opts.get("type")
+            if not self._type:
+                if self.name is not None:
+                    if self.EDITORIAL.lower() in self.name.lower():
+                        self._type = self.EDITORIAL
+                    elif self.ADVISORY.lower() in self.name.lower():
+                        self._type = self.ADVISORY
+        return self._type
+    @property
+    def short_name(self):
+        """Trimmed version of the name, suitable for web form picklists."""
+        if not hasattr(self, "_short_name"):
+            self._short_name = self.name
+            if self._short_name:
+                if self._short_name.startswith(self.PREFIX):
+                    self._short_name = self._short_name[len(self.PREFIX):]
+                for suffix in self.SUFFIXES:
+                    if self._short_name.endswith(suffix):
+                        self._short_name = self._short_name[:-len(suffix)]
+        return self._short_name
+    @property
+    def tab_name(self):
+        """Version of the name short enough to fit on an Excel tab."""
+        if not self.short_name:
+            return None
+        if "alternative" in self.short_name.lower():
+            return "IACT"
+        return self.short_name
+    def __lt__(self, other):
+        return (self.name or "") < (other.name or "")
+    @classmethod
+    def get_boards(cls, board_type=EDITORIAL, cursor=None):
+        """Dictionary of PDQ boards, indexed by Organization document ID.
+
+        Pass:
+            board_type:
+                None for all boards
+                "Editorial" for the editorial boards only (the default)
+                "Advisory" for the advisory boards only
+            cursor:
+                optional database cursor object
+        """
+        query = cdrdb.Query("query_term n", "n.doc_id", "n.value").unique()
+        query.join("query_term t", "t.doc_id = n.doc_id")
+        query.join("active_doc a", "a.id = n.doc_id")
+        query.where(query.Condition("n.path", cls.NAME_PATH))
+        query.where(query.Condition("t.path", cls.ORG_TYPE_PATH))
+        if board_type in cls.BOARD_TYPES:
+            query.where(query.Condition("t.value", f"PDQ {board_type} Board"))
+        else:
+            types = [f"PDQ {bt} Board" for bt in cls.BOARD_TYPES]
+            query.where(query.Condition("t.value", types, "IN"))
+        boards = {}
+        for board_id, board_name in query.execute():
+            boards[board_id] = cls(board_id, name=board_name)
+        return boards
+
 
 
 # ======================================================================
@@ -88,7 +174,7 @@ def getControlGroup(group, tier=None):
       dictionary of active values for the group, indexed by their names
     """
 
-    cursor = cdrdb.connect(user="CdrGuest", tier=tier).cursor if tier else None
+    cursor = cdrdb.connect(user="CdrGuest", tier=tier).cursor()
     query = cdrdb.Query("ctl", "name", "val")
     query.where(query.Condition("grp", group))
     query.where("inactivated IS NULL")
@@ -111,7 +197,7 @@ def updateCtl(credentials, action, **opts):
                   "Create"
                       add a new row to the table, assigning a value for
                       a group/name combination; any existing rows for
-                      that comibinaty will be inactivated
+                      that combination will be inactivated
                   "Inactivate"
                       mark the row for a group/name combination as
                       inactivated
@@ -417,9 +503,6 @@ def delUser(credentials, name, **opts):
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
 
-#----------------------------------------------------------------------
-# Gets the list of CDR users.
-#----------------------------------------------------------------------
 def getUsers(credentials, **opts):
     """
     Get the list of name for active CDR user accounts
@@ -702,7 +785,8 @@ def getGroup(credentials, name, **opts):
     etree.SubElement(command, "GrpName").text = name
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == command.tag + "Resp":
-            group = Session.Group()
+            group = Session.Group(actions={}, users=[])
+            #LOGGER.info("starting with actions=%s", group.actions)
             for child in response.node.findall("*"):
                 if child.tag == "GrpName":
                     group.name = child.text
@@ -715,9 +799,16 @@ def getGroup(credentials, name, **opts):
                 elif child.tag == "Auth":
                     action = get_text(child.find("Action"))
                     doctype = get_text(child.find("DocType"))
+                    if group.actions is None:
+                        #LOGGER.info("setting actions->{}")
+                        group.actions = {}
+                    #else:
+                        #LOGGER.info("no, actions is already %s", group.actions)
                     if action not in group.actions:
                         group.actions[action] = []
                     group.actions[action].append(doctype or "")
+                    #LOGGER.info("added action %s -> %s", action, group.actions)
+            #LOGGER.info("return group with actions=%s", group.actions)
             return group
         raise Exception(";".join(response.errors) or "missing response")
     raise Exception("missing response")
@@ -802,10 +893,9 @@ def delGroup(credentials, name, **opts):
 # Manage CDR document types
 # ======================================================================
 
-#----------------------------------------------------------------------
-# Class to contain CDR document type information.
-#----------------------------------------------------------------------
 class dtinfo:
+    """Class to contain CDR document type information."""
+
     def __init__(self, **opts):
         names = ("type", "format", "versioning", "created", "schema_mod",
                  "dtd", "schema", "vvLists", "comment", "error", "active",
@@ -846,31 +936,22 @@ class dtinfo:
 
     def __repr__(self):
         if self.error: return self.error
-        return """\
+        return f"""\
 [CDR Document Type]
-            Name: {}
-          Format: {}
-      Versioning: {}
-         Created: {}
-          Active: {}
-    Title Filter: {}
- Schema Modified: {}
+            Name: {self.type or ""}
+          Format: {self.format or ""}
+      Versioning: {self.versioning or ""}
+         Created: {self.created or ""}
+          Active: {self.active or ""}
+    Title Filter: {self.title_filter or ""}
+ Schema Modified: {self.schema_mod or ""}
           Schema:
-{}
+{self.schema or ""}
              DTD:
-{}
+{self.dtd or ""}
          Comment:
-{}
-""".format(self.type or "",
-           self.format or "",
-           self.versioning or "",
-           self.created or "",
-           self.active or "",
-           self.title_filter or "",
-           self.schema_mod or "",
-           self.schema or "",
-           self.dtd or "",
-           self.comment or "")
+{self.comment or ""}
+"""
 
 def getDoctype(credentials, name, **opts):
     """
@@ -937,9 +1018,6 @@ def getDoctype(credentials, name, **opts):
             raise Exception(";".join(response.errors) or "missing response")
     raise Exception("missing response")
 
-#----------------------------------------------------------------------
-# Create a new document type for the CDR.
-#----------------------------------------------------------------------
 def addDoctype(credentials, info, **opts):
     """
     Create a new document type for the CDR
@@ -1235,10 +1313,10 @@ class Doc:
         # ... and the other for passing in a CdrDoc element to be parsed.
         else:
             if self.encoding.lower() != "utf-8":
-                if isinstance(xml, unicode):
+                if isinstance(xml, str):
                     xml = xml.encode("utf-8")
                 else:
-                    xml = unicode(xml, self.encoding).encode("utf-8")
+                    xml = str(xml, self.encoding).encode("utf-8")
             root = etree.fromstring(xml)
             self.ctrl = {}
             self.xml = ""
@@ -1273,7 +1351,7 @@ class Doc:
             DOM node for CdrDocBlob.
         """
 
-        self.blob = base64decode(get_text(node).encode("ascii"))
+        self.blob = base64.decodebytes(get_text(node).encode("ascii"))
 
     def __str__(self):
         """
@@ -1289,21 +1367,21 @@ class Doc:
         control_wrapper = etree.SubElement(doc, "CdrDocCtl")
         if self.ctrl:
             for key in self.ctrl:
-                value = self.ctrl[key].decode(self.encoding)
+                value = self.ctrl[key]
+                if isinstance(value, bytes):
+                    value = self.ctrl[key].decode(self.encoding)
                 etree.SubElement(control_wrapper, key).text = value
         xml = self.xml
-        if not isinstance(xml, unicode):
+        if not isinstance(xml, str):
             xml = xml.decode("utf-8")
         if "]]>" not in xml:
             xml = etree.CDATA(xml)
         etree.SubElement(doc, "CdrDocXml").text = xml
         if self.blob is not None:
-            blob = base64encode(self.blob).decode("ascii")
+            blob = base64.encodebytes(self.blob).decode("ascii")
             etree.SubElement(doc, "CdrDocBlob", encoding="base64").text = blob
         cdr_doc_xml = etree.tostring(doc, encoding="utf-8")
-        if is_python3:
-            return cdr_doc_xml.decode("utf-8")
-        return cdr_doc_xml
+        return cdr_doc_xml.decode("utf-8")
 
     # Construct name for publishing the document.  Zero padding is
     # different for media documents, based on Alan's Multimedia Publishing
@@ -1351,12 +1429,12 @@ def makeCdrDoc(xml, docType, docId=None, ctrl=None):
     control_wrapper = etree.SubElement(doc, "CdrDocCtl")
     for name in (ctrl or {}):
         value = ctrl[name] or ""
-        if isinstance(value, basestring) and not isinstance(value, unicode):
+        if isinstance(value, bytes):
             value = value.decode("utf-8")
-        etree.SubElement(control_wrapper, name).text = unicode(value)
-    if isinstance(xml, basestring) and not isinstance(xml, unicode):
+        etree.SubElement(control_wrapper, name).text = str(value)
+    if isinstance(xml, bytes):
         xml = xml.decode("utf-8")
-    etree.SubElement(doc, "CdrDocXml").text = etree.CDATA(unicode(xml))
+    etree.SubElement(doc, "CdrDocXml").text = etree.CDATA(str(xml))
     return etree.tostring(doc, encoding="utf-8")
 
 def _put_doc(session, command_name, **opts):
@@ -1399,9 +1477,9 @@ def _put_doc(session, command_name, **opts):
 
     # Specify the value to be saved in audit_trail.comment.
     reason = opts.get("reason") or opts.get("comment") or ""
-    if isinstance(reason, basestring) and not isinstance(reason, unicode):
+    if isinstance(reason, bytes):
         reason = reason.decode("utf-8")
-    etree.SubElement(command, "Reason").text = unicode(reason)
+    etree.SubElement(command, "Reason").text = str(reason)
 
     # Get or create the CdrDoc node.
     filename = opts.get("doc_filename") or opts.get("file")
@@ -1410,7 +1488,7 @@ def _put_doc(session, command_name, **opts):
             cdr_doc = etree.parse(filename).getroot()
         else:
             doc = opts.get("doc")
-            if isinstance(doc, unicode):
+            if isinstance(doc, str):
                 doc = doc.encode("utf-8")
             cdr_doc = etree.fromstring(doc)
     except:
@@ -1439,7 +1517,7 @@ def _put_doc(session, command_name, **opts):
         blob = None
         etree.SubElement(command, "DelAllBlobVersions").text = "Y"
     if blob is not None:
-        encoded_blob = base64encode(blob).decode("ascii")
+        encoded_blob = base64.encodebytes(blob).decode("ascii")
         node = cdr_doc.find("CdrDocBlob")
         if node is not None:
             node.text = encoded_blob
@@ -1449,7 +1527,7 @@ def _put_doc(session, command_name, **opts):
     # Plug in a new comment if appropriate.
     comment = opts.get("comment")
     if comment:
-        if not isinstance(comment, unicode):
+        if not isinstance(comment, str):
             comment = comment.decode("utf-8")
         doc_control = cdr_doc.find("CdrDocCtl")
         node = doc_control.find("DocComment")
@@ -1633,10 +1711,10 @@ def getDoc(credentials, docId, *args, **opts):
                 raise Exception(error)
         if doc is None:
             raise Exception("missing response")
-    doc_string = etree.tostring(doc, encoding="utf-8")
+    doc_bytes = etree.tostring(doc, encoding="utf-8")
     if opts.get("getObject"):
-        return Doc(doc_string, encoding="utf-8")
-    return doc_string
+        return Doc(doc_bytes, encoding="utf-8")
+    return doc_bytes
 
 def delDoc(credentials, doc_id, **opts):
     """
@@ -1807,10 +1885,10 @@ def filterDoc(credentials, filter, docId=None, **opts):
                     version selection; filterDate is legacy alias
       tier - optional; one of DEV, QA, STAGE, PROD
       host - deprecated alias for tier
+      encoding - return document and errors as bytes with specified encoding
 
     Return:
         tuple of document, messages if successful, else error string
-        document is serialized as utf-8 bytes
     """
 
     xml = opts.get("doc")
@@ -1820,6 +1898,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
     filter_ver = opts.get("filter_ver") or opts.get("filterVer")
     filter_date = opts.get("filter_date") or opts.get("filterDate") or date
     no_output = opts.get("no_output", "N") == "Y"
+    encoding = opts.get("encoding") or "unicode"
     output = not no_output
     parms = opts.get("parms") or opts.get("parm")
     parms = dict(parms) if parms else {}
@@ -1846,15 +1925,17 @@ def filterDoc(credentials, filter, docId=None, **opts):
             messages = etree.Element("Messages")
             for message in result.messages:
                 etree.SubElement(messages, "message").text = message
-            messages = etree.tostring(messages, encoding="utf-8")
+            messages = etree.tostring(messages, encoding=encoding)
         else:
             messages = ""
         if output:
             # Don't know why, but lxml isn't consistent in filter results.
             if isinstance(result.result_tree, etree._Element):
-                result = etree.tostring(result.result_tree, encoding="utf-8")
+                result = etree.tostring(result.result_tree, encoding=encoding)
             else:
-                result = unicode(result.result_tree).encode("utf-8")
+                result = str(result.result_tree)
+                if encoding.lower() != "unicode":
+                    result = result.encode(encoding)
             return result, messages
         else:
             return messages
@@ -1866,7 +1947,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
     if filter_date:
         command.set("FilterCutoff", str(filter_date))
     if opts.get("inline"):
-        if not isinstance(filter, unicode):
+        if not isinstance(filter, str):
             filter = filter.decode("utf-8")
         etree.SubElement(command, "Filter").text = etree.CDATA(filter)
     else:
@@ -1890,7 +1971,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
         if date:
             node.set("maxDate", str(date))
     elif xml:
-        if not isinstance(xml, unicode):
+        if not isinstance(xml, str):
             xml = xml.decode("utf-8")
         node.text = etree.CDATA(xml)
     else:
@@ -1908,11 +1989,13 @@ def filterDoc(credentials, filter, docId=None, **opts):
             document = get_text(response.node.find("Document"))
             messages = response.node.find("Messages")
             if messages is not None:
-                messages = etree.tostring(messages, encoding="utf-8")
+                messages = etree.tostring(messages, encoding=encoding)
             else:
                 messages = ""
             if output:
-                return document.encode("utf-8"), messages
+                if encoding.lower() != "unicode":
+                    document = document.encode(encoding)
+                return document, messages
             else:
                 return messages
         error = ";".join(response.errors) or "missing response"
@@ -2203,7 +2286,7 @@ def valDoc(credentials, doctype, **opts):
     if doc_id and doc:
         raise Exception("valDoc(): both doc and doc_id specified")
     if doc:
-        if isinstance(doc, unicode):
+        if isinstance(doc, str):
             doc = doc.encode("utf-8")
         xml = None
         try:
@@ -2415,7 +2498,7 @@ class LockedDoc(object):
     def getDocTitle(self):
         return self.__docTitle
         # Conversion for use in log files and messages XXX - no, don't
-        if type(self.__docTitle) == type(u""):
+        if isinstance(self.__docTitle, type("")):
             return self.__docTitle.encode('ascii', 'replace')
         return self.__docTitle
     docTitle = property(getDocTitle)
@@ -2426,17 +2509,15 @@ class LockedDoc(object):
     def __str__(self):
         """ Human readable form """
 
-        args = (self.docId, self.docType, self.docTitle, self.__docVersion,
-                self.userId, self.userAbbrev, self.userFullName, self.dateOut)
-        return """\
-       docId: {}
-     docType: {}
-    docTitle: {}
-  docVersion: {}
-      userId: {}
-  userAbbrev: {}
-userFullName: {}
-     dateOut: {}""".format(*args)
+        return f"""\
+       docId: {self.docId}
+     docType: {self.docType}
+    docTitle: {self.docTitle}
+  docVersion: {self.__docVersion}
+      userId: {self.userId}
+  userAbbrev: {self.userAbbrev}
+userFullName: {self.userFullName}
+     dateOut: {self.dateOut}"""
 
 
 def isCheckedOut(doc_id, conn=None):
@@ -2605,7 +2686,7 @@ def getCssFiles(credentials, **opts):
             for node in response.node.findall("File"):
                 name = get_text(node.find("Name"))
                 data = get_text(node.find("Data"))
-                data = base64decode(data.encode("ascii"))
+                data = base64.decodebytes(data.encode("ascii"))
                 files.append(CssFile(name, data))
             return files
         error = ";".join(response.errors) or "missing response"
@@ -2637,9 +2718,9 @@ def addExternalMapping(credentials, usage, value, **opts):
       integer primary key for newly inserted mapping table row
     """
 
-    if isinstance(usage, basestring) and not isinstance(usage, unicode):
+    if isinstance(usage, bytes):
         usage = usage.decode("utf-8")
-    if isinstance(value, basestring) and not isinstance(value, unicode):
+    if isinstance(value, bytes):
         value = value.decode("utf-8")
     tier = opts.get("tier") or opts.get("host") or None
     session = _Control.get_session(credentials, tier)
@@ -2821,7 +2902,7 @@ class FilterSet:
         if isinstance(session, Session):
             members = []
             for m in self.members:
-                if isinstance(m.id, basestring):
+                if isinstance(m.id, (str, bytes)):
                     member = APIDoc(session, id=m.id, title=self.name)
                 else:
                     member = APIFilterSet(session, id=m.id, name=self.name)
@@ -2849,10 +2930,13 @@ class FilterSet:
         if self.notes is not None:
             etree.SubElement(command, "FilterSetNotes").text = self.notes
         for member in self.members:
-            if isinstance(member.id, basestring):
-                etree.SubElement(command, "Filter", DocId=member.id)
+            member_id = member.id
+            if isinstance(member_id, bytes):
+                member_id = member_id.decode("utf-8")
+            if isinstance(member_id, str):
+                etree.SubElement(command, "Filter", DocId=member_id)
             else:
-                etree.SubElement(command, "FilterSet", SetId=str(member.id))
+                etree.SubElement(command, "FilterSet", SetId=str(member_id))
         for response in _Control.send_command(session, command, tier):
             if response.node.tag == name + "Resp":
                 return int(response.node.get("TotalFilters"))
@@ -2868,19 +2952,22 @@ class FilterSet:
           string describing the set
         """
 
-        lines = [u"name={}".format(self.name), u"desc={}".format(self.desc)]
+        lines = [f"name={self.name}", f"desc={self.desc}"]
         if self.notes:
-            lines.append(u"notes={}".format(self.notes))
+            lines.append("notes={}".format(self.notes))
         if self.expanded:
-            lines.append(u"Expanded list of filters:")
+            lines.append("Expanded list of filters:")
         for member in self.members:
-            args = member.id, member.name
-            if self.expanded or isinstance(member.id, basestring):
-                args = u"filter", member.id, member.name
-            else:
-                args = u"filter set", member.id, member.name
-            lines.append(u"{} {} ({})".format(*args))
-        return u"\n".join(lines) + u"\n"
+            member_id, member_name = member.id, member.name
+            if isinstance(member_id, bytes):
+                member_id = member_id.decode("utf-8")
+            if isinstance(member_name, bytes):
+                member_name = member_name.decode("utf-8")
+            member_type = "filter set"
+            if self.expanded or isinstance(member_id, str):
+                member_type = "filter"
+            lines.append(f"{member_type} {member_id} ({member_name})")
+        return "\n".join(lines) + "\n"
 
 def addFilterSet(credentials, filter_set, **opts):
     """
@@ -2952,36 +3039,39 @@ def getFilterSet(credentials, name, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
-#----------------------------------------------------------------------
-# Recursively rolls out the list of filters invoked by a named filter
-# set.  In contrast with getFilterSet, which returns a list of nested
-# filter sets and filters intermixed, all of the members of the list
-# returned by this function represent filters.  Since there is no need
-# to distinguish filters from nested sets by the artifice of
-# representing filter IDs as strings, the id member of each object
-# in this list is an integer.
-#
-# Takes the name of the filter set as input.  Returns a FilterSet
-# object, with the members attribute as described above.
-#
-# Note: since it is possible for bad data to trigger infinite
-# recursion, we throw an exception if the depth of nesting exceeds
-# a reasonable level.
-#
-# WARNING: treat the returned objects as read-only, otherwise you'll
-# corrupt the cache used for future calls.
-#----------------------------------------------------------------------
 _expandedFilterSetCache = {}
 def expandFilterSet(session, name, level=0, **opts):
+    """
+    Find all of the filters loaded for a filter set.
+
+    Recursively rolls out the list of filters invoked by a named filter
+    set.  In contrast with getFilterSet, which returns a list of nested
+    filter sets and filters intermixed, all of the members of the list
+    returned by this function represent filters.  Since there is no need
+    to distinguish filters from nested sets by the artifice of
+    representing filter IDs as strings, the id member of each object
+    in this list is an integer.
+
+    Takes the name of the filter set as input.  Returns a FilterSet
+    object, with the members attribute as described above.
+
+    Note: since it is possible for bad data to trigger infinite
+    recursion, we throw an exception if the depth of nesting exceeds
+    a reasonable level.
+
+    WARNING: treat the returned objects as read-only, otherwise you'll
+    corrupt the cache used for future calls.
+    """
+
     global _expandedFilterSetCache
     if level > 100:
         raise Exception('expandFilterSet', 'infinite nesting of sets')
-    if _expandedFilterSetCache.has_key(name):
+    if name in _expandedFilterSetCache:
         return _expandedFilterSetCache[name]
     filterSet = getFilterSet(session, name, host, port)
     newSetMembers = []
     for member in filterSet.members:
-        if type(member.id) == type(9):
+        if isinstance(member.id, type(9)):
             nestedSet = expandFilterSet(session, member.name, level + 1)
             newSetMembers += nestedSet.members
         else:
@@ -2991,16 +3081,19 @@ def expandFilterSet(session, name, level=0, **opts):
     _expandedFilterSetCache[name] = filterSet
     return filterSet
 
-#----------------------------------------------------------------------
-# Returns a dictionary containing all of the CDR filter sets, rolled
-# out by the expandFilterSet() function above, indexed by the filter
-# set names.
-#----------------------------------------------------------------------
 def expandFilterSets(session, **opts):
+    """
+    Perform the filter set expansion for all filter sets in the system
+
+    Returns a dictionary containing all of the CDR filter sets, rolled
+    out by the expandFilterSet() function above, indexed by the filter
+    set names.
+    """
+
     sets = {}
+    opts = dict(host=host, port=port)
     for fSet in getFilterSets(session):
-        sets[fSet.name] = expandFilterSet(session, fSet.name, host = host,
-                                          port = port)
+        sets[fSet.name] = expandFilterSet(session, fSet.name, **opts)
     return sets
 
 def delFilterSet(credentials, name, **opts):
@@ -3060,8 +3153,8 @@ class LinkType:
         lines = ["LinkType("]
         for name in self.LISTS:
             lines.append(str(getattr(self, name)))
-        lines += [self.linkChkType or u"?", self.comment or u"[NO COMMENT]"]
-        return u",\n    ".join(lines) + u"\n)"
+        lines += [self.linkChkType or "?", self.comment or "[NO COMMENT]"]
+        return ",\n    ".join(lines) + "\n)"
 
 class LinkPropType:
     """
@@ -3127,7 +3220,7 @@ def getLinkType(credentials, name, **opts):
         t = APILinkType(session, name=name)
         props = t.properties or []
         opts = {
-            "linkTargets": [v.name for v in itervalues(t.targets)],
+            "linkTargets": [v.name for v in t.targets.values()],
             "linkSources": [(s.doctype.name, s.element) for s in t.sources],
             "linkProps": [(p.name, p.value, p.comment) for p in props],
             "linkChkType": t.chk_type,
@@ -3235,7 +3328,7 @@ def putLinkType(credentials, name, linktype, action, **opts):
             wrapper = etree.SubElement(command, "LinkProperties")
             etree.SubElement(wrapper, "LinkProperty").text = name
             etree.SubElement(wrapper, "PropertyValue").text = value
-            etree.SubElement(wrapper, "Comment").text = comment or u""
+            etree.SubElement(wrapper, "Comment").text = comment or ""
         for response in _Control.send_command(session, command, tier):
             if response.node.tag == tag + "Resp":
                 return
@@ -3438,15 +3531,19 @@ def publish(credentials, pubSystem, pubSubset, **opts):
     """
 
     # Log what we're doing to the publishing log
-    logwrite("cdr.publish(opts={})".format(opts), PUBLOG)
+    logger = Logging.get_logger("publish")
+    logger.info("cdr.publish(opts=%s)", opts)
 
     # Parse the doc list
     doc_list = opts.get("docList", [])
-    if isinstance(doc_list, basestring):
+    if isinstance(doc_list, (str, bytes)):
         doc_list = [doc_list]
     docs = []
     for doc in doc_list:
-        doc_string = str(doc)
+        if isinstance(doc, bytes):
+            doc_string = doc.decode("utf-8")
+        else:
+            doc_string = str(doc)
         if "/" in doc_string:
             doc_id, version = doc_string.split("/", 1)
         else:
@@ -3472,11 +3569,11 @@ def publish(credentials, pubSystem, pubSubset, **opts):
         )
         try:
             job_id = PublishingJob(session, **pub_opts).create()
-            logwrite("Job {} created".format(job_id), PUBLOG)
+            logger.info("Job %s created", job_id)
             return (str(job_id), None)
         except Exception as e:
             session.logger.exception("publish() failed")
-            logwrite("failure: {}".format(e), PUBLOG)
+            logger.exception("failure: %s", e)
             errors = etree.Element("Errors")
             etree.SubElement(errors, "Err").text = str(e)
             return (None, etree.tostring(errors, encoding="utf-8"))
@@ -3495,7 +3592,7 @@ def publish(credentials, pubSystem, pubSubset, **opts):
         for name, value in parms:
             parm = etree.SubElement(wrapper, "Parm")
             etree.SubElement(parm, "Name").text = name
-            etree.SubElement(parm, "Value").text = unicode(value)
+            etree.SubElement(parm, "Value").text = str(value)
     if docs:
         wrapper = etree.SubElement(command, "DocList")
         for doc_id, doc_version in docs:
@@ -3515,8 +3612,7 @@ def publish(credentials, pubSystem, pubSubset, **opts):
             parent = response.node.getparent()
             node_bytes = etree.tostring(parent, encoding="utf-8")
             node_string = node_bytes.decode("utf-8")
-            message = "cdr.publish() returned {}".format(node_string)
-            logwrite(message, PUBLOG)
+            logger.info("cdr.publish() returned %s", node_string)
             job_id = get_text(response.node.find("JobId"))
             return (job_id, None)
 
@@ -3830,6 +3926,20 @@ def delQueryTermDef(credentials, path, rule=None, **opts):
 
 def log_client_event(credentials, description, **opts):
     """
+    Capture a record of something that happened in the XMetaL client
+
+    Useful for troubleshooting.
+
+    Pass:
+      credentials - result of login
+      description - string describing what happened
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
     """
 
     tier = opts.get("tier") or opts.get("host") or None
@@ -3848,6 +3958,20 @@ def log_client_event(credentials, description, **opts):
 
 def save_client_trace_log(credentials, log_data, **opts):
     """
+    Capture the contents of the trace debugging log from the XMetaL client
+
+    Useful for troubleshooting.
+
+    Pass:
+      credentials - result of login
+      description - string holding the trace log's currentcontent
+
+    Optional keyword arguments:
+      tier - optional; one of DEV, QA, STAGE, PROD
+      host - deprecated alias for tier
+
+    Return:
+      None
     """
 
     tier = opts.get("tier") or opts.get("host") or None
@@ -3887,15 +4011,16 @@ def mailerCleanup(credentials, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+def bail(why):
+    """Complain to web client and exit."""
+    print(f"Content-type: text/plain\n\n{why}\n")
+    exit(0)
 
 class Logging:
     """
-    The CDR has too many ways to do logging already. In spite of this,
-    I'm adding yet another logging class, this one based on the standard
-    library's logging module. The immediate impetus for doing this is the
-    fact that we have to use that module in the new CDR Scheduler. The
-    Logger class below is only used as a namespace wrapper, with a factory
-    method for instantiating logger objects.
+    Use the Python standard library support for logging the CDR activity
+    This class is basically used as a namespace wrapper, with a factory
+    method for instantiating logging objects.
     """
 
     FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
@@ -3938,7 +4063,7 @@ class Logging:
 
         logger = logging.getLogger(name)
         level = opts.get("level", "info")
-        logger.setLevel(cls.LEVELS.get(level, logging.INFO))
+        logger.setLevel(cls.LEVELS.get(level.lower(), logging.INFO))
         logger.propagate = opts.get("propagate", False)
         if not logger.handlers or opts.get("multiplex"):
             path = opts.get("path", "%s/%s.log" % (DEFAULT_LOGDIR, name))
@@ -4014,14 +4139,30 @@ class _Control:
         if isinstance(credentials, Session):
             return credentials
         if cls.tunneling(tier):
-            if isinstance(credentials, basestring):
+            if isinstance(credentials, str):
                 return credentials
+            elif isinstance(credentials, bytes):
+                return credentials("utf-8")
             else:
                 username, password = credentials
+                if isinstance(username, bytes):
+                    username = username.decode("utf-8")
+                if isinstance(password, bytes):
+                    password = password.decode("utf-8")
                 return cls.windows_login(username, password, tier)
-        if isinstance(credentials, basestring):
+        if isinstance(tier, bytes):
+            tier = tier.decode("utf-8")
+        if isinstance(comment, bytes):
+            comment = comment.decode("utf-8")
+        if isinstance(credentials, bytes):
+            credentials = credentials.decode("utf-8")
+        if isinstance(credentials, str):
             return Session(credentials, tier)
         user, password = credentials
+        if isinstance(user, bytes):
+            user = user.decode("utf-8")
+        if isinstance(password, bytes):
+            password = password.decode("utf-8")
         opts = dict(comment=comment, password=password, tier=tier)
         return Session.create_session(user, **opts)
 
@@ -4123,7 +4264,7 @@ class _Control:
                 root = etree.parse(filename).getroot()
             else:
                 doc = opts.get("doc")
-                if isinstance(doc, unicode):
+                if isinstance(doc, str):
                     doc = doc.encode("utf-8")
                 root = etree.fromstring(doc)
         except:
@@ -4146,7 +4287,7 @@ class _Control:
             if blob is None:
                 encoded_blob = get_text(root.find("CdrDocBlob"))
                 if encoded_blob is not None:
-                    blob = base64decode(encoded_blob.encode("ascii"))
+                    blob = base64.decodebytes(encoded_blob.encode("ascii"))
                 elif opts.get("del_blob") or opts.get("delBlob"):
                     blob = b""
         doc_opts = {
@@ -4158,9 +4299,9 @@ class _Control:
         doc = APIDoc(session, **doc_opts)
         comment = opts.get("comment")
         reason = opts.get("reason")
-        if comment and not isinstance(comment, unicode):
+        if comment and not isinstance(comment, str):
             comment = comment.decode("utf-8")
-        if reason and not isinstance(reason, unicode):
+        if reason and not isinstance(reason, str):
             reason = reason.decode("utf-8")
         publishable = opts.get("publishable", opts.get("verPublishable", "N"))
         save_opts = {
@@ -4207,7 +4348,7 @@ class _Control:
 # ======================================================================
 # Legacy functions, classes, and module-level values
 # The stuff below here was cleaned up a little bit, but is essentially
-# what it was before Gauss.
+# what it was before the Gauss release.
 # ======================================================================
 
 def isDevHost():
@@ -4263,7 +4404,7 @@ def getpw(name):
 
     try:
         name = name.lower()
-        with open(WORK_DRIVE + ":/etc/cdrpw") as fp:
+        with open(f"{ETC}/cdrpw") as fp:
             for line in fp:
                 n, p = line.strip().split(":", 1)
                 if n == name:
@@ -4272,7 +4413,7 @@ def getpw(name):
         pass
     return None
 
-def toUnicode(value, default=u""):
+def toUnicode(value, default=""):
     """
     Convert value to Unicode
 
@@ -4288,16 +4429,16 @@ def toUnicode(value, default=u""):
 
     if value is None:
         return default
-    if not isinstance(value, basestring):
-        return unicode(value)
-    if isinstance(value, unicode):
+    if not isinstance(value, (str, bytes)):
+        return str(value)
+    if isinstance(value, str):
         return value
     for encoding in ("ascii", "utf-8", "iso-8859-1"):
         try:
             return value.decode(encoding)
         except:
             pass
-    raise Exception("unknown encoding for {!r}".format(value))
+    raise Exception(f"unknown encoding for {value!r}")
 
 def get_text(node, default=None):
     """
@@ -4318,14 +4459,14 @@ def get_text(node, default=None):
 
     if node is None:
         return default
-    return u"".join(node.itertext("*"))
+    return "".join(node.itertext("*"))
 
 #----------------------------------------------------------------------
 # Normalize a document id to form 'CDRnnnnnnnnnn'.
 #----------------------------------------------------------------------
 def normalize(id):
     if id is None: return None
-    if type(id) == type(9):
+    if isinstance(id, type(9)):
         idNum = id
     else:
         digits = re.sub('[^\d]', '', id)
@@ -4359,7 +4500,7 @@ def exNormalize(id):
         Exception if not a CDR ID.
     """
 
-    if type(id) == type(9):
+    if isinstance(id, type(9)):
         # Passed a number
         idNum = id
         frag  = None
@@ -4392,35 +4533,39 @@ def exNormalize(id):
 # Legacy global names
 # ======================================================================
 CBIIT_HOSTING = True
-WORK_DRIVE = _Control.TIER.drive
-GPMAILER = _Control.TIER.hosts["EMAILERS"]
-GPMAILERDB = _Control.TIER.hosts["DBNIX"]
+BASEDIR = _Control.TIER.basedir
+FIX_PERMISSIONS = f"{BASEDIR}/Bin/fix-permissions.cmd".replace("/", "\\")
+ETC = _Control.TIER.etc
 APPC = _Control.TIER.hosts["APPC"]
-FQDN = open(WORK_DRIVE + ":/cdr/etc/hostname").read().strip()
+FQDN = open(f"{BASEDIR}/etc/hostname").read().strip()
 HOST_NAMES = FQDN.split(".")[0], FQDN, "https://" + FQDN
 CBIIT_NAMES = APPC.split(".")[0], APPC, "https://" + APPC
 OPERATOR = "NCIPDQoperator@mail.nih.gov"
 DOMAIN_NAME = FQDN.split(".", 1)[1]
 PUB_NAME = HOST_NAMES[0]
 URDATE = "2002-06-22"
-PYTHON = WORK_DRIVE + ":\\python\\python.exe"
-BASEDIR = WORK_DRIVE + ":/cdr"
+PYTHON = sys.executable
 SMTP_RELAY = "MAILFWD.NIH.GOV"
-DEFAULT_LOGDIR = BASEDIR + "/Log"
-DEFAULT_LOGLVL = 5
-DEFAULT_LOGFILE = DEFAULT_LOGDIR + "/debug.log"
-PUBLOG = DEFAULT_LOGDIR + "/publish.log"
+DEFAULT_LOGDIR = f"{BASEDIR}/Log"
+DEFAULT_LOGFILE = f"{DEFAULT_LOGDIR}/debug.log"
+PUBLOG = f"{DEFAULT_LOGDIR}/publish.log"
+MAILER_LOGFILE = f"{DEFAULT_LOGDIR}/mailer.log"
 MANIFEST_NAME = "CdrManifest.xml"
-CLIENT_FILES_DIR = BASEDIR + "/ClientFiles"
-MANIFEST_PATH = "{}/{}".format(CLIENT_FILES_DIR, MANIFEST_NAME)
+CLIENT_FILES_DIR = f"{BASEDIR}/ClientFiles"
+MANIFEST_PATH = f"{CLIENT_FILES_DIR}/{MANIFEST_NAME}"
 SENDCMDS_TIMEOUT = 300
 SENDCMDS_SLEEP = 3
-PDQDTDPATH = WORK_DRIVE + ":\\cdr\\licensee"
-DEFAULT_DTD = PDQDTDPATH + "\\pdqCG.dtd"
+PDQDTDPATH = f"{BASEDIR}/licensee".replace("/", os.path.sep)
+DEFAULT_DTD = f"{PDQDTDPATH}/pdqCG.dtd".replace("/", os.path.sep)
 NAMESPACE = "cips.nci.nih.gov/cdr"
-LOGGER = Logging.get_logger("cdr-client", level="debug", console=True)
+LOGGER = Logging.get_logger("cdr-client", level="debug")
 Group = Session.Group
 Action = Session.Action
+try:
+    WORK_DRIVE = _Control.TIER.drive
+except:
+    WORK_DRIVE = None
+TMP = f"{WORK_DRIVE}:/tmp" if WORK_DRIVE else "/tmp"
 
 # ======================================================================
 # Module data used by publishing.py and cdrpub.py.
@@ -4433,245 +4578,6 @@ PUBTYPES = {
     'Hotfix (Remove)': 'Delete individual documents from Cancer.gov',
     'Hotfix (Export)': 'Send individual documents to Cancer.gov'
 }
-
-def logwrite(msgs, logfile=DEFAULT_LOGFILE, tback=False, stackTrace=False):
-    """
-    Append one or messages to a log file - closing the file when done.
-    Can also record traceback information.
-
-    Pass:
-        msgs    - Single string or sequence of strings to write.
-                   Should not contain binary data.
-        logfile - Optional log file path, else uses default.
-        tback   - True = log the latest traceback object.
-                   False = do not.
-                   See stack trace notes.
-        stack   - True = log a stack trace even if there is no traceback
-                   object.  Useful for logging the stack trace even though
-                   no exception occurred.
-                   See stack trace notes.
-
-    Stack trace notes:
-        For unconditional logging of a stack trace, use stackTrace=True,
-        not tback=True.  tback will _only_ print a stack trace if there was
-        an exception.
-
-    Return:
-        Void.  Does nothing at all if it can't open the logfile or
-          append to it.
-    """
-    f = None
-    try:
-        f = open(logfile, "a", 0)
-
-        # Write process id and timestamp
-        now = datetime.datetime.now()
-        f.write("!%d %s: " % (os.getpid(), now.ctime()))
-
-        # Sequence of messages or single message
-        if isinstance(msgs, (tuple, list)):
-            for msg in msgs:
-                if isinstance(msg, unicode):
-                    msg = msg.encode('utf-8')
-                f.write(msg)
-                f.write("\n")
-        else:
-            if isinstance(msgs, unicode):
-                msgs = msgs.encode('utf-8')
-            f.write(msgs)
-            f.write("\n")
-
-        # If traceback of the last exception is requested
-        if tback:
-            try:
-                traceback.print_exc(999, f)
-            except:
-                pass
-
-        # If an unconditional stack trace (no exception required) is requested
-        if stackTrace:
-            try:
-                traceback.print_stack(file=f)
-            except:
-                pass
-
-    except:
-        pass
-
-    # Close file if opened.  This ensures that caller will see his
-    #   logged messages even if his program crashes
-    if f:
-        try:
-            f.close()
-        except:
-            pass
-
-
-class Log:
-    """
-    Manage a logfile.  Improved functionality compared to cdr.logwrite()
-
-    Provides efficient logging to any file desired.
-
-    Instantiate one of these to create, or append to an existing,
-    logfile.
-    """
-
-    _DEFAULT_BANNER = "=========== Opening Log ==========="
-
-    def __init__(self, filename,
-                 dirname=DEFAULT_LOGDIR, banner=_DEFAULT_BANNER,
-                 logTime=True, logPID=True, level=DEFAULT_LOGLVL,
-                 logTier=False):
-        """
-        Creates log object.
-
-        Pass:
-            filename - All logging goes here.
-            dirname  - Directory for log file.
-            banner   - If present, write it to signify opening
-                       the log.
-            logTime  - Prepend date/time to each entry.
-            logPID   - Prepend process ID.
-            level    - Log any message at this level or lower.
-                       (Possibly override with environment
-                       variable or by calling function to change
-                       level.)
-            logTier  - Prepend tier ID (DEV, QA, etc.) to each log msg.
-                       Tier will always be under the banner if there
-                       is one.
-
-        Raises:
-            IOError if log cannot be opened.
-        """
-
-        # Defaults for banner
-        self.__logTime  = True
-        self.__logPID   = True
-        self.__level    = level
-
-        # Can get the PID once and save it, formatted
-        self.__pid = "!%d: " % os.getpid()
-
-        # Save parms
-        self.__banner  = banner
-        self.__logTime = logTime
-        self.__logPID  = logPID
-        self.__level   = level
-        self.__fp      = None
-
-        # Find the tier once and format it
-        if logTier:
-            self.__logTier = _Control.TIER.name + ':'
-        else:
-            self.__logTier = False
-
-        # Open for append, unbuffered
-        self.__filename = dirname + '/' + filename
-        self.__fp = open(self.__filename, "a", 0)
-
-        # If there's a banner, write it with stamps
-        if banner:
-            now = datetime.datetime.now()
-            args = banner, _Control.TIER.name, now.ctime()
-            self.writeRaw("\n%s\nTIER: %s  DATETIME: %s\n" % args)
-
-    def write(self, msgs, level=DEFAULT_LOGLVL, tback=False,
-              stdout=False, stderr=False):
-        """
-        Writes msg(s) to log file.
-        Flushes after each write but does not close the file.
-
-        Pass:
-            msgs   - If type=string, write single message with
-                     newline.
-                   - If type=sequence, write each sequence in
-                     string with newline (assuming raw = False).
-            level  - See __init__().
-            tback  - Write latest traceback object.
-                     Use this when writing from an exception
-                     handler if desired.
-            stdout - True=Also write to stdout.
-            stderr - True=Also write to stderr.
-        """
-        # No write if level too high
-        if level > self.__level:
-            return
-
-        # Write process id and timestamp
-        if self.__logTier:
-            self.__fp.write(self.__logTier)
-        if self.__logPID:
-            self.__fp.write(self.__pid)
-        if self.__logTime:
-            now = datetime.datetime.now()
-            self.__fp.write("%s: " % now.ctime())
-
-        # Sequence of messages or single message
-        if type(msgs) == type(()) or type(msgs) == type([]):
-            for msg in msgs:
-                if (type(msg)) == type(u""):
-                    msg = msg.encode ('utf-8')
-                self.__fp.write(msg)
-                self.__fp.write("\n")
-                if stdout:
-                    print(msg)
-                if stderr:
-                    sys.stderr.write(msg + "\n")
-        else:
-            if (type(msgs)) == type(u""):
-                msgs = msgs.encode('utf-8')
-            self.__fp.write(msgs)
-            self.__fp.write("\n")
-            if stdout:
-                print(msgs)
-            if stderr:
-                sys.stderr.write(msgs + "\n")
-
-        # If traceback is requested, include the last one
-        if tback:
-            try:
-                self.writeRaw("Traceback follows:\n")
-                traceback.print_exc(999, self.__fp)
-            except:
-                pass
-
-    def writeRaw(self, msg, level=DEFAULT_LOGLVL):
-        """
-        No processing of any kind.  But we do respect level.
-
-        Caller can use this to dump data as he sees fit, but must
-        take care about encoding and other issues.
-        """
-        # No write if level too high
-        if level > self.__level:
-            return
-
-        self.__fp.write(msg)
-
-    def __del__(self):
-        """
-        Final close of the log file.
-
-        May write a closing banner - this tells when the program
-        exited, or caller explicitly called del(log_object).
-        """
-        # If there's a banner, put one at the end
-        if self.__banner:
-            # Insure PID: date time on closing banner
-            self.__logTime  = True
-            self.__logPID   = True
-            self.__level    = DEFAULT_LOGLVL
-            if isinstance(self.__fp, file):
-                now = datetime.datetime.now()
-                self.writeRaw("\n%s\n" % now.ctime())
-                self.writeRaw("=========== Closing Log ===========\n\n")
-
-        # Can only close the file if we were able to open it earlier.
-        # Permission problems exist and file pointer is None.
-        # -----------------------------------------------------------
-        if isinstance(self.__fp, file):
-            self.__fp.close()
 
 
 # ======================================================================
@@ -4867,7 +4773,7 @@ class Error:
         every time this module is loaded.
         """
         if not cls.__pattern:
-            cls.__pattern = re.compile(u"<Err(?:\\s+[^>]*)?>(.*?)</Err>",
+            cls.__pattern = re.compile("<Err(?:\\s+[^>]*)?>(.*?)</Err>",
                                        re.DOTALL)
         return cls.__pattern
 
@@ -4930,31 +4836,33 @@ def checkErr(resp, asObject=False):
 #                    objects); also ignored when we're not returning
 #                    a sequence (again, to preserve the original
 #                    behavior of the function)
+#                    2019-09-01: the default is now False (so by
+#                                default we return Unicode strings)
 #----------------------------------------------------------------------
 def getErrors(xmlFragment, **opts):
 
     # Pull out the options.
     expected = opts.get("errorsExpected", True)
     as_objects = opts.get("asObjects", False)
-    as_utf8 = opts.get("asUtf8", True)
+    as_utf8 = opts.get("asUtf8", False)
     use_dom = as_objects or opts.get("useDom", True)
     as_sequence = opts.get("asSequence", False)
 
     # Try get a parsed node for the fragment if appropriate.
     if use_dom:
         root = None
-        if isinstance(xmlFragment, unicode):
+        if isinstance(xmlFragment, str):
             xmlFragment = xmlFragment.encode("utf-8")
         try:
             root = etree.fromstring(xmlFragment)
         except Exception as e:
             if as_objects:
-                raise Exception(u"getErrors(): %s" % e)
+                raise Exception(f"getErrors(): {e}")
 
     if as_sequence or as_objects:
 
         # Safety check.
-        if not isinstance(xmlFragment, basestring):
+        if not isinstance(xmlFragment, (str, bytes)):
             return []
 
         if use_dom and root is not None:
@@ -4964,79 +4872,47 @@ def getErrors(xmlFragment, **opts):
             if as_objects:
                 return errors
             return [e.getMessage(as_utf8) for e in errors]
-        if not isinstance(xmlFragment, unicode):
+        if not isinstance(xmlFragment, str):
             xmlFragment = xmlFragment.decode("utf-8")
         errors = Error.getPattern().findall(xmlFragment)
         if not errors and expected:
-            return ["Internal failure"]
+            errors = ["Internal failure"]
         if as_utf8:
             return [e.encode("utf-8") for e in errors]
         return errors
 
     elif use_dom and root is not None:
+        errors = b""
         for node in root.iter("Errors"):
-            return etree.tostring(node, encoding="utf-8")
-        if expected:
-            return "<Errors><Err>Internal failure</Err></Errors>"
+            errors = etree.tostring(node, encoding="utf-8")
+        if not errors and expected:
+            errors = b"<Errors><Err>Internal failure</Err></Errors>"
         else:
-            return ""
+            errors = b""
+        return errors if as_utf8 else errors.decode("utf-8")
 
     else:
         # Compile the pattern for the regular expression.
-        pattern = re.compile(u"<Errors[>\\s].*</Errors>", re.DOTALL)
+        pattern = re.compile("<Errors[>\\s].*</Errors>", re.DOTALL)
 
         # Search for the <Errors> element.
-        if not isinstance(xmlFragment, unicode):
+        if not isinstance(xmlFragment, str):
             xmlFragment = xmlFragment.decode("utf-8")
         errors = pattern.search(xmlFragment)
         if errors:
-            return errors.group()
+            errors = errors.group()
         elif expected:
-            return "<Errors><Err>Internal failure</Err></Errors>"
+            errors = "<Errors><Err>Internal failure</Err></Errors>"
         else:
-            return ""
-
-#----------------------------------------------------------------------
-# Identify the user associated with a session.
-# Originally this was a reverse login, providing a userid and password
-# enabling a program to re-login the same user with a new session.
-#
-# The function has been modified (March 2013) to only return a user id.
-# Passwords are to be encrypted in the database and are hence not stored
-# in any form that could be used to re-login.
-#
-# Pass:
-#   mySession  - session for user doing the lookup - currently unused.
-#   getSession - session to be looked up.
-#
-# Returns:
-#   Tuple of (userid, '')
-#   Or single error string.
-#
-#   The original tuple type return is retained so that the many programs
-#   that use this function only to find a userid will work without
-#   modification.
-#----------------------------------------------------------------------
-def idSessionUser(mySession, getSession):
-
-    query = cdrdb.Query("usr u", "u.name")
-    query.join("session s", "s.usr = u.id")
-    query.where(query.Condition("s.name", getSession))
-    try:
-        row = query.execute().fetchone()
-    except Exception as e:
-        return "Failure selection user for %r: %s".format(getSession, e)
-    if not row:
-        return None
-    return row.name, ""
+            errors = ""
+        return errors.encode("utf-8") if as_utf8 else errors
 
 #----------------------------------------------------------------------
 # Find out if the user for a session is a member of the specified group.
 #----------------------------------------------------------------------
 def member_of_group(session, group):
     try:
-        name, _ = idSessionUser(session, session)
-        user = getUser(session, name)
+        user = getUser(session, Session(session).user_name)
         return group in user.groups
     except:
         return False
@@ -5305,7 +5181,7 @@ def getSchemaEnumVals(schemaTitle, typeName, **opts):
         Array of string values.
 
     Raises:
-        cdr.Exception if schemaTitle or simpleName not found.
+        Exception if schemaTitle or simpleName not found.
     """
 
     # Fetch and parse the schema
@@ -5352,10 +5228,9 @@ def getEmailList(groupName):
     query.where(query.Condition("g.name", groupName))
     return [row.email for row in query.execute().fetchall() if row.email]
 
-#----------------------------------------------------------------------
-# Object for a mime attachment.
-#----------------------------------------------------------------------
+
 class EmailAttachment:
+    """Object for a mime attachment"""
     def __init__(self, bytes=None, filepath=None, content_type=None):
         """
         Construct an email attachment object
@@ -5405,144 +5280,176 @@ class EmailAttachment:
             self.mime_object.add_header("Content-disposition", "attachment",
                                         filename=os.path.basename(filepath))
 
-#----------------------------------------------------------------------
-# Eventually we'll use this to send all email messages; for right
-# now I'm using this for a selected set of applications to test
-# it.
-#----------------------------------------------------------------------
-def sendMailMime(sender, recips, subject, body, bodyType='plain',
-                 attachments=None):
-    """
-    Send an email message via SMTP to a list of recipients.  This
-    version supports Unicode in the subject and body.  The message
-    will be encoded with the most widely-supported encoding which
-    results in no loss of information.  The encoding for the
-    subject and body are determined separately.
 
-    Pass:
+class EmailMessage:
+    """Wrap the Python mail services"""
 
-        sender     - email address of sender; must contain only ASCII
-                     characters
-        recips     - sequence of recipient addresses; must contain only
-                     ASCII characters
-        subject    - string for subject header; must be a unicode object
-                     or contain only ASCII characters or be UTF-8 encoded
-        body       - payload for the message; must be a unicode object
-                     or contain only ASCII characters or be UTF-8 encoded
-        bodyType   - subtype for MIMEText object (e.g., 'plain', 'html')
-        attachments - optional sequence of EmailAttachment objects
-    """
+    def __init__(self, sender, recips, **opts):
+        """
+        Assemble and send an SMTP message
 
-    if not recips:
-        raise Exception("sendMailMime: no recipients specified")
-    if type(recips) not in (tuple, list):
-        raise Exception("sendMailMime: recipients must be a sequence of "
-                        "email addresses")
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.header import Header as EmailHeader
+        Required positional arguments:
+          sender - string in the form user@example.com (only ascii characters);
+                   we can't do anything fancier for now because of bugs in
+                   the Python libraries
+                     - https://bugs.python.org/issue33398
+                     - https://bugs.python.org/issue24218
+                     - https://bugs.python.org/issue34424
+          recips - one or more recipient addresses; same format (and
+                   issues) as for the sender
 
-    if not isinstance(sender, unicode):
-        sender = sender.decode("utf-8")
-    if not isinstance(subject, unicode):
-        subject = subject.decode("utf-8")
-    if not isinstance(body, unicode):
-        body = body.decode("utf-8")
+        Optional keyword arguments:
+          subject - Unicode string for the message subject
+          body - Unicode string for the message body; if there are no
+                 attachments, the default is a single period (because
+                 NIH's mail server won't deliver messages whose content
+                 consists of only whitespace)
+          subtype - set to 'html' to override the default mime type of
+                    'text/plain'
+          attachments - optional sequence of cdr.EmailAttachment objects
+        """
 
-    recipients = []
-    for recip in recips:
-        if not isinstance(recip, unicode):
-            recip = recip.decode("utf-8")
-        recipients.append(recip)
-    subject = EmailHeader(subject, "utf-8")
+        # Enforce required positional arguments.
+        if not sender:
+            raise Exception("EmailMessage(): missing sender")
+        if not recips:
+            raise Exception("EmailMessage(): missing recipients")
 
-    # The charset for the body must be set explicitly.
-    encoded_body = None
+        # Capture the caller's values.
+        self.__sender = sender
+        self.__recips = recips
+        self.__opts = opts
 
-    for charset in ("US-ASCII", "ISO-8859-1", "UTF-8"):
+    def send(self):
+        """Use the NIH mail server to deliver the message"""
+
         try:
-            encoded_body = body.encode(charset)
-        except UnicodeError:
-            pass
-        else:
-            break
+            from smtplib import SMTP
+            with SMTP(SMTP_RELAY) as server:
+                args = self.sender, self.recips, self.smtp_message.as_string()
+                server.sendmail(*args)
+        except Exception as e:
+            LOGGER.exception("send_mail failure")
+            raise Exception(f"send_mail: {e}")
 
-    if encoded_body is None:
-        raise Exception("sendMailMime: failure determining body charset")
+    @property
+    def attachments(self):
+        """Make sure the attachments are the right type"""
 
-    # Create the message object.
-    message = MIMEText(encoded_body, bodyType, charset)
+        if not hasattr(self, "_attachments"):
+            self._attachments = self.__opts.get("attachments")
+            if self._attachments is not None:
+                if not isinstance(self._attachments, (list, tuple)):
+                    self._attachments = [self._attachments]
+                for attachment in self._attachments:
+                    if not isinstance(attachment, EmailAttachment):
+                        t = type(attachment)
+                        raise Exception(f"EmailMessage(): attachment is {t}")
+        return self._attachments
 
-    # Add attachments if present.
-    if attachments:
-        from email.mime.multipart import MIMEMultipart
-        wrapper = MIMEMultipart()
-        wrapper.preamble = "This is a multipart MIME message"
-        wrapper.attach(message)
-        for attachment in attachments:
-            wrapper.attach(attachment.mime_object)
-        message = wrapper
+    @property
+    def body(self):
+        """
+        Make sure we have either a body or at least one attachment
 
-    # Plug in the headers.
-    message["From"] = sender
-    message["To"] = ",\n  ".join(recipients)
-    message["Subject"] = subject
+        If we have a body, make sure it is Unicode.
+        """
 
-    # Send it
-    try:
-        server = smtplib.SMTP(SMTP_RELAY)
-        server.sendmail(sender, recipients, message.as_string())
-        server.quit()
+        if not hasattr(self, "_body"):
+            self._body = self.__opts.get("body")
+            if self._body is None or not self._body.strip():
+                if not self.attachments:
+                    self._body = "."
+            if isinstance(self._body, bytes):
+                self._body = str(self._body, "utf-8")
+        return self._body
 
-    except Exception as e:
+    @property
+    def recips(self):
+        """Coerce recips to sequence of Unicode strings"""
 
-        # Log the error before re-throwing an exception.
-        msg = "sendMailMime failure: %s" % e
-        logwrite(msg, tback=True)
-        raise Exception(msg)
+        if not hasattr(self, "_recips"):
+            self._recips = self.__recips
+            if isinstance(self._recips, tuple):
+                self._recips = list(self._recips)
+            elif not isinstance(self._recips, list):
+                self._recips = [self._recips]
+            for i, recip in enumerate(self._recips):
+                if isinstance(recip, bytes):
+                    self._recips[i] = str(recip, "ascii")
+        return self._recips
 
-#----------------------------------------------------------------------
-# Send email to a list of recipients.
-# Doesn't handle Unicode well. Use sendMailMime() above for new code.
-#----------------------------------------------------------------------
-def sendMail(sender, recips, subject="", body="", html=False, mime=False,
-             attachments=None):
-    import smtplib
-    if mime or attachments:
-        return sendMailMime(sender, recips, subject, body,
-                            attachments=attachments)
-    if not recips:
-        raise Exception("sendMail: no recipients specified")
-    if type(recips) not in (tuple, list):
-        raise Exception("sendMail: recipients must be a sequence of "
-                        "email addresses")
-    recipList = recips[0]
-    for recip in recips[1:]:
-        recipList += (",\n  %s" % recip)
-    try:
-        # Headers
-        message = """\
-From: %s
-To: %s
-Subject: %s
-""" % (sender, recipList, subject)
+    @property
+    def sender(self):
+        """Force sender to Unicode string"""
 
-        # Set content type for html
-        if html:
-            message += "Content-type: text/html; charset=iso-8859-1\n"
+        if not hasattr(self, "_sender"):
+            self._sender = self.__sender
+            if isinstance(self._sender, bytes):
+                self._sender = str(self._sender, "ascii")
+        return self._sender
 
-        # Separator line + body
-        message += "\n%s" % body
+    @property
+    def smtp_message(self):
+        """
+        Assemble the SMTP message object
+        """
 
-        # Send it
-        server = smtplib.SMTP(SMTP_RELAY)
-        server.sendmail(sender, recips, message)
-        server.quit()
-    except:
-        # Log the error and return it to caller
-        msg = "sendMail failure: %s" % exceptionInfo()
-        logwrite(msg)
-        return msg
+        # Create the object if not already cached.
+        if not hasattr(self, "_smtp_message"):
+            from email.message import EmailMessage as EM
+            message = EM()
+            if self.body:
+                message.set_content(self.body, subtype=self.subtype)
+
+            # Add attachments if present.
+            if self.attachments:
+                from email.mime.multipart import MIMEMultipart
+                wrapper = MIMEMultipart()
+                wrapper.preamble = "This is a multipart MIME message"
+                wrapper.attach(message)
+                for attachment in self.attachments:
+                    wrapper.attach(attachment.mime_object)
+                message = wrapper
+
+            # Plug in the headers.
+            message["From"] = self.sender
+            message["To"] = ", ".join(self.recips)
+            if self.subject:
+                message["Subject"] = self.subject
+
+            # Cache the object.
+            self._smtp_message = message
+
+        # Return the (possibly cached) object.
+        return self._smtp_message
+
+    @property
+    def subtype(self):
+        if not hasattr(self, "_subtype"):
+            stp = self.__opts.get("subtype", "plain")
+            if isinstance(stp, bytes):
+                stp = str(stp, "utf-8")
+            if stp not in ("plain", "html"):
+                raise Exception(f"EmailMessage(): invalid subtype {stp!r}")
+            self._subtype = stp
+        return self._subtype
+
+    @property
+    def subject(self):
+        """Coerce subject to Unicode string"""
+
+        if not hasattr(self, "_subject"):
+            self._subject = self.__opts.get("subject")
+            if isinstance(self._subject, bytes):
+                self._subject = str(self._subject, "utf-8")
+        return self._subject
+
+    def __str__(self):
+        """Serialize the message"""
+
+        return str(self.smtp_message)
+
 
 #----------------------------------------------------------------------
 # Object for results of an external command.
@@ -5556,74 +5463,52 @@ class CommandResult:
 #----------------------------------------------------------------------
 # Run an external command.
 #----------------------------------------------------------------------
-def runCommand(command, joinErr2Out=True, returnNoneOnSuccess=True):
+def run_command(command, **opts):
     """
     Run a shell command
 
-    Pass:
-        command     - The string of the shell command to be run
-        joinErr2Out - optional value, default TRUE
-                      This parameter, when true (for backward compatibility)
-                      pipes both stdout and stderr to stdout.
-                      Otherwise stdout and stderr are split.
-        returnNoneOnSuccess
-                    - optional value, default TRUE
-                      This parameter, when true (for backward compatibility)
-                      returns `None` as a successful returncode.
-                      Otherwise the `code` for a successful command is 0.
-                      Note:  This is the return code of the command
-                             submitted and not the return code of runCommand()
-                             itself!
+    Required positional argument:
+
+        command
+             string of the command to be run, with arguments as appropriate
+
+    Optional keyword arguments:
+
+        binary
+            if True, use bytes for io instead of text
+
+        merge_output
+            if True, combine stdin and stderr into a single stream; default
+            is False
+
+        shell
+            if False, don't invoke a separate command shell to process
+            the command (safer); default is True
+
     Return:
-        CommandResult object
-            output  - output from stdout (or stdout and stderr if joinErr2Out
-                      is True)
-            error   - output from stderr (or a warning message if joinErr2Out
-                      is True)
-            code    - 0 or None (see notes above) for successful completion
+        subprocess.CompletedProcess object, with properties:
+           - args
+           - returncode
+           - stdout
+           - stderr
     """
 
     import subprocess
 
-    # Default mode - Pipe stdout and stderr to stdout
-    # -----------------------------------------------
-    if joinErr2Out:
-        try:
-            commandStream = subprocess.Popen(command, shell=True,
-                                             stdin =subprocess.PIPE,
-                                             stdout=subprocess.PIPE,
-                                             stderr=subprocess.STDOUT)
-            output, error = commandStream.communicate()
-            code          = commandStream.returncode
-            error         = '*** Warning: stderr piped to stdout'
-
-            # For backward compatibility we return None for a successful
-            # command return code
-            # ----------------------------------------------------------
-            if returnNoneOnSuccess and code == 0:
-                return CommandResult(None, output)
-        except Exception as e:
-            logwrite("failure running command: %s\n%s" % (command, e))
-            return None
+    spopts = dict(stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    if not opts.get("binary"):
+        spopts["encoding"] = "utf-8"
+    if opts.get("merge_output"):
+        spopts["stderr"] = subprocess.STDOUT
     else:
-        try:
-            commandStream = subprocess.Popen(command, shell=True,
-                                             stdin =subprocess.PIPE,
-                                             stdout=subprocess.PIPE,
-                                             stderr=subprocess.PIPE)
-            output, error = commandStream.communicate()
-            code = commandStream.returncode
-
-            # For backward compatibility we return None for a successful
-            # command return code
-            # ----------------------------------------------------------
-            if returnNoneOnSuccess and code == 0:
-                return CommandResult(None, output, error)
-        except Exception as e:
-            logwrite("failure running command: %s\n%s" % (command, e))
-            return None
-
-    return CommandResult(code, output, error)
+        spopts["stderr"] = subprocess.PIPE
+    if opts.get("shell", True):
+        spopts["shell"] = True
+    try:
+        return subprocess.run(command, **spopts)
+    except:
+        LOGGER.exception("failure running command %s", command)
+        raise
 
 #----------------------------------------------------------------------
 # Create a temporary working area.
@@ -5649,7 +5534,7 @@ def makeTempDir(basename="tmp", chdir=True):
     """
 
     import tempfile
-    if os.environ.has_key("TMP"):
+    if "TMP" in os.environ:
         tempfile.tempdir = os.environ["TMP"]
     where = tempfile.mktemp(basename)
     abspath = os.path.abspath(where)
@@ -5695,6 +5580,38 @@ def stripBlankLines(s):
 
     # Return them as a string with newlines at each line end
     return "\n".join(outSeq);
+
+class Normalizer:
+    ELEMENT_ONLY = {}
+
+    def __init__(self):
+        self.session = Session("guest")
+    def transform(self, xml):
+        try:
+            root = etree.fromstring(xml)
+        except:
+            if isinstance(xml, str):
+                root = etree.fromstring(xml.encode("utf-8"))
+            else:
+                raise
+        element_only = Normalizer.ELEMENT_ONLY.get(root.tag)
+        if element_only is None:
+            element_only = set()
+            schema = Doctype(self.session, name=root.tag).schema
+            for line in str(DTD(self.session, name=schema)).splitlines():
+                if line.startswith("<!ELEMENT") and "#PCDATA" not in line:
+                    element_only.add(line.split()[1])
+            Normalizer.ELEMENT_ONLY[root.tag] = element_only
+        if element_only:
+            for node in root.iter("*"):
+                if node.tag in element_only:
+                    self.scrub(node)
+        xml = etree.tostring(root, pretty_print=True, encoding="unicode")
+        return etree.canonicalize(xml)
+    def scrub(self, node):
+        node.text = None
+        for child in node.findall("*"):
+            child.tail = None
 
 #----------------------------------------------------------------------
 # Takes a utf-8 string for an XML document and creates a utf-8 string
@@ -5758,15 +5675,23 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, **opts):
         diffText = "".join(diffSeq)
 
     # Convert output back to utf-8; normalization made it unicode
-    if type(diffText) == type(u''):
+    if isinstance(diffText, str):
         diffText = diffText.encode('utf-8')
 
     return diffText
 
-#----------------------------------------------------------------------
-# Determine the last date a versioned blob changed.
-#----------------------------------------------------------------------
 def getVersionedBlobChangeDate(credentials, doc_id, version, **opts):
+    """
+    Determine the last date a versioned blob changed
+
+    Pass:
+      credentials - result of login
+      doc_id - unique ID for the CDR document connected with the blob
+      version - version number of the document
+      tier - optional name of hosting tier (e.g., 'DEV')
+      conn - optional connection to the database
+    """
+
     tier = opts.get("tier")
     conn = opts.get("conn") or cdrdb.connect(user="CdrGuest", tier=tier)
     cursor = conn.cursor()
@@ -5798,27 +5723,22 @@ def getVersionedBlobChangeDate(credentials, doc_id, version, **opts):
         last_version, last_date = prev_version, prev_date
     return last_date
 
-#----------------------------------------------------------------------
-# Returns the base URL for the current emailer CGI directory.
-# Note: The CNAME for the GPMailer is only accessible from the
-#       bastion host but not from the CDR Server (C-Mahler)
-#----------------------------------------------------------------------
-def emailerCgi(cname=True):
-    key = "EMAILERSC" if cname else "EMAILERS"
-    return "https://%s/cgi-bin" % _Control.TIER.hosts[key]
-
-#----------------------------------------------------------------------
-# Standardize the email subject prefix used to
-#    Host-Tier: SubjectLine
-#----------------------------------------------------------------------
 def emailSubject(text='No Subject'):
-    return u"[%s] %s" % (_Control.TIER.name, text)
+    """
+    Standardize the email subject format
 
-#----------------------------------------------------------------------
-# Create a file to use as an interprocess lockfile.
-#----------------------------------------------------------------------
-# Static dictionary of locked files
+    Pass:
+      text - string for the subject's main content
+
+    Return:
+      passed string prefixed by "[TIER-NAME] "
+    """
+
+    return "[%s] %s" % (_Control.TIER.name, text)
+
 _lockedFiles = {}
+""" Static dictionary of locked files"""
+
 def createLockFile(fname):
     """
     Create a named lock file to use in synchronizing processes.
@@ -5882,9 +5802,6 @@ def createLockFile(fname):
 
     return True
 
-#----------------------------------------------------------------------
-# Delete a lockfile.
-#----------------------------------------------------------------------
 def removeLockFile(fname):
     """
     Remove a file created by createLockFile.
@@ -5894,32 +5811,23 @@ def removeLockFile(fname):
     """
     # Only remove the file if we created it.
     # It is illegal to remove a lock created by another process
-    if not _lockedFiles.has_key(fname):
+    if fname not in _lockedFiles:
         raise Exception('File "%s" not locked in this process' % fname)
     del(_lockedFiles[fname])
 
     # If we got here, this ought to work, propagate exception if it fails
     os.remove(fname)
 
-#----------------------------------------------------------------------
-# Remove any outstanding lockfiles for this process.
-#----------------------------------------------------------------------
 def removeAllLockFiles():
     """
-    Remove any files that were created by createLockFile() for which
-    removeLockFile() was not called.
+    Remove any outstanding lockfiles for this process.
+
+    Removes any files that were created by createLockFile() for which
+    removeLockFile() was never called.
     """
-    for fname in _lockedFiles.keys():
+    for fname in list(_lockedFiles.keys()):
         removeLockFile(fname)
 
-#----------------------------------------------------------------------
-# Find a date a specified number of days in the future (or in the
-# past, if a negative integer is passed).  We do this often enough
-# that it's worth creating a function in this module.  Returns
-# the value as an ISO-format date string, unless the optional
-# second argument is False, in which case the 9-member tuple
-# for the new date is returned.
-#----------------------------------------------------------------------
 def calculateDateByOffset(offset, referenceDate=None):
     """
     Find a date a specified number of days in the future (or in the
@@ -5948,21 +5856,23 @@ def calculateDateByOffset(offset, referenceDate=None):
 
     if not referenceDate:
         referenceDate = datetime.date.today()
-    elif type(referenceDate) in (str, unicode):
-        y, m, d = referenceDate.split('-')
+    elif isinstance(referenceDate, (str, bytes)):
+        separator = "-" if isinstance(referenceDate, str) else b"-"
+        y, m, d = referenceDate.split(separator)
         referenceDate = datetime.date(int(y), int(m), int(d))
     elif not isinstance(referenceDate, datetime.date):
         raise Exception("invalid type for referenceDate")
     return referenceDate + datetime.timedelta(offset)
 
-#----------------------------------------------------------------------
-# Gets a list of all board names.
-# This is frequently used to create reports by board.
-#----------------------------------------------------------------------
 def getBoardNames(boardType='all', display='full', tier=None):
     """
-    Get the list of all board names (i.e. organizations with an
-    organization type of 'PDQ Editorial Board' or 'PDQ Advisory Board').
+    Get a list of all the PDQ board names
+
+    Gets the list of names of all organizations with an organization
+    type of 'PDQ Editorial Board' or 'PDQ Advisory Board').
+
+    This is frequently used to create reports by board.
+
     Usage:
          boardNames = cdr.getBoardNames()
 
@@ -6010,9 +5920,6 @@ def getBoardNames(boardType='all', display='full', tier=None):
         pairs = [tuple(row) for row in rows]
     return dict(pairs)
 
-#----------------------------------------------------------------------
-# Gets a list of Summary languages.
-#----------------------------------------------------------------------
 def getSummaryLanguages():
     """
     Return a list of all languages that are used for Summaries.
@@ -6030,9 +5937,6 @@ def getSummaryLanguages():
 
     return 'English', 'Spanish'
 
-#----------------------------------------------------------------------
-# Gets a list of Audience values
-#----------------------------------------------------------------------
 def getSummaryAudiences():
     """
     Return a list of all Audience values that are used for Summaries.
@@ -6042,10 +5946,17 @@ def getSummaryAudiences():
 
     return 'Health professionals', 'Patients'
 
-#----------------------------------------------------------------------
-# Pull out the portion of an editorial board name used for menu options.
-#----------------------------------------------------------------------
 def extract_board_name(doc_title):
+    """
+    Pull out the portion of an editorial board name used for menu options.
+
+    Pass:
+      doc_title - string pulled from the `all_docs.title` column
+
+    Return:
+      String for the board's canonical name
+    """
+
     board_name = doc_title.split(";")[0].strip()
     board_name = board_name.replace("PDQ ", "").strip()
     board_name = board_name.replace(" Editorial Board", "").strip()
@@ -6125,7 +6036,7 @@ def prepare_pubmed_article_for_import(node):
     which means our own schema can be much more stable.
 
     Pass:
-      node - parsed XML object for an PubmedArticle block
+      node - parsed XML object for a PubmedArticle block
 
     Return:
       transformed PubmedArticle node object

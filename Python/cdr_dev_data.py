@@ -2,6 +2,7 @@
 # Assembles information about data preserved on the CDR DEV tier.
 # JIRA::OCECDR-3733
 #----------------------------------------------------------------------
+import datetime
 import glob
 import os
 
@@ -49,7 +50,7 @@ class Data:
         first line.
 
         For example:
-        
+
            DevData-20140227075603
              Filter
                100.cdr
@@ -77,15 +78,15 @@ class Data:
             for name in old.tables:
                 try:
                     self.tables[name] = Table(name, source)
-                except:
+                except Exception as e:
                     pass
             for name in old.docs:
                 self.docs[name] = DocType(name, source)
         else:
-            for path in glob.glob("%s/tables/*" % source):
+            for path in glob.glob(f"{source}/tables/*"):
                 name = os.path.basename(path)
                 self.tables[name] = Table(name, source)
-            for path in glob.glob("%s/*" % source):
+            for path in glob.glob(f"{source}/*"):
                 doc_type = os.path.basename(path)
                 if doc_type != "tables":
                     self.docs[doc_type] = DocType(doc_type, source)
@@ -96,7 +97,9 @@ class Data:
         """
         filter_name = subset = None
         if row["filter"]:
-            filter_name = self.docs["Filter"].map.get(row["filter"], "***MISSING***").strip()
+            default = "***MISSING***"
+            filter_map = self.docs["Filter"].map
+            filter_name = filter_map.get(row["filter"], default).strip()
         if row["subset"]:
             subset = self.tables["filter_set"].map[row["subset"]].strip()
         filter_set = self.tables["filter_set"].map[row["filter_set"]].strip()
@@ -108,11 +111,11 @@ class Data:
         """
         group = self.tables["grp"].map[row["grp"]]
         action = self.tables["action"].map[row["action"]]
-        result = "permission for members of %s group to perform action %s" % (
-            repr(group), repr(action))
+        result = "permission for members of %r group to perform action %r"
+        result = result.format(group, action)
         if row["doc_type"]:
             doc_type = self.tables["doc_type"].map[row["doc_type"]]
-            result += " on %s documents" % repr(doc_type)
+            result += f" on {doc_type!r} documents"
         return result
 
     def grp_usr(self, row):
@@ -121,7 +124,7 @@ class Data:
         """
         group = self.tables["grp"].map[row["grp"]]
         user = self.tables["usr"].map[row["usr"]]
-        return "%s's membership in group %s" % (user, group)
+        return f"{user}'s membership in group {group}"
 
     def link_properties(self, row):
         """
@@ -168,24 +171,32 @@ class Table:
         """
         self.name = name
         self.path = self.cols = self.values = self.map = self.names = None
-        if type(source) is str:
-            path = "%s/tables/%s" % (source, name)
+        if isinstance(source, str):
+            path = f"{source}/tables/{name}"
             self.values = [tuple(eval(row)) for row in open(path)]
             self.cols = self.values.pop(0)
         else:
-            source.execute("SELECT * FROM %s" % name)
+            source.execute(f"SELECT * FROM {name}")
             self.cols = tuple([col[0] for col in source.description])
-            self.values = [tuple(row) for row in source.fetchall()]
+            #self.values = [tuple(row) for row in source.fetchall()]
+            self.values = []
+            for row in source.fetchall():
+                values = []
+                for value in row:
+                    if isinstance(value, datetime.datetime):
+                        value = str(value)
+                    values.append(value)
+                self.values.append(values)
         self.rows = [self._row_dict(row) for row in self.values]
         if "name" in self.cols:
             names = [row["name"] for row in self.rows]
-            self.names = dict(zip(names, self.rows))
+            self.names = dict(list(zip(names, self.rows)))
             if "id" in self.cols:
                 ids = [row["id"] for row in self.rows]
-                self.map = dict(zip(ids, names))
+                self.map = dict(list(zip(ids, names)))
         if name == "query_term_def":
             paths = [row["path"] for row in self.rows]
-            self.names = dict(zip(paths, self.rows))
+            self.names = dict(list(zip(paths, self.rows)))
     def _row_dict(self, row):
         """
         Creates a dictionary for a single row, mapping column names to values
@@ -198,9 +209,9 @@ class Table:
 
         Also normalizes the 'notes' column of the filter_set table.
         """
-        d = dict(zip(self.cols, row))
-        if self.name == "filter_set" and d["notes"] == u"None":
-            d["notes"] = u""
+        d = dict(list(zip(self.cols, row)))
+        if self.name == "filter_set" and d["notes"] == "None":
+            d["notes"] = ""
         return d
 
 class DocType:
@@ -220,7 +231,7 @@ class DocType:
     unique document titles within each document type.  This is guaranteed
     to be true for the base control document types (Schema, Filter, and
     PublishingControl).  It is the responsibility of the developer to
-    ensure that this is true for documents of any any additional document
+    ensure that this is true for documents of any additional document
     types which must be preserved.
     """
     def __init__(self, name, source):
@@ -235,15 +246,16 @@ class DocType:
         self.name = name
         self.docs = {}
         self.map = {}
-        if type(source) is str:
-            for doc_path in glob.glob("%s/%s/*.cdr" % (source, name)):
-                doc = eval(open(doc_path).read())
-                key = doc[1].lower().strip()
+        if isinstance(source, str):
+            for doc_path in glob.glob(f"{source}/{name}/*.cdr"):
+                with open(doc_path) as fp:
+                    doc = eval(fp.read())
+                doc_id, title = doc[:2]
+                key = title.lower().strip()
                 if key in self.docs:
-                    raise Exception("too many %s docs with title %s" %
-                                    (name, doc[1]))
+                    raise Exception(f"too many {name} docs with title {title}")
                 self.docs[key] = tuple(doc)
-                self.map[doc[0]] = doc[1]
+                self.map[doc_id] = title
         else:
             source.execute("""\
 SELECT d.id, d.title, d.xml
@@ -256,8 +268,8 @@ SELECT d.id, d.title, d.xml
                 doc_id, doc_title, doc_xml = row
                 key = doc_title.lower().strip()
                 if key in self.docs:
-                    raise Exception("too many %s docs with title %s " 
-                                    "in database" % (name, doc_title))
+                    message = "too many {} docs with title {} in database"
+                    raise Exception(message.format(name, doc_title))
                 self.docs[key] = tuple(row)
                 self.map[doc_id] = doc_title
                 row = source.fetchone()

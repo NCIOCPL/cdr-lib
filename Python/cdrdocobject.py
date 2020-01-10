@@ -19,11 +19,11 @@ class PersonalName:
         Parameters:
             node - PersonName or Name subelement DOM node
         """
-        self.__givenName     = u""
-        self.__middleInitial = u""
-        self.__surname       = u""
-        self.__prefix        = u""
-        self.__genSuffix     = u""
+        self.__givenName     = ""
+        self.__middleInitial = ""
+        self.__surname       = ""
+        self.__prefix        = ""
+        self.__genSuffix     = ""
         self.__proSuffixes   = []
         suffixElems          = ("StandardProfessionalSuffix",
                                 "CustomProfessionalSuffix")
@@ -136,10 +136,10 @@ class ContactInfo:
 
         getPhone()
             Returns the phone number, if any; otherwise None.
-            
+
         getFax()
             Returns the fax number, if any; otherwise None.
-            
+
         getEmail()
             Returns the email address, if any; otherwise None.
 
@@ -179,7 +179,7 @@ class ContactInfo:
         self.__email          = None
         self.__ptHandling     = personTitleHandling
 
-        if type(xmlFragment) in (str, unicode):
+        if type(xmlFragment) in (str, bytes):
             dom = xml.dom.minidom.parseString(xmlFragment)
         else:
             dom = xmlFragment
@@ -421,8 +421,8 @@ class Person:
             filters = ['name:%s' % filt]
             parms = (('fragId', fragId),)
             result = cdr.filterDoc('guest', filters, cdrId, parm = parms)
-            if type(result) in (str, unicode):
-                raise Exception(u"Person.Contact(%s, %s): %s" %
+            if type(result) in (str, bytes):
+                raise Exception("Person.Contact(%s, %s): %s" %
                                 (cdrId, fragId, result))
             ContactInfo.__init__(self, result[0])
 
@@ -453,8 +453,8 @@ class Organization:
             filters = ['name:%s' % filt]
             parms = (('fragId', fragId),)
             result = cdr.filterDoc('guest', filters, cdrId, parm = parms)
-            if type(result) in (str, unicode):
-                raise Exception(u"Organization.Contact(%s, %s): %s" %
+            if type(result) in (str, bytes):
+                raise Exception("Organization.Contact(%s, %s): %s" %
                                 (cdrId, fragId, result))
             ContactInfo.__init__(self, result[0])
 
@@ -581,15 +581,14 @@ class Protocol:
                 #print "orgStatuses: %s" % repr(orgStatuses)
                 statuses.setdefault(startDate, []).append(val)
             i += 1
-        keys = statuses.keys()
-        keys.sort()
+        keys = sorted(statuses.keys())
         for startDate in keys:
             for i, orgStatus in statuses[startDate]:
                 try:
                     orgStatuses[i] = orgStatus
                 except:
-                    print "statuses: %s" % repr(statuses)
-                    print "orgStatuses: %s" % repr(orgStatuses)
+                    print("statuses: %s" % repr(statuses))
+                    print("orgStatuses: %s" % repr(orgStatuses))
                     raise
             protStatus = self.getProtStatus(orgStatuses)
             if protStatus == "Active" and not self.firstPub:
@@ -646,11 +645,11 @@ class Protocol:
             self.name      = name
             self.startDate = startDate
             self.endDate   = endDate
-        def __cmp__(self, other):
-            diff = cmp(self.startDate, other.startDate)
-            if diff:
-                return diff
-            return cmp(self.endDate, other.endDate)
+        def __lt__(self, other):
+            return self.sortkey < other.sortkey
+        @property
+        def sortkey(self):
+            return self.startDate, self.endDate
 
     class LeadOrg:
         "Lead Organization for a protocol, with all its status history."

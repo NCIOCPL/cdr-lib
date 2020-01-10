@@ -1,84 +1,75 @@
-#----------------------------------------------------------------------
-# Common routines for creating CDR web forms.
-#
-# BZIssue::1000
-# BZIssue::1335
-# BZIssue::1531
-# BZIssue::1876
-# BZIssue::1980
-# BZIssue::2753
-# BZIssue::3132
-# BZIssue::3923
-# BZIssue::4205
-# BZIssue::4381
-# BZIssue::4653 CTRO Access to CDR Admin
-# Fixed some security weaknesses and enhanced Page and Report classes.
-# JIRA::OCECDR-4170 - add new ExcelStyles class
-#----------------------------------------------------------------------
+"""Common routines for creating CDR web forms.
 
-#----------------------------------------------------------------------
-# Import external modules needed.
-#----------------------------------------------------------------------
-from builtins import range
-import cdr
-import cdrdb
+This module has the following sections:
+
+    Imports and global values
+
+    Tools for creating CGI forms and reports
+
+        Controller
+            Base class for top-level controller of CGI scripts
+        FormFieldFactory
+            Provides convenient class methods for creating HTML form fields
+        HTMLPage
+            Creates a CDR web page for forms and reports using a common
+            customizable layout
+        Reporter
+            Creates CDR reports which can be sent to the web browser or
+            to Excel
+        Excel
+            Wrapper for building Excel workbooks using OpenPyXl
+        AdvancedSearch
+            Search forms for each of the CDR document types
+
+    Older legacy versions of these tools
+        Control, Page, Report, ExcelStyle
+
+        Keep these older class as long as we still have scripts
+        which haven't been converted to their successors
+
+    Miscellaneous global function
+
+        Most of these should be gradually retired, in favor of
+        the core CDR API functionality.
+"""
+
+# Packages from the standard library.
 import cgi
+import cgitb
 import copy
 import datetime
-import lxml.etree as etree
-import lxml.html
-import lxml.html.builder
+from html import escape as html_escape
+from io import BytesIO
+from operator import itemgetter
 import os
 import re
 import sys
 import textwrap
 import time
-import urllib
-import xlwt
+import urllib.request, urllib.parse, urllib.error
 import xml.sax.saxutils
 
-#----------------------------------------------------------------------
-# Make this work on Python 2 and 3.
-#----------------------------------------------------------------------
-try:
-    basestring
-except:
-    basestring = str, bytes
-    unicode = str
+# Third-party libraries/packages.
+import lxml.etree as etree
+import lxml.html
+import lxml.html.builder
+import openpyxl
+import xlsxwriter
+import xlwt
 
-#----------------------------------------------------------------------
-# Do this once, right after loading the module. Used in Report class.
-#----------------------------------------------------------------------
-xlwt.add_palette_colour("hdrbg", 0x21)
+# Project modules.
+import cdr
+from cdrapi import db
+from cdrapi.settings import Tier
+from cdrapi.users import Session
 
-#----------------------------------------------------------------------
-# Get some help tracking down CGI problems.
-#----------------------------------------------------------------------
-import cgitb
+
+# Turn on debugging for CGI scripts.
 cgitb.enable(display = cdr.isDevHost(), logdir = cdr.DEFAULT_LOGDIR)
 
-#----------------------------------------------------------------------
-# Now that we're migrating to CBIIT hosting, we'll need a more flexible
-# method for keeping track of web server names.  If we're being called
-# in the context of a web request, get the name of the server handling
-# that request.  Otherwise, fall back on the name we use for the CDR
-# server.
-#----------------------------------------------------------------------
-def _getWebServerName():
-    try:
-        name = os.environ["SERVER_NAME"]
-        if name:
-            return name
-    except:
-        pass
-    return cdr.getHostName()[1]
 
-#----------------------------------------------------------------------
-# Create some useful constants.  Some of these are no longer necessarily
-# useful (for example, ISPLAIN, or THISHOST) but are retained in case
-# older code relies on them.
-#----------------------------------------------------------------------
-VERSION = "201603211524"
+# Global values
+VERSION = "201909061106"
 CDRCSS = "/stylesheets/cdr.css?v=%s" % VERSION
 DATETIMELEN = len("YYYY-MM-DD HH:MM:SS")
 TAMPERING = "CGI parameter tampering detected"
@@ -89,1764 +80,2662 @@ SESSION  = "Session"
 REQUEST  = "Request"
 DOCID    = "DocId"
 FILTER   = "Filter"
-FORMBG   = '/images/back.jpg'
 BASE     = '/cgi-bin/cdr'
 MAINMENU = 'Admin Menu'
 DEVTOP   = 'Developer Menu'
-WEBSERVER= _getWebServerName()
+TIER     = Tier()
+WEBSERVER= os.environ.get("SERVER_NAME") or TIER.hosts.get("APPC")
 SPLTNAME = WEBSERVER.lower().split(".")
 THISHOST = SPLTNAME[0]
 ISPLAIN  = "." not in THISHOST
 DOMAIN   = "." + ".".join(SPLTNAME[1:])
 DAY_ONE  = cdr.URDATE
-NEWLINE  = "@@@NEWLINE-PLACEHOLDER@@@"
-BR       = "@@@BR-PLACEHOLDER@@@"
-HEADER   = u"""\
-<!DOCTYPE html>
-<HTML>
- <HEAD>
-  <TITLE>%s</TITLE>
-  <meta http-equiv='Content-Type' content='text/html;charset=utf-8'>
-  <link rel='shortcut icon' href='/favicon.ico'>
-  <LINK TYPE='text/css' REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
-  <style type='text/css'>
-    body         { background-color: #%s; }
-    *.banner     { background-color: silver;
-                   background-image: url(/images/nav1.jpg); }
-    *.DTDerror   { color: red;
-                   font-weight: bold; }
-    *.DTDwarning { color: green; }
-    TD.ttext     { color: black; }
-    TD.tlabel    { font-weight: bold;
-                   text-align: right;
-                   white-space: nowrap;
-                   vertical-align: top; }
-    TH.theader   { font-weight: bold;
-                   font-size: small;
-                   text-align: left;
-                   white-space: nowrap;
-                   vertical-align: top; }
-  </style>
-  %s
- </HEAD>
- <BODY>
-  <FORM ACTION='/cgi-bin/cdr/%s' METHOD='%s'%s>
-   <TABLE WIDTH='100%%' CELLSPACING='0' CELLPADDING='0' BORDER='0'>
-    <TR>
-     <TH class='banner' NOWRAP ALIGN='left'>
-      <span style='color: white; font-size: xx-large;'>&nbsp;%s</span>
-     </TH>
-"""
-RPTHEADER   = """\
-<!DOCTYPE HTML PUBLIC '-//W3C//DTD HTML 4.01 Transitional//EN'
-                      'http://www.w3.org/TR/html4/loose.dtd'>
-<HTML>
- <HEAD>
-  <TITLE>%s</TITLE>
-  <meta http-equiv='Content-Type' content='text/html;charset=utf-8'>
-  <link rel='shortcut icon' href='/favicon.ico'>
-  <LINK TYPE='text/css' REL='STYLESHEET' HREF='/stylesheets/dataform.css'>
-  <style type='text/css'>
-    body         { font-family: Arial;
-                   background-color: #%s; }
-    *.banner     { background-color: silver;
-                   background-image: url(/images/nav1.jpg); }
-    *.DTDerror   { color: red;
-                   font-weight: bold; }
-    *.DTDwarning { color: green; }
-    tr.odd        { background-color: #F7F7F7; }
-    tr.even       { background-color: #DFDFDF; }
-    th           { font-size: 12pt;
-                   font-weight: bold;
-                   text-align: center;
-                   background-color: #ADADAD; }
-  </style>
-%s
- </HEAD>
-"""
-B_CELL = """\
-     <TD class='banner'
-         VALIGN='middle'
-         ALIGN='right'
-         WIDTH='100%'>
-"""
-BUTTON = """\
-      <INPUT TYPE='submit' NAME='%s' VALUE='%s'>&nbsp;
-"""
-SUBBANNER = """\
-    </TR>
-    <TR>
-     <TD BGCOLOR='#FFFFCC' COLSPAN='3'>
-      <span style='color: navy; font-size: small;'>&nbsp;%s<BR></span>
-     </TD>
-    </TR>
-   </TABLE>
-"""
 
-class ExcelStyles:
-    """
-    Styles for an Excel workbook.
 
-    Used for rewriting legacy reports originally using ExcelWriter,
-    in cases where we don't want to spend the time on a more extensive
-    rewrite of the report to use the Page/Report/Control classes below.
+#----------------------------------------------------------------------#
+#                        NEW CLASSES -- USE THESE                      #
+#----------------------------------------------------------------------#
 
-    Example usage:
 
-    import cdrcgi
-    styles = cdrcgi.ExcelStyles()
-    sheet = styles.add_sheet("Sample Report")
-    sheet.set_panes_frozen(True)
-    sheet.set_horz_split_pos(1)
-    widths = 10, 60, 100
-    labels = "CDR ID", "Title", "Comments"
-    assert(len(widths) == len(labels))
-    for i, chars in enumerate(widths):
-        sheet.col(i).width = styles.chars_to_width(chars)
-    sheet.write_merge(0, 0, 0, len(labels) - 1, "Sample Report", styles.banner)
-    for i, label in enumerate(labels):
-        sheet.write(1, i, label, styles.header)
-    data = (
-        (500000, "Title of the first document", "A comment on the document"),
-        (600000, "Title for the next document", "Another comment"),
-        (700000, "Last document title", "Final comment")
-    )
-    for i, values in enumerate(data):
-        for col, value in enumerate(values):
-            sheet.write(i + 2, col, value, styles.left)
-    styles.book.save("sample-report.xls")
+class Controller:
+    """Base class for top-level controller for a CGI script.
+
+    Includes methods for displaying a form (typically for a report)
+    and for rendering the requested report.
+
+    This will gradually replace the older `Control` class, which
+    is built around the use of `Page` objects, which created
+    HTML pages using direct string manipulation instead of real
+    HTML parser objects.
+
+    Typically, a web script will create a derived class using this
+    class as its base. It is possible to override the constructor,
+    but this is not necessary. If you do, be sure to invoke the
+    base class constructor from the overriding implementation.
+
+    The `run()` method is the top-level processing starting point.
+    That method calls the `show_report()` method if the Submit
+    button was clicked, or `show_form()` if no button was clicked.
+    The derived class implements `populate_form()` to add the
+    fields it needs for its job, and overrides the `build_tables()`
+    method to provide the report's data.
     """
 
-    BORDERS = "borders: top hair, bottom hair, left hair, right hair"
-    LEFT = "align: wrap True, horiz left, vert top"
-    RIGHT = "align: wrap True, horiz right, vert top"
-    CENTER = "align: wrap True, horiz center, vert center"
-    CENTER_TOP = "align: wrap True, horiz center, vert top"
-    RED = "font: color red"
-    BLUE = "font: color blue"
-    MAROON = "font: color dark_red"
-    TEAL = "font: color teal"
-    PURPLE = "font: color violet"
-    WHITE = "font: color white"
-    HYPERLINK = "font: color blue, underline single"
-    TWIPS = 20
+    PAGE_TITLE = "CDR Administration"
+    TITLE = PAGE_TITLE
+    SUBTITLE = None
+    REPORTS_MENU = SUBMENU = "Reports Menu"
+    ADMINMENU = MAINMENU
+    DEVMENU  = DEVTOP
+    SUBMIT = "Submit"
+    LOG_OUT = "Log Out"
+    FORMATS = "html", "excel"
+    LOGNAME = "reports"
+    LOGLEVEL = "INFO"
+    METHOD = "post"
 
-    def __init__(self):
-        """
-        Create some commonly useful style objects.
+    def __init__(self, **opts):
+        """Set up a skeletal controller."""
+        self.__started = datetime.datetime.now()
+        self.__opts = opts
+        self.logger.info("started %s", self.subtitle or "controller")
+
+    def run(self):
+        """Override in derived class if there are custom actions."""
+        try:
+            if self.request:
+                if self.request == self.ADMINMENU:
+                    navigateTo("Admin.py", self.session.name)
+                elif self.request == self.REPORTS_MENU:
+                    navigateTo("Reports.py", self.session.name)
+                elif self.request == self.DEVMENU:
+                    navigateTo("DevSA.py", self.session.name)
+                elif self.request == self.LOG_OUT:
+                    logout(self.session.name)
+                elif self.request and self.request == self.SUBMIT:
+                    self.show_report()
+                else:
+                    self.show_form()
+            else:
+                self.show_form()
+        except Exception as e:
+            self.logger.exception("Controller.run() failure")
+            bail(str(e))
+
+    def show_form(self):
+        """Populate an HTML page with a form and fields and send it."""
+        self.populate_form(self.form_page)
+        self.form_page.send()
+
+    def show_report(self):
+        """Override this method if you need to make some tweaks.
+
+        A typical case would be:
+
+            def show_report(self):
+                self.report.body.set("id", "activity-report")
+                self.report.send(self.format)
+
+        Another situation in which you would override this method
+        would be if you have a non-tabular report to be sent.
         """
 
-        self.book = xlwt.Workbook(encoding="UTF-8")
-        self.left = self.style(self.LEFT)
-        self.right = self.style(self.RIGHT)
-        self.center = self.style(self.CENTER_TOP)
-        self.banner = self.style(self.CENTER, self.bold_font(12))
-        self.header = self.style(self.CENTER, self.bold_font())
-        self.bold = self.style(self.bold_font())
-        self.red = self.style(self.RED)
-        self.blue = self.style(self.BLUE)
-        self.teal = self.style(self.TEAL)
-        self.purple = self.style(self.PURPLE)
-        self.maroon = self.style(self.MAROON)
-        self.white = self.style(self.WHITE)
-        self.error = self.style(self.bold_font(color="red"))
-        self.url = self.style(self.HYPERLINK, self.LEFT)
+        elapsed = self.report.page.html.get_element_by_id("elapsed", None)
+        if elapsed is not None:
+            elapsed.text = str(self.elapsed)
+        self.report.send(self.format)
 
-    def add_sheet(self, name, **opts):
-        """
-        Create a new worksheet, possibly with frozen rows or columns.
+    def populate_form(self, page):
+        """Stub, to be overridden by real controllers."""
+        pass
+
+    def build_tables(self):
+        """Stub, to be overridden by real controllers."""
+        return []
+
+    def log_elapsed(self):
+        """Record how long this took."""
+        self.logger.info(f"elapsed: {self.elapsed.total_seconds():f}")
+
+    def make_url(self, script, **params):
+        """Create a URL.
 
         Pass:
-            name         - required string for the worksheet's name
-            frozen_rows  - optional keyword argument for the number of rows
-                           which should always be visible at the top
-            frozen_cols  - optional keyword argument for the number of
-                           columns which should always be visible at the
-                           left
-            cell_overwrite_ok - optional keyword argument to override the
-                           default behavior which prevents the code from
-                           writing to the same cell more than once (see
-                           http://stackoverflow.com/questions/41770461).
-        Return:
-            new object representing a new Excel worksheet
-        """
-
-        cell_overwrite_ok = opts.get("cell_overwrite_ok") and True or False
-        sheet = self.book.add_sheet(name, cell_overwrite_ok)
-        sheet.print_grid = True
-        frozen_rows = opts.get("frozen_rows")
-        frozen_cols = opts.get("frozen_cols")
-        if frozen_rows:
-            sheet.panes_frozen = True
-            sheet.horz_split_pos = int(frozen_rows)
-        if frozen_cols:
-            sheet.panes_frozen = True
-            sheet.vert_split_pos = int(frozen_cols)
-        return sheet
-
-    def write_headers(self, sheet, labels, widths=None, **opts):
-        """
-        Write the header labels for each of the columns in an Excel
-        worksheet, and (optionally) set the column widths.
-
-        Pass:
-            sheet - reference to an xlwt.Worksheet object
-            labels - sequence of strings to write for the header labels
-            widths - optional column widths, in number of characters
-
-        Named options:
-            blank - integer representing the number blank rows to leave
-                    immediately above the row for the column labels
-            banners - sequence of strings to be written to the top of the
-                      sheet; the first string is written in a larger font
+            script - string for base of url (can be relative or absolute)
+            params - dictionary of named parameters for the URL
 
         Return:
-            row number for the first data column
+            value appropriate for the href attribute of a link
         """
 
-        if widths:
-            assert(len(labels) == len(widths))
-            self.set_widths(sheet, widths)
-        row = 0
-        banners = opts.get("banners")
-        if banners:
-            style = self.banner
-            for banner in banners:
-                sheet.write_merge(row, row, 0, len(labels) - 1, banner, style)
-                sytle = self.header
-                row += 1
-        row += opts.get("blank", 0)
-        for i, label in enumerate(labels):
-            sheet.write(row, i, label, self.header)
-        return row + 1
+        if SESSION not in params:
+            params[SESSION] = self.session.name
+        params = urllib.parse.urlencode(params)
+        return f"{script}?{params}"
 
     @staticmethod
-    def link(url, label):
-        """
-        Wrap the value inside a hyperlink to the specified url.
-        """
-
-        return xlwt.Formula(u'HYPERLINK("%s";"%s")' % (url, label))
-
-    def adjust_color(self, name, rgb):
-        """
-        Modify the values for a color in the book's palette.
+    def add_date_range_to_caption(caption, start, end):
+        """Format caption with date range (we do this a lot).
 
         Pass:
-            name  - name of a color in the xlwt color map
-            rgb   - six-digit hex string for the new color values
+            caption - base string for the start of the caption
+            start - optional beginning of the date range
+            end - optional finish of the date range
+
+        Return:
+            possibly altered string for the table caption
         """
 
-        color_slot = xlwt.Style.colour_map.get(name)
-        if not color_slot:
-            raise Exception("set_color(): invalid color name %s" % repr(name))
-        try:
-            r, g, b = int(rgb[:2], 16), int(rgb[2:4], 16), int(rgb[4:6], 16)
-        except:
-            raise Exception("set_color(): bad argument %s" % repr(rgb))
-        self.book.set_colour_RGB(color_slot, r, g, b)
+        if start:
+            if end:
+                return f"{caption} Between {start} and {end}"
+            return f"{caption} Since {start}"
+        elif end:
+            return f"{caption} Through {end}"
+        return caption
 
-    @classmethod
-    def bold_font(cls, point_size=10, color=None):
-        """
-        Return the string for a bold font of a certain size.
-
-        The string will be passed (possibly as part of a larger string)
-        to the xlwt.easyxf() function by our own style() method to create
-        an xlwt.XFStyle object.
-        """
-
-        font = "font: bold True, height %d" % (cls.TWIPS * point_size)
-        if color:
-            font += ", color %s" % color
-        return font
-
-    @classmethod
-    def set_size(cls, style, point_size=10):
-        """
-        Modify the font size for an existing xlwt XFStyle object.
+    @staticmethod
+    def parse_date(iso_date):
+        """Convert a date string to a `datetime.date` object.
 
         Pass:
-            style      - reference to an xlwt.XFStyle object
-            point_size - new size specified in (possibly fractional) points,
-                         which will be converted to twips, which the xlwt
-                         package expects
+            iso_date - optional string for the date
+
+        Return:
+            None if the string is None or empty, otherwise a date object
         """
 
-        style.font.height = int(point_size * cls.TWIPS)
+        if iso_date is None or not iso_date.strip():
+            return None
+        year, month, date = iso_date.strip().split("-")
+        return datetime.date(int(year), int(month), int(date))
 
-    @classmethod
-    def set_row_height(cls, row, point_size):
+    @property
+    def HTMLPage(self):
+        """Allow overriding of page class."""
+        return HTMLPage
+
+    @property
+    def Query(self):
+        """Convenience reference to database query class object."""
+        return db.Query
+
+    @property
+    def Reporter(self):
+        """Allow overriding of page class."""
+        return Reporter
+
+    @property
+    def banner(self):
+        """Title displayed boldly at the top of the page."""
+        return self.__opts.get("banner") or self.title
+
+    @property
+    def buttons(self):
+        """Sequence of names for request buttons to be provided
+
+        By default, SUBMIT, SUBMENU, ADMINMENU and LOG_OUT will be used.
+        Any of these can be suppressed by setting the class value to None
+        in the derived class. Alternatively, the "buttons" keyword arg
+        can be passed with a list of button names. Downstream these
+        names will be converted to HTML input elements with the name
+        attribute set to "Submit". Pass an empty list to the constructor
+        for the "buttons" keyword argument to have no buttons displayed
+        (None won't have the same effect).
         """
-        Adjust the height of a row in an Excel worksheet.
 
+        if not hasattr(self, "_buttons"):
+            buttons = self.SUBMIT, self.SUBMENU, self.ADMINMENU, self.LOG_OUT
+            self._buttons = self.__opts.get("buttons")
+            if self._buttons is None:
+                self._buttons = []
+                for button in buttons:
+                    if button:
+                        self._buttons.append(button)
+        return self._buttons
+
+    @property
+    def conn(self):
+        """Database connection for this controller."""
+        if not hasattr(self, "_conn"):
+            self._conn = db.connect()
+        return self._conn
+
+    @property
+    def cursor(self):
+        """Database cursor for this controller."""
+        if not hasattr(self, "_cursor"):
+            self._cursor = self.conn.cursor()
+        return self._cursor
+
+    @property
+    def elapsed(self):
+        """How long have we been running?"""
+        return datetime.datetime.now() - self.started
+
+    @property
+    def fields(self):
+        """CGI fields for the web form."""
+        if not hasattr(self, "_fields"):
+            self._fields = cgi.FieldStorage()
+        return self._fields
+
+    @property
+    def footer(self):
+        """Override to alter or suppress the default report footer."""
+
+        if not hasattr(self, "_footer"):
+            user = self.session.User(self.session, id=self.session.user_id)
+            name = user.fullname or user.name
+            today = datetime.date.today()
+            generated = f"Report generated {today} by {name}"
+            elapsed = HTMLPage.B.SPAN(str(self.elapsed), id="elapsed")
+            args = generated, HTMLPage.B.BR(), "Elapsed: ", elapsed
+            self._footer = HTMLPage.B.E("footer", HTMLPage.B.P(*args))
+        return self._footer
+
+    @property
+    def form_page(self):
+        """Create a form page.
+
+        Cache the page so we don't end up populating one page and
+        sending another one.
+        """
+        if not hasattr(self, "_form_page"):
+            opts = {
+                "action": self.script,
+                "buttons": [HTMLPage.button(b) for b in self.buttons],
+                "subtitle": self.subtitle,
+                "session": self.session,
+                "method": self.method,
+            }
+            self._form_page = HTMLPage(self.title, **opts)
+        return self._form_page
+
+    @property
+    def format(self):
+        """Either "html" (the default) or "excel"."""
+        if not hasattr(self, "_format"):
+            self._format = self.fields.getvalue("format")
+            if not self._format:
+                self._format = self.__opts.get("format") or self.FORMATS[0]
+        return self._format
+
+    @property
+    def logger(self):
+        """Object for recording what we do."""
+        if not hasattr(self, "_logger"):
+            self._logger = self.__opts.get("logger")
+            if self._logger is None:
+                opts = dict(level=self.loglevel)
+                self._logger = cdr.Logging.get_logger(self.LOGNAME, **opts)
+        return self._logger
+
+    @property
+    def loglevel(self):
+        """Override this to provide runtime control of logging."""
+        return self.LOGLEVEL
+
+    @property
+    def method(self):
+        """Allow override of form method."""
+        return self.fields.getvalue("method") or self.METHOD
+
+    @property
+    def no_results(self):
+        """Message to display if no result tables are returned."""
+        return "No report results found."
+
+    @property
+    def report(self):
+        """Create the `Reporter` object for this job."""
+
+        if not hasattr(self, "_report"):
+            tables = self.build_tables()
+            buttons = []
+            for button in (self.SUBMENU, self.ADMINMENU, self.LOG_OUT):
+                if button:
+                    buttons.append(HTMLPage.button(button))
+            opts = {
+                "banner": self.title or "",
+                "footer": self.footer,
+                "subtitle": self.subtitle,
+                "no_results": self.no_results,
+                "page_opts": {
+                    "buttons": buttons,
+                    "session": self.session,
+                    "action": buttons and self.script or None,
+                }
+            }
+            self._report = Reporter(self.title, tables, **opts)
+        return self._report
+
+    @property
+    def request(self):
+        """Name of clicked request button, if any."""
+        if not hasattr(self, "_request"):
+            self._request = getRequest(self.fields)
+        return self._request
+
+    @request.setter
+    def request(self, value):
+        """Support re-routing."""
+        self._request = value
+
+    @property
+    def script(self):
+        """Name of form submission handler."""
+        if not hasattr(self, "_script"):
+            self._script = self.__opts.get("script")
+            if self._script is None:
+                self._script = os.path.basename(sys.argv[0])
+        return self._script
+
+    @property
+    def session(self):
+        """Session object for this controller.
+
+        Note: this is an object, not a string. For the session name,
+        use `self.session.name` or `str(self.session)` or `f"{self.session}"`.
+
+        No need to specify a tier here, as web CGI scripts are only
+        intended to work on the local tier.
+        """
+
+        if not hasattr(self, "_session"):
+            session = self.__opts.get("session")
+            if not session:
+                session = self.fields.getvalue(SESSION) or "guest"
+            if isinstance(session, bytes):
+                session = str(session, "ascii")
+            if isinstance(session, str):
+                self._session = Session(session)
+            else:
+                self._session = session
+            if not isinstance(self._session, Session):
+                raise Exception("Not a session object")
+        return self._session
+
+    @property
+    def timestamp(self):
+        """String used to distinguish multiple instances of named items."""
+        return self.started.strftime("%Y%m%d%H%M%S")
+
+    @property
+    def started(self):
+        """When did we start processing?"""
+        return self.__started
+
+    @property
+    def subtitle(self):
+        """String to be displayed under the main banner, if supplied."""
+        return self.__opts.get("subtitle") or self.SUBTITLE
+
+    @property
+    def title(self):
+        """Title to be used for the page."""
+        return self.__opts.get("title") or self.TITLE or self.PAGE_TITLE
+
+    @staticmethod
+    def bail(message=TAMPERING, banner="CDR Web Interface", extra=None,
+             logfile=None):
+        """
+        Send an error page to the browser with a specific banner and title.
         Pass:
-            row        - reference to an xlwt.Row object
-            point_size - new height specified in (possibly fractional) points,
-                         which will be converted to twips, which the xlwt
-                         package expects
-
+            message - Display this.
+            banner  - Optional changed line for page banner.
+            extra   - Optional sequence of extra lines to append.
+            logfile - Optional name of logfile to write to.
+        Return:
+            No return. Exits here.
         """
 
-        row.height_mismatch = True
-        row.height = cls.TWIPS * point_size
+        opts = dict(banner=banner, subtitle="An error has occurred", scripts=[])
+        page = HTMLPage("CDR Error", **opts)
+        page.body.append(page.B.P(str(message), page.B.CLASS("error")))
+        if extra:
+            for arg in extra:
+                page.body.append(page.B.P(str(arg), page.B.CLASS("error")))
+        if logfile:
+            if logfile.lower().endswith(".log"):
+                logfile = logfile[:-4]
+            logger = cdr.Logging.get_logger(logfile)
+            logger.error("cdrcgi bailout: %s", message)
+        page.send()
 
-    @staticmethod
-    def style(*definitions):
-        """
-        Contruct an xlwt.XFStyle object for formatting cell content.
+class FormFieldFactory:
+    """Provide class methods for creating HTML form fields.
 
-        Pass:
-            one anonymous argument for each style group which needs
-            to be modified; the arguments are strings in the format:
+    Also has a factory method for creating a fieldset (with an optional
+    legend) which isn't really a field, but it seemed to fit best here.
 
-                group_name: attribute-name attribute-value[, ...]
+    These methods are inherited by the HTMLPage class below, so that
+    users passed an object of that class have easy access to the
+    methods without having to import anything extra.
 
-            The style groups include:
-                * font
-                * align[ment]
-                * border[s]
-                * pattern
-                * protection
+    Here are the categories of fields supported:
 
-            See http://xlwt.readthedocs.io/en/latest/api.html and the
-            xlwt source code (including examples) for more information.
-        """
+        text fields
+           - text_field()
+           - password_field()
+           - date_field()
 
-        return xlwt.easyxf("; ".join(definitions))
+        clickable fields
+           - checkbox()
+           - radio_button()
 
-    @staticmethod
-    def font(spec):
-        """
-        Construct an xlwt.Font object for formatting cell content segments.
+        other
+           - file_field()
+           - hidden_field()
+           - select()
 
-        This is used to support calling sheet.write_rich_text(). For example:
+    Pro tip:
+       If you don't specify a label for a field, the class will create
+       one for you based on the field's value, by replacing underscores
+       with spaces, and capitalizing each word. Of course, this is only
+       useful for fields which have an initial value (as is always the
+       case for radio buttons and checkboxes). For example:
 
-            styles = cdrcgi.ExcelStyles()
-            sheet = styles.add_sheet("Rich Text")
-            sheet.col(0).width = 5000
-            name = "atezolizumab"
-            comment = "For NCT01375842; No info available at this time"
-            font = styles.font("italic true, color green")
-            segments = (name + "\n", (comment, font))
-            sheet.write_rich_text(0, 0, segments, styles.left)
+       page.radio_button("sort", value="by_board")
 
-            See http://xlwt.readthedocs.io/en/latest/api.html and the
-            xlwt source code (including examples) for more information.
-
-            Pass:
-                spec - string providing desired attribute values in the form
-                       name value[, name value[, ...]
-            Return:
-                a new xlwt.Font object
-        """
-
-        return xlwt.easyfont(spec)
-
-    @staticmethod
-    def set_color(style, color="black"):
-        """
-        Change the foreground color for an xlwt.Style object.
-
-        Pass:
-            style - reference to an xlwt.Style object
-            color - string identifying one of the colors which can
-                    be used in the workbook's cells; examples of
-                    valid names include red, dark_red, blue, teal,
-                    violet, white, black. For the complete list,
-                    refer to the source code in:
-                       $PYTHON/lib/site-packages/xlwt/Styles.py
-        """
-
-        try:
-            style.font.colour_index = xlwt.Style.colour_map[color]
-        except:
-            raise Exception("set_color(): invalid color %s" % repr(color))
-
-    @staticmethod
-    def set_background(style, color="white"):
-        """
-        Change the foreground color for an xlwt.Style object.
-
-        Pass:
-            style - reference to an xlwt.Style object
-            color - string identifying one of the colors which can
-                    be used in the workbook's cells; examples of
-                    valid names include red, dark_red, blue, teal,
-                    violet, white, black. For the complete list,
-                    refer to the source code in:
-                       $PYTHON/lib/site-packages/xlwt/Styles.py
-        """
-
-        style.pattern.pattern = xlwt.Pattern.SOLID_PATTERN
-        try:
-            style.pattern.pattern_fore_colour = xlwt.Style.colour_map[color]
-        except:
-            raise Exception("set_background(): invalid color %s" % repr(color))
-
-    @staticmethod
-    def link(url, label):
-        """
-        Prepare a value for display as a hyperling in a worksheet cell.
-
-        Pass:
-            url   - HTTP[S] address for the link
-            label - the value to be displayed for the cell
-        """
-
-        return xlwt.Formula(u'HYPERLINK("%s";"%s")' % (url, label))
-
-    @staticmethod
-    def clone(style):
-        """
-        Create a copy of an xlwt.Style object, which can be altered
-        (for example, by calling Style.set_color(), or Style.set_background()).
-        """
-
-        return copy.deepcopy(style)
-
-    @staticmethod
-    def lookup_color(name):
-        """
-        Find the color code used internally by Excel for the named color.
-        """
-
-        return xlwt.Style.colour_map.get(name)
-
-    @staticmethod
-    def points_to_width(points):
-        """
-        Convert column width from points to BIFF COLINFO units.
-
-        Unfortunately, Microsoft has used a number of different ways over
-        the years to represent Excel column widths. The xlwt package uses
-        the original BIFF units, which (according to Microsoft's docs) is
-        "[w]idth of the columns in 1/256 of the width of the zero character,
-        using default font (first FONT record in the file)." Many of our
-        older reports were written when XML Excel files were Microsoft's
-        format du jour, which measured the column width in points. This
-        conversion is an approximation, because the scaling of column
-        widths as they increase isn't strictly proportional. But it's close
-        enough.
-        """
-
-        return int(points * 49)
-
-    @staticmethod
-    def chars_to_width(chars):
-        """
-        Convert width in number of characters to internal BIFF units.
-        Determined by experimentation, as I didn't find this formula
-        documented anywhere. My guess is that the extra 200 represents
-        cell padding.
-        """
-
-        return int(chars * 256 + 200)
-
-    @classmethod
-    def set_width(cls, sheet, col, chars):
-        """
-        Set the width of a column in an Excel worksheet.
-
-        Pass:
-            sheet - reference to an xlwt.Worksheet object
-            col - integer identifying the worksheet column (based 0)
-            chars - amount of horizontal space for the column in units
-                    of the width of the zero character ("0") using the
-                    default font (the first FONT record in the file);
-                    see chars_to_width() above
-        """
-
-        sheet.col(col).width = cls.chars_to_width(chars)
-
-    @classmethod
-    def set_widths(cls, sheet, widths):
-        """
-        Set the column widths for an Excel worksheet.
-        """
-
-        for i, chars in enumerate(widths):
-            cls.set_width(sheet, i, chars)
-
-class Page:
+       will result in a field whose label is "By Board".
     """
-    Object used to build a web page.
+
+    EN_DASH = "\u2013"
+    CLICKABLE = "checkbox", "radio"
+    B = lxml.html.builder
+
+    @classmethod
+    def button(cls, label, **kwargs):
+        """Create a button to be added to an HTMLPage object.
+
+        Typically, one or more of these buttons will be passed as the
+        buttons keyword argument to the HTMLPage constructor, to be
+        displayed on the right side of the main banner, but it is also
+        possible to place a button elsewhere on the page. It is also
+        possible to override the default buttons for a form by overriding
+        its page's `buttons` property.
+
+        These are called "buttons" even though the HTML element used
+        to create the widget is an "input" element with type of
+        "submit" or "reset" (and even though, confusingly, there is
+        another HTML element called "button," which is not being used
+        here).
+
+        Not to be confused with radio buttons. :-)
+
+        Required positional argument:
+
+            label
+                string to be displayed on the button; also used by the
+                form submission handler to determine which button was
+                clicked
+
+        Optional keyword arguments:
+
+            button_type
+                set to "reset" to override the default of "submit"
+
+            onclick
+                optional JavaScript to be invoked when the button
+                is clicked
+
+        Return:
+
+            lxml object for an INPUT element
+
+        """
+
+        button = cls.B.INPUT(value=label, name="Request")
+        button.set("type", kwargs.get("button_type", "submit"))
+        onclick = kwargs.get("onclick")
+        if onclick:
+            button.set("onclick", onclick)
+        return button
+
+    @classmethod
+    def checkbox(cls, group, **kwargs):
+        """Create a checkbox field block with label.
+
+        Required positional argument:
+
+            group
+
+                string identifying the set of checkboxes whose checked
+                values will be returned to the form processor as a
+                single sequence
+
+        See the `__field()`, `__wrapper()`, and `__clickable()`
+        methods for a description of the available optional keyword
+        arguments.
+
+        Example:
+
+            fieldset = page.fieldset("Select Board(s)")
+            for board in self.boards:
+                opts = dict(value=board.id, label=board.name)
+                fieldset.append(page.checkbox("board", **opts)
+            page.append(fieldset)
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        return cls.__clickable(group, "checkbox", **kwargs)
+
+    @classmethod
+    def date_field(cls, name, **kwargs):
+
+        """Create a date field block with optional label.
+
+        A date picker is displayed for ease of choosing a value for the
+        field. The text widget is still editable directly.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        wrapper = cls.text_field(name, **kwargs)
+        field = wrapper.find("input")
+        classes = field.get("class", "").split()
+        if "CdrDateField" not in classes:
+            classes.append("CdrDateField")
+            field.set("class", " ".join(classes))
+        return wrapper
+
+    @classmethod
+    def date_range(cls, name, **kwargs):
+        """Date an inline pair of dates with a single label.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        Optional keyword arguments:
+
+            start_date
+                initial value for the first date field
+
+            end_date
+                initial value for the second date field
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of other available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing two INPUT elements
+            with a separating SPAN between
+        """
+
+        opts = dict(**kwargs, wrapper_classes="date-range")
+        wrapper = cls.__wrapper(name, **opts)
+        for which in ("start", "end"):
+            opts["value"] = opts.get(f"{which}_date")
+            field = cls.__field(f"{name}-{which}", "text", **opts)
+            classes = field.get("class", "").split()
+            if "CdrDateField" not in classes:
+                classes.append("CdrDateField")
+                field.set("class", " ".join(classes))
+            wrapper.append(field)
+            if which == "start":
+                separator = cls.B.SPAN(cls.EN_DASH)
+                separator.set("class", "date-range-sep")
+                wrapper.append(separator)
+        return wrapper
+
+    @classmethod
+    def fieldset(cls, legend=None):
+        """Create an HTML fieldset element with an optional legend child.
+
+        Optional keyword argument:
+
+            legend
+
+                string for optional legend to be displayed for the
+                fieldset
+
+        Return:
+
+            lxml object for a FIELDSET element
+        """
+
+        fieldset = cls.B.FIELDSET()
+        if legend:
+            fieldset.append(cls.B.LEGEND(legend))
+        return fieldset
+
+    @classmethod
+    def file_field(cls, name, **kwargs):
+        """Create a file upload field block with optional label.
+
+        The widget design for picking a field varies from browser to
+        browser.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        field = cls.__field(name, "file", **kwargs)
+        wrapper = cls.__wrapper(name, **kwargs)
+        wrapper.append(field)
+        return wrapper
+
+    @classmethod
+    def hidden_field(cls, name, value):
+        if value is None:
+            value = ""
+        return cls.B.INPUT(name=name, value=str(value), type="hidden")
+
+    @classmethod
+    def password_field(cls, name, **kwargs):
+        """Create a password field block with optional label.
+
+        The value for the field is not displayed.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        field = cls.__field(name, "password", **kwargs)
+        wrapper = cls.__wrapper(name, **kwargs)
+        wrapper.append(field)
+        return wrapper
+
+    @classmethod
+    def radio_button(cls, group, **kwargs):
+        """Create a wrapped radio button field with label.
+
+        Required positional argument:
+
+            group
+
+                string identifying the set of radio buttons of which
+                at most only one can be checked
+
+        See the `__field()`, `__wrapper()`, and `__clickable()`
+        methods for a description of the available optional keyword
+        arguments.
+
+        Example:
+
+            choices = ("html", "Web Page"), ("excel", "Excel Workbook")
+            fieldset = page.fieldset("Report Format")
+            page.append(fieldset)
+            for value, label in choices:
+                opts = dict(label=label, value=value)
+                if value == "html":
+                    opts["checked"] = True
+                fieldset.append(page.radio_button("format", **opts))
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        return cls.__clickable(group, "radio", **kwargs)
+
+    @classmethod
+    def select(cls, name, **kwargs):
+        """Create a wrapped picklist field with optional label.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        Optional keyword arguments:
+
+            options
+                sequence of choices
+
+            size
+                height of the select box (default 1; 4 if multiple)
+
+            onchange
+                javascript to execute when the selection changes
+
+            multiple
+                whether multiple selections are permitted
+
+        See the `__field()` and `__wrapper()` methods for a description
+        of additional available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an SELECT element
+        """
+
+        # Create the widget and its wrapper element.
+        wrapper = cls.__wrapper(name, **kwargs)
+        field = cls.__field(name, "select", **kwargs)
+        wrapper.append(field)
+
+        # Add attributes unique to picklist fields.
+        multiple = True if kwargs.get("multiple") else False
+        if multiple:
+            field.set("multiple")
+        if kwargs.get("onchange"):
+            field.set("onchange", kwargs["onchange"])
+        if kwargs.get("size"):
+            field.set("size", str(kwargs["size"]))
+
+        # If we have any options, add them as children of the widget object.
+        options = kwargs.get("options")
+        if options:
+            default = kwargs.get("default")
+            if not isinstance(default, (list, tuple, set)):
+                default = [default] if default else []
+            if multiple and len(default) > 1:
+                error = "Multiple defaults specified for single picklist"
+                raise Exception(error)
+            if isinstance(options, dict):
+                options = sorted(options.items(), key=itemgetter(1))
+            for option in options:
+                if isinstance(option, (list, tuple)):
+                    value, display = option
+                else:
+                    value = display = option
+                if value is None:
+                    value = ""
+                option = cls.B.OPTION(str(display), value=str(value))
+                if value in default:
+                    option.set("selected")
+                field.append(option)
+
+        # Done.
+        return wrapper
+
+    @classmethod
+    def textarea(cls, name, **kwargs):
+        """Create a textarea field block with optional label.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        field = cls.__field(name, "textarea", **kwargs)
+        if "rows" in kwargs:
+            field.set("rows", str(kwargs["rows"]))
+        wrapper = cls.__wrapper(name, **kwargs)
+        wrapper.append(field)
+        return wrapper
+
+    @classmethod
+    def text_field(cls, name, **kwargs):
+        """Create a text field block with optional label.
+
+        Required positional argument:
+
+            name
+                unique name of the field on the page; it is essential
+                that the name be unique, even across forms (in the
+                event that the caller adds a second form to the page)
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        field = cls.__field(name, "text", **kwargs)
+        wrapper = cls.__wrapper(name, **kwargs)
+        wrapper.append(field)
+        return wrapper
+
+    @classmethod
+    def __field(cls, name, field_type, **kwargs):
+        """Build an HTML form field widget.
+
+        Required positional arguments:
+
+            name
+                unique name of the field on the page (not just unique
+                to the form); be careful also to avoid clashes with
+                names generated for date range fields ({name}-start
+                and {name}-end)
+
+            field_type
+                one of the following string values:
+                   - text
+                   - password
+                   - file
+                   - textarea
+                   - select
+                   - checkbox
+                   - radio
+
+        Optional keyword arguments:
+
+            value
+                initial value for the field (default: "")
+                not used for "select" fields
+
+            widget_id
+                custom value for the field element's ID attribute
+                (default: normalized name-value string for radio
+                buttons and checkboxes, name for all other field
+                types)
+
+            classes
+                if present, used as the 'class' attribute for the
+                field element; may be passed as a list, tuple, or set,
+                or as a string value with one or more space-delimited
+                class names (default: no classes)
+
+            tooltip
+                if present, used as the 'title' attribute for the
+                field element (default: no tooltip)
+
+            readonly
+                if True, the field is not editable, but it can get the
+                UI focus, and it is still sent with the form submission
+                (default: False); not used for 'select' fields
+
+            disabled
+                like readonly, but the form element does not receive
+                focus, is skipped in tabbing navigation, and is not
+                passed to the form processor
+
+        Returns:
+
+            lxml HTML element object
+        """
+
+        # Create the object for the field element.
+        value = kwargs.get("value")
+        if value is None:
+            value = ""
+        value = str(value)
+        if field_type == "textarea":
+            field = cls.B.TEXTAREA(value, name=name)
+        elif field_type == "select":
+            field = cls.B.SELECT(name=name)
+        else:
+            field = cls.B.INPUT(name=name, value=value)
+            field.set("type", field_type)
+
+        # Add the element's unique ID attribute.
+        if field_type in cls.CLICKABLE:
+            widget_id = kwargs.get("widget_id")
+            if not widget_id:
+                widget_id = f"{name}-{value}".replace(" ", "-").lower()
+        else:
+            widget_id = name
+        field.set("id", widget_id)
+
+        # Add the classes for the widget element.
+        classes = cls.__classes(kwargs.get("classes"))
+        if classes:
+            field.set("class", " ".join(classes))
+
+        # Tooltip for clickables goes on the label, not the widget.
+        elif kwargs.get("tooltip"):
+            field.set("title", kwargs["tooltip"])
+
+        # Add the attributes which (almost) any field can use, and we're done.
+        if kwargs.get("disabled"):
+            field.set("disabled")
+        if kwargs.get("readonly") and field_type != "select":
+            field.set("readonly")
+        return field
+
+    @classmethod
+    def __wrapper(cls, name, **kwargs):
+        """Create an enclosing element for a form field
+
+        Required positional argument:
+
+            name
+                unique name for the field
+
+        Optional keyword arguments:
+
+            clickable
+                True if the field is a checkbox or radio button
+
+            wrapper
+                string value for the name of the element to use
+                for the field's enclosing element (default: "div")
+
+            label
+                string for identify which field this is
+
+            wrapper_id
+                custom value for the enclosing element's ID attribute
+                (default: None)
+
+            wrapper_classes
+                one or more classes to be applied to the div
+                wrapper (as space-delimited string, or as list,
+                tuple, or set) or None if no additional classes
+                are to be applied; the "labeled-field" class
+                will be added to the set of classes for fields
+                labeled on the left
+
+        Returns:
+
+            lxml HTML element object
+        """
+
+        # Create the enclosing element.
+        wrapper = cls.B.E(kwargs.get("wrapper") or "div")
+
+        # Set the unique ID for the enclosing element.
+        if kwargs.get("wrapper_id"):
+            wrapper.set("id", kwargs["wrapper_id"])
+
+        # Determine the classes to be applied to the wrapper element.
+        classes = cls.__classes(kwargs.get("wrapper_classes"))
+        label = kwargs.get("label", name.replace("_", " ").title())
+        if label and not kwargs.get("clickable"):
+            classes.add("labeled-field")
+            widget_id = kwargs.get("widget_id") or name
+            label = cls.B.LABEL(label, cls.B.FOR(widget_id))
+            if kwargs.get("tooltip"):
+                label.set("title", kwargs["tooltip"])
+            wrapper.append(label)
+        if classes:
+            wrapper.set("class", " ".join(classes))
+
+        # Done.
+        return wrapper
+
+    @classmethod
+    def __clickable(cls, group, field_type, **kwargs):
+        """Create a wrapped checkbox or radio button field.
+
+        Required positional arguments:
+
+            group
+                string identifying a set of related clickable fields
+                which will be returned as a sequence of checked
+                values to the form processor
+
+            field_type
+                one of "checkbox" or "radio"
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        # Create the field and its wrapper.
+        wrapper = cls.__wrapper(group, clickable=True, **kwargs)
+        widget = cls.__field(group, field_type, **kwargs)
+        widget.tail = " "
+
+        # Add attributes unique to radio buttons and checkboxes.
+        if kwargs.get("checked"):
+            widget.set("checked")
+        value = kwargs.get("value")
+        if value is None:
+            value = ""
+        value = str(value)
+        onclick = kwargs.get("onclick", f"check_{group}('{value}')")
+        if onclick:
+            widget.set("onclick", onclick.replace("-", "_"))
+
+        # For these fields, the label follows the widget.
+        label = kwargs.get("label", value.replace("_", " ").title())
+        label = cls.B.LABEL(cls.B.FOR(widget.get("id")), label)
+        label.set("class", "clickable")
+        if kwargs.get("tooltip"):
+            label.set("title", kwargs["tooltip"])
+        wrapper.append(widget)
+        wrapper.append(label)
+        return wrapper
+
+    @classmethod
+    def __classes(cls, classes):
+        """Package the classes to be assigned to an element as a set
+
+        Required positional argument:
+
+            classes
+                one of the following:
+                   - None
+                   - a space-delimited string of class names
+                   - a `tuple` of class names
+                   - a `list` of class names
+                   - a `set` of class names
+
+        Returns:
+
+            a `set` of zero or more class name strings
+        """
+
+        if classes is None:
+            return set()
+        if isinstance(classes, str):
+            return set(classes.split())
+        return set(classes)
+
+
+class HTMLPage(FormFieldFactory):
+    """Web page for the CDR system.
+
+    Replacement for the old `Page` class, which built up a page as a
+    sequence of strings. This class does it the way it should always
+    have been done, by building an object tree, using the html.builder
+    support in the lxml package.
 
     Sample usage:
 
-        form = cdrcgi.Page('Simple Report', subtitle='Documents by Title',
-                           buttons=('Submit', 'Admin'),
-                           action='simple-report.py')
-        form.add('<fieldset>')
-        form.add(cdrcgi.Page.B.LEGEND('Select Documents By Title'))
-        form.add_text_field('title', 'Containing')
-        form.add('</fieldset>')
-        form.add_output_options()
-        form.send()
+        buttons = HTMLPage.button("Submit"), HTMLPage.button("Reports")
+        page = HTMLPage("Advanced Search", subtitle="Drug", buttons=buttons)
+        fieldset = page.fieldset("Search Criteria")
+        fieldset.append(page.text_field("name", "Name"))
+        fieldset.append(page.date_field("since", "Since"))
+        page.form.append(fieldset)
+        page.send()
     """
 
-    INDENT = u"  "
-    CDN = "https://ajax.googleapis.com/ajax/libs/"
-    JS = (
-        CDN + "jquery/2.1.4/jquery.min.js",
-        CDN + "jqueryui/1.11.4/jquery-ui.min.js"
-    )
-    STYLESHEETS = (
-        CDN + "jqueryui/1.11.4/themes/smoothness/jquery-ui.css",
-        CDRCSS
-    )
-    B = lxml.html.builder
+    VERSION = "201909071039"
+    CDR_CSS = f"/stylesheets/cdr.css?v={VERSION}"
+    APIS = "https://ajax.googleapis.com/ajax/libs"
+    JQUERY = f"{APIS}/jquery/3.4.1/jquery.min.js"
+    JQUERY_UI = f"{APIS}/jqueryui/1.12.1/jquery-ui.min.js"
+    JQUERY_CSS = f"{APIS}/jqueryui/1.12.1/themes/smoothness/jquery-ui.css"
+    STYLESHEETS = JQUERY_CSS, CDR_CSS
+    SCRIPTS = JQUERY, JQUERY_UI
+    PRIMARY_FORM_ID = "primary-form"
+    STRING_OPTS = dict(pretty_print=True, doctype="<!DOCTYPE html>")
+    CALENDAR_SCRIPT = "\n".join([
+        "jQuery(function() {",
+        "    jQuery('.CdrDateField').datepicker({",
+        "        dateFormat: 'yy-mm-dd',",
+        "        showOn: 'button',",
+        "        buttonImageOnly: true,",
+        "        buttonImage: '/images/calendar.png',",
+        "        buttonText: 'Select date',",
+        "        dayNamesMin: [ 'S', 'M', 'T', 'W', 'T', 'F', 'S' ]",
+        "    });",
+        "});"])
 
     def __init__(self, title, **kwargs):
-        """
-        Initializes an object for generating an HTML web page.
+        """Capture the initial settings for the page.
 
-        Required argument:
+        Required positional argument:
 
-            title -       used in the 'title' element of the 'head' block;
-                          also used as the page banner unless overridden
-
-        Optional keyword arguments:
-
-            banner -      overrides the value of the title argument for
-                          display of the page's top h1 banner; set to
-                          None to eliminate the banner
-            subtitle -    displayed below the banner
-            method -      'post' or 'get'; defaults to 'post'
-            buttons -     values for buttons rendered to the right of the
-                          banner; must be an array; empty by default
-            action -      handler for HTML form, which will be automatically
-                          opened unless no action is provided
-            icon -        favicon path; defaults to '/favicon.ico'
-            js -          array of external Javascript files to be included;
-                          defaults to scripts for jquery and the CDR calendar
-                          widget
-            stylesheets - array of paths to external CSS files to be loaded;
-                          defaults to the standard cdr and CdrCalendar sheets
-            session -     string identifying the CDR login session; can be
-                          used to override the current session, which will
-                          be retrieved from the CGI variables if you don't
-                          specify a replacement string here; the session
-                          string will be added as a hidden varilable if
-                          the 'action' paramater is set
-            body_classes -e.g., 'report'
-            enctype -     (for form element; e.g., "multipart/form-data")
-        """
-        self._finished = self._have_date_field = False
-        self._html = []
-        self._script = []
-        self._css = []
-        self._level = 0
-        self._title = title
-        self._banner = kwargs.get("banner", title)
-        self._subtitle = kwargs.get("subtitle")
-        self._method = kwargs.get("method", "post")
-        self._buttons = kwargs.get("buttons")
-        self._action = kwargs.get("action")
-        self._icon = kwargs.get("icon", "/favicon.ico")
-        self._js = kwargs.get("js", Page.JS)
-        self._stylesheets = kwargs.get("stylesheets", Page.STYLESHEETS)
-        self._session = kwargs.get("session")
-        self._body_classes = kwargs.get("body_classes")
-        self._enctype = kwargs.get("enctype")
-        self._start()
-
-    def get_action(self): return self._action
-
-    def add(self, line, post_indent=True):
-        """
-        Add a line to the HTML for the page.
-
-        Passed:
-
-            line -        either a string or an object created by the
-                          lxml.html.builder module
-            post_indent - optional argument which can be used to suppress
-                          the default indenting logic
-        """
-        if not isinstance(line, basestring):
-            line = lxml.html.tostring(line)
-            post_indent = False
-        elif line.startswith("</"):
-            if self._level > 0:
-                self._level -= 1
-            post_indent = False
-        self._html.append(Page._indent(self._level, line))
-        if post_indent:
-            self._level += 1
-
-    def add_checkbox(self, group, label, value, **kwargs):
-        """
-        Add a labeled form checkbox to the HTML for the page.
-
-        Required positional arguments:
-
-            group        used for the name of the input element
-            label        string to identify the checkbox to the user
-            value        used as the 'value' attribute of the element
+            title
+                string representing the page's title
 
         Optional keyword arguments:
 
-            widget_id       override the default id, which is normally formed
-                            by concatenating the group and value arguments,
-                            separated by a hyphen, and then lowercasing the
-                            result
-            widget_classes  if present, used as the 'class' attribute for
-                            the input element
-            wrapper         defaults to 'div' which keeps the field on
-                            a separate line from the other checkboxes;
-                            set to None to have no wrapper
-            wrapper_classes if present, used as the 'class' attribute for
-                            the wrapper element
-            tooltip         if present, used as the 'title' attribute for
-                            the label element
-            checked         if set to True will cause the checkbox to be
-                            checked by default
-            onclick         Javascript to be invoked when the checkbox is
-                            clicked; defaults to check_GROUP('VALUE') where
-                            GROUP is the value of the group argument and
-                            VALUE is the value of the value argument
+            action
+                form submission handler (default: URL which draws form)
+
+            banner
+                string for main banner (default: page title)
+
+            body_id
+                ID attribute for body element (default: "cdr-page")
+
+            buttons
+                sequence of objects created by FormFieldFactory.button()
+
+            head_title
+                title for head block (default: page title)
+
+            icon
+                favicon path (defaults: "/favicon.ico")
+
+            method
+                set to "get" to override default of "post")
+
+            scripts
+                urls for js to load (default: jQuery and jQueryUI URLs)
+
+            session
+                object representing the current CDR login context
+
+            subtitle
+                string for a smaller second banner
+
+            stylesheets
+                urls for CSS to load (default: CDR and jQueryUI CSS)
         """
-        self._add_checkbox_or_radio_button("checkbox", group, label, value,
-                                           **kwargs)
 
-    def add_radio(self, group, label, value, **kwargs):
+        self.__title = title
+        self.__opts = kwargs
+
+    def tostring(self):
+        """Return the serialized Unicode string for the page object."""
+        opts = dict(self.STRING_OPTS, encoding="unicode")
+        return lxml.html.tostring(self.html, **opts)
+
+    def tobytes(self):
+        """Return the serialized page as ASCII bytes.
+
+        The Unicode characters contained on the page will have
+        been encoded as HTML entities.
         """
-        Add a labeled form radio button to the HTML for the page.
 
-        Required positional arguments:
+        return lxml.html.tostring(self.html, **self.STRING_OPTS)
 
-            group        used for the name of the input element
-            label        string to identify the radio button to the user
-            value        used as the 'value' attribute of the element
+    def send(self):
+        """Push the page back to the browser via the web server."""
+        if self.body.get("class") == "admin-menu" and self.news:
+            header = self.body.find("form/header")
+            if header is not None:
+                for name in reversed(sorted(self.news, key=str.lower)):
+                    news = self.news[name]
+                    p = self.B.P(news)
+                    if "error" in name.lower() or "failure" in name.lower():
+                        p.set("class", "failure news")
+                    else:
+                        p.set("class", "info news")
+                    header.addnext(p)
+        sendPage(self.tostring())
 
-        Optional keyword arguments:
-
-            widget_id       override the default id, which is normally formed
-                            by concatenating the group and value arguments,
-                            separated by a hyphen, and then lowercasing the
-                            result
-            widget_classes  if present, used as the 'class' attribute for
-                            the input element
-            wrapper         defaults to 'div' which keeps the field on
-                            a separate line from the other radio buttons;
-                            set to None to have no wrapper
-            wrapper_classes if present, used as the 'class' attribute for
-                            the wrapper element
-            tooltip         if present, used as the 'title' attribute for
-                            the label element
-            checked         if set to True will cause the radio button to be
-                            selected by default
-            onclick         Javascript to be invoked when the button is
-                            clicked; defaults to check_GROUP('VALUE') where
-                            GROUP is the value of the group argument and
-                            VALUE is the value of the value argument
-        """
-        self._add_checkbox_or_radio_button("radio", group, label, value,
-                                           **kwargs)
-    def add_select(self, name, label, options, default=None, **kwargs):
-        """
-        Add a picklist field.
-
-        Required positional arguments:
-
-            name            the name of the field, also used as the field's ID
-            label           string used to identify the field to the user
-            options         sequence of choices for the picklist; each member
-                            of the sequence can be a sequence of value and
-                            display, in order to have a different string
-                            displayed for the choice than the value returned
-                            when that choice is selected, or a single value,
-                            in which case the value returned will be the same
-                            as the string displayed for the option
-
-        Optional positional argument:
-
-            default         choice(s) which should be selected when the form
-                            is initially displayed; can be a sequence of
-                            values if the 'multiple' argument is passed as
-                            True; values for default are matched against
-                            the values for the choices, not against the
-                            display strings for those choices
-
-        Optional keyword arguments
-
-            multiple        if passed and set to True, allows the user to
-                            select multiple choices from the picklist
-            onchange        Javascript to be invoked when the users changes
-                            the choice(s) from the picklist
-            classes         string to be set as the 'class' attribute of
-                            the select element
-            wrapper_classes classes to be added to the div wrapper
-            tooltip         if present, used as the 'title' attribute for
-                            the select element
-        """
-        wrapper_classes = kwargs.get("wrapper_classes")
-        if wrapper_classes:
-            if isinstance(wrapper_classes, basestring):
-                wrapper_classes = wrapper_classes.split()
-        else:
-            wrapper_classes = []
-        if "labeled-field" not in wrapper_classes:
-            wrapper_classes.append("labeled-field")
-        self.add('<div class="%s">' % " ".join(wrapper_classes))
-        label = Page.B.LABEL(Page.B.FOR(name), label)
-        #if tooltip:
-        #    label.set("title", tooltip)
-        self.add(label)
-        open_tag = '<select name="%s" id="%s"' % (name, name)
-        classes = kwargs.get("classes") or kwargs.get("class_")
-        if classes:
-            if type(classes) in (list, tuple, set):
-                classes = " ".join(classes)
-            open_tag += ' class="%s"' % classes
-        if type(default) not in (list, tuple):
-            default = default and [default] or []
-        if kwargs.get("multiple"):
-            open_tag += " multiple"
-        elif len(default) > 1:
-            raise Exception("Multiple defaults specified for single picklist")
-        tooltip = kwargs.get("tooltip")
-        if tooltip:
-            open_tag += ' title="%s"' % tooltip.replace('"', "&quot;")
-        onchange = kwargs.get("onchange")
-        if onchange:
-            open_tag += ' onchange="%s"' % onchange.replace('"', "&quot;")
-        self.add(open_tag + ">")
-        for option in options:
-            if type(option) in (list, tuple):
-                value, display = option
-            else:
-                value = display = option
-            o = Page.B.OPTION(display, value=unicode(value))
-            if value in default:
-                o.set("selected", "selected")
-            self.add(o)
-        self.add("</select>")
-        self.add("</div>")
-
-    def add_text_field(self, name, label, **kwargs):
-        """
-        Add a labeled text input field to an HTML form.
-
-        Required positional arguments:
-
-            name            used as the 'name' attribute for the input
-                            element
-            label           used for the accompanying label value's content
-
-        Optional keywork arguments:
-
-            value           default value for field
-            classes         if present, used as the 'class' attribute for
-                            the input element.  May include multiple space
-                            separated class names.
-            wrapper_classes classes to be added to the div wrapper
-            password        if True, value is not displayed
-            upload          if True, type is set to "file"
-            tooltip         if present, used as the 'title' attribute for
-                            the input element
-        """
-        wrapper_classes = kwargs.get("wrapper_classes")
-        if wrapper_classes:
-            if isinstance(wrapper_classes, basestring):
-                wrapper_classes = wrapper_classes.split()
-        else:
-            wrapper_classes = []
-        if "labeled-field" not in wrapper_classes:
-            wrapper_classes.append("labeled-field")
-        self.add('<div class="%s">' % " ".join(wrapper_classes))
-        self.add(Page.B.LABEL(Page.B.FOR(name), label))
-        field = Page.B.INPUT(id=name, name=name)
-        tooltip = kwargs.get("tooltip")
-        if tooltip:
-            field.set("title", tooltip)
-        classes = kwargs.get("classes") or kwargs.get("class_")
-        classes = classes or kwargs.get("class")
-        if classes:
-            if type(classes) in (list, tuple, set):
-                classes = " ".join(classes)
-            field.set("class", classes)
-        if "value" in kwargs:
-            field.set("value", unicode(kwargs["value"]))
-        if kwargs.get("password"):
-            field.set("type", "password")
-        if kwargs.get("upload"):
-            field.set("type", "file")
-        if kwargs.get("readonly"):
-            field.set("readonly", "readonly")
-        if kwargs.get("disabled"):
-            field.set("disabled", "disabled")
-        self.add(field)
-        self.add("</div>")
-
-    def add_textarea_field(self, name, label, **kwargs):
-        """
-        Add a labeled text input field to an HTML form.
-
-        Required positional arguments:
-
-            name            used as the 'name' attribute for the input
-                            element
-            label           used for the accompanying label value's content
-
-        Optional keywork arguments:
-
-            classes         if present, used as the 'class' attribute for
-                            the input element.  May include multiple space
-                            separated class names.
-            wrapper_classes classes to be added to the div wrapper
-            value           initial value for the field (optional)
-            tooltip         if present, used as the 'title' attribute for
-                            the textarea element
-        """
-        wrapper_classes = kwargs.get("wrapper_classes")
-        if wrapper_classes:
-            if isinstance(wrapper_classes, basestring):
-                wrapper_classes = wrapper_classes.split()
-        else:
-            wrapper_classes = []
-        if "labeled-field" not in wrapper_classes:
-            wrapper_classes.append("labeled-field")
-        self.add('<div class="%s">' % " ".join(wrapper_classes))
-        label = Page.B.LABEL(Page.B.FOR(name), label)
-        self.add(label)
-        value = unicode(kwargs.get("value", ""))
-        field = Page.B.TEXTAREA(value, id=name, name=name)
-        tooltip = kwargs.get("tooltip")
-        if tooltip:
-            field.set("title", tooltip)
-        classes = kwargs.get("classes") or kwargs.get("class_")
-        classes = classes or kwargs.get("class")
-        if classes:
-            if type(classes) in (list, tuple, set):
-                classes = " ".join(classes)
-            field.set("class", classes)
-        self.add(field)
-        self.add("</div>")
-
-    def add_date_field(self, name, label, **kwargs):
-        """
-        Add a labeled date input field to an HTML form.
-
-        See documentation for the add_text_field() method, which takes
-        the same arguments.
-        """
-        kwargs["classes"] = "CdrDateField"
-        self.add_text_field(name, label, **kwargs)
-        self._have_date_field = True
-
-    def add_menu_link(self, script, display, session=None, **kwargs):
-        """
-        Add a list item containing a CDR admin menu link.
-        """
-        url = script
-        if session:
-            kwargs[SESSION] = session
-        if kwargs:
-            url = "%s?%s" % (url, urllib.urlencode(kwargs))
-        link = Page.B.A(display, href=url)
-        self.add(Page.B.LI(link))
-
-    def add_hidden_field(self, name, value):
-        "Utility method to insert a hidden CGI field."
-        if not value:
-            value = u""
-        if not isinstance(value, basestring):
-            value = str(value)
-        value = value and str(value) or ""
-        self.add(Page.B.INPUT(name=name, value=value, type="hidden"))
+    def add_css(self, css):
+        """Add style rules directly to the page."""
+        self.head.append(self.B.STYLE(css))
 
     def add_script(self, script):
-        """
-        Add a block of Javascript code.
-
-        The code will be inserted into the HTML page immediately before
-        the closing 'body' tag.
-
-        Required positional argument:
-
-            script          block of Javascript, everything that would go
-                            between <script> and </script>.  Do not include
-                            the "script" tags.
-        """
-        self._script.append(script.rstrip() + "\n")
-
-    def add_css(self, script):
-        """
-        Add a block of CSS rules.
-
-        The code will be inserted into the HTML page immediately before
-        the closing 'body' tag, along with any javascript code blocks.
-
-        Required positional argument:
-
-            script          block of css rules, everything that would go
-                            between <style> and </style>.  Do not include
-                            the "style" tags.
-        """
-        self._css.append(script.rstrip() + "\n")
+        """Add script code directly to the page."""
+        self.head.append(self.B.SCRIPT(script))
 
     def add_output_options(self, default=None, onclick=None):
         """
         Allow the user to decide between HTML and Excel.
         """
-        h_checked = default == "html"
-        e_checked = default == "excel"
-        self.add("<fieldset id='report-format-block'>")
-        self.add(self.B.LEGEND("Report Format"))
-        self.add_radio("format", "Web Page", "html", checked=h_checked,
-                       onclick=onclick)
-        self.add_radio("format", "Excel Workbook", "excel", checked=e_checked,
-                       onclick=onclick)
-        self.add("</fieldset>")
+        choices = ("html", "Web Page"), ("excel", "Excel Workbook")
+        fieldset = self.fieldset("Report Format")
+        fieldset.set("id", "report-format-block")
+        self.form.append(fieldset)
+        for value, label in choices:
+            if value is None:
+                value = ""
+            opts = dict(label=label, value=value, onclick=onclick)
+            if value == default:
+                opts["checked"] = True
+            fieldset.append(self.radio_button("format", **opts))
+        return fieldset
 
-    def send(self):
+    def add_session_field(self, session):
+        """Add hidden session field if it isn't there already."""
+        if self.form is not None:
+            if not self.form.xpath(f"//input[@name='{SESSION}']"):
+                self.form.append(self.hidden_field(SESSION, session))
+
+    def menu_link(self, script, display, **params):
         """
-        Returns the HTML page to the web server for delivery to the browser.
-        """
-
-        self._finish()
-        sendPage(u"".join(self._html))
-
-    @classmethod
-    def _indent(class_, level, block):
-        """
-        Add indenting to a block of lines.
-
-        This turns out not to have been such a good idea. The intention
-        was to make the generated HTML source more readable by a human,
-        giving a visual indication of the nested hierarchy of the elements.
-        However, it introduced undesirable and unanticipated side effects,
-        the most notable of which was that multiline values for textarea
-        form fields was garbled. The original solution for that problem
-        was to have the caller replace the newlines in the value with a
-        unique placeholder, which would prevent the garbling, and this
-        method swaps back in the newlines at the last minute. For right
-        now we're retaining that swap so that older scripts using that
-        technique will still work correctly, but we are no longer doing
-        any indenting behind the curtain.
-
-        indent = class_.INDENT * level
-        if not "\n" in block:
-            result = u"%s%s\n" % (indent, block)
-        else:
-            lines = block.splitlines()
-            result = u"".join([u"%s%s\n" % (indent, line) for line in lines])
-        return result.replace(NEWLINE, "\n").replace(BR, "<br>")
+        Add a list item containing a CDR admin menu link.
         """
 
-        return block.replace(NEWLINE, "\n").replace(BR, "<br>") + "\n"
+        url = script
+        if self.session and SESSION not in params:
+            params[SESSION] = self.session
+        if params:
+            url = f"{url}?{urllib.parse.urlencode(params)}"
+        return self.B.A(display, href=url)
 
-    def _add_checkbox_or_radio_button(self, widget, group, label, value,
-                                     **kwargs):
-        """
-        Internal helper method for add_radio() and add_checkbox()
+    @property
+    def action(self):
+        """URL for the form submission handler."""
+        if not hasattr(self, "_action"):
+            self._action = self.__opts.get("action")
+            if self._action is None:
+                self._action = os.path.basename(sys.argv[0])
+            if self._action == "flask":
+                self._action = ""
+        return self._action
 
-        See documentation for those methods.
-        """
-        default_widget_id = ("%s-%s" % (group, value)).replace(" ", "-")
-        widget_id = kwargs.get("widget_id", default_widget_id.lower())
-        widget_classes = kwargs.get("widget_classes")
-        wrapper = kwargs.get("wrapper", "div")
-        wrapper_id = kwargs.get("wrapper_id")
-        wrapper_classes = kwargs.get("wrapper_classes")
-        tooltip = kwargs.get("tooltip")
-        checked = kwargs.get("checked") and True or False
-        onclick = kwargs.get("onclick", "check_%s('%s')" % (group, value))
-        if wrapper:
-            tag = "<%s" % wrapper
-            if wrapper_id:
-                tag += ' id="%s"' % wrapper_id
-            if wrapper_classes:
-                if type(wrapper_classes) in (list, tuple, set):
-                    wrapper_classes = " ".join(wrapper_classes)
-                tag += ' class="%s"' % wrapper_classes
-            self.add(tag + ">")
-        if not isinstance(value, basestring):
-            value = str(value)
-        field = Page.B.INPUT(
-            id=widget_id,
-            type=widget,
-            name=group,
-            value=value,
-        )
-        if checked:
-            field.set("checked", "checked")
-        if onclick:
-            field.set("onclick", onclick.replace("-", "_"))
-        if widget_classes:
-            if type(widget_classes) in (list, tuple, set):
-                widget_classes = " ".join(widget_classes)
-            field.set("class", widget_classes)
-        self.add(field)
-        label = Page.B.LABEL(Page.B.FOR(widget_id), label,
-                             Page.B.CLASS("clickable"))
-        if tooltip:
-            label.set("title", tooltip)
-        self.add(label)
-        if wrapper:
-            self.add("</%s>" % wrapper)
+    @property
+    def banner_title(self):
+        """The title to be displayed in the main banner for the page."""
+        if not hasattr(self, "_banner_title"):
+            self._banner_title = self.__opts.get("banner_title")
+            if self._banner_title is None:
+                self._banner_title = self.title
+        return self._banner_title
 
-    def _start(self):
-        """
-        Helper method for __init__().
-        """
-        self.add("<!DOCTYPE html>", False)
-        self.add("<html>")
-        self.add("<head>")
-        self.add(Page.B.META(charset="utf-8"))
-        self.add(Page.B.TITLE(self._title))
-        if self._icon:
-            self.add(Page.B.LINK(rel="icon", href="/favicon.ico"))
-        for sheet in self._stylesheets:
-            self.add(Page.B.LINK(rel="stylesheet", href=sheet))
-        for js in self._js:
-            self.add(Page.B.SCRIPT(src=js))
-        self.add("</head>")
-        if self._body_classes:
-            body_classes = self._body_classes
-            if type(body_classes) in (list, tuple, set):
-                body_classes = " ".join(body_classes)
-            self.add('<body class="%s">' % body_classes)
-        else:
-            self.add("<body>")
-        if self._action and self._buttons:
-            prefix = "/cgi-bin/cdr/"
-            if "/" in self._action:
-                prefix=""
-            enctype = ""
-            if self._enctype:
-                enctype = " enctype=\"%s\"" % self._enctype
-            self.add("""<form action="%s%s" method="%s"%s>""" %
-                     (prefix, self._action, self._method, enctype))
-            self.add("<header>")
-            self.add("<h1>%s" % self._banner)
-            self.add("<span>")
-            for b in self._buttons:
-                self.add(Page.B.INPUT(name="Request", value=b, type="submit"))
-            self.add("</span>")
-            self.add("</h1>")
-        else:
-            self.add("<header>")
-            if self._banner:
-                self.add(Page.B.H1(self._banner))
-        if self._subtitle:
-            self.add(Page.B.H2(self._subtitle))
-        self.add("</header>")
-        if self._action:
-            if not self._buttons:
-                self.add("""<form action="/cgi-bin/cdr/%s" method="%s">""" %
-                         (self._action, self._method))
-            if self._session:
-                self.add_hidden_field(SESSION, self._session)
+    @property
+    def body(self):
+        """The body content element for the page.
 
-    def _finish(self):
+        May or may not contain a form wrapper for the page's content,
+        depending on whether any buttons were passed to the HTMLPage's
+        constructor. Typically, the code creating an HTMLPage object
+        will then append to this object, or the enclosed form object,
+        or both.
         """
-        Helper function called by the send() method.
-        """
-        if not self._finished:
-            if self._have_date_field:
-                self.add_script("""\
-jQuery(function() {
-    jQuery('.CdrDateField').datepicker({
-        dateFormat: 'yy-mm-dd',
-        showOn: 'button',
-        buttonImageOnly: true,
-        buttonImage: "/images/calendar.png",
-        buttonText: "Select date",
-        dayNamesMin: [ "S", "M", "T", "W", "T", "F", "S" ]
-    });
-});""")
-            if self._action:
-                self.add("</form>")
-            if self._css:
-                self.add("<style>")
-                self._html += self._css
-                self.add("</style>")
-            if self._script:
-                self.add("<script>")
-                self._html += self._script
-                self.add("</script>")
-            self.add("</body>")
-            self.add("</html>")
-            self._finished = True
 
-    @staticmethod
-    def test():
-        """
-        Quick check to see if anything obvious got broken by changes to the
-        Page class.
-        """
-        P = Page
-        page = P("Test", banner="A Banner", subtitle="A Subtitle",
-                 buttons=("Manny", "Moe", "Jack"), action="dummy.py",
-                 session="guest", body_classes="custom-form")
-        page.add("<fieldset>")
-        page.add(P.B.LEGEND("Checkboxes"))
-        page.add_checkbox("cb", "Checkbox 1", "1", onclick=None)
-        page.add_checkbox("cb", "Checkbox 2", "2", onclick=None)
-        page.add_checkbox("cb", "Checkbox 3", "3", onclick=None)
-        page.add("</fieldset>")
-        page.add("<fieldset>")
-        page.add(P.B.LEGEND("Radio Buttons"))
-        page.add_radio("ra", "Button 1", "1")
-        page.add_radio("ra", "Button 2", "2")
-        page.add_radio("ra", "Button 3", "3")
-        page.add("</fieldset>")
-        page.add("<fieldset>")
-        page.add(P.B.LEGEND("Picklist"))
-        page.add_select("se", "Names",
-                        ("Larry", "Moe", "Curly", "Tristan", "Brunnhilde"),
-                        ("Moe", "Tristan"), multiple=True)
-        page.add("</fieldset>")
-        page.add("<fieldset>")
-        page.add(P.B.LEGEND("Text Fields"))
-        page.add_text_field("addr", "Address")
-        page.add_text_field("phone", "Phone")
-        page.add_text_field("email", "Email")
-        page.add("</fieldset>")
-        page.add("<fieldset>")
-        page.add(P.B.LEGEND("Date Fields"))
-        page.add_date_field("start", "Start")
-        page.add_date_field("end", "End", value=str(datetime.date.today()))
-        page.add("</fieldset>")
-        page.add_output_options("html")
-        page.add_script("""\
-function check_ra(val) {
-    alert('You checked ' + val + '!');
-}""")
-        page.add_css("header h1 { background-color: blue; }")
-        page._finish()
-        print("".join(page._html))
+        if not hasattr(self, "_body"):
+            self._body = self.B.BODY(id=self.body_id)
+            if self.body_classes:
+                self._body.set("class", " ".join(self.body_classes))
+            banner = self.B.H1(self.banner_title)
+            header = self.B.E("header", banner)
+            if self.subtitle:
+                header.append(self.B.H2(self.subtitle))
+            if self.buttons:
+                buttons = self.B.SPAN(*self.buttons)
+                buttons.set("id", "header-buttons")
+                banner.append(buttons)
+                form = self.B.FORM(action=self.action, method=self.method)
+                if self.session:
+                    form.append(self.hidden_field(SESSION, self.session))
+                form.set("id", self.PRIMARY_FORM_ID)
+                self._body.append(form)
+                form.append(header)
+            else:
+                self._body.append(header)
+        return self._body
 
-class Report:
-    """
-    CDR Report which can be rendered as an HTML page or as an Excel workbook.
+    @property
+    def body_id(self):
+        """ID attribute to be applied to the page's body element."""
+        if not hasattr(self, "_body_id"):
+            self._body_id = self.__opts.get("body_id")
+            if not self._body_id:
+                self._body_id = "cdr-page"
+        return self._body_id
+
+    @property
+    def body_classes(self):
+        if not hasattr(self, "_body_classes"):
+            classes = self.__opts.get("body_classes")
+            if classes:
+                if isinstance(classes, str):
+                    classes = classes.strip().split()
+                self._body_classes = set(classes)
+            else:
+                self._body_classes = set()
+        return self._body_classes
+
+    @property
+    def buttons(self):
+        """The buttons to appear on the right side of the main banner."""
+        return self.__opts.get("buttons")
+
+    @property
+    def form(self):
+        """The body's <form> element.
+
+        Only present if one or more buttons passed to the constructor,
+        or if the caller has added its own form(s). If the page has
+        more than one form, this only finds the first one (and it won't
+        even find that, if it was attached by the caller inside a
+        wrapper other than `body`). In these more complicated cases,
+        it will be the caller's responsibility to keep track of the
+        added forms.
+        """
+
+        return self.body.find("form")
+
+    @property
+    def head(self):
+        """Assemble the head block for the HTML page."""
+        if not hasattr(self, "_head"):
+            self._head = self.B.HEAD(
+                self.B.META(charset="utf-8"),
+                self.B.TITLE(self.head_title),
+                self.B.LINK(href="/favicon.ico", rel="icon")
+            )
+            for sheet in self.stylesheets:
+                self._head.append(self.B.LINK(href=sheet, rel="stylesheet"))
+            for script in self.scripts:
+                self._head.append(self.B.SCRIPT(src=script))
+        return self._head
+
+    @property
+    def header(self):
+        """The <header> element at the top of the body."""
+        header = self.body.find("form/header")
+        if header is not None:
+            return header
+        return self.body.find("header")
+
+    @property
+    def head_title(self):
+        """The title to be inserted into the head block of the page."""
+        if not hasattr(self, "_head_title"):
+            self._head_title = self.__opts.get("head_title")
+            if self._head_title is None:
+                self._head_title = self.title
+        return self._head_title
+
+    @property
+    def html(self):
+        """Top-level object for the page.
+
+        Slips in the calendar JavaScript if there are any date fields.
+        """
+
+        if not hasattr(self, "_html"):
+            if not hasattr(self, "_has_calendar_js"):
+                self._has_calendar_js = False
+            if not self._has_calendar_js:
+                if self.body.xpath("//*[contains(@class, 'CdrDateField')]"):
+                    self.body.append(self.B.SCRIPT(self.CALENDAR_SCRIPT))
+                    self._has_calendar_js = True
+            self._html = self.B.HTML(self.head, self.body)
+        return self._html
+
+    @property
+    def title(self):
+        """Return the title string for the page.
+
+        Used by default in the head block and in the main banner, but
+        each can be overridden individually using keyword arguments
+        passed to the constructor.
+        """
+
+        return self.__title or ""
+
+    @property
+    def method(self):
+        """CGI verb to be used for form submission."""
+        return self.__opts.get("method", "post")
+
+    @property
+    def news(self):
+        """Information to be displayed at the top of the menu pages."""
+        if not hasattr(self, "_news"):
+            self._news = cdr.getControlGroup("news")
+        return self._news
+
+    @property
+    def scripts(self):
+        """Client-side scripts to be loaded for the page."""
+        if not hasattr(self, "_scripts"):
+            self._scripts = self.__opts.get("scripts")
+            if self._scripts is None:
+                self._scripts = self.SCRIPTS
+        return self._scripts
+
+    @property
+    def session(self):
+        """CDR login context for this page."""
+        if not hasattr(self, "_session"):
+            self._session = self.__opts.get("session", "guest")
+            if isinstance(self._session, str):
+                self._session = Session(self._session)
+        return self._session
+
+    @property
+    def stylesheets(self):
+        """CSS rules to be loaded for the page."""
+        if not hasattr(self, "_stylesheets"):
+            self._stylesheets = self.__opts.get("stylesheets")
+            if self._stylesheets is None:
+                self._stylesheets = self.STYLESHEETS
+        return self._stylesheets
+
+    @property
+    def subtitle(self):
+        """Optional title to be displayed in a second, smaller banner."""
+        if not hasattr(self, "_subtitle"):
+            self._subtitle = self.__opts.get("subtitle")
+        return self._subtitle
+
+
+
+class Reporter:
+    """Create web-based or Excel workbook reports.
+
+    This replaces the older `Report` class.
+
+    Uses the HTMLPage class for HTML report output, avoiding the ugly
+    and error-prone approach of creating web pages by direct string
+    juggling. When we have converted all of the existing reports to
+    use this new class, move the inherited functions in here, rename
+    `Reporter` to `Report` (here and for the users of this new class),
+    and delete the old class.
 
     Example usage:
 
-        R = cdrcgi.Report
-        cursor = cdrdb.connect('CdrGuest').cursor()
-        cursor.execute('''\
-            SELECT id, name
-              FROM doc_type
-          ORDER BY name''')
-        columns = (
-            R.Column('Type ID', width='75px'),
-            R.Column('Type Name', width='300px')
-        )
-        rows = cursor.fetchall()
-        table = R.Table(columns, rows, caption='Document Types')
-        report = R('Simple Report', [table])
-        report.send('html')
-    """
-
-    def __init__(self, title, tables, **options):
-        """
-        Starts a new CDR report.
-
-        Required parameters:
-
-            title -       title of the report; used as the 'title' element
-                          of the head block for HTML output; used to create
-                          the Excel workbook filename for 'excel' output
-            tables -      array of Table objects; these will be rendered as
-                          separate spreadsheets for 'excel' output, or as
-                          separate HTML table blocks for web page output
-
-        Optional parameters:
-
-            banner -      banner for the top of a web page; unused for
-                          Excel output
-            subtitle -    displayed underneath the banner on a web page;
-                          not used for Excel output
-            page_opts -   dictionary of options to be passed to Page
-                          constructor for HTML output (for example, to
-                          get navigation buttons on the report page's
-                          banner); for more extensive modifications to
-                          the page, derive your own class from the
-                          Report class and override _create_html_page()
-            css -         optional string or sequence of strings to be
-                          added to the report page if HTML
-        """
-        self._title = title
-        self._tables = tables
-        self._options = options
-        if isinstance(tables, Report.Table):
-            self._tables = [tables]
-
-    def send(self, fmt="html"):
-        """
-        Send the report to the web server to be returned to the user's browser
-
-        Passed:
-
-            fmt -         'html' or 'excel'; defaults to 'html'
-        """
-        if fmt == "html":
-            self._send_html()
-        else:
-            self._send_excel_workbook()
-
-    def _create_html_page(self, **opts):
-        """
-        Separated out from _send_html() so it can be overridden.
-        """
-        return Page(self._title, **opts)
-
-    def _send_html(self):
-        """
-        Internal helper method for Report.send()
-        """
-        opts = {
-            "banner": self._options.get("banner"),
-            "subtitle": self._options.get("subtitle"),
-            "stylesheets": [CDRCSS],
-            "body_classes": "report",
-            "js": []
-        }
-        opts.update(self._options.get("page_opts") or {})
-        page = self._create_html_page(**opts)
-        css = self._options.get("css")
-        if css:
-            if isinstance(css, basestring):
-                css = [css]
-            for c in css:
-                page.add_css(c)
-        B = page.B
-        for table in self._tables:
-            if table._html_callback_pre:
-                table._html_callback_pre(table, page)
-            page.add('<table class="report">')
-            if table._caption or table._show_report_date:
-                if not table._caption:
-                    lines = []
-                if type(table._caption) in (list, tuple):
-                    lines = list(table._caption)
-                else:
-                    lines = [table._caption]
-                if table._show_report_date:
-                    today = datetime.date.today()
-                    lines += ["", "Report date: {}".format(today), ""]
-                line = lines.pop(0)
-                caption = B.CAPTION(line)
-                while lines:
-                    line = lines.pop(0)
-                    br = B.BR()
-                    br.tail = line
-                    caption.append(br)
-                page.add(caption)
-            page.add("<thead>")
-            page.add("<tr>")
-            for column in table._columns:
-                cell = B.TH(column._name)
-                for opt in column._options:
-                    if opt == "width":
-                        width = column._options["width"]
-                        cell.set("style", "min-width:%s;" % width)
-                    else:
-                        cell.set(opt, column._options[opt])
-                page.add(cell)
-            page.add("</tr>")
-            page.add("</thead>")
-            if table._rows:
-                if table._stripe:
-                    prev_rowspan = 0
-                    class_ = None
-                page.add("<tbody>")
-                for row in table._rows:
-                    if table._stripe:
-                        if not prev_rowspan:
-                            class_ = class_ == "odd" and "even" or "odd"
-                        else:
-                            prev_rowspan -= 1
-                        page.add('<tr class="%s">' % class_)
-                    else:
-                        page.add("<tr>")
-                    for cell in row:
-                        if isinstance(cell, self.Cell):
-                            td = cell.to_td()
-                            if table._stripe and cell._rowspan:
-                                extra_rows = int(cell._rowspan) - 1
-                                if extra_rows > prev_rowspan:
-                                    prev_rowspan = extra_rows
-                        else:
-                            td = B.TD()
-                            self.Cell.set_values(td, cell)
-                        page.add(td)
-                    page.add("</tr>")
-                page.add("</tbody>")
-            page.add("</table>")
-            if table._html_callback_post:
-                table._html_callback_post(table, page)
-        elapsed = self._options.get("elapsed")
-        if elapsed:
-            page.add(page.B.P("elapsed: %s" % elapsed,
-                              page.B.CLASS("footnote")))
-        page.send()
-
-    @staticmethod
-    def xf(**opts):
-        """
-        By default cells are top aligned vertically, with horizontal
-        alignment determined by the type of data (right for integers,
-        left for everything else), without bold font, and with word
-        wrapping turned on. This function wraps the style creation
-        functionality so that report writers can create a custom style
-        object to override the default styling by passing the object
-        as the value of the sheet_style optional argument for the
-        Cell class constructor. If the options here don't support
-        the styling you want, you can adjust the properties of the
-        returned object yourself.
-
-        https://github.com/python-excel/xlwt/blob/master/xlwt/Formatting.py
-
-        Optional arguments:
-
-            header - if True, apply bold font with white text against
-                     a colored background centered in the cell; used
-                     for column headers
-            banner - same as header, with increased height (for first row)
-            wrap   - if set to False, turns off word wrapping
-            horiz  - one of:
-                       "left"
-                       "center"
-                       "right"
-                       "general" (the default)
-            vert    - one of:
-                       "top" (the default)
-                       "center"
-                       "bottom"
-            easyxf  - if set, overrides the default string passed to
-                      xlwt.easyxf(), creating the object to which the
-                      other options will be applied
-        """
-        horz = {
-            "left": xlwt.Alignment.HORZ_LEFT,
-            "center": xlwt.Alignment.HORZ_CENTER,
-            "right": xlwt.Alignment.HORZ_RIGHT,
-            "general": xlwt.Alignment.HORZ_GENERAL
-        }
-        vert = {
-            "top": xlwt.Alignment.VERT_TOP,
-            "center": xlwt.Alignment.VERT_CENTER,
-            "bottom": xlwt.Alignment.VERT_BOTTOM
-        }
-        wrap = {
-            True: xlwt.Alignment.WRAP_AT_RIGHT,
-            False: xlwt.Alignment.NOT_WRAP_AT_RIGHT
-        }
-        settings = {
-            "align": "wrap True, vert top"
-        }
-        if opts.get("header") or opts.get("banner"):
-            font = ["colour black", "bold True"]
-            if opts.get("banner"):
-                font.append("height 240")
-            settings["font"] = ", ".join(font)
-            settings["align"] = "wrap True, vert centre, horiz centre"
-        default = ";".join(["%s: %s" % (k, settings[k]) for k in settings])
-        style = xlwt.easyxf(opts.get("easyxf", default))
-        if "wrap" in opts:
-            style.alignment.wrap = wrap.get(opts["wrap"],
-                                            xlwt.Alignment.WRAP_AT_RIGHT)
-        if "horiz" in opts:
-            style.alignment.horz = horz.get(opts["horiz"],
-                                            xlwt.Alignment.HORZ_GENERAL)
-        if "vert" in opts:
-            style.alignment.vert = vert.get(opts["vert"],
-                                            xlwt.Alignment.VERT_TOP)
-        if "bold" in opts:
-            style.font.bold = opts["bold"] and True or False
-        return style
-
-    def _send_excel_workbook(self):
-        """
-        Internal helper method for Report.send()
-        """
-        book = xlwt.Workbook(encoding="UTF-8")
-        book.set_colour_RGB(0x21, 153, 52, 102) #993366
-        self._data_style = self.xf()
-        self._header_style = self.xf(header=True)
-        self._banner_style = self.xf(banner=True)
-        self._bold_data_style = self.xf(bold=True)
-        self._right_data_style = self.xf(horiz="right")
-        self._center_data_style = self.xf(horiz="center")
-        count = 1
-        for table in self._tables:
-            self._add_worksheet(book, table, count)
-            count += 1
-        import msvcrt
-        now = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        book_name = re.sub(r"\W", "_", self._title)
-        book_name += "-%s.xls" % now
-        msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
-        sys.stdout.write("Content-type: application/vnd.ms-excel\r\n")
-        sys.stdout.write("Content-disposition: attachment; ")
-        sys.stdout.write("filename=%s\r\n\r\n" % book_name)
-        book.save(sys.stdout)
-        if self._options.get("debug"):
-            name = "d:/tmp/%s" % book_name
-            fp = open(name, "wb")
-            book.save(fp)
-            fp.close()
-        sys.exit(0)
-
-    def _add_worksheet(self, book, table, count):
-        """
-        Internal help method called by Report._send_excel_workbook
-        """
-        name = table._options.get("sheet_name", "Sheet%d" % count)
-        sheet = book.add_sheet(name)
-        sheet.print_grid = True
-        row_number = 0
-        last_col = len(table._columns) - 1
-        for col_number, column in enumerate(table._columns):
-            width = Report._get_excel_width(column)
-            if width:
-                sheet.col(col_number).width = width
-        if table._caption:
-            if type(table._caption) in (list, tuple):
-                captions = table._caption
-            else:
-                captions = [table._caption]
-            for caption in captions:
-                sheet.write_merge(row_number, row_number, 0, last_col, caption,
-                                  self._banner_style)
-                row_number += 1
-        if table._show_report_date:
-            sheet.write_merge(row_number, row_number, 0, last_col, "")
-            row_number += 1
-            sheet.write_merge(row_number, row_number, 0, last_col,
-                              "Report date: {}".format(datetime.date.today()),
-                              self._bold_data_style)
-            row_number += 1
-            sheet.write_merge(row_number, row_number, 0, last_col, "")
-            row_number += 1
-        for col_number, column in enumerate(table._columns):
-            sheet.write(row_number, col_number, column._name,
-                        self._header_style)
-        for row in table._rows:
-            row_number += 1
-            col_number = 0
-            for cell in row:
-
-                # Determine coordinates where cell should be written.
-                while col_number < len(table._columns):
-                    if table._columns[col_number]._skip > 0:
-                        table._columns[col_number]._skip -= 1
-                        col_number += 1
-                    else:
-                        break
-                if col_number >= len(table._columns):
-                    raise Exception("too many cells for row %d" % row_number)
-
-                # Assemble the values to be written
-                values = Report.Cell._get_values(cell, True)
-                if type(values) is not int:
-                    values = u"\n".join(values)
-                style = self._data_style
-                if isinstance(cell, self.Cell):
-                    if cell._sheet_style:
-                        style = cell._sheet_style
-                    elif cell._bold:
-                        style = self._bold_data_style
-                    elif cell._right:
-                        style = self._right_data_style
-                    elif cell._center:
-                        style = self._center_data_style
-                    if cell._href:
-                        vals = unicode(values).replace(u'"', u'""')
-                        formula = u'HYPERLINK("%s";"%s")' % (cell._href, vals)
-                        values = xlwt.Formula(formula)
-                    if cell._colspan or cell._rowspan:
-                        colspan = cell._colspan and int(cell._colspan) or 1
-                        rowspan = cell._rowspan and int(cell._rowspan) or 1
-                        r1, c1 = r2, c2 = row_number, col_number
-                        if colspan > 1:
-                            c2 += colspan - 1
-                            if c2 >= len(table._columns):
-                                raise Exception("not enough room for colspan "
-                                                "on row %d" % row_number)
-                        if rowspan > 1:
-                            extra_rows = rowspan - 1
-                            r2 += extra_rows
-                            while col_number <= c2:
-                                if table._columns[col_number]._skip > 0:
-                                    raise Exception("overlapping rowspan "
-                                                    "detected at row %d" %
-                                                    row_number)
-                                table._columns[col_number]._skip = extra_rows
-                                col_number += 1
-                        sheet.write_merge(r1, r2, c1, c2, values, style)
-                        col_number = c2 + 1
-                        continue
-                sheet.write(row_number, col_number, values, style)
-                col_number += 1
-
-    @staticmethod
-    def _get_excel_width(column):
-        """
-        Convert CSS cell width to width units used by the xlwt module
-
-        Passed:
-
-            column -     instance of the Column class
-
-        The width option of the Column object can be given as 'NN.NNin' or
-        'NN.NNpx' where 'NN' is any number including of decimal digits.
-        The decimal point is optional, and there don't have to be digits
-        on both sides of the decimal point, but has to be at least one
-        digit somewhere in the string.  Percentages aren't supported (yet).
-
-        The formula for converting pixels to xlwt units is derived from
-        the xlwt module's Column.width_in_pixels() method (see
-        https://github.com/python-excel/xlwt/blob/master/xlwt/Column.py)
-
-        The xlwt units represent 1/256 of the width of the character '0'
-        in the workbook's default font.
-
-        See http://office.microsoft.com/en-us/excel-help\
-        /measurement-units-and-rulers-in-excel-HP001151724.aspx
-        for the formula used to convert inches to pixels.
-
-        """
-
-        width = column._options.get("width")
-        if width:
-            if width.endswith("in"):
-                inches = float(width[:-2])
-                pixels = 96 * inches
-            else:
-                pixels = float(re.sub(r"[^\d.]+", "", width))
-            return int((pixels - .446) / .0272)
-        return None
-
-    @staticmethod
-    def test():
-        """
-        Very crude little test to check for any obvious breakage.
-
-        Run like this from the command line:
-
-         python -c "import cdrcgi;cdrcgi.Report.test()" | sed -n /DOCTYPE/,$p
-
-        Wouldn't hurt to add more testing to this method as we get time.
-        """
-        R = Report
-        cursor = cdrdb.connect("CdrGuest").cursor()
-        cursor.execute("""\
-            SELECT id, name
-              FROM doc_type
-             WHERE active = 'Y'
-               AND name > ''
-          ORDER BY name""")
+        R = cdrcgi.Reporter
         columns = (
             R.Column("Type ID", width="75px"),
-            R.Column("Type Name", width="300px")
+            R.Column("Type Name", width="300px"),
         )
-        rows = cursor.fetchall()
-        table = R.Table(columns, rows, caption="Document Types")
-        report = R("Simple Report", [table])
+        query = db.Query("doc_type", "id", "name").order("name")
+        rows = query.execute().fetchall()
+        table = R.Table(rows, columns=columns, caption="Document Types")
+        report = R("Simple Report", table)
         report.send("html")
+    """
 
-    class Column:
+    def __init__(self, title, tables, **opts):
+        """Capture the values for the report."""
+        self.__title = title
+        self.__tables = tables
+        self.__opts = opts
+
+    def send(self, format="html"):
+        """Send the web page or Excel workbook to the browser."""
+        if format == "excel":
+            self.workbook.send()
+            if self.debug:
+                self.workbook.save(cdr.TMP)
+        else:
+            self.page.send()
+        sys.exit(0)
+
+    @property
+    def banner(self):
+        """Banner for the top of an HTML report (unused for Excel output)."""
+        return self.__opts.get("banner")
+
+    @property
+    def css(self):
+        """Sequence of string for <style> elements on HTML reports."""
+        if not hasattr(self, "_css"):
+            self._css = self.__opts.get("css")
+            if isinstance(self._css, str):
+                self._css = [self._css]
+            elif not self._css:
+                self._css = []
+        return self._css
+
+    @property
+    def debug(self):
+        """Boolean; if True, save the workbook to the file system."""
+        return self.__opts.get("debug")
+
+    @property
+    def elapsed(self):
+        """Optional length of time the report took to generate.
+
+        Will be converted to a string at render time.
         """
-        Information about a column in a tabular report.
+
+        return self.__opts.get("elapsed")
+
+    @property
+    def footer(self):
+        """Optional footer to appear on the HTML report."""
+        return self.__opts.get("footer")
+
+    @property
+    def no_results(self):
+        """What to say if no result tables are found."""
+
+        if not hasattr(self, "_no_results"):
+            if "no_results" in self.__opts:
+                self._no_results = self.__opts.get("no_results")
+            else:
+                self._no_results = "No report results found."
+        return self._no_results
+
+    @property
+    def page(self):
+        """HTML version of report."""
+        if not hasattr(self, "_page"):
+            opts = {
+                "banner": self.banner,
+                "subtitle": self.subtitle,
+                "body_classes": "report",
+                "styles": self.css,
+            }
+            opts.update(self.page_opts)
+            self._page = HTMLPage(self.title, **opts)
+            if self.css:
+                self._page.add_css(self.css)
+            if not self.tables and self.no_results:
+                no_results = self._page.B.P(self.no_results)
+                no_results.set("class", "no-results")
+                self._page.body.append(no_results)
+            for table in self.tables:
+                if table.node is not None:
+                    self._page.body.append(table.node)
+            if self.footer is not None:
+                self._page.body.append(self.footer)
+            if self.elapsed:
+                footnote = self._page.B.P(f"elapsed: {self.elapsed}")
+                footnote.set("class", "footnote")
+                self._page.body.append(footnote)
+        return self._page
+
+    @property
+    def page_opts(self):
+        """Dictionary of options passed to HTMLPage class's constructor."""
+        return self.__opts.get("page_opts") or {}
+
+    @property
+    def subtitle(self):
+        """String for display under the primary banner of the web report.
+
+        Not used for Excel reports.
         """
-        def __init__(self, name, **options):
-            self._name = name
-            self._options = options
-            self._skip = 0
-        def set_name(self, name):
-            self._name = name
 
-    class Table:
+        return self.__opts.get("subtitle")
+
+    @property
+    def tables(self):
+        """Sequence of tables to be included in the report.
+
+        A single table will be converted to a list.
         """
-        One of (possibly) multiple tables in a CDR report
+        if not hasattr(self, "_tables"):
+            self._tables = self.__tables
+            if isinstance(self._tables, Reporter.Table):
+                self._tables = [self._tables]
+        return self._tables
+
+    @property
+    def title(self):
+        """Title of the report.
+
+        Used for the workbook filename or the /html/head/title element.
         """
-        def __init__(self, columns, rows, **options):
-            """
-            Table constructor.
 
-            Required arguments:
-                columns - Array of Column objects, one for each column.
+        return self.__title
 
-                rows    - Array of arrays of values for the cells.  Each of
-                          the sub-arrays has one value for one cell.
-                          Values can be string or numeric.  (Or formula?)
+    @property
+    def workbook(self):
+        """Wrapper for Excel workbook."""
+        if not hasattr(self, "_workbook"):
+            opts = dict(stamp=True)
+            if self.wrap is not None:
+                opts["wrap"] = self.wrap
+            self._workbook = Excel(self.title, stamp=True, wrap=self.wrap)
+            for table in self.tables:
+                table.add_worksheet(self._workbook)
+        return self._workbook
 
-            Optional keyword arguments:
+    @property
+    def wrap(self):
+        return self.__opts.get("wrap", True)
 
-                caption - Caption centered at the top of the table, full
-                          width.  If the caption is an array, each element of
-                          the array will be centered on a new line.
-
-                html_callback_pre
-                        - Reference to a function to be called before
-                          processing the table by send("html").  Note that
-                          function outputs may or may appear before the
-                          table in the output HTML.
-
-                          The function is not called when output is Excel.
-
-                html_callback_post
-                        - Reference to a function to be called after
-                          processing the table by send("html").
-
-                user_data
-                        - Store whatever the value is for return later if
-                          and when Table.user_data() is called.  Value can
-                          be anything - string, object, array, dictionary,
-                          whatever.
-
-                stripe  - Use odd / even background coloring for rows.
-                          Default=True.
-
-                show_report_date
-                        - If true, add "Report date: yyyy-mm-dd" line
-            """
-            if not columns:
-                raise Exception("no columns specified for table")
-            if type(columns) not in (list, tuple):
-                raise Exception("table columns must be a sequence")
-            self._columns = columns
-            self._rows = rows
-            self._options = options
-            self._caption = options.get("caption")
-            self._html_callback_pre = options.get("html_callback_pre")
-            self._html_callback_post = options.get("html_callback_post")
-            self._user_data = options.get("user_data")
-            # Note None != False, hence True is default
-            self._stripe = options.get("stripe") != False
-            self._show_report_date = options.get("show_report_date")
-
-        def options(self):
-            """
-            Accessor object for the table's options.
-            """
-            return self._options
-
-        def user_data(self):
-            """
-            Accessor object for data stored by the caller.
-            """
-            return self._user_data
 
     class Cell:
-        """
-        Single cell of data for a table in a CDR report.
+        """Data for one cell in a report table."""
 
-        The cell can optionally span multiple rows and/or columns
-        (using the optional 'colspan' or 'rowspan' arguments
-        to the constructor.
+        B = lxml.html.builder
 
-        The value can be a single string or number or an array of
-        strings or numbers.  Each value in an array of values will
-        be displayed on a separate line of the cell.
-        """
-        def __init__(self, value, **options):
-            self._value = value
-            self._options = options
-            self._colspan = options.get("colspan")
-            self._rowspan = options.get("rowspan")
-            self._href = options.get("href")
-            self._target = options.get("target")
-            self._bold = options.get("bold")
-            self._right = options.get("right")
-            self._center = options.get("center")
-            self._sheet_style = options.get("sheet_style")
-            self._callback = options.get("callback")
-            self._title = options.get("title")
-            classes = options.get("classes")
-            if not classes:
-                self._classes = []
-            elif isinstance(classes, basestring):
-                self._classes = classes.split()
-            elif type(classes) in (set, tuple):
-                self._classes = list(classes)
-            elif type(classes) is list:
-                self._classes = classes
+        def __init__(self, *values, **opts):
+            """Capture the information needed to show this cell on the report.
+            """
+
+            self.__vals = values
+            self.__opts = opts
+
+        def write(self, book, rownum, colnum, columns):
+            """Add this cell's data to the worksheet.
+
+            Only used for the Excel flavor of the report.
+
+            Pass:
+                book - `Excel` object
+                rownum - integer position for the row we're on
+                colnum - starting column for this cell's data
+                columns - sequence of `Reporter.Column` objects for the table
+
+            Return:
+                integer position for the next cell to be written
+            """
+
+            # May have to skip columns if there were previous rowspans.
+            while colnum <= len(columns):
+                if columns[colnum-1].skip > 0:
+                    columns[colnum-1].skip -= 1
+                    colnum += 1
+                else:
+                    break
+            if colnum > len(columns):
+                raise Exception(f"too many cells for row {rownum:d}")
+
+            # Assemble the values to be written
+            if len(self.values) == 1:
+                values = self.values[0]
             else:
-                raise Exception("unexpected type %s for Cell classes: %s" %
-                                (type(classes), repr(classes)))
+                values = "\n".join([str(value) for value in self.values])
 
+            # Determine the styles to be applied.
+            styles = self.sheet_styles
+            if self.right:
+                styles["alignment"] = book.right
+            elif self.center:
+                styles["alignment"] = book.center
+            elif "alignment" not in styles:
+                styles["alignment"] = book.left
+            if self.href:
+                values = f'=HYPERLINK("{self.href}", "{values}")'
+                styles["font"] = book.hyperlink
+            elif self.bold:
+                styles["font"] = book.bold
+
+            # Handle the case of writing to more than one cell.
+            nextcol = colnum + 1
+            if self.colspan or self.rowspan:
+                colspan = self.colspan or 1
+                rowspan = self.rowspan or 1
+                r1, c1 = r2, c2 = rownum, colnum
+                if colspan > 1:
+                    c2 += colspan - 1
+                    if c2 > len(columns):
+                        msg = "not enough room for colspan on row {rownum:d}"
+                        raise Exception(msg)
+                if rowspan > 1:
+                    extra_rows = rowspan - 1
+                    r2 += extra_rows
+                    while colnum <= c2:
+                        if columns[colnum-1].skip > 0:
+                            msg = "overlapping rowspan at row {rownum:d}"
+                            raise Exception(msg)
+                        columns[colnum-1].skip = extra_rows
+                        colnum += 1
+                nextcol = c2 + 1
+                book.merge(r1, c1, r2, c2)
+                colnum = c1
+            cell = book.write(rownum, colnum, values, styles)
+            # This resulted in horrible performance. Use formula instead.
+            #if self.href:
+            #    cell.hyperlink = self.href
+            return nextcol
+
+        @property
+        def bold(self):
+            """Boolean indicating whether the cell values should be bolded."""
+            return self.__opts.get("bold")
+
+        @property
+        def center(self):
+            """Boolean indicating whether to center the cell's content."""
+            return self.__opts.get("center")
+
+        @property
+        def classes(self):
+            """Sequence of class names for this cell."""
+            if not hasattr(self, "_classes"):
+                classes = self.__opts.get("classes")
+                if not classes:
+                    self._classes = set()
+                elif isinstance(classes, set):
+                    self._classes = classes
+                elif isinstance(classes, str):
+                    self._classes = {classes}
+                elif isinstance(classes, (tuple, list)):
+                    self._classes = set(classes)
+                else:
+                    message = "unexpected type {} for Cell classes: {}"
+                    args = type(classes), repr(classes)
+                    raise Exception(message.format(args))
+                if self.bold and not self.href:
+                    self._classes.add("strong")
+                if self.center:
+                    self._classes.add("center")
+                elif self.right:
+                    self._classes.add("right")
+            return self._classes
+
+        @property
+        def colspan(self):
+            """How many columns does this cell span horizontally?
+
+            Default is 1.
+            """
+
+            if not hasattr(self, "_colspan"):
+                self._colspan = self.__opts.get("colspan")
+                if self._colspan:
+                    self._colspan = int(self._colspan)
+            return self._colspan
+
+        @property
+        def href(self):
+            """URL value for link."""
+            return self.__opts.get("href")
+
+        @property
+        def middle(self):
+            """Override vertical alignment."""
+            return self.__opts.get("middle")
+
+        @property
+        def right(self):
+            """Boolean indicating whether the values should be right aligned.
+            """
+
+            return self.__opts.get("right")
+
+        @property
+        def rowspan(self):
+            """How many rows does this cell span vertically?
+
+            Default is 1.
+            """
+
+            if not hasattr(self, "_rowspan"):
+                self._rowspan = self.__opts.get("rowspan")
+                if self._rowspan:
+                    self._rowspan = int(self._rowspan)
+            return self._rowspan
+
+        @property
+        def sheet_styles(self):
+            """Optional dictionary of style attributes for the Excel report."""
+            if not hasattr(self, "_sheet_styles"):
+                self._sheet_styles = self.__opts.get("sheet_styles") or {}
+            return self._sheet_styles
+
+        @property
+        def target(self):
+            """Target for links.
+
+            Only used for web output, when the `href` option has been set.
+            """
+
+            return self.__opts.get("target")
+
+        @property
+        def td(self):
+            """HTML node for this cell in a web report."""
+            if not hasattr(self, "_td"):
+                self._td = container = self.B.TD()
+                if self.href:
+                    container = self.B.A(href=self.href)
+                    if self.target:
+                        container.set("target", self.target)
+                    if self.bold:
+                        container.set("class", "strong")
+                    self._td.append(container)
+                if len(self.values) == 1:
+                    if isinstance(self.values[0], lxml.html.HtmlElement):
+                        container.append(self.values[0])
+                    else:
+                        container.text = str(self.values[0])
+                else:
+                    values = list(self.values)
+                    container.append(self.B.SPAN(str(values.pop(0))))
+                    while values:
+                        container.append(self.B.BR())
+                        container.append(self.B.SPAN(str(values.pop(0))))
+                if self.colspan:
+                    self._td.set("colspan", str(self.colspan))
+                if self.rowspan:
+                    self._td.set("rowspan", str(self.rowspan))
+                if self.classes:
+                    self._td.set("class", " ".join(self.classes))
+                if self.title:
+                    self._td.set("title", self.title)
+            return self._td
+
+        @property
+        def title(self):
+            """Optional string to be shown in popup when hovering."""
+            if not hasattr(self, "_title"):
+                if "title" in self.__opts:
+                    self._title = self.__opts["title"]
+                elif "tooltip" in self.__opts:
+                    self._title = self.__opts["tooltip"]
+                else:
+                    self._title = None
+            return self._title
+
+        @property
+        def tooltip(self):
+            """Alias for the title property."""
+            return self.title
+
+        @property
         def values(self):
-            return self._value
+            """Collect the values for the cell into a sequence."""
+            if not hasattr(self, "_values"):
+                self._values = []
+                for value in self.__vals:
+                    if isinstance(value, (list, tuple)):
+                        self._values += list(value)
+                    elif value is not None:
+                        self._values.append(value)
+                if not self._values:
+                    self._values = [""]
+            return self._values
 
-        def options(self):
-            return self._options
 
-        def to_td(self):
-            if self._callback:
-                td = self._callback(self, "html")
-                if td is not None:
-                    return td
-            td = Page.B.TD()
-            if self._href:
-                element = Page.B.A(href=self._href)
-                if self._target:
-                    element.set("target", self._target)
-                if self._bold:
-                    element.set("class", "strong")
-            else:
-                element = td
-                if self._bold and "strong" not in self._classes:
-                    self._classes.append("strong")
-            self.set_values(element, self)
-            if self._colspan:
-                td.set("colspan", str(self._colspan))
-            if self._rowspan:
-                td.set("rowspan", str(self._rowspan))
-            if self._center:
-                if "center" not in self._classes:
-                    self._classes.append("center")
-            elif self._right:
-                if "right" not in self._classes:
-                    self._classes.append("right")
-            if self._classes:
-                td.set("class", " ".join(self._classes))
-            if self._title:
-                td.set("title", self._title)
-            if element is not td:
-                td.append(element)
-            return td
+    class Column:
+        """Header and properties for one column in a report table."""
 
-        @staticmethod
-        def set_values(element, cell):
-            values = Report.Cell._get_values(cell)
-            value = values.pop(0)
-            element.text = value
-            while values:
-                value = values.pop(0)
-                br = Page.B.BR()
-                br.tail = value
-                element.append(br)
+        def __init__(self, name, **opts):
+            """Save what we need to render this column in the report."""
+            self.__name = name
+            self.__opts = opts
 
-        @staticmethod
-        def _get_values(cell, preserve_int=False):
+        @property
+        def classes(self):
+            """Optional classes for the th element (HTML only)."""
+            return self.__opts.get("classes")
+
+        @property
+        def id(self):
+            """Optional unique ID for the th element (HTML only)."""
+            return self.__opts.get("id")
+
+        @property
+        def name(self):
+            """What we display at the top of the column."""
+            return self.__name
+
+        @property
+        def skip(self):
+            """Keep track of rows to be skipped when rowspan is set."""
+            if not hasattr(self, "_skip"):
+                self._skip = 0
+            return self._skip
+
+        @skip.setter
+        def skip(self, other):
+            """Let table rendering modify this value."""
+            self._skip = other
+
+        @property
+        def tooltip(self):
+            """Popup string for help when the user hovers over the column."""
+            return self.__opts.get("tooltip")
+
+        @property
+        def style(self):
+            """HTML style attribute for column element on web page."""
+            if not hasattr(self, "_style"):
+                self._style = None
+                style = self.__opts.get("style") or ""
+                rules = [r for r in style.rstrip(";").split(";") if r]
+                if self.width:
+                    rules.append(f"min-width: {self.width}")
+                if rules:
+                    self._style = ";".join(rules)
+            return self._style
+
+        @property
+        def width(self):
+            """Minimum width of column (e.g., '40px')."""
+            return self.__opts.get("width")
+
+
+    class Table:
+        """Grid of rows and columns for the report.
+
+        A report can have more than one table.
+        """
+
+        B = lxml.html.builder
+
+        def __init__(self, rows, **opts):
+            """Capture the information we need to render the table."""
+            self.__rows = rows
+            self.__opts = opts
+
+        def add_worksheet(self, book):
+            """Create an Excel worksheet and add it to the workbook.
+
+            Pass:
+                book
+                    `Excel` object
             """
-            Returns the values for a table cell as an array
 
-            Passed:
+            # Create a new worksheet.
+            self.sheet = book.add_sheet(self.sheet_name)
+            self.sheet.sheet_format.defaultRowHeight = 200
+            if self.freeze_panes:
+                self.sheet.freeze_panes = self.freeze_panes
 
-                cell -       either a string or number, an array of strings
-                             and/or numbers, or a Report.Cell object (whose
-                             _value member may in turn be a string, a number,
-                             or an array of strings and/or numbers)
+            # Add the rows for the caption strings.
+            rownum = 1
+            styles = dict(alignment=book.center, font=book.bold)
+            for caption in self.caption:
+                book.merge(rownum, 1, rownum, len(self.columns))
+                book.write(rownum, 1, caption, styles)
+                rownum += 1
+            if self.caption:
+                book.merge(rownum, 1, rownum, len(self.columns))
+                rownum += 1
+
+            # Set the column headers and widths.
+            colnum = 1
+            styles["alignment"] = book.center_middle
+            for column in self.columns:
+                if column.width:
+                    width = book.pixels_to_chars(column.width)
+                    book.set_width(colnum, width)
+                book.write(rownum, colnum, column.name, styles)
+                colnum += 1
+
+            # Add each of the data rows to the worksheet.
+            for row in self.rows:
+                rownum += 1
+                colnum = 1
+                for cell in row:
+                    if not isinstance(cell, Reporter.Cell):
+                        cell = Reporter.Cell(cell)
+                    colnum = cell.write(book, rownum, colnum, self.columns)
+
+        def debug(self, message, *args):
+            """If we have a logger, use it for debugging."""
+
+            if self.logger:
+                self.logger.debug(message, *args)
+
+        @property
+        def caption(self):
+            """Sequence of strings to be displayed for the table's caption.
+
+            If more than one string, each will be rendered on a separate line.
             """
-            if isinstance(cell, Report.Cell):
-                values = cell._value
+
+            if not hasattr(self, "_caption"):
+                self._caption = self.__opts.get("caption")
+                if not self._caption:
+                    self._caption = []
+                elif isinstance(self._caption, str):
+                    self._caption = [self._caption]
+            return self._caption
+
+        @property
+        def classes(self):
+            """Optional classes for the table element (HTML only)."""
+            return self.__opts.get("classes")
+
+        @property
+        def cols(self):
+            """Alias for `columns` property."""
+            return self.columns
+
+        @property
+        def columns(self):
+            """Sequence of `Reporter.Column` objects for this table."""
+            if not hasattr(self, "_columns"):
+                self._columns = []
+                columns = self.__opts.get("columns") or self.__opts.get("cols")
+                if columns:
+                    self._columns = []
+                    for column in columns:
+                        if isinstance(column, str):
+                            column = Reporter.Column(column)
+                        self._columns.append(column)
+            return self._columns
+
+        @property
+        def freeze_panes(self):
+            """Optional cell marking row/col freezing (Excel only)."""
+            return self.__opts.get("freeze_panes")
+
+        @property
+        def id(self):
+            """Optional id attribute for the table element (HTML only)."""
+            return self.__opts.get("id")
+
+        @property
+        def logger(self):
+            """Access to logging."""
+            return self.__opts.get("logger")
+
+        @property
+        def node(self):
+            """HTML object for table."""
+            if not hasattr(self, "_node"):
+
+                # Hold off until we know we have child nodes for the table.
+                self._node = None
+                children = []
+
+                # Add the caption strings to the table if we have any.
+                if self.caption:
+                    nodes = [self.B.SPAN(self.caption[0])]
+                    for line in self.caption[1:]:
+                        nodes.append(self.B.BR())
+                        nodes.append(self.B.SPAN(line))
+                    children.append(self.B.CAPTION(*nodes))
+
+                # Add the column headers if they have been provided.
+                if self.columns:
+                    tr = self.B.TR()
+                    for column in self.columns:
+                        th = self.B.TH(column.name)
+                        if column.style:
+                            th.set("style", column.style)
+                        if column.id:
+                            th.set("id", column.ids)
+                        if column.tooltip:
+                            th.set("title", column.tooltip)
+                        if column.classes:
+                            if isinstance(column.classes, str):
+                                th.set("class", column.classes)
+                            else:
+                                th.set("class", " ".join(column.classes))
+                        tr.append(th)
+                    children.append(self.B.THEAD(tr))
+
+                # Only create the <tbody> element if there are data rows.
+                if self.rows:
+                    tbody = self.B.TBODY()
+                    for row in self.rows:
+                        tr = self.B.TR()
+                        self.debug("row has %d cells", len(row))
+                        for cell in row:
+                            if not isinstance(cell, Reporter.Cell):
+                                cell = Reporter.Cell(cell)
+                            self.debug("cell values: %s", cell.values)
+                            self.debug("td: %s", cell.td)
+                            tr.append(cell.td)
+                        self.debug("tr: %s", lxml.html.tostring(tr))
+                        tbody.append(tr)
+                    children.append(tbody)
+
+                # Create the table element if we found any child nodes.
+                if children:
+                    self._node = self.B.TABLE(*children)
+                    if self.id:
+                        self._node.set("id", self.id)
+                    if self.classes:
+                        if isinstance(self.classes, str):
+                            self._node.set("class", self.classes)
+                        else:
+                            self._node.set("class", " ".join(self.classes))
+            return self._node
+
+        @property
+        def rows(self):
+            """Sequence of data cells displayed by the table."""
+            return self.__rows
+
+        @property
+        def sheet_name(self):
+            """Optional name of the sheet.
+
+            Not used for HTML reports. Defaults to "SheetN" where
+            N is the number of existing sheets plus 1.
+            """
+
+            return self.__opts.get("sheet_name")
+
+
+class Excel:
+    """Build workbooks using OpenPyXl
+
+    See https://openpyxl.readthedocs.io/en/stable/
+
+    We have created most of our Excel reports in the past using
+    the pre-2007 formats. This package uses the current, more
+    capable Excel format, and is the recommended package for
+    generating Excel workbooks in Python.
+
+    In rare cases it will be necessary to use the XlsxWriter
+    package (https://xlsxwriter.readthedocs.io). See, for example,
+    the MediaCaptionContent.py web admin report. One drawback of
+    the XlsxWriter package is that it cannot read Excel workbooks,
+    only create them.
+    TODO: document the limitations of the OpenPyXl package which
+    require the use of XlsxWriter.
+
+    Note that an object of this class has properties for commonly
+    used styles. It caches these properties, rather that creating
+    a new style object for each call, so be careful that you not
+    alter the returned property unless you are sure that you will
+    want _all_ uses of that style property to have that change.
+    """
+
+    MIME_SUBTYPE = "vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    MIME_TYPE = f"application/{MIME_SUBTYPE}"
+    from openpyxl.utils import get_column_letter
+
+    def __init__(self, title=None, **opts):
+        self.__title = title
+        self.__opts = opts
+
+    def add_sheet(self, name=None):
+        if not name:
+            name = f"Sheet{len(self.book.worksheets)+1}"
+        sheet = self.book.create_sheet(title=name)
+        sheet.print_options.gridLines = True
+        return sheet
+
+    def merge(self, start_row, start_column, end_row, end_column):
+        self.sheet.merge_cells(
+            start_row=start_row,
+            start_column=start_column,
+            end_row=end_row,
+            end_column=end_column
+        )
+
+    def save(self, directory=None):
+        path = self.filename
+        if directory:
+            path = f"{directory}/{path}"
+        with open(path, "wb") as fp:
+            self.book.save(fp)
+
+    def send(self):
+        headers = (
+            f"Content-type: {self.book.mime_type}",
+            f"Content-disposition: attachment; filename={self.filename}"
+        )
+        headers = "\r\n".join(headers) + "\r\n\r\n"
+        sys.stdout.buffer.write(headers.encode("utf-8"))
+        self.book.save(sys.stdout.buffer)
+
+    def set_width(self, col, width):
+        letter = Excel.get_column_letter(col)
+        self.sheet.column_dimensions[letter].width = width
+
+    def write(self, row, column, value, styles=None):
+        cell = self.sheet.cell(row=row, column=column, value=value)
+        if styles:
+            for name in styles:
+                setattr(cell, name, styles[name])
+        return cell
+
+    @property
+    def hyperlink(self):
+        """Font styling we want for links."""
+        if not hasattr(self, "_hyperlink"):
+            opts = dict(color = "000000FF", underline="single")
+            self._hyperlink = openpyxl.styles.Font(**opts)
+        return self._hyperlink
+
+    @property
+    def bold(self):
+        if not hasattr(self, "_bold"):
+            self._bold = openpyxl.styles.Font(bold=True)
+        return self._bold
+
+    @property
+    def center(self):
+        if not hasattr(self, "_center"):
+            opts = dict(horizontal="center", vertical="top",
+                        wrap_text=self.wrap)
+            self._center = openpyxl.styles.Alignment(**opts)
+        return self._center
+
+    @property
+    def right(self):
+        if not hasattr(self, "_right"):
+            opts = dict(horizontal="right", vertical="top",
+                        wrap_text=self.wrap)
+            self._right = openpyxl.styles.Alignment(**opts)
+        return self._right
+
+    @property
+    def left(self):
+        if not hasattr(self, "_left"):
+            opts = dict(horizontal="left", vertical="top", wrap_text=self.wrap)
+            self._left = openpyxl.styles.Alignment(**opts)
+        return self._left
+
+    @property
+    def center_middle(self):
+        """Center both horizontally and vertically."""
+        if not hasattr(self, "_center_middle"):
+            opts = dict(horizontal="center", vertical="center",
+                        wrap_text=self.wrap)
+            self._center_middle = openpyxl.styles.Alignment(**opts)
+        return self._center_middle
+
+    @property
+    def book(self):
+        """Create a workbook with no sheets."""
+        if not hasattr(self, "_book"):
+            self._book = openpyxl.Workbook()
+            if not self.__opts.get("keep_initial_sheet"):
+                for sheet in self._book.worksheets:
+                    self._book.remove(sheet)
+        return self._book
+
+    @property
+    def sheet(self):
+        """The most recently added sheet if any, else None."""
+        return self.book.worksheets[-1] if self.book.worksheets else None
+
+    @property
+    def title(self):
+        return self.__title
+
+    @property
+    def filename(self):
+        if not hasattr(self, "_filename"):
+            stamp = ""
+            if self.__opts.get("stamp") or not self.title:
+                stamp = datetime.datetime.now().strftime("-%Y%m%d%H%M%S")
+            if self.title:
+                title = re.sub(r"\W", "_", self.title)
             else:
-                values = cell
-            if type(values) is int and preserve_int:
-                return values
-            if type(values) not in (list, tuple):
-                return [unicode(values)]
-            elif not values:
-                return [""]
-            return [unicode(v) for v in values]
+                title = "workbook"
+            self._filename = f"{title}{stamp}.xlsx"
+        return self._filename
+
+    @property
+    def wrap(self):
+        return self.__opts.get("wrap")
+
+    @classmethod
+    def pixels_to_chars(cls, pixels):
+        """Convert pixels to characters for column widths, etc.
+
+        See https://docs.microsoft.com/en-us/previous-versions/office\
+        /developer/office-2010/cc802410(v=office.14)
+
+        In particular:
+          "To translate from pixels to character width, use this calculation:
+            =Truncate(({pixels}-5)/{Maximum Digit Width} * 100+0.5)/100
+
+        The following code gets the maximum digit width for the default
+        font in a new Excel installation:
+
+        >>> from PIL import ImageFont
+        >>> font = ImageFont.truetype('d:/Windows/Fonts/calibri.ttf', 11)
+        >>> font.getsize("0")
+        (6, 9)
+
+        In other words, 6 pixels wide.
+        """
+        max_digit_width = 6
+        pixels = int(re.sub("[^0-9]+", "", pixels))
+        return int((pixels - 5) / max_digit_width * 100 + 0.5) / 100
+
+
+class AdvancedSearch(FormFieldFactory):
+    """Search for CDR documents of a specific type.
+
+    It is the responsibility of the derived classes to:
+       1. populate the search_fields member
+       2. populate the query_fields member
+       3. assign the class-level DOCTYPE value
+       4. assign the class-level FILTER value (if needed)
+       5. override customize_form() if appropriate
+       6. override customize_report() if appropriate
+
+    Public methods:
+
+        run()
+            top-level processing entry point
+    """
+
+    INCLUDE_ROWS = True
+    FILTER = None
+    DBQuery = db.Query
+
+    def __init__(self):
+        self.match_all = True if self.fields.getvalue("match_all") else False
+        self.session = Session(getSession(self.fields) or "guest")
+        self.request = self.fields.getvalue("Request")
+        self.search_fields = []
+
+    @property
+    def fields(self):
+        """Named values from the CGI form."""
+        if not hasattr(self, "_fields"):
+            self._fields = cgi.FieldStorage()
+        return self._fields
+
+    def run(self):
+        try:
+            if self.request == "Search":
+                self.show_report()
+            else:
+                self.show_form()
+        except Exception as e:
+            try:
+                message = "AdvancedSearch.run(request=%r)"
+                self.session.logger.exception(message, self.request)
+            except:
+                bail(f"Unable to log exception {e}")
+            bail(f"AdvancedSearch.run() failure: {e}")
+
+    def show_form(self, subtitle=None, error=None):
+        args = self.session.name, subtitle or self.SUBTITLE, self.search_fields
+        page = self.Form(*args, error=error)
+        self.customize_form(page)
+        sendPage(page.tostring())
+
+    def show_report(self):
+        args = self.query_fields, self.DOCTYPE, self.match_all
+        self.query = query = self.Query(*args)
+        self.rows = rows =query.execute(self.session.cursor).fetchall()
+        connector = " and " if self.match_all else " or "
+        strings = connector.join([repr(c) for c in query.criteria])
+        subtitle = self.SUBTITLE
+        opts = dict(search_strings=strings, count=len(rows), subtitle=subtitle)
+        if self.INCLUDE_ROWS:
+            opts["rows"] = rows
+        if self.FILTER:
+            opts["filter"] = self.FILTER
+        page = self.ResultsPage(self.DOCTYPE, **opts)
+        self.customize_report(page)
+        sendPage(page.tostring())
+
+    def customize_form(self, page):
+        """Override in derived class if default behavior isn't enough."""
+
+    def customize_report(self, page):
+        """Override in derived class if default behavior isn't enough."""
+
+    def values_for_paths(self, paths):
+        query = db.Query("query_term", "value").unique().order("value")
+        query.where(query.Condition("path", paths, "IN"))
+        rows = query.execute(self.session.cursor).fetchall()
+        return [row.value for row in rows if row.value.strip()]
+
+    @property
+    def valid_values(self):
+        if not hasattr(self, "_valid_values"):
+            doctype = cdr.getDoctype("guest", self.DOCTYPE)
+            self._valid_values = dict(doctype.vvLists)
+        return self._valid_values
+
+    @property
+    def countries(self):
+        query = db.Query("document d", "d.id", "d.title")
+        query.join("doc_type t", "t.id = d.doc_type")
+        query.where("t.name = 'Country'")
+        query.order("d.title")
+        rows = query.execute(self.session.cursor).fetchall()
+        return [(f"CDR{row.id:010d}", row.title) for row in rows]
+
+    @property
+    def states(self):
+        fields = "s.id AS i", "s.title AS s", "c.title as c"
+        query = db.Query("document s", *fields)
+        query.join("query_term r", "r.doc_id = s.id")
+        query.join("document c", "c.id = r.int_val")
+        query.where("r.path = '/PoliticalSubUnit/Country/@cdr:ref'")
+        query.order("s.title", "c.title")
+        rows = query.execute(self.session.cursor).fetchall()
+        return [(f"CDR{row.i:010d}", f"{row.s} [{row.c}]") for row in rows]
+
+    @property
+    def statuses(self):
+        """Valid active_status value for non-deleted CDR documents."""
+        return [("A", "Active"), ("I", "Inactive")]
+
+
+    class Form(HTMLPage):
+        BUTTONS = (
+            HTMLPage.button("Search"),
+            HTMLPage.button("Clear", button_type="reset"),
+        )
+        TITLE = "CDR Advanced Search"
+        MATCH_ALL_HELP = "If unchecked any field match will succeed."
+        def __init__(self, session, subtitle, fields, **kwargs):
+            if "buttons" not in kwargs:
+                buttons = self.BUTTONS
+            kwargs = dict(
+                **kwargs,
+                buttons=buttons,
+                session=session,
+                subtitle=subtitle,
+                method="get",
+            )
+            HTMLPage.__init__(self, self.TITLE, **kwargs)
+            self.add_session_field(session or "guest")
+            fieldset = self.fieldset("Search Fields")
+            if kwargs.get("error"):
+                classes = self.B.CLASS("error center")
+                self.form.append(self.B.P(kwargs["error"], classes))
+            self.form.append(fieldset)
+            for field in fields:
+                fieldset.append(field)
+            if len(fields) > 1:
+                fieldset = self.fieldset("Options")
+                self.form.append(fieldset)
+                opts = dict(
+                    label="Match All Criteria",
+                    checked=True,
+                    value="yes",
+                    tooltip=self.MATCH_ALL_HELP,
+                )
+                fieldset.append(self.checkbox("match_all", **opts))
+            else:
+                self.form.append(self.hidden_field("match_all", "yes"))
+
+
+    class ResultsPage(HTMLPage):
+
+        TITLE = "CDR Advanced Search Results"
+        PERSONS_ORGS_GLOSSARY = (
+            "Person",
+            "Organization",
+            "GlossaryTermConcept",
+            "GlossaryTermName",
+        )
+
+        def __init__(self, doctype, **kwargs):
+
+            # Let the base class get us started.
+            subtitle = kwargs.get("subtitle", doctype)
+            opts = dict(body_id="advanced-search-results", subtitle=subtitle)
+            HTMLPage.__init__(self, self.TITLE, **opts)
+
+            # Add a summary line if we have the requisite information.
+            strings = kwargs.get("search_strings")
+            count = kwargs.get("count")
+            if strings and isinstance(count, int):
+                if count == 1:
+                    summary = f"1 document matches {strings}"
+                else:
+                    summary = f"{count:d} documents match {strings}"
+                self.body.append(self.B.P(summary))
+
+            # Start the table for the results.
+            table = self.B.TABLE()
+            self.body.append(table)
+
+            # If we have the rows for the results set, add them to the table.
+            rows = kwargs.get("rows")
+            if rows:
+                for i, row in enumerate(rows):
+                    cdr_id = cdr.normalize(row[0])
+                    title = row[1].replace(";", "; ")
+
+                    # Create the link.
+                    base = f"{BASE}/QcReport.py"
+                    if doctype in self.PERSONS_ORGS_GLOSSARY:
+                        url = f"{base}?DocId={cdr_id}"
+                    elif doctype == "Summary":
+                        url = f"{base}?DocId={cdr_id}&ReportType=nm"
+                    else:
+                        base = f"{BASE}/Filter.py"
+                        filtre = kwargs.get("filter")
+                        url = f"{base}?DocId={cdr_id}&Filter={filtre}"
+                    url += f"&{SESSION}={self.session}"
+                    link = self.B.A(cdr_id, href=url)
+
+                    # Assemble the table row and attach it.
+                    tr = self.B.TR(self.B.CLASS("row-item"))
+                    tr.append(self.B.TD(f"{i+1}.", self.B.CLASS("row-number")))
+                    tr.append(self.B.TD(link, self.B.CLASS("doc-link")))
+                    tr.append(self.B.TD(title, self.B.CLASS("doc-title")))
+                    table.append(tr)
+
+
+    class QueryField:
+        """Information used to plug one field into the search query."""
+
+        def __init__(self, var, selectors):
+            """Capture the value and the paths used to look for it.
+
+            Pass:
+                var - the CGI variable's value for this search field
+                selectors - list of paths to look for in the query_term table
+
+            In some cases `selectors` is a single string, in which case it
+            is the name of a column in the `document` table.
+            """
+            self.var = var
+            self.selectors = selectors
+
+    class Query:
+        """Builds a database query for an advanced search.
+
+        Attributes:
+            fields - information on the search fields from the form
+            doctype - string identifying which documents we're looking for
+            match_all - if False then OR the field conditions together
+            criteria - list of all the field values being search for,
+                       so we can remind the user what she put on the form
+            query - db.Query object built on demand
+        """
+
+        def __init__(self, fields, doctype, match_all=True):
+            """Capture what we'll need to build the SQL query.
+
+            Pass:
+                fields - sequence of `QueryField` objects
+                doctype - string for the CDR document type (e.g., 'Summary')
+                match_all - if set to `False` then _any_ field match works
+            """
+
+            self.fields = fields
+            self.match_all = match_all
+            self.doctype = doctype
+            self.criteria = []
+
+        def execute(self, cursor=None):
+            """Convenience method to make the code cleaner."""
+            return self.query.execute(cursor)
+
+        @property
+        def query(self):
+            """Build the query for the search if it's not already cached."""
+
+            if not hasattr(self, "_query"):
+
+                # Set up some convenience aliases.
+                Query = db.Query
+                Condition = Query.Condition
+                Or = Query.Or
+
+                # Create a query object.
+                columns = f"d.id", "d.title" #, f"'{self.doctype}' AS doctype"
+                self._query = Query("document d", *columns).order("d.title")
+
+                # Add the conditions: one for each field with a value.
+                conditions = []
+                have_doctype = False
+                for field in self.fields:
+
+                    # See if we got a value for this field.
+                    value = field.var.strip() if field.var else None
+                    if not value:
+                        continue
+
+                    # Remember the criterion for display to the user.
+                    self.criteria.append(value)
+
+                    # If 'selectors' is a string, it's a column in `document`.
+                    value_op = getQueryOp(value)
+                    if isinstance(field.selectors, str):
+                        column = f"d.{field.selectors}"
+                        conditions.append(Condition(column, value, value_op))
+                        continue
+
+                    # Build up a subquery for the field.
+                    have_doctype = True
+                    subquery = Query("query_term", "doc_id").unique()
+
+                    # These are ORd together.
+                    selector_conditions = []
+                    for path in field.selectors:
+                        path_op = "LIKE" if "%" in path else "="
+
+                        # Simple case: test for a string stored in the doc.
+                        if not path.endswith("/@cdr:ref[int_val]"):
+                            path_test = Condition("path", path, path_op)
+                            value_test = Condition("value", value, value_op)
+                            selector_conditions.append((path_test, value_test))
+
+                        # Trickier case: find values in linked documents.
+                        else:
+                            path = path.replace("[int_val]", "")
+                            title_query = Query("document", "id").unique()
+                            args = "title", value, value_op
+                            title_query.where(Condition(*args))
+                            args = "int_val", title_query, "IN"
+                            title_test = Condition(*args)
+                            path_test = Condition("path", path, path_op)
+                            selector_conditions.append((path_test, title_test))
+
+                    # Add the conditions for this field's selectors to the mix.
+                    subquery.where(Or(*selector_conditions))
+                    conditions.append(Condition("d.id", subquery, "IN"))
+
+                # Sanity check.
+                if not conditions:
+                    raise Exception("No search conditions specified")
+
+                # If all the selectors are from the document table (or,
+                # view, to be precise), then we still need to narrow
+                # the search to this document type.
+                if not have_doctype:
+                    self._query.join("doc_type t", "t.id = d.doc_type")
+                    self._query.where(Condition("t.name", self.doctype))
+                # Plug the top-level conditions into the query.
+                if self.match_all:
+                    for condition in conditions:
+                        self._query.where(condition)
+                else:
+                    self._query.where(Or(*conditions))
+
+            # All the fields with values have been folded into the query.
+            #bail(str(self._query))
+            return self._query
+
+
+#----------------------------------------------------------------------#
+#          LEGACY CLASSES -- USE THE REPLACEMENTS ABOVE INSTEAD        #
+#----------------------------------------------------------------------#
+
+NEWLINE  = "@@@NEWLINE-PLACEHOLDER@@@"
+BR       = "@@@BR-PLACEHOLDER@@@"
+bail     = Controller.bail
 
 class Control:
     """
@@ -1881,7 +2770,7 @@ class Control:
     LANGUAGES = ("English", "Spanish")
     SUMMARY_SELECTION_METHODS = ("id", "title", "board")
     LOGNAME = "reports"
-    LOGLEVEL = "info"
+    LOGLEVEL = "INFO"
 
     def __init__(self, title=None, subtitle=None, **opts):
         """
@@ -1895,7 +2784,7 @@ class Control:
         self.subtitle = subtitle
         self.opts = opts
         if self.opts.get("open_cursor", True):
-            self.cursor = cdrdb.connect("CdrGuest").cursor()
+            self.cursor = db.connect(user="CdrGuest").cursor()
         else:
             self.cursor = None
         self.fields = cgi.FieldStorage()
@@ -2008,12 +2897,10 @@ function check_set(name, val) {
 
         value = self.fields.getvalue(name)
         if value is None:
-            return u""
-        if not isinstance(value, basestring):
-            return unicode(value)
-        if isinstance(value, unicode):
-            return value
-        return value.decode("utf-8")
+            return ""
+        if isinstance(value, bytes):
+            return str(value, "utf-8")
+        return str(value)
 
     @staticmethod
     def get_referer():
@@ -2036,7 +2923,7 @@ function check_set(name, val) {
         Expose this functionality to non-CGI code.
         """
 
-        query = cdrdb.Query("query_term n", "n.doc_id", "n.value")
+        query = db.Query("query_term n", "n.doc_id", "n.value")
         query.join("query_term t", "t.doc_id = n.doc_id")
         query.join("active_doc a", "a.id = n.doc_id")
         query.where("t.path = '/Organization/OrganizationType'")
@@ -2211,7 +3098,7 @@ function check_set(name, val) {
         Fetch the title column from the all_docs table for a CDR document.
         """
 
-        query = cdrdb.Query("document", "title")
+        query = db.Query("document", "title")
         query.where(query.Condition("id", doc_id))
         row = query.execute(self.cursor).fetchone()
         return row and row[0] or ""
@@ -2243,10 +3130,10 @@ function check_set(name, val) {
         """
 
         if doc_version:
-            query = cdrdb.Query("doc_version", "xml")
+            query = db.Query("doc_version", "xml")
             query.where(query.Condition("num", doc_version))
         else:
-            query = cdrdb.Query("document", "xml")
+            query = db.Query("document", "xml")
         query.where(query.Condition("id", doc_id))
         return query.execute(self.cursor).fetchone()[0]
 
@@ -2266,8 +3153,9 @@ function check_set(name, val) {
                 self.display = display
                 self.tooltip = tooltip
 
-        fragment = unicode(fragment, "utf-8")
-        query = cdrdb.Query("active_doc d", "d.id", "d.title")
+        if isinstance(fragment, bytes):
+            fragment = str(fragment, "utf-8")
+        query = db.Query("active_doc d", "d.id", "d.title")
         query.join("doc_type t", "t.id = d.doc_type")
         query.where("t.name = 'Summary'")
         query.where(query.Condition("d.title", fragment + "%", "LIKE"))
@@ -2397,31 +3285,1776 @@ jQuery(function() {
     check_method(jQuery("input[name='method']:checked").val());
 });"""
 
-#----------------------------------------------------------------------
-# Display the header for a CDR web form.
-#----------------------------------------------------------------------
-def header(title, banner, subBanner, script = '', buttons = None,
-           bkgd = 'DFDFDF', numBreaks = 2, method = 'POST', stylesheet='',
-           formExtra = ''):
-    html = HEADER % (title, bkgd, stylesheet, script,
-                     method, formExtra, banner)
-    if buttons:
-        html = html + B_CELL
-        for button in buttons:
-            if button == "Load":
-                html = html + "      <INPUT NAME='DocId' SIZE='14'>&nbsp;\n"
-            html = html + BUTTON % (REQUEST, button)
-        html = html + "     </TD>\n"
-    html = html + SUBBANNER % subBanner
-    return html + numBreaks * "   <BR>\n"
+xlwt.add_palette_colour("hdrbg", 0x21)
 
-#----------------------------------------------------------------------
-# Display the header for a CDR web report (no banner or buttons).
-# By default the background is white for reports.
-#----------------------------------------------------------------------
-def rptHeader(title, bkgd = 'FFFFFF', stylesheet=''):
-    html = RPTHEADER % (title, bkgd, stylesheet)
-    return html
+class ExcelStyles:
+    """
+    Styles for an Excel workbook.
+
+    Used for rewriting legacy reports originally using ExcelWriter,
+    in cases where we don't want to spend the time on a more extensive
+    rewrite of the report to use the Page/Report/Control classes below.
+
+    Example usage:
+
+    import cdrcgi
+    styles = cdrcgi.ExcelStyles()
+    sheet = styles.add_sheet("Sample Report")
+    sheet.set_panes_frozen(True)
+    sheet.set_horz_split_pos(1)
+    widths = 10, 60, 100
+    labels = "CDR ID", "Title", "Comments"
+    assert(len(widths) == len(labels))
+    for i, chars in enumerate(widths):
+        sheet.col(i).width = styles.chars_to_width(chars)
+    sheet.write_merge(0, 0, 0, len(labels) - 1, "Sample Report", styles.banner)
+    for i, label in enumerate(labels):
+        sheet.write(1, i, label, styles.header)
+    data = (
+        (500000, "Title of the first document", "A comment on the document"),
+        (600000, "Title for the next document", "Another comment"),
+        (700000, "Last document title", "Final comment")
+    )
+    for i, values in enumerate(data):
+        for col, value in enumerate(values):
+            sheet.write(i + 2, col, value, styles.left)
+    styles.book.save("sample-report.xls")
+    """
+
+    BORDERS = "borders: top hair, bottom hair, left hair, right hair"
+    LEFT = "align: wrap True, horiz left, vert top"
+    RIGHT = "align: wrap True, horiz right, vert top"
+    CENTER = "align: wrap True, horiz center, vert center"
+    CENTER_TOP = "align: wrap True, horiz center, vert top"
+    RED = "font: color red"
+    BLUE = "font: color blue"
+    MAROON = "font: color dark_red"
+    TEAL = "font: color teal"
+    PURPLE = "font: color violet"
+    WHITE = "font: color white"
+    HYPERLINK = "font: color blue, underline single"
+    TWIPS = 20
+
+    def __init__(self):
+        """
+        Create some commonly useful style objects.
+        """
+
+        self.book = xlwt.Workbook(encoding="UTF-8")
+        self.left = self.style(self.LEFT)
+        self.right = self.style(self.RIGHT)
+        self.center = self.style(self.CENTER_TOP)
+        self.banner = self.style(self.CENTER, self.bold_font(12))
+        self.header = self.style(self.CENTER, self.bold_font())
+        self.bold = self.style(self.bold_font())
+        self.red = self.style(self.RED)
+        self.blue = self.style(self.BLUE)
+        self.teal = self.style(self.TEAL)
+        self.purple = self.style(self.PURPLE)
+        self.maroon = self.style(self.MAROON)
+        self.white = self.style(self.WHITE)
+        self.error = self.style(self.bold_font(color="red"))
+        self.url = self.style(self.HYPERLINK, self.LEFT)
+
+    def add_sheet(self, name, **opts):
+        """
+        Create a new worksheet, possibly with frozen rows or columns.
+
+        Pass:
+            name         - required string for the worksheet's name
+            frozen_rows  - optional keyword argument for the number of rows
+                           which should always be visible at the top
+            frozen_cols  - optional keyword argument for the number of
+                           columns which should always be visible at the
+                           left
+            cell_overwrite_ok - optional keyword argument to override the
+                           default behavior which prevents the code from
+                           writing to the same cell more than once (see
+                           http://stackoverflow.com/questions/41770461).
+        Return:
+            new object representing a new Excel worksheet
+        """
+
+        cell_overwrite_ok = opts.get("cell_overwrite_ok") and True or False
+        sheet = self.book.add_sheet(name, cell_overwrite_ok)
+        sheet.print_grid = True
+        frozen_rows = opts.get("frozen_rows")
+        frozen_cols = opts.get("frozen_cols")
+        if frozen_rows:
+            sheet.panes_frozen = True
+            sheet.horz_split_pos = int(frozen_rows)
+        if frozen_cols:
+            sheet.panes_frozen = True
+            sheet.vert_split_pos = int(frozen_cols)
+        return sheet
+
+    def write_headers(self, sheet, labels, widths=None, **opts):
+        """
+        Write the header labels for each of the columns in an Excel
+        worksheet, and (optionally) set the column widths.
+
+        Pass:
+            sheet - reference to an xlwt.Worksheet object
+            labels - sequence of strings to write for the header labels
+            widths - optional column widths, in number of characters
+
+        Named options:
+            blank - integer representing the number blank rows to leave
+                    immediately above the row for the column labels
+            banners - sequence of strings to be written to the top of the
+                      sheet; the first string is written in a larger font
+
+        Return:
+            row number for the first data column
+        """
+
+        if widths:
+            assert(len(labels) == len(widths))
+            self.set_widths(sheet, widths)
+        row = 0
+        banners = opts.get("banners")
+        if banners:
+            style = self.banner
+            for banner in banners:
+                sheet.write_merge(row, row, 0, len(labels) - 1, banner, style)
+                sytle = self.header
+                row += 1
+        row += opts.get("blank", 0)
+        for i, label in enumerate(labels):
+            sheet.write(row, i, label, self.header)
+        return row + 1
+
+    @staticmethod
+    def link(url, label):
+        """
+        Wrap the value inside a hyperlink to the specified url.
+        """
+
+        return xlwt.Formula('HYPERLINK("%s";"%s")' % (url, label))
+
+    def adjust_color(self, name, rgb):
+        """
+        Modify the values for a color in the book's palette.
+
+        Pass:
+            name  - name of a color in the xlwt color map
+            rgb   - six-digit hex string for the new color values
+        """
+
+        color_slot = xlwt.Style.colour_map.get(name)
+        if not color_slot:
+            raise Exception("set_color(): invalid color name %s" % repr(name))
+        try:
+            r, g, b = int(rgb[:2], 16), int(rgb[2:4], 16), int(rgb[4:6], 16)
+        except:
+            raise Exception("set_color(): bad argument %s" % repr(rgb))
+        self.book.set_colour_RGB(color_slot, r, g, b)
+
+    @classmethod
+    def bold_font(cls, point_size=10, color=None):
+        """
+        Return the string for a bold font of a certain size.
+
+        The string will be passed (possibly as part of a larger string)
+        to the xlwt.easyxf() function by our own style() method to create
+        an xlwt.XFStyle object.
+        """
+
+        font = "font: bold True, height %d" % (cls.TWIPS * point_size)
+        if color:
+            font += ", color %s" % color
+        return font
+
+    @classmethod
+    def set_size(cls, style, point_size=10):
+        """
+        Modify the font size for an existing xlwt XFStyle object.
+
+        Pass:
+            style      - reference to an xlwt.XFStyle object
+            point_size - new size specified in (possibly fractional) points,
+                         which will be converted to twips, which the xlwt
+                         package expects
+        """
+
+        style.font.height = int(point_size * cls.TWIPS)
+
+    @classmethod
+    def set_row_height(cls, row, point_size):
+        """
+        Adjust the height of a row in an Excel worksheet.
+
+        Pass:
+            row        - reference to an xlwt.Row object
+            point_size - new height specified in (possibly fractional) points,
+                         which will be converted to twips, which the xlwt
+                         package expects
+
+        """
+
+        row.height_mismatch = True
+        row.height = cls.TWIPS * point_size
+
+    @staticmethod
+    def style(*definitions):
+        """
+        Contruct an xlwt.XFStyle object for formatting cell content.
+
+        Pass:
+            one anonymous argument for each style group which needs
+            to be modified; the arguments are strings in the format:
+
+                group_name: attribute-name attribute-value[, ...]
+
+            The style groups include:
+                * font
+                * align[ment]
+                * border[s]
+                * pattern
+                * protection
+
+            See http://xlwt.readthedocs.io/en/latest/api.html and the
+            xlwt source code (including examples) for more information.
+        """
+
+        return xlwt.easyxf("; ".join(definitions))
+
+    @staticmethod
+    def font(spec):
+        """
+        Construct an xlwt.Font object for formatting cell content segments.
+
+        This is used to support calling sheet.write_rich_text(). For example:
+
+            styles = cdrcgi.ExcelStyles()
+            sheet = styles.add_sheet("Rich Text")
+            sheet.col(0).width = 5000
+            name = "atezolizumab"
+            comment = "For NCT01375842; No info available at this time"
+            font = styles.font("italic true, color green")
+            segments = (name + "\n", (comment, font))
+            sheet.write_rich_text(0, 0, segments, styles.left)
+
+            See http://xlwt.readthedocs.io/en/latest/api.html and the
+            xlwt source code (including examples) for more information.
+
+            Pass:
+                spec - string providing desired attribute values in the form
+                       name value[, name value[, ...]
+            Return:
+                a new xlwt.Font object
+        """
+
+        return xlwt.easyfont(spec)
+
+    @staticmethod
+    def set_color(style, color="black"):
+        """
+        Change the foreground color for an xlwt.Style object.
+
+        Pass:
+            style - reference to an xlwt.Style object
+            color - string identifying one of the colors which can
+                    be used in the workbook's cells; examples of
+                    valid names include red, dark_red, blue, teal,
+                    violet, white, black. For the complete list,
+                    refer to the source code in:
+                       $PYTHON/lib/site-packages/xlwt/Styles.py
+        """
+
+        try:
+            style.font.colour_index = xlwt.Style.colour_map[color]
+        except:
+            raise Exception("set_color(): invalid color %s" % repr(color))
+
+    @staticmethod
+    def set_background(style, color="white"):
+        """
+        Change the foreground color for an xlwt.Style object.
+
+        Pass:
+            style - reference to an xlwt.Style object
+            color - string identifying one of the colors which can
+                    be used in the workbook's cells; examples of
+                    valid names include red, dark_red, blue, teal,
+                    violet, white, black. For the complete list,
+                    refer to the source code in:
+                       $PYTHON/lib/site-packages/xlwt/Styles.py
+        """
+
+        style.pattern.pattern = xlwt.Pattern.SOLID_PATTERN
+        try:
+            style.pattern.pattern_fore_colour = xlwt.Style.colour_map[color]
+        except:
+            raise Exception("set_background(): invalid color %s" % repr(color))
+
+    @staticmethod
+    def link(url, label):
+        """
+        Prepare a value for display as a hyperling in a worksheet cell.
+
+        Pass:
+            url   - HTTP[S] address for the link
+            label - the value to be displayed for the cell
+        """
+
+        return xlwt.Formula('HYPERLINK("%s";"%s")' % (url, label))
+
+    @staticmethod
+    def clone(style):
+        """
+        Create a copy of an xlwt.Style object, which can be altered
+        (for example, by calling Style.set_color(), or Style.set_background()).
+        """
+
+        return copy.deepcopy(style)
+
+    @staticmethod
+    def lookup_color(name):
+        """
+        Find the color code used internally by Excel for the named color.
+        """
+
+        return xlwt.Style.colour_map.get(name)
+
+    @staticmethod
+    def points_to_width(points):
+        """
+        Convert column width from points to BIFF COLINFO units.
+
+        Unfortunately, Microsoft has used a number of different ways over
+        the years to represent Excel column widths. The xlwt package uses
+        the original BIFF units, which (according to Microsoft's docs) is
+        "[w]idth of the columns in 1/256 of the width of the zero character,
+        using default font (first FONT record in the file)." Many of our
+        older reports were written when XML Excel files were Microsoft's
+        format du jour, which measured the column width in points. This
+        conversion is an approximation, because the scaling of column
+        widths as they increase isn't strictly proportional. But it's close
+        enough.
+        """
+
+        return int(points * 49)
+
+    @staticmethod
+    def chars_to_width(chars):
+        """
+        Convert width in number of characters to internal BIFF units.
+        Determined by experimentation, as I didn't find this formula
+        documented anywhere. My guess is that the extra 200 represents
+        cell padding.
+        """
+
+        return int(chars * 256 + 200)
+
+    @classmethod
+    def set_width(cls, sheet, col, chars):
+        """
+        Set the width of a column in an Excel worksheet.
+
+        Pass:
+            sheet - reference to an xlwt.Worksheet object
+            col - integer identifying the worksheet column (based 0)
+            chars - amount of horizontal space for the column in units
+                    of the width of the zero character ("0") using the
+                    default font (the first FONT record in the file);
+                    see chars_to_width() above
+        """
+
+        sheet.col(col).width = cls.chars_to_width(chars)
+
+    @classmethod
+    def set_widths(cls, sheet, widths):
+        """
+        Set the column widths for an Excel worksheet.
+        """
+
+        for i, chars in enumerate(widths):
+            cls.set_width(sheet, i, chars)
+
+class Page:
+    """
+    Object used to build a web page.
+
+    Sample usage:
+
+        form = cdrcgi.Page('Simple Report', subtitle='Documents by Title',
+                           buttons=('Submit', 'Admin'),
+                           action='simple-report.py')
+        form.add('<fieldset>')
+        form.add(cdrcgi.Page.B.LEGEND('Select Documents By Title'))
+        form.add_text_field('title', 'Containing')
+        form.add('</fieldset>')
+        form.add_output_options()
+        form.send()
+    """
+
+    INDENT = "  "
+    CDN = "https://ajax.googleapis.com/ajax/libs/"
+    JS = (
+        CDN + "jquery/2.1.4/jquery.min.js",
+        CDN + "jqueryui/1.11.4/jquery-ui.min.js"
+    )
+    STYLESHEETS = (
+        CDN + "jqueryui/1.11.4/themes/smoothness/jquery-ui.css",
+        CDRCSS
+    )
+    B = lxml.html.builder
+
+    def __init__(self, title, **kwargs):
+        """
+        Initializes an object for generating an HTML web page.
+
+        Required argument:
+
+            title -       used in the 'title' element of the 'head' block;
+                          also used as the page banner unless overridden
+
+        Optional keyword arguments:
+
+            banner -      overrides the value of the title argument for
+                          display of the page's top h1 banner; set to
+                          None to eliminate the banner
+            subtitle -    displayed below the banner
+            method -      'post' or 'get'; defaults to 'post'
+            buttons -     values for buttons rendered to the right of the
+                          banner; must be an array; empty by default
+            action -      handler for HTML form, which will be automatically
+                          opened unless no action is provided
+            icon -        favicon path; defaults to '/favicon.ico'
+            js -          array of external Javascript files to be included;
+                          defaults to scripts for jquery and the CDR calendar
+                          widget
+            stylesheets - array of paths to external CSS files to be loaded;
+                          defaults to the standard cdr and CdrCalendar sheets
+            session -     string identifying the CDR login session; can be
+                          used to override the current session, which will
+                          be retrieved from the CGI variables if you don't
+                          specify a replacement string here; the session
+                          string will be added as a hidden varilable if
+                          the 'action' paramater is set
+            body_classes -e.g., 'report'
+            enctype -     (for form element; e.g., "multipart/form-data")
+        """
+        self._finished = self._have_date_field = False
+        self._html = []
+        self._script = []
+        self._css = []
+        self._level = 0
+        self._title = title
+        self._banner = kwargs.get("banner", title)
+        self._subtitle = kwargs.get("subtitle")
+        self._method = kwargs.get("method", "post")
+        self._buttons = kwargs.get("buttons")
+        self._action = kwargs.get("action")
+        self._icon = kwargs.get("icon", "/favicon.ico")
+        self._js = kwargs.get("js", Page.JS)
+        self._stylesheets = kwargs.get("stylesheets", Page.STYLESHEETS)
+        self._session = kwargs.get("session")
+        self._body_classes = kwargs.get("body_classes")
+        self._enctype = kwargs.get("enctype")
+        self._start()
+
+    def get_action(self): return self._action
+
+    def add(self, line, post_indent=True):
+        """
+        Add a line to the HTML for the page.
+
+        Passed:
+
+            line -        either a string or an object created by the
+                          lxml.html.builder module
+            post_indent - optional argument which can be used to suppress
+                          the default indenting logic
+        """
+
+        if isinstance(line, bytes):
+            line = str(line, "utf-8")
+        if not isinstance(line, str):
+            line = lxml.html.tostring(line, encoding="unicode")
+            post_indent = False
+        elif line.startswith("</"):
+            if self._level > 0:
+                self._level -= 1
+            post_indent = False
+        self._html.append(Page._indent(self._level, line))
+        if post_indent:
+            self._level += 1
+
+    def add_checkbox(self, group, label, value, **kwargs):
+        """
+        Add a labeled form checkbox to the HTML for the page.
+
+        Required positional arguments:
+
+            group        used for the name of the input element
+            label        string to identify the checkbox to the user
+            value        used as the 'value' attribute of the element
+
+        Optional keyword arguments:
+
+            widget_id       override the default id, which is normally formed
+                            by concatenating the group and value arguments,
+                            separated by a hyphen, and then lowercasing the
+                            result
+            widget_classes  if present, used as the 'class' attribute for
+                            the input element
+            wrapper         defaults to 'div' which keeps the field on
+                            a separate line from the other checkboxes;
+                            set to None to have no wrapper
+            wrapper_classes if present, used as the 'class' attribute for
+                            the wrapper element
+            tooltip         if present, used as the 'title' attribute for
+                            the label element
+            checked         if set to True will cause the checkbox to be
+                            checked by default
+            onclick         Javascript to be invoked when the checkbox is
+                            clicked; defaults to check_GROUP('VALUE') where
+                            GROUP is the value of the group argument and
+                            VALUE is the value of the value argument
+        """
+        self._add_checkbox_or_radio_button("checkbox", group, label, value,
+                                           **kwargs)
+
+    def add_radio(self, group, label, value, **kwargs):
+        """
+        Add a labeled form radio button to the HTML for the page.
+
+        Required positional arguments:
+
+            group        used for the name of the input element
+            label        string to identify the radio button to the user
+            value        used as the 'value' attribute of the element
+
+        Optional keyword arguments:
+
+            widget_id       override the default id, which is normally formed
+                            by concatenating the group and value arguments,
+                            separated by a hyphen, and then lowercasing the
+                            result
+            widget_classes  if present, used as the 'class' attribute for
+                            the input element
+            wrapper         defaults to 'div' which keeps the field on
+                            a separate line from the other radio buttons;
+                            set to None to have no wrapper
+            wrapper_classes if present, used as the 'class' attribute for
+                            the wrapper element
+            tooltip         if present, used as the 'title' attribute for
+                            the label element
+            checked         if set to True will cause the radio button to be
+                            selected by default
+            onclick         Javascript to be invoked when the button is
+                            clicked; defaults to check_GROUP('VALUE') where
+                            GROUP is the value of the group argument and
+                            VALUE is the value of the value argument
+        """
+        self._add_checkbox_or_radio_button("radio", group, label, value,
+                                           **kwargs)
+    def add_select(self, name, label, options, default=None, **kwargs):
+        """
+        Add a picklist field.
+
+        Required positional arguments:
+
+            name            the name of the field, also used as the field's ID
+            label           string used to identify the field to the user
+            options         sequence of choices for the picklist; each member
+                            of the sequence can be a sequence of value and
+                            display, in order to have a different string
+                            displayed for the choice than the value returned
+                            when that choice is selected, or a single value,
+                            in which case the value returned will be the same
+                            as the string displayed for the option
+
+        Optional positional argument:
+
+            default         choice(s) which should be selected when the form
+                            is initially displayed; can be a sequence of
+                            values if the 'multiple' argument is passed as
+                            True; values for default are matched against
+                            the values for the choices, not against the
+                            display strings for those choices
+
+        Optional keyword arguments
+
+            multiple        if passed and set to True, allows the user to
+                            select multiple choices from the picklist
+            onchange        Javascript to be invoked when the users changes
+                            the choice(s) from the picklist
+            classes         string to be set as the 'class' attribute of
+                            the select element
+            wrapper_classes classes to be added to the div wrapper
+            tooltip         if present, used as the 'title' attribute for
+                            the select element
+        """
+        wrapper_classes = kwargs.get("wrapper_classes")
+        if wrapper_classes:
+            if isinstance(wrapper_classes, str):
+                wrapper_classes = wrapper_classes.split()
+        else:
+            wrapper_classes = []
+        if "labeled-field" not in wrapper_classes:
+            wrapper_classes.append("labeled-field")
+        self.add('<div class="%s">' % " ".join(wrapper_classes))
+        label = Page.B.LABEL(Page.B.FOR(name), label)
+        #if tooltip:
+        #    label.set("title", tooltip)
+        self.add(label)
+        open_tag = '<select name="%s" id="%s"' % (name, name)
+        classes = kwargs.get("classes") or kwargs.get("class_")
+        if classes:
+            if type(classes) in (list, tuple, set):
+                classes = " ".join(classes)
+            open_tag += ' class="%s"' % classes
+        if type(default) not in (list, tuple):
+            default = default and [default] or []
+        if kwargs.get("multiple"):
+            open_tag += " multiple"
+        elif len(default) > 1:
+            raise Exception("Multiple defaults specified for single picklist")
+        tooltip = kwargs.get("tooltip")
+        if tooltip:
+            open_tag += ' title="%s"' % tooltip.replace('"', "&quot;")
+        onchange = kwargs.get("onchange")
+        if onchange:
+            open_tag += ' onchange="%s"' % onchange.replace('"', "&quot;")
+        self.add(open_tag + ">")
+        for option in options:
+            try:
+                value, display = option
+            except:
+                value = display = option
+            o = Page.B.OPTION(display, value=str(value))
+            if value in default:
+                o.set("selected", "selected")
+            self.add(o)
+        self.add("</select>")
+        self.add("</div>")
+
+    def add_text_field(self, name, label, **kwargs):
+        """
+        Add a labeled text input field to an HTML form.
+
+        Required positional arguments:
+
+            name            used as the 'name' attribute for the input
+                            element
+            label           used for the accompanying label value's content
+
+        Optional keywork arguments:
+
+            value           default value for field
+            classes         if present, used as the 'class' attribute for
+                            the input element.  May include multiple space
+                            separated class names.
+            wrapper_classes classes to be added to the div wrapper
+            password        if True, value is not displayed
+            upload          if True, type is set to "file"
+            tooltip         if present, used as the 'title' attribute for
+                            the input element
+        """
+        wrapper_classes = kwargs.get("wrapper_classes")
+        if wrapper_classes:
+            if isinstance(wrapper_classes, str):
+                wrapper_classes = wrapper_classes.split()
+        else:
+            wrapper_classes = []
+        if "labeled-field" not in wrapper_classes:
+            wrapper_classes.append("labeled-field")
+        self.add('<div class="%s">' % " ".join(wrapper_classes))
+        self.add(Page.B.LABEL(Page.B.FOR(name), label))
+        field = Page.B.INPUT(id=name, name=name)
+        tooltip = kwargs.get("tooltip")
+        if tooltip:
+            field.set("title", tooltip)
+        classes = kwargs.get("classes") or kwargs.get("class_")
+        classes = classes or kwargs.get("class")
+        if classes:
+            if type(classes) in (list, tuple, set):
+                classes = " ".join(classes)
+            field.set("class", classes)
+        if "value" in kwargs:
+            field.set("value", str(kwargs["value"]))
+        if kwargs.get("password"):
+            field.set("type", "password")
+        if kwargs.get("upload"):
+            field.set("type", "file")
+        if kwargs.get("readonly"):
+            field.set("readonly", "readonly")
+        if kwargs.get("disabled"):
+            field.set("disabled", "disabled")
+        self.add(field)
+        self.add("</div>")
+
+    def add_textarea_field(self, name, label, **kwargs):
+        """
+        Add a labeled text input field to an HTML form.
+
+        Required positional arguments:
+
+            name            used as the 'name' attribute for the input
+                            element
+            label           used for the accompanying label value's content
+
+        Optional keywork arguments:
+
+            classes         if present, used as the 'class' attribute for
+                            the input element.  May include multiple space
+                            separated class names.
+            wrapper_classes classes to be added to the div wrapper
+            value           initial value for the field (optional)
+            tooltip         if present, used as the 'title' attribute for
+                            the textarea element
+        """
+        wrapper_classes = kwargs.get("wrapper_classes")
+        if wrapper_classes:
+            if isinstance(wrapper_classes, str):
+                wrapper_classes = wrapper_classes.split()
+        else:
+            wrapper_classes = []
+        if "labeled-field" not in wrapper_classes:
+            wrapper_classes.append("labeled-field")
+        self.add('<div class="%s">' % " ".join(wrapper_classes))
+        label = Page.B.LABEL(Page.B.FOR(name), label)
+        self.add(label)
+        value = str(kwargs.get("value", ""))
+        field = Page.B.TEXTAREA(value, id=name, name=name)
+        tooltip = kwargs.get("tooltip")
+        if tooltip:
+            field.set("title", tooltip)
+        classes = kwargs.get("classes") or kwargs.get("class_")
+        classes = classes or kwargs.get("class")
+        if classes:
+            if type(classes) in (list, tuple, set):
+                classes = " ".join(classes)
+            field.set("class", classes)
+        self.add(field)
+        self.add("</div>")
+
+    def add_date_field(self, name, label, **kwargs):
+        """
+        Add a labeled date input field to an HTML form.
+
+        See documentation for the add_text_field() method, which takes
+        the same arguments.
+        """
+        kwargs["classes"] = "CdrDateField"
+        self.add_text_field(name, label, **kwargs)
+        self._have_date_field = True
+
+    def add_menu_link(self, script, display, session=None, **kwargs):
+        """
+        Add a list item containing a CDR admin menu link.
+        """
+        url = script
+        if session:
+            kwargs[SESSION] = session
+        if kwargs:
+            url = "%s?%s" % (url, urllib.parse.urlencode(kwargs))
+        link = Page.B.A(display, href=url)
+        self.add(Page.B.LI(link))
+
+    def add_hidden_field(self, name, value):
+        "Utility method to insert a hidden CGI field."
+        value = str(value) if value else ""
+        self.add(Page.B.INPUT(name=name, value=value, type="hidden"))
+
+    def add_script(self, script):
+        """
+        Add a block of Javascript code.
+
+        The code will be inserted into the HTML page immediately before
+        the closing 'body' tag.
+
+        Required positional argument:
+
+            script          block of Javascript, everything that would go
+                            between <script> and </script>.  Do not include
+                            the "script" tags.
+        """
+        self._script.append(script.rstrip() + "\n")
+
+    def add_css(self, script):
+        """
+        Add a block of CSS rules.
+
+        The code will be inserted into the HTML page immediately before
+        the closing 'body' tag, along with any javascript code blocks.
+
+        Required positional argument:
+
+            script          block of css rules, everything that would go
+                            between <style> and </style>.  Do not include
+                            the "style" tags.
+        """
+        self._css.append(script.rstrip() + "\n")
+
+    def add_output_options(self, default=None, onclick=None):
+        """
+        Allow the user to decide between HTML and Excel.
+        """
+        h_checked = default == "html"
+        e_checked = default == "excel"
+        self.add("<fieldset id='report-format-block'>")
+        self.add(self.B.LEGEND("Report Format"))
+        self.add_radio("format", "Web Page", "html", checked=h_checked,
+                       onclick=onclick)
+        self.add_radio("format", "Excel Workbook", "excel", checked=e_checked,
+                       onclick=onclick)
+        self.add("</fieldset>")
+
+    def send(self):
+        """
+        Returns the HTML page to the web server for delivery to the browser.
+        """
+
+        self._finish()
+        sendPage("".join(self._html))
+
+    @classmethod
+    def _indent(class_, level, block):
+        """
+        Add indenting to a block of lines.
+
+        This turns out not to have been such a good idea. The intention
+        was to make the generated HTML source more readable by a human,
+        giving a visual indication of the nested hierarchy of the elements.
+        However, it introduced undesirable and unanticipated side effects,
+        the most notable of which was that multiline values for textarea
+        form fields was garbled. The original solution for that problem
+        was to have the caller replace the newlines in the value with a
+        unique placeholder, which would prevent the garbling, and this
+        method swaps back in the newlines at the last minute. For right
+        now we're retaining that swap so that older scripts using that
+        technique will still work correctly, but we are no longer doing
+        any indenting behind the curtain.
+
+        indent = class_.INDENT * level
+        if not "\n" in block:
+            result = u"%s%s\n" % (indent, block)
+        else:
+            lines = block.splitlines()
+            result = u"".join([u"%s%s\n" % (indent, line) for line in lines])
+        return result.replace(NEWLINE, "\n").replace(BR, "<br>")
+        """
+
+        return block.replace(NEWLINE, "\n").replace(BR, "<br>") + "\n"
+
+    def _add_checkbox_or_radio_button(self, widget, group, label, value,
+                                     **kwargs):
+        """
+        Internal helper method for add_radio() and add_checkbox()
+
+        See documentation for those methods.
+        """
+        default_widget_id = ("%s-%s" % (group, value)).replace(" ", "-")
+        widget_id = kwargs.get("widget_id", default_widget_id.lower())
+        widget_classes = kwargs.get("widget_classes")
+        wrapper = kwargs.get("wrapper", "div")
+        wrapper_id = kwargs.get("wrapper_id")
+        wrapper_classes = kwargs.get("wrapper_classes")
+        tooltip = kwargs.get("tooltip")
+        checked = kwargs.get("checked") and True or False
+        onclick = kwargs.get("onclick", "check_%s('%s')" % (group, value))
+        if wrapper:
+            tag = "<%s" % wrapper
+            if wrapper_id:
+                tag += ' id="%s"' % wrapper_id
+            if wrapper_classes:
+                if type(wrapper_classes) in (list, tuple, set):
+                    wrapper_classes = " ".join(wrapper_classes)
+                tag += ' class="%s"' % wrapper_classes
+            self.add(tag + ">")
+        if not isinstance(value, str):
+            value = str(value)
+        field = Page.B.INPUT(
+            id=widget_id,
+            type=widget,
+            name=group,
+            value=value,
+        )
+        if checked:
+            field.set("checked", "checked")
+        if onclick:
+            field.set("onclick", onclick.replace("-", "_"))
+        if widget_classes:
+            if type(widget_classes) in (list, tuple, set):
+                widget_classes = " ".join(widget_classes)
+            field.set("class", widget_classes)
+        self.add(field)
+        label = Page.B.LABEL(Page.B.FOR(widget_id), label,
+                             Page.B.CLASS("clickable"))
+        if tooltip:
+            label.set("title", tooltip)
+        self.add(label)
+        if wrapper:
+            self.add("</%s>" % wrapper)
+
+    def _start(self):
+        """
+        Helper method for __init__().
+        """
+        self.add("<!DOCTYPE html>", False)
+        self.add("<html>")
+        self.add("<head>")
+        self.add(Page.B.META(charset="utf-8"))
+        self.add(Page.B.TITLE(self._title))
+        if self._icon:
+            self.add(Page.B.LINK(rel="icon", href="/favicon.ico"))
+        for sheet in self._stylesheets:
+            self.add(Page.B.LINK(rel="stylesheet", href=sheet))
+        for js in self._js:
+            self.add(Page.B.SCRIPT(src=js))
+        self.add("</head>")
+        if self._body_classes:
+            body_classes = self._body_classes
+            if type(body_classes) in (list, tuple, set):
+                body_classes = " ".join(body_classes)
+            self.add('<body class="%s">' % body_classes)
+        else:
+            self.add("<body>")
+        if self._action and self._buttons:
+            prefix = "/cgi-bin/cdr/"
+            if "/" in self._action:
+                prefix=""
+            enctype = ""
+            if self._enctype:
+                enctype = " enctype=\"%s\"" % self._enctype
+            self.add("""<form action="%s%s" method="%s"%s>""" %
+                     (prefix, self._action, self._method, enctype))
+            self.add("<header>")
+            self.add("<h1>%s" % self._banner)
+            self.add("<span>")
+            for b in self._buttons:
+                self.add(Page.B.INPUT(name="Request", value=b, type="submit"))
+            self.add("</span>")
+            self.add("</h1>")
+        else:
+            self.add("<header>")
+            if self._banner:
+                self.add(Page.B.H1(self._banner))
+        if self._subtitle:
+            self.add(Page.B.H2(self._subtitle))
+        self.add("</header>")
+        if self._action:
+            if not self._buttons:
+                self.add("""<form action="/cgi-bin/cdr/%s" method="%s">""" %
+                         (self._action, self._method))
+            if self._session:
+                self.add_hidden_field(SESSION, self._session)
+
+    def _finish(self):
+        """
+        Helper function called by the send() method.
+        """
+        if not self._finished:
+            if self._have_date_field:
+                self.add_script("""\
+jQuery(function() {
+    jQuery('.CdrDateField').datepicker({
+        dateFormat: 'yy-mm-dd',
+        showOn: 'button',
+        buttonImageOnly: true,
+        buttonImage: "/images/calendar.png",
+        buttonText: "Select date",
+        dayNamesMin: [ "S", "M", "T", "W", "T", "F", "S" ]
+    });
+});""")
+            if self._action:
+                self.add("</form>")
+            if self._css:
+                self.add("<style>")
+                self._html += self._css
+                self.add("</style>")
+            if self._script:
+                self.add("<script>")
+                self._html += self._script
+                self.add("</script>")
+            self.add("</body>")
+            self.add("</html>")
+            self._finished = True
+
+    @staticmethod
+    def test():
+        """
+        Quick check to see if anything obvious got broken by changes to the
+        Page class.
+        """
+        P = Page
+        page = P("Test", banner="A Banner", subtitle="A Subtitle",
+                 buttons=("Manny", "Moe", "Jack"), action="dummy.py",
+                 session="guest", body_classes="custom-form")
+        page.add("<fieldset>")
+        page.add(P.B.LEGEND("Checkboxes"))
+        page.add_checkbox("cb", "Checkbox 1", "1", onclick=None)
+        page.add_checkbox("cb", "Checkbox 2", "2", onclick=None)
+        page.add_checkbox("cb", "Checkbox 3", "3", onclick=None)
+        page.add("</fieldset>")
+        page.add("<fieldset>")
+        page.add(P.B.LEGEND("Radio Buttons"))
+        page.add_radio("ra", "Button 1", "1")
+        page.add_radio("ra", "Button 2", "2")
+        page.add_radio("ra", "Button 3", "3")
+        page.add("</fieldset>")
+        page.add("<fieldset>")
+        page.add(P.B.LEGEND("Picklist"))
+        page.add_select("se", "Names",
+                        ("Larry", "Moe", "Curly", "Tristan", "Brunnhilde"),
+                        ("Moe", "Tristan"), multiple=True)
+        page.add("</fieldset>")
+        page.add("<fieldset>")
+        page.add(P.B.LEGEND("Text Fields"))
+        page.add_text_field("addr", "Address")
+        page.add_text_field("phone", "Phone")
+        page.add_text_field("email", "Email")
+        page.add("</fieldset>")
+        page.add("<fieldset>")
+        page.add(P.B.LEGEND("Date Fields"))
+        page.add_date_field("start", "Start")
+        page.add_date_field("end", "End", value=str(datetime.date.today()))
+        page.add("</fieldset>")
+        page.add_output_options("html")
+        page.add_script("""\
+function check_ra(val) {
+    alert('You checked ' + val + '!');
+}""")
+        page.add_css("header h1 { background-color: blue; }")
+        page._finish()
+        print("".join(page._html))
+
+class Report:
+    """
+    CDR Report which can be rendered as an HTML page or as an Excel workbook.
+
+    Example usage:
+
+        R = cdrcgi.Report
+        cursor = db.connect(user='CdrGuest').cursor()
+        cursor.execute('''\
+            SELECT id, name
+              FROM doc_type
+          ORDER BY name''')
+        columns = (
+            R.Column('Type ID', width='75px'),
+            R.Column('Type Name', width='300px')
+        )
+        rows = cursor.fetchall()
+        table = R.Table(columns, rows, caption='Document Types')
+        report = R('Simple Report', [table])
+        report.send('html')
+    """
+
+    def __init__(self, title, tables, **options):
+        """
+        Starts a new CDR report.
+
+        Required parameters:
+
+            title -       title of the report; used as the 'title' element
+                          of the head block for HTML output; used to create
+                          the Excel workbook filename for 'excel' output
+            tables -      array of Table objects; these will be rendered as
+                          separate spreadsheets for 'excel' output, or as
+                          separate HTML table blocks for web page output
+
+        Optional parameters:
+
+            banner -      banner for the top of a web page; unused for
+                          Excel output
+            subtitle -    displayed underneath the banner on a web page;
+                          not used for Excel output
+            page_opts -   dictionary of options to be passed to Page
+                          constructor for HTML output (for example, to
+                          get navigation buttons on the report page's
+                          banner); for more extensive modifications to
+                          the page, derive your own class from the
+                          Report class and override _create_html_page()
+            css -         optional string or sequence of strings to be
+                          added to the report page if HTML
+        """
+        self._title = title
+        self._tables = tables
+        self._options = options
+        if not isinstance(tables, (list, tuple)):
+            self._tables = [tables]
+
+    def send(self, fmt="html"):
+        """
+        Send the report to the web server to be returned to the user's browser
+
+        Passed:
+
+            fmt -         'html' or 'excel'; defaults to 'html'
+        """
+        if fmt == "html":
+            self._send_html()
+        else:
+            self._send_excel_workbook()
+
+    def _create_html_page(self, **opts):
+        """
+        Separated out from _send_html() so it can be overridden.
+        """
+        return Page(self._title, **opts)
+
+    def _send_html(self):
+        """
+        Internal helper method for Report.send()
+        """
+        opts = {
+            "banner": self._options.get("banner"),
+            "subtitle": self._options.get("subtitle"),
+            "stylesheets": [CDRCSS],
+            "body_classes": "report",
+            "js": []
+        }
+        opts.update(self._options.get("page_opts") or {})
+        page = self._create_html_page(**opts)
+        css = self._options.get("css")
+        if css:
+            if isinstance(css, str):
+                css = [css]
+            for c in css:
+                page.add_css(c)
+        B = page.B
+        for table in self._tables:
+            if table._html_callback_pre:
+                table._html_callback_pre(table, page)
+            page.add('<table class="report">')
+            if table._caption or table._show_report_date:
+                if not table._caption:
+                    lines = []
+                if type(table._caption) in (list, tuple):
+                    lines = list(table._caption)
+                else:
+                    lines = [table._caption]
+                if table._show_report_date:
+                    today = datetime.date.today()
+                    lines += ["", "Report date: {}".format(today), ""]
+                line = lines.pop(0)
+                caption = B.CAPTION(line)
+                while lines:
+                    line = lines.pop(0)
+                    br = B.BR()
+                    br.tail = line
+                    caption.append(br)
+                page.add(caption)
+            page.add("<thead>")
+            page.add("<tr>")
+            for column in table._columns:
+                cell = B.TH(column._name)
+                for opt in column._options:
+                    if opt == "width":
+                        width = column._options["width"]
+                        cell.set("style", "min-width:%s;" % width)
+                    else:
+                        cell.set(opt, column._options[opt])
+                page.add(cell)
+            page.add("</tr>")
+            page.add("</thead>")
+            if table._rows:
+                if table._stripe:
+                    prev_rowspan = 0
+                    class_ = None
+                page.add("<tbody>")
+                for row in table._rows:
+                    if table._stripe:
+                        if not prev_rowspan:
+                            class_ = class_ == "odd" and "even" or "odd"
+                        else:
+                            prev_rowspan -= 1
+                        page.add('<tr class="%s">' % class_)
+                    else:
+                        page.add("<tr>")
+                    for cell in row:
+                        if isinstance(cell, self.Cell):
+                            td = cell.to_td()
+                            if table._stripe and cell._rowspan:
+                                extra_rows = int(cell._rowspan) - 1
+                                if extra_rows > prev_rowspan:
+                                    prev_rowspan = extra_rows
+                        else:
+                            td = B.TD()
+                            self.Cell.set_values(td, cell)
+                        page.add(td)
+                    page.add("</tr>")
+                page.add("</tbody>")
+            page.add("</table>")
+            if table._html_callback_post:
+                table._html_callback_post(table, page)
+        elapsed = self._options.get("elapsed")
+        if elapsed:
+            page.add(page.B.P("elapsed: %s" % elapsed,
+                              page.B.CLASS("footnote")))
+        page.send()
+
+    @staticmethod
+    def xf(**opts):
+        """
+        By default cells are top aligned vertically, with horizontal
+        alignment determined by the type of data (right for integers,
+        left for everything else), without bold font, and with word
+        wrapping turned on. This function wraps the style creation
+        functionality so that report writers can create a custom style
+        object to override the default styling by passing the object
+        as the value of the sheet_style optional argument for the
+        Cell class constructor. If the options here don't support
+        the styling you want, you can adjust the properties of the
+        returned object yourself.
+
+        https://github.com/python-excel/xlwt/blob/master/xlwt/Formatting.py
+
+        Optional arguments:
+
+            header - if True, apply bold font with white text against
+                     a colored background centered in the cell; used
+                     for column headers
+            banner - same as header, with increased height (for first row)
+            wrap   - if set to False, turns off word wrapping
+            horiz  - one of:
+                       "left"
+                       "center"
+                       "right"
+                       "general" (the default)
+            vert    - one of:
+                       "top" (the default)
+                       "center"
+                       "bottom"
+            easyxf  - if set, overrides the default string passed to
+                      xlwt.easyxf(), creating the object to which the
+                      other options will be applied
+        """
+        horz = {
+            "left": xlwt.Alignment.HORZ_LEFT,
+            "center": xlwt.Alignment.HORZ_CENTER,
+            "right": xlwt.Alignment.HORZ_RIGHT,
+            "general": xlwt.Alignment.HORZ_GENERAL
+        }
+        vert = {
+            "top": xlwt.Alignment.VERT_TOP,
+            "center": xlwt.Alignment.VERT_CENTER,
+            "bottom": xlwt.Alignment.VERT_BOTTOM
+        }
+        wrap = {
+            True: xlwt.Alignment.WRAP_AT_RIGHT,
+            False: xlwt.Alignment.NOT_WRAP_AT_RIGHT
+        }
+        settings = {
+            "align": "wrap True, vert top"
+        }
+        if opts.get("header") or opts.get("banner"):
+            font = ["colour black", "bold True"]
+            if opts.get("banner"):
+                font.append("height 240")
+            settings["font"] = ", ".join(font)
+            settings["align"] = "wrap True, vert centre, horiz centre"
+        default = ";".join(["%s: %s" % (k, settings[k]) for k in settings])
+        style = xlwt.easyxf(opts.get("easyxf", default))
+        if "wrap" in opts:
+            style.alignment.wrap = wrap.get(opts["wrap"],
+                                            xlwt.Alignment.WRAP_AT_RIGHT)
+        if "horiz" in opts:
+            style.alignment.horz = horz.get(opts["horiz"],
+                                            xlwt.Alignment.HORZ_GENERAL)
+        if "vert" in opts:
+            style.alignment.vert = vert.get(opts["vert"],
+                                            xlwt.Alignment.VERT_TOP)
+        if "bold" in opts:
+            style.font.bold = opts["bold"] and True or False
+        return style
+
+    def _send_excel_workbook(self):
+        """
+        Internal helper method for Report.send()
+        """
+        book = xlwt.Workbook(encoding="UTF-8")
+        book.set_colour_RGB(0x21, 153, 52, 102) #993366
+        self._data_style = self.xf()
+        self._header_style = self.xf(header=True)
+        self._banner_style = self.xf(banner=True)
+        self._bold_data_style = self.xf(bold=True)
+        self._right_data_style = self.xf(horiz="right")
+        self._center_data_style = self.xf(horiz="center")
+        count = 1
+        for table in self._tables:
+            self._add_worksheet(book, table, count)
+            count += 1
+        #import msvcrt
+        now = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        book_name = re.sub(r"\W", "_", self._title)
+        book_name += f"-{now}s.xls"
+        #msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+        headers = (
+            "Content-type: application/vnd.ms-excel",
+            f"Content-disposition: attachment; filename={book_name}"
+        )
+        headers = "\r\n".join(headers) + "\r\n\r\n"
+        sys.stdout.buffer.write(headers.encode("utf-8"))
+        book.save(sys.stdout.buffer)
+        if self._options.get("debug"):
+            name = "d:/tmp/%s" % book_name
+            fp = open(name, "wb")
+            book.save(fp)
+            fp.close()
+        sys.exit(0)
+
+    def _add_worksheet(self, book, table, count):
+        """
+        Internal help method called by Report._send_excel_workbook
+        """
+        name = table._options.get("sheet_name", "Sheet%d" % count)
+        sheet = book.add_sheet(name)
+        sheet.print_grid = True
+        row_number = 0
+        last_col = len(table._columns) - 1
+        for col_number, column in enumerate(table._columns):
+            width = Report._get_excel_width(column)
+            if width:
+                sheet.col(col_number).width = width
+        if table._caption:
+            if type(table._caption) in (list, tuple):
+                captions = table._caption
+            else:
+                captions = [table._caption]
+            for caption in captions:
+                sheet.write_merge(row_number, row_number, 0, last_col, caption,
+                                  self._banner_style)
+                row_number += 1
+        if table._show_report_date:
+            sheet.write_merge(row_number, row_number, 0, last_col, "")
+            row_number += 1
+            sheet.write_merge(row_number, row_number, 0, last_col,
+                              "Report date: {}".format(datetime.date.today()),
+                              self._bold_data_style)
+            row_number += 1
+            sheet.write_merge(row_number, row_number, 0, last_col, "")
+            row_number += 1
+        for col_number, column in enumerate(table._columns):
+            sheet.write(row_number, col_number, column._name,
+                        self._header_style)
+        for row in table._rows:
+            row_number += 1
+            col_number = 0
+            for cell in row:
+
+                # Determine coordinates where cell should be written.
+                while col_number < len(table._columns):
+                    if table._columns[col_number]._skip > 0:
+                        table._columns[col_number]._skip -= 1
+                        col_number += 1
+                    else:
+                        break
+                if col_number >= len(table._columns):
+                    raise Exception("too many cells for row %d" % row_number)
+
+                # Assemble the values to be written
+                values = Report.Cell._get_values(cell, True)
+                if not isinstance(values, int):
+                    values = "\n".join(values)
+                style = self._data_style
+                if isinstance(cell, self.Cell):
+                    if cell._sheet_style:
+                        style = cell._sheet_style
+                    elif cell._bold:
+                        style = self._bold_data_style
+                    elif cell._right:
+                        style = self._right_data_style
+                    elif cell._center:
+                        style = self._center_data_style
+                    if cell._href:
+                        vals = str(values).replace('"', '""')
+                        formula = 'HYPERLINK("%s";"%s")' % (cell._href, vals)
+                        values = xlwt.Formula(formula)
+                    if cell._colspan or cell._rowspan:
+                        colspan = cell._colspan and int(cell._colspan) or 1
+                        rowspan = cell._rowspan and int(cell._rowspan) or 1
+                        r1, c1 = r2, c2 = row_number, col_number
+                        if colspan > 1:
+                            c2 += colspan - 1
+                            if c2 >= len(table._columns):
+                                raise Exception("not enough room for colspan "
+                                                "on row %d" % row_number)
+                        if rowspan > 1:
+                            extra_rows = rowspan - 1
+                            r2 += extra_rows
+                            while col_number <= c2:
+                                if table._columns[col_number]._skip > 0:
+                                    raise Exception("overlapping rowspan "
+                                                    "detected at row %d" %
+                                                    row_number)
+                                table._columns[col_number]._skip = extra_rows
+                                col_number += 1
+                        sheet.write_merge(r1, r2, c1, c2, values, style)
+                        col_number = c2 + 1
+                        continue
+                sheet.write(row_number, col_number, values, style)
+                col_number += 1
+
+    @staticmethod
+    def _get_excel_width(column):
+        """
+        Convert CSS cell width to width units used by the xlwt module
+
+        Passed:
+
+            column -     instance of the Column class
+
+        The width option of the Column object can be given as 'NN.NNin' or
+        'NN.NNpx' where 'NN' is any number including of decimal digits.
+        The decimal point is optional, and there don't have to be digits
+        on both sides of the decimal point, but has to be at least one
+        digit somewhere in the string.  Percentages aren't supported (yet).
+
+        The formula for converting pixels to xlwt units is derived from
+        the xlwt module's Column.width_in_pixels() method (see
+        https://github.com/python-excel/xlwt/blob/master/xlwt/Column.py)
+
+        The xlwt units represent 1/256 of the width of the character '0'
+        in the workbook's default font.
+
+        See http://office.microsoft.com/en-us/excel-help\
+        /measurement-units-and-rulers-in-excel-HP001151724.aspx
+        for the formula used to convert inches to pixels.
+
+        """
+
+        width = column._options.get("width")
+        if width:
+            if width.endswith("in"):
+                inches = float(width[:-2])
+                pixels = 96 * inches
+            else:
+                pixels = float(re.sub(r"[^\d.]+", "", width))
+            return int((pixels - .446) / .0272)
+        return None
+
+    @classmethod
+    def test(cls):
+        """
+        Very crude little test to check for any obvious breakage.
+
+        Run like this from the command line:
+
+         python -c "import cdrcgi;cdrcgi.Report.test()" | sed -n /DOCTYPE/,$p
+
+        Wouldn't hurt to add more testing to this method as we get time.
+        """
+        R = cls
+        cursor = db.connect(user="CdrGuest").cursor()
+        cursor.execute("""\
+            SELECT id, name
+              FROM doc_type
+             WHERE active = 'Y'
+               AND name > ''
+          ORDER BY name""")
+        columns = (
+            R.Column("Type ID", width="75px"),
+            R.Column("Type Name", width="300px")
+        )
+        rows = cursor.fetchall()
+        table = R.Table(columns, rows, caption="Document Types")
+        report = R("Simple Report", table)
+        report.send("html")
+
+    class Column:
+        """
+        Information about a column in a tabular report.
+        """
+        def __init__(self, name, **options):
+            self._name = name
+            self._options = options
+            self._skip = 0
+        def set_name(self, name):
+            self._name = name
+
+    class Table:
+        """
+        One of (possibly) multiple tables in a CDR report
+        """
+        def __init__(self, columns, rows, **options):
+            """
+            Table constructor.
+
+            Required arguments:
+                columns - Array of Column objects, one for each column.
+
+                rows    - Array of arrays of values for the cells.  Each of
+                          the sub-arrays has one value for one cell.
+                          Values can be string or numeric.  (Or formula?)
+
+            Optional keyword arguments:
+
+                caption - Caption centered at the top of the table, full
+                          width.  If the caption is an array, each element of
+                          the array will be centered on a new line.
+
+                html_callback_pre
+                        - Reference to a function to be called before
+                          processing the table by send("html").  Note that
+                          function outputs may or may appear before the
+                          table in the output HTML.
+
+                          The function is not called when output is Excel.
+
+                html_callback_post
+                        - Reference to a function to be called after
+                          processing the table by send("html").
+
+                user_data
+                        - Store whatever the value is for return later if
+                          and when Table.user_data() is called.  Value can
+                          be anything - string, object, array, dictionary,
+                          whatever.
+
+                stripe  - Use odd / even background coloring for rows.
+                          Default=True.
+
+                show_report_date
+                        - If true, add "Report date: yyyy-mm-dd" line
+            """
+            if not columns:
+                raise Exception("no columns specified for table")
+            if type(columns) not in (list, tuple):
+                raise Exception("table columns must be a sequence")
+            self._columns = columns
+            self._rows = rows
+            self._options = options
+            self._caption = options.get("caption")
+            self._html_callback_pre = options.get("html_callback_pre")
+            self._html_callback_post = options.get("html_callback_post")
+            self._user_data = options.get("user_data")
+            # Note None != False, hence True is default
+            self._stripe = options.get("stripe") != False
+            self._show_report_date = options.get("show_report_date")
+
+        def options(self):
+            """
+            Accessor object for the table's options.
+            """
+            return self._options
+
+        def user_data(self):
+            """
+            Accessor object for data stored by the caller.
+            """
+            return self._user_data
+
+    class Cell:
+        """
+        Single cell of data for a table in a CDR report.
+
+        The cell can optionally span multiple rows and/or columns
+        (using the optional 'colspan' or 'rowspan' arguments
+        to the constructor.
+
+        The value can be a single string or number or an array of
+        strings or numbers.  Each value in an array of values will
+        be displayed on a separate line of the cell.
+        """
+
+        B = lxml.html.builder
+
+        def __init__(self, value, **options):
+            self._value = value
+            self._options = options
+            self._colspan = options.get("colspan")
+            self._rowspan = options.get("rowspan")
+            self._href = options.get("href")
+            self._target = options.get("target")
+            self._bold = options.get("bold")
+            self._right = options.get("right")
+            self._center = options.get("center")
+            self._sheet_style = options.get("sheet_style")
+            self._callback = options.get("callback")
+            self._title = options.get("title")
+            classes = options.get("classes")
+            if not classes:
+                self._classes = []
+            elif isinstance(classes, str):
+                self._classes = classes.split()
+            elif isinstance(classes, (set, tuple)):
+                self._classes = list(classes)
+            elif isinstance(classes, list):
+                self._classes = classes
+            else:
+                raise Exception("unexpected type %s for Cell classes: %s" %
+                                (type(classes), repr(classes)))
+
+        def values(self):
+            return self._value
+
+        def options(self):
+            return self._options
+
+        def to_td(self):
+            if self._callback:
+                td = self._callback(self, "html")
+                if td is not None:
+                    return td
+            td = self.B.TD()
+            if self._href:
+                element = self.B.A(href=self._href)
+                if self._target:
+                    element.set("target", self._target)
+                if self._bold:
+                    element.set("class", "strong")
+            else:
+                element = td
+                if self._bold and "strong" not in self._classes:
+                    self._classes.append("strong")
+            self.set_values(element, self)
+            if self._colspan:
+                td.set("colspan", str(self._colspan))
+            if self._rowspan:
+                td.set("rowspan", str(self._rowspan))
+            if self._center:
+                if "center" not in self._classes:
+                    self._classes.append("center")
+            elif self._right:
+                if "right" not in self._classes:
+                    self._classes.append("right")
+            if self._classes:
+                td.set("class", " ".join(self._classes))
+            if self._title:
+                td.set("title", self._title)
+            if element is not td:
+                td.append(element)
+            return td
+
+        @classmethod
+        def set_values(cls, element, cell):
+            values = cls._get_values(cell)
+            value = values.pop(0)
+            element.text = value
+            while values:
+                value = values.pop(0)
+                br = cls.B.BR()
+                br.tail = value
+                element.append(br)
+
+        @classmethod
+        def _get_values(cls, cell, preserve_int=False):
+            """
+            Returns the values for a table cell as an array
+
+            Passed:
+
+                cell -       either a string or number, an array of strings
+                             and/or numbers, or a Report.Cell object (whose
+                             _value member may in turn be a string, a number,
+                             or an array of strings and/or numbers)
+            """
+            if isinstance(cell, cls):
+                values = cell._value
+            else:
+                values = cell
+            if isinstance(values, int) and preserve_int:
+                return values
+            if values is None:
+                return [""]
+            if type(values) not in (list, tuple):
+                return [str(values)]
+            elif not values:
+                return [""]
+            return [str(v) for v in values]
+
+
+#----------------------------------------------------------------------#
+# LEGACY GLOBAL FUNCTIONS -- USE NEW CDRAPI MODULES INSTEAD IF YOU CAN #
+#----------------------------------------------------------------------#
+
+
+def header(title, banner, subtitle, *args, **kwargs):
+    """Create the top portion of a serialized HTML form document.
+
+    This is an ancient function, and was how we created CDR web pages
+    back around the turn of the century. It needs to be retired, but
+    doing so will involve rewrites of around 40 scripts. The worst
+    of the function's numerous flaws was that it involved building
+    up HTML using string manipulation, mixing byte strings and unicode
+    strings, and throwing in some regular expression parsing for fun.
+    At least we have replaced strings splicing with a real HTML
+    object builder (from the lxml package). All strings must be real
+    `str` objects, not `bytes` or `bytearray` objects.
+
+    The existing code calling this function never went beyond passing
+    the first two of the keyword arguments as positional arguments,
+    so we catch those ("script" and "buttons") either way. The old
+    numBreaks, bkgd, and formExtra keyword arguments are now ignored.
+
+    Required positional arguments:
+
+        title
+            string used in the html/head/title
+
+        banner
+            string displayed in the header element's h1 child
+
+        subtitle
+            string displayed in the header element's h2 child
+
+    Optional keyword arguments:
+
+        script
+            file name for the script handling the form submission
+            (can also be passed as the 4th positional argument)
+
+        buttons
+            sequence of strings used for buttons placed on the left
+            side of the banner (can also be passed as the 5th positional
+            argument)
+
+        method
+            set to "get" to override the default ("post")
+
+        stylesheet
+            optional string containing serialized HTML fragments
+            to be placed at the end of html/head
+
+    Returns:
+        serialized HTML string with the closing tags for the form,
+        body, and html stripped off
+    """
+
+    # Assemble the optional keyword arguments.
+    script = args[0] if args else kwargs.get("script")
+    button_labels = args[1] if len(args) > 1 else kwargs.get("buttons")
+    method = kwargs.get("method") or "post"
+    head_extra = kwargs.get("stylesheet")
+
+    # Create the skeleton for the page (caller will add its own session).
+    opts = dict(
+        banner=banner,
+        subtitle=subtitle,
+        method=method,
+        body_id="legacy-page",
+        session=None,
+        stylesheets=["/stylesheets/dataform.css"],
+        scripts=[],
+    )
+    if script is not None:
+        opts["action"] = f"/cgi-bin/cdr/{script}"
+    if button_labels:
+        buttons = []
+        for label in button_labels:
+            if label == "Load":
+                buttons.append(HTMLPage.button(button))
+            buttons.append(HTMLPage.button(label))
+        opts["buttons"] = buttons
+    page = HTMLPage(title, **opts)
+
+    # Fold in any additional html/head child elements.
+    if head_extra:
+        for fragment in lxml.html.fragments_fromstring(head_extra):
+            page.head.append(fragment)
+
+    # Let the caller close out the form/body/html elements.
+    html = page.tostring()
+    if "</form>" in html:
+        return "".join(html.split("</form>")[:-1])
+    return "".join(html.split("</body>")[:-1])
+
 
 #----------------------------------------------------------------------
 # Scrubber
@@ -2473,7 +5106,7 @@ def getSession(fields, **opts):
             return "guest"
 
     # Make sure it's an active session.
-    query = cdrdb.Query("session", "id")
+    query = db.Query("session", "id")
     query.where(query.Condition("name", session))
     query.where("ended IS NULL")
     try:
@@ -2499,14 +5132,16 @@ def getRequest(fields):
 # and run the QCforWord.py script to properly convert the HTML output
 # to Word.
 #----------------------------------------------------------------------
-def sendPage(page, textType = 'html', parms='', docId='', docType='',
-             docVer=''):
+def sendPage(page, textType='html', parms='', docId='', docType='', docVer=''):
     """
     Send a completed page of text to stdout, assumed to be piped by a
     webserver to a web browser.
 
+    Note that _all_ the values passed in are Unicode strings. Any
+    encoding happens on the way out the door.
+
     Pass:
-        page     - Text to send, assumed to be 16 bit unicode.
+        page     - Text to send, assumed to be a unicode string (not bytes).
         textType - HTTP Content-type, assumed to be html.
         parms    - RowID storing all parameters if report needs to
                    be converted to Word, usually an empty string.
@@ -2516,80 +5151,19 @@ def sendPage(page, textType = 'html', parms='', docId='', docType='',
     Return:
         No return.  After writing to the browser, the process exits.
     """
-    if parms == "":
-        redirect = ""
-    else:
-        url = "https://{}{}/QCforWord.py".format(WEBSERVER, BASE)
+
+    # Handle redirect.
+    if parms:
+        url = f"https://{WEBSERVER}{BASE}/QCforWord.py"
         args = docId, docType, docVer, parms
         parms = "DocId={}&DocType={}&DocVersion={}&{}".format(*args)
-        redirect = "Location: {}?{}\n".format(url, parms)
-    print("""\
-{}Content-type: text/{}
+        print(f"Location: {url}?{parms}\n")
+    else:
+        sys.stdout.buffer.write(f"""\
+Content-type: text/{textType};charset=utf-8
 
-{}""".format(redirect, textType, unicodeToLatin1(page)))
+{page}""".encode("utf-8"))
     sys.exit(0)
-
-#----------------------------------------------------------------------
-# Emit an HTML page containing an error message and exit.
-#----------------------------------------------------------------------
-def bail(message=TAMPERING, banner="CDR Web Interface", extra=None,
-         logfile=None):
-    """
-    Send an error page to the browser with a specific banner and title.
-    Pass:
-        message - Display this.
-        banner  - Optional changed line for page banner.
-        extra   - Optional sequence of extra lines to append.
-        logfile - Optional name of logfile to write to.
-    Return:
-        No return. Exits here.
-    """
-    page = Page("CDR Error", banner=banner, subtitle="An error has occurred",
-                js=[], stylesheets=["/stylesheets/cdr.css"])
-    page.add(Page.B.P(message, Page.B.CLASS("error")))
-    if extra:
-        for arg in extra:
-            page.add(Page.B.P(arg, Page.B.CLASS("error")))
-    if logfile:
-        cdr.logwrite ("cdrcgi bailout:\n %s" % message, logfile)
-    page.send()
-
-#----------------------------------------------------------------------
-# Encode XML for transfer to the CDR Server using utf-8.
-#----------------------------------------------------------------------
-def encode(xml): return unicode(xml, 'latin-1').encode('utf-8')
-
-#----------------------------------------------------------------------
-# Convert CDR Server's XML from utf-8 to latin-1 encoding.
-#----------------------------------------------------------------------
-decodePattern = re.compile(u"([\u0080-\uffff])")
-def decode(xml):
-    # Take input in utf-8:
-    #   Convert it to unicode.
-    #   Replace all chars above 127 with character entitites.
-    #   Convert from unicode back to 8 bit chars, ascii is fine since
-    #     anything above ascii is entity encoded.
-    return re.sub(decodePattern,
-                  lambda match: u"&#x%X;" % ord(match.group(0)[0]),
-                  unicode(xml, 'utf-8')).encode('ascii')
-
-def unicodeToLatin1(s):
-    # Same as above, but with unicode input instead of utf-8
-    # The unfortunate name is a historical artifact of our using 'latin-1'
-    #   as the final encoding, but it's really just 7 bit ascii.
-    # If something sends other than unicode, let's track who did it
-    if type(s) != unicode:
-        cdr.logwrite("cdrcgi.unicodeToLatin1 got non-unicode string.  "
-                     "Stack trace follows", stackTrace=True)
-    return re.sub(decodePattern,
-                  lambda match: u"&#x%X;" % ord(match.group(0)[0]),
-                  s).encode('ascii')
-
-def unicodeToJavaScriptCompatible(s):
-    # Same thing but with 4 char unicode syntax for Javascript
-    return re.sub(decodePattern,
-                  lambda match: u"\\u%04X" % ord(match.group(0)[0]),
-                  s).encode('ascii')
 
 #----------------------------------------------------------------------
 # Log out of the CDR session and put up a new login screen.
@@ -2615,65 +5189,12 @@ def logout(session):
     page.send()
 
 #----------------------------------------------------------------------
-# Display the CDR Administation Main Menu.
-#----------------------------------------------------------------------
-def mainMenu(session, news=None):
-
-    try:
-        name = cdr.idSessionUser(session, session)[0]
-        user = cdr.getUser(session, name)
-    except:
-        user = ""
-    if isinstance(user, basestring):
-        bail("Missing or expired session")
-    menus = (
-        ("Board Manager Menu Users", "BoardManagers.py", "OCC Board Managers"),
-        ("CIAT/OCCM Staff Menu Users", "CiatCipsStaff.py", "CIAT/OCC Staff"),
-        ("Developer/SysAdmin Menu Users", "DevSA.py",
-         "Developers/System Administrators")
-    )
-    available = []
-    for group, script, label in menus:
-        if group in user.groups:
-            available.append((script, label))
-    if available:
-        available.append(("Logout.py", "Log Out"))
-    else:
-        available = [("GuestUsers.py", "Guest User")]
-
-    # If user is only in one of the groups above (with 'Logout' added),
-    # make the menu for that group the landing page and jump directly to
-    # it. The navigateTo() call doesn't return. But don't bypass this
-    # page if there's news to show.
-    if len(available) < 3 and not news:
-        navigateTo(available[0][0], session)
-
-    opts = { "subtitle": "Main Menu", "body_classes": "admin-menu" }
-    page = Page("CDR Administration", **opts)
-    section  = "Main Menu"
-    if news:
-        style = "color: green; font-weight: bold; font-style: italic;"
-        page.add(page.B.P(news, style=style))
-    page.add("<ol>")
-    for script, label in available:
-         page.add_menu_link(script, label, session)
-    page.add("</ol>")
-    page.send()
-
-#----------------------------------------------------------------------
 # Navigate to menu location or publish preview.
 #----------------------------------------------------------------------
 def navigateTo(where, session, **params):
-    args = WEBSERVER, BASE, where, SESSION, session
-    url = ["https://{}{}/{}?{}={}".format(*args)]
-
-    # Concatenate additional Parameters to URL for PublishPreview
-    # -----------------------------------------------------------
-    for param in params.keys():
-        args = cgi.escape(param), cgi.escape(params[param])
-        url.append("&{}={}".format(*args))
-
-    print("Location:{}\n".format("".join(url)))
+    params[SESSION] = session
+    params = urllib.parse.urlencode(params)
+    print(f"Location:https://{WEBSERVER}{BASE}/{where}?{params}\n")
     sys.exit(0)
 
 #----------------------------------------------------------------------
@@ -2761,9 +5282,9 @@ def sanitize(formStr, dType='str', maxLen=None, noSemis=True,
         elif dType == 'cdrID':
             try:
                 cdr.exNormalize(newStr)
-            except cdr.Exception as info:
+            except Exception as e:
                 if excp:
-                    raise ValueError(info)
+                    raise ValueError(e)
                 return None
 
     # Maximum string length
@@ -2796,924 +5317,6 @@ def sanitize(formStr, dType='str', maxLen=None, noSemis=True,
     return newStr
 
 #----------------------------------------------------------------------
-# Query components.
-#----------------------------------------------------------------------
-class SearchField:
-    def __init__(self, var, selectors):
-        self.var       = var
-        self.selectors = selectors
-
-#----------------------------------------------------------------------
-# Generate picklist for miscellaneous document types.
-#----------------------------------------------------------------------
-def miscTypesList(conn, fName):
-    path = '/MiscellaneousDocument/MiscellaneousDocumentMetadata' \
-           '/MiscellaneousDocumentType'
-    try:
-        cursor = conn.cursor()
-        query  = """\
-SELECT DISTINCT value
-           FROM query_term
-          WHERE path = '%s'
-       ORDER BY value""" % path
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        cursor.close()
-        cursor = None
-    except cdrdb.Error as info:
-        bail('Failure retrieving misc type list from CDR: %s' % info[1][0])
-    html = """\
-      <SELECT NAME='%s'>
-       <OPTION VALUE='' SELECTED>&nbsp;</OPTION>
-""" % fName
-    for row in rows:
-        html += """\
-       <OPTION VALUE='%s'>%s &nbsp;</OPTION>
-""" % (row[0], row[0])
-    html += """\
-      </SELECT>
-"""
-    return html
-
-#----------------------------------------------------------------------
-# Generate picklist for document publication status valid values.
-#----------------------------------------------------------------------
-def pubStatusList(conn, fName):
-    return """\
-      <SELECT NAME='%s'>
-       <OPTION VALUE='' SELECTED>&nbsp;</OPTION>
-       <OPTION VALUE='A'>Ready For Publication &nbsp;</OPTION>
-       <OPTION VALUE='I'>Not Ready For Publication &nbsp;</OPTION>
-      </SELECT>
-""" % fName
-
-#----------------------------------------------------------------------
-# Generate picklist for countries.  See generateHtmlPicklist() comments.
-#----------------------------------------------------------------------
-def countryList(conn, fName, valCol=-1):
-    query  = """\
-  SELECT d.id, d.title
-    FROM document d
-    JOIN doc_type t
-      ON t.id = d.doc_type
-   WHERE t.name = 'Country'
-ORDER BY d.title
-"""
-    pattern = "<option value='CDR%010d'>%s &nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern,
-                                valCol=valCol, valPat='CDR%010d')
-
-#----------------------------------------------------------------------
-# Generate picklist for states.
-#----------------------------------------------------------------------
-def stateList(conn, fName, valCol=-1):
-    query  = """\
-SELECT DISTINCT s.id,
-                s.title,
-                c.title
-           FROM document s
-           JOIN query_term clink
-             ON clink.doc_id = s.id
-           JOIN document c
-             ON clink.int_val = c.id
-          WHERE clink.path = '/PoliticalSubUnit/Country/@cdr:ref'
-       ORDER BY 2, 3"""
-    pattern = "<option value='CDR%010d'>%s [%s]&nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern,
-                                valCol=valCol, valPat='CDR%010d')
-
-#----------------------------------------------------------------------
-# Generate picklist for GlossaryAudience.
-#----------------------------------------------------------------------
-def glossaryAudienceList(conn, fName, valCol=-1):
-    defaultOpt = "<option value='' selected>Select an audience...</option>\n"
-    query  = """\
-SELECT DISTINCT value, value
-           FROM query_term
-          WHERE path IN ('/GlossaryTermConcept/TermDefinition/Audience',
-               '/GlossaryTermConcept/TranslatedTermDefinition/Audience')
-       ORDER BY 1"""
-    pattern = "<option value='%s'>%s&nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern,
-                    firstOpt=defaultOpt, valCol=valCol, valPat='CDR%010d')
-
-#----------------------------------------------------------------------
-# Generate picklist for GlossaryTermStatus.
-#----------------------------------------------------------------------
-def glossaryTermStatusList(conn, fName,
-                           path='/GlossaryTermName/TermNameStatus', valCol=-1):
-    defaultOpt = "<option value='' selected>Select a status...</option>\n"
-    query  = """\
-SELECT DISTINCT value, value
-           FROM query_term
-          WHERE path = '%s'
-       ORDER BY 1""" % path
-    pattern = "<option value='%s'>%s&nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern,
-                                firstOpt=defaultOpt, valCol=valCol)
-
-
-#----------------------------------------------------------------------
-# Generate picklist for GlossaryTermStatus.
-#----------------------------------------------------------------------
-def glossaryTermDictionaryList(conn, fName, valCol=-1):
-    defaultOpt = "<option value='' selected>Select a dictionary...</option>\n"
-    query  = """\
-SELECT DISTINCT value, value
-           FROM query_term
-          WHERE path IN ('/GlossaryTermConcept/TermDefinition/Dictionary',
-               '/GlossaryTermConcept/TranslatedTermDefinition/Dictionary')
-       ORDER BY 1"""
-    pattern = "<option value='%s'>%s&nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern,
-                                firstOpt=defaultOpt, valCol=valCol)
-
-
-#----------------------------------------------------------------------
-# Generate picklist for OrganizationType
-#----------------------------------------------------------------------
-def organizationTypeList(conn, fName, valCol=-1):
-    query  = """\
-  SELECT DISTINCT value, value
-    FROM query_term
-   WHERE path = '/Organization/OrganizationType'
-     AND value IS NOT NULL
-     AND value <> ''
-ORDER BY 1"""
-    pattern = "<option value='%s'>%s &nbsp;</option>"
-    return generateHtmlPicklist(conn, fName, query, pattern, valCol=valCol)
-
-#----------------------------------------------------------------------
-# Generic HTML picklist generator.
-#
-# Note: this only works if the query generates exactly as many
-# columns for each row as are needed by the % conversion placeholders
-# in the pattern argument, and in the correct order.
-#
-# For example invocations, see stateList and countryList above.
-#
-# Similarly, if valCol >= 0, there must be an actual column corresponding
-# to the valCol number.  See comments below.
-#----------------------------------------------------------------------
-def generateHtmlPicklist(conn, fieldName, query, pattern, selAttrs=None,
-                         firstOpt=None, lastOpt=None, valCol=-1, valPat=None):
-    """
-    Generate one of two outputs:
-
-     1) A string of HTML that implements a option list (picklist) for a
-        <select> element in an HTML form field, or
-     2) A list of values that the user might have picked from in order to
-        validate that nothing untoward happened betwixt list selection
-        and selection processing.
-
-    The goal is to enable a program to use identical software to create a
-    picklist and to validate a selection from that list in case of bugs or
-    hacking (or AppScan) attempts to upset it.
-
-    Pass:
-        conn      - Database connection.
-        fieldName - Name of the entire selection field, <select name=...
-        query     - Database query to generate options.
-        pattern   - Interpolation pattern for items in each row of query result
-                      e.g.: "<option value='%s'>%s&nbsp;</option>"
-        selAttrs  - Optional attributes to add to the select line
-                      e.g.: "multiple='1' size='5'"
-        firstOpt  - Optional line(s) at the beginning of the option list
-                      e.g.: "<option value='any' selected='1'>Any</option>\n"
-        lastOpt   - Optional line(s) at the end of the option list
-                      e.g.: "<option value='all'>All</option>\n"
-        valCol    - If valCol > -1, this call is not to generate a picklist,
-                    but to generate a validation list for checking the
-                    picklist.  valCol is the column number of the query rows.
-                      e.g.: query = SELECT id, name FROM ...
-                            if valCol == 0, return a list of ids.
-                            if valCol == 1, return a list of names.
-                    Bad things may happen if valCol >= the number of actual
-                    columns selected in the query.
-        valPat    - If not None, impose this string intepolation pattern on
-                    each returned valid value
-                      e.g., valPat='CDR%010d'
-
-    Return:
-        if valCol < 0:  Return a string of HTML containing a select option
-                        list from which a user can pick a value.
-        if valCol >= 0: Return a list of the values which may be picked.
-    """
-    # Select rows from the database
-    try:
-        cursor = conn.cursor()
-        cursor.execute(query, timeout=300)
-        rows = cursor.fetchall()
-        cursor.close()
-        cursor = None
-    except cdrdb.Error as info:
-        bail('Failure retrieving %s list from CDR: %s' % (fieldName,
-                                                          info[1][0]))
-
-    # For validation, we don't need HTML, just a list of valid values
-    if valCol >= 0:
-        if valPat:
-            return [valPat % row[valCol] for row in rows]
-        return [row[valCol] for row in rows]
-
-    # Else generate a picklist
-    html = "  <select name='%s'" % fieldName
-
-    # Add any requested attributes to the select
-    if selAttrs:
-        html += " " + selAttrs
-    html += ">\n"
-
-    # If there are user supplied options to put at the top
-    if firstOpt:
-        html += "   " + firstOpt
-    else:
-        # Backwards compatibity requires this default firstOpt
-        html += "   " + "<option value='' selected>&nbsp;</option>\n"
-
-    # Add data from the query
-    for row in rows:
-        option = pattern % tuple(row)
-        html += "   %s\n" % option
-
-    # Final options
-    if lastOpt:
-        html += lastOpt
-    # Termination
-    html += "  </select>\n"
-
-    return html
-
-#----------------------------------------------------------------------
-# Generate the top portion of an advanced search form.
-#----------------------------------------------------------------------
-def startAdvancedSearchPage(session, title, script, fields, buttons, subtitle,
-                            conn, errors = "", extraField = None):
-    """
-    Create a form to take in parameters for advanced searches.
-    This routine creates many types of forms, based on passed parameters.
-
-    Pass:
-        session   - String identifying the CDR login session
-        title     - HTML TITLE of the form on screen.
-        script    - Name of the ACTION script in cgi-bin/cdr that will
-                    process the FORM node created by this script.
-        fields    - A sequence of sequences.  Each element of the containing
-                    sequence describes one field of the form.  The sequence
-                    with an individual field description contains:
-                        Label to display to the user.
-                        HTML form field name.
-                        Optional function identifier to invoke to generate
-                            additional information, such as a select list.
-                            If present, the function will be called, passing
-                            an active database connection and the name of
-                            the HTML form field for which the function is
-                            being invoked, i.e., field[1] of this sequence.
-                    Each field is displayed as a row in a table on the form.
-        buttons   - A sequence of sequences defining form buttons.
-                    Each inner sequence contains three elements:
-                        Button type, e.g., 'submit', 'reset'
-                        Button HTML element name, e.g., 'HelpButton'
-                        Button Label, e.g., 'Help'
-                    Buttons are displayed in a row at the bottom of the form.
-        subtitle  - A subtitle displayed to the user, immediately under the
-                    title "CDR Advanced Search"
-        conn      - An active database connection, passed back in a script
-                    function invocation if needed.  May be None if there
-                    are no function needing to be invoked.  See
-                    "Optional function identifier" above.
-        errors    - An optional error string, displayed near the top of the
-                    form page when it is desirable to tell a user that
-                    an error occurred.
-        extraField- Optional extra rows to add to the form table between the
-                    form fields and the buttons at the bottom.
-
-    Return:
-        A string of HTML containing the base content of the form.  It is the
-        caller's responsibility to add anything else desired to the bottom of
-        the form, then add the closing </FORM>, </BODY>, and </HTML> tags.
-        The caller may then send the form page to the client.
-"""
-    html = """\
-<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
-<HTML>
- <HEAD>
-  <TITLE>%s</TITLE>
-  <META         HTTP-EQUIV  = "Content-Type"
-                CONTENT     = "text/html; charset=iso-8859-1">
-  <STYLE        TYPE        = "text/css">
-   <!--
-    *.header  { font-family: Arial, Helvietica, sans-serif;
-                font-size: x-large;
-                white-space: nowrap;
-                color: #000066 }
-    *.subhdr  { font-family: Arial, Helvietica, sans-serif;
-                font-size: large;
-                white-space: nowrap;
-                color: #000066 }
-    *.page    { font-family: Arial, Helvietica, sans-serif;
-                font-size: medium;
-                white-space: nowrap;
-                color: #000066 }
-   -->
-  </STYLE>
- </HEAD>
- <BODY          BGCOLOR     = "#CCCCFF">
-  <FORM         METHOD      = "GET"
-                ACTION      = "%s/%s">
-   <INPUT       TYPE        = "hidden"
-                NAME        = "%s"
-                VALUE       = "%s">
-   <TABLE       WIDTH       = "100%%"
-                BORDER      = "0"
-                CELLSPACING = "0">
-    <TR         BGCOLOR     = "#6699FF">
-     <TD        HEIGHT      = "26"
-                COLSPAN     = "2"
-                class       = "header">CDR Advanced Search
-     </TD>
-    </TR>
-    <TR         BGCOLOR     = "#FFFFCC">
-     <TD        COLSPAN     = "2"
-                class       = "subhdr">%s</TD>
-    <TR>
-    <TR>
-     <TD        style       = "white-space: nowrap;"
-                COLSPAN     = "2">&nbsp;</TD>
-    </TR>
-""" % (title, BASE, script, SESSION, session, subtitle)
-
-    if errors:
-        html += """\
-    <TR>
-     <TD ALIGN="left" COLSPAN="2">
-      %s
-     </TD>
-    </TR>
-""" % errors
-
-    for field in fields:
-        if len(field) == 2:
-            html += """\
-    <TR>
-     <TD        NOWRAP
-                ALIGN       = "right"
-                class       = "page">%s &nbsp; </TD>
-     <TD        WIDTH       = "55%%"
-                ALIGN       = "left">
-      <INPUT    TYPE        = "text"
-                NAME        = "%s"
-                SIZE        = "60">
-     </TD>
-    </TR>
-""" % field
-        else:
-            html += """\
-    <TR>
-     <TD        NOWRAP
-                ALIGN       = "right"
-                class       = "page">%s &nbsp; </TD>
-     <TD        WIDTH       = "55%%"
-                ALIGN       = "left">
-%s
-     </TD>
-    </TR>
-""" % (field[0], field[2](conn, field[1]))
-
-    if len(fields) > 1:
-        html += """\
-    <TR>
-     <TD        NOWRAP
-                WIDTH       = "15%"
-                class       = "page"
-                VALIGN      = "top"
-                ALIGN       = "right">Search Connector &nbsp; </TD>
-     <TD        WIDTH       = "30%"
-                ALIGN       = "left">
-      <SELECT   NAME        = "Boolean"
-                SIZE        = "1">
-       <OPTION  SELECTED>AND</OPTION>
-       <OPTION>OR</OPTION>
-      </SELECT>
-     </TD>
-    </TR>"""
-
-    if extraField:
-        if type(extraField[0]) not in (type([]), type(())):
-            extraField = [extraField]
-        for ef in extraField:
-            html += """\
-    <TR>
-     <TD        NOWRAP
-                class       = "page"
-                VALIGN      = "top"
-                ALIGN       = "right">%s &nbsp; </TD>
-     <TD        WIDTH       = "55%%">
-%s
-     </TD>
-    </TR>
-""" % (ef[0], ef[1])
-
-    html += """\
-    <TR>
-     <TD        WIDTH       = "15%">&nbsp;</TD>
-     <TD        WIDTH       = "55%">&nbsp;</TD>
-    </TR>
-   </TABLE>
-   <TABLE       WIDTH       = "100%"
-                BORDER      = "0">
-    <TR>
-     <TD        COLSPAN     = "2">&nbsp; </TD>
-"""
-
-    for button in buttons:
-        if button[0].lower() == 'button':
-            html += """\
-     <TD        WIDTH       = "13%%"
-                ALIGN       = "center">
-      <INPUT    TYPE        = "button"
-                ONCLICK     = %s
-                VALUE       = "%s">
-     </TD>
-""" % (xml.sax.saxutils.quoteattr(button[1]), button[2])
-        else:
-            html += """\
-     <TD        WIDTH       = "13%%"
-                ALIGN       = "center">
-      <INPUT    TYPE        = "%s"
-                NAME        = "%s"
-                VALUE       = "%s">
-     </TD>
-""" % button
-
-    html += """\
-     <TD        WIDTH       = "33%">&nbsp;</TD>
-    </TR>
-   </TABLE>
-   <BR>
-"""
-
-    return html
-
-
-#----------------------------------------------------------------------
-# Generate the top portion of an advanced search form.
-#----------------------------------------------------------------------
-def addNewFormOnPage(session, script, fields, buttons, subtitle,
-                            conn, errors = "", extraField = None):
-
-    html = """\
-  <FORM         METHOD      = "GET"
-                ACTION      = "%s/%s">
-   <INPUT       TYPE        = "hidden"
-                NAME        = "%s"
-                VALUE       = "%s">
-   <TABLE       WIDTH       = "100%%"
-                BORDER      = "0"
-                CELLSPACING = "0">
-    <!-- TR         BGCOLOR     = "#6699FF">
-     <TD        HEIGHT      = "26"
-                COLSPAN     = "2"
-                class       = "header">CDR Advanced Search</TD>
-    </TR -->
-    <TR         BGCOLOR     = "#FFFFCC">
-     <TD        COLSPAN     = "2"
-                class       = "subhdr">%s</TD>
-    <TR>
-    <TR>
-     <TD        NOWRAP
-                COLSPAN     = "2">&nbsp;</TD>
-    </TR>
-""" % (BASE, script, SESSION, session, subtitle)
-
-    if errors:
-        html += """\
-    <TR>
-     <TD ALIGN="left" COLSPAN="2">
-      %s
-     </TD>
-    </TR>
-""" % errors
-
-    for field in fields:
-        if len(field) == 2:
-            html += """\
-    <TR>
-     <TD        NOWRAP
-                ALIGN       = "right"
-                class       = "page">%s &nbsp; </TD>
-     <TD        WIDTH       = "55%%"
-                ALIGN       = "left">
-      <INPUT    TYPE        = "text"
-                NAME        = "%s"
-                SIZE        = "60">
-     </TD>
-    </TR>
-""" % field
-        else:
-            html += """\
-    <TR>
-     <TD        NOWRAP
-                ALIGN       = "right"
-                class       = "page">%s &nbsp; </TD>
-     <TD        WIDTH       = "55%%"
-                ALIGN       = "left">
-%s
-     </TD>
-    </TR>
-""" % (field[0], field[2](conn, field[1]))
-
-    if len(fields) > 1:
-        html += """\
-    <TR>
-     <TD        NOWRAP
-                WIDTH       = "15%"
-                class       = "page"
-                VALIGN      = "top"
-                ALIGN       = "right">Search Connector &nbsp; </TD>
-     <TD        WIDTH       = "30%"
-                ALIGN       = "left">
-      <SELECT   NAME        = "Boolean"
-                SIZE        = "1">
-       <OPTION  SELECTED>AND</OPTION>
-       <OPTION>OR</OPTION>
-      </SELECT>
-     </TD>
-    </TR>"""
-
-    if extraField:
-        if type(extraField[0]) not in (type([]), type(())):
-            extraField = [extraField]
-        for ef in extraField:
-            html += """\
-    <TR>
-     <TD        NOWRAP
-                class       = "page"
-                VALIGN      = "top"
-                ALIGN       = "right">%s &nbsp; </TD>
-     <TD        WIDTH       = "55%%">
-%s
-     </TD>
-    </TR>
-""" % (ef[0], ef[1])
-
-    html += """\
-    <TR>
-     <TD        WIDTH       = "15%">&nbsp;</TD>
-     <TD        WIDTH       = "55%">&nbsp;</TD>
-    </TR>
-   </TABLE>
-   <TABLE       WIDTH       = "100%"
-                BORDER      = "0">
-    <TR>
-     <TD        COLSPAN     = "2">&nbsp; </TD>
-"""
-
-    for button in buttons:
-        if button[0].lower() == 'button':
-            html += """\
-     <TD        WIDTH       = "13%%"
-                ALIGN       = "center">
-      <INPUT    TYPE        = "button"
-                ONCLICK     = %s
-                VALUE       = "%s">
-     </TD>
-""" % (xml.sax.saxutils.quoteattr(button[1]), button[2])
-        else:
-            html += """\
-     <TD        WIDTH       = "13%%"
-                ALIGN       = "center">
-      <INPUT    TYPE        = "%s"
-                NAME        = "%s"
-                VALUE       = "%s">
-     </TD>
-""" % button
-
-    html += """\
-     <TD        WIDTH       = "33%">&nbsp;</TD>
-    </TR>
-   </TABLE>
-   <BR>
-"""
-
-    return html
-
-
-#----------------------------------------------------------------------
-# XXX This functionality has become pretty crusty over time. Replace it.
-#
-# Construct query for advanced search page.
-#
-# The caller passes the following arguments:
-#
-#   searchFields
-#     a list of one or more objects with two attributes:
-#       * var:       a string containing the content of one of the
-#                    fields in the HTML search form
-#       * selectors: this can be either a single string or a list;
-#                    the normal case is the list, each member of which
-#                    is a string identifying the path(s) to be matched
-#                    in the query_term table; if a string contains an
-#                    ampersand, then the WHERE clause to find the
-#                    paths will use the SQL 'LIKE' keyword; otherwise
-#                    that clause with use '=' for an exact match.
-#                    If the selector is a single string, rather than
-#                    a list, it represents a column in the document
-#                    table which is to be compared with the value of
-#                    the var member of the SearchField object (for an
-#                    example, see SummarySearch.py, which has a
-#                    SearchField object for checking a value in the
-#                    active_status column of the document table
-#
-#   boolOp
-#     the string value 'AND' or 'OR' - used as a boolean connector
-#     between the WHERE clauses for each of the search fields passed
-#     in by the first argument.
-#
-#   docType
-#     either a string identifying which document type the result
-#     set must come from, or a list of strings identifying a choice
-#     of document types from the which the result set can be drawn.
-#
-# Modified 2003-09-11 RMK as follows:
-#   If the `selectors' attribute of a SearchField object is a list,
-#   then for any string in that list, if the string ends in the
-#   substring "/@cdr:ref[int_val]" then instead of matching the
-#   contents of the `var' attribute against the `value' column of
-#   the query_term table, an lookup will be added to the SQL query
-#   to find occurrences of the target string (in the var attribute)
-#   in the title column of the document table, joined to the int_val
-#   column of the query_term table.  This allow the users to perform
-#   advanced searches which include matches against titles of linked
-#   documents.
-#----------------------------------------------------------------------
-exampleQuery = """\
-SELECT d.id
-  FROM document d
-  JOIN doc_type t
-    ON t.id = d.doc_type
-   AND t.name = 'Citation'
- WHERE d.id IN (SELECT doc_id
-                  FROM query_term
-                 WHERE value LIKE '%immunohistochemical%'
-                   AND path = '/Citation/PubmedArticle/%/Article/%Title'
-                    OR value LIKE '%immunohistochemical%'
-                   AND path = '/Citation/PDQCitation/CitationTitle')
-   AND d.id IN (SELECT doc_id
-                  FROM query_term
-                 WHERE value = 'Histopathology'
-                   AND path = '/Citation/PubmedArticle/MedlineCitation/MedlineJournalInfo/MedlineTA'
-                    OR path = '/Citation/PDQCitation/PublicationDetails/PublishedIn/@cdr:ref'
-                   AND int_val IN (SELECT id
-                                     FROM document
-                                    WHERE title = 'Histopathology'))"""
-
-def constructAdvancedSearchQuery(searchFields, boolOp, docType):
-    where      = ""
-    strings    = ""
-    boolOp     = boolOp == "AND" and " AND " or " OR "
-
-    for searchField in searchFields:
-
-        #--------------------------------------------------------------
-        # Skip empty fields.
-        #--------------------------------------------------------------
-        if searchField.var:
-
-            queryOp  = getQueryOp(searchField.var)  # '=' or 'LIKE'
-            queryVal = getQueryVal(searchField.var) # escape single quotes
-
-            #----------------------------------------------------------
-            # Remember the fields' values in a single string so we can
-            # show it to the user later, reminding him what he searched
-            # for.
-            #----------------------------------------------------------
-            if strings: strings += ' '
-            strings += queryVal.strip()
-
-            #----------------------------------------------------------
-            # Start another portion of the WHERE clause.
-            #----------------------------------------------------------
-            if not where:
-                where = " WHERE "
-            else:
-                where += boolOp
-
-            #----------------------------------------------------------
-            # Handle special case of match against a column in the
-            # document table.
-            #----------------------------------------------------------
-            if type(searchField.selectors) == type(""):
-                where += "(d.%s %s '%s')" % (searchField.selectors,
-                                             queryOp,
-                                             queryVal)
-                continue
-
-            #----------------------------------------------------------
-            # Build up a portion of the WHERE clause to represent this
-            # search field.
-            #----------------------------------------------------------
-            where += "d.id IN (SELECT doc_id FROM query_term"
-            prefix = " WHERE "
-
-            #----------------------------------------------------------
-            # Build up a sub-select which checks to see if the value
-            # desired for this field can be found in any of the
-            # paths identified by the SearchField object's selectors
-            # attribute.
-            #----------------------------------------------------------
-            for selector in searchField.selectors:
-                pathOp = selector.find("%") == -1 and "=" or "LIKE"
-
-                #------------------------------------------------------
-                # Handle the normal case: a string stored in the doc.
-                #------------------------------------------------------
-                if not selector.endswith("/@cdr:ref[int_val]"):
-                    where += ("%spath %s '%s' AND value %s '%s'"
-                              % (prefix, pathOp, selector, queryOp, queryVal))
-                else:
-
-                    #--------------------------------------------------
-                    # Special code to handle searches for linked
-                    # documents.  We need a sub-subquery to look at
-                    # the title fields of the linked docs.
-                    #--------------------------------------------------
-                    where += ("%spath %s '%s' AND int_val IN "
-                              "(SELECT id FROM document WHERE title %s '%s')"
-                              % (prefix, pathOp, selector[:-9],
-                                 queryOp, queryVal))
-                prefix = " OR "
-            where += ")"
-
-    #------------------------------------------------------------------
-    # If the user didn't fill in any fields, we can't make a query.
-    #------------------------------------------------------------------
-    if not where:
-        return (None, None)
-
-    #------------------------------------------------------------------
-    # Join the document and doc_type tables.  We could be looking for
-    # a single document type or more than one document type.  If we're
-    # looking for more than one document type, the query has to get
-    # the document type in the result set for each of the documents
-    # found.
-    #------------------------------------------------------------------
-    # Adding the docytype as a string to the query output since we
-    # may need to distinguish between InScope and CTGov protocols later
-    # on.
-    # -----------------------------------------------------------------
-    if type(docType) == type(""):
-        query = ("SELECT DISTINCT d.id, d.title, '%s' FROM document d "
-                 "JOIN doc_type t ON t.id = d.doc_type AND t.name = '%s'"
-                 % (docType, docType))
-    else:
-        query = ("SELECT DISTINCT d.id, d.title, t.name FROM document d "
-                 "JOIN doc_type t ON t.id = d.doc_type AND t.name IN (")
-        sep = ""
-        for dt in docType:
-            query += "%s'%s'" % (sep, dt)
-            sep = ","
-        query += ")"
-
-    query += where + " ORDER BY d.title"
-    return (query, strings)
-
-#----------------------------------------------------------------------
-# Construct top of HTML page for advanced search results.
-#----------------------------------------------------------------------
-def advancedSearchResultsPageTop(subTitle, nRows, strings):
-    return u"""\
-<!DOCTYPE HTML PUBLIC '-//IETF//DTD HTML//EN'>
-<HTML>
- <HEAD>
-  <TITLE>CDR %s Search Results</TITLE>
-  <META   HTTP-EQUIV = "Content-Type"
-             CONTENT = "text/html; charset=iso-8859-1">
-  <STYLE        TYPE = "text/css">
-   <!--
-    *.header  { font-family: Arial, Helvietica, sans-serif;
-                font-size: x-large;
-                white-space: nowrap;
-                color: #000066 }
-    *.subhdr  { font-family: Arial, Helvietica, sans-serif;
-                font-size: large;
-                white-space: nowrap;
-                color: #000066 }
-    *.page    { font-family: Arial, Helvietica, sans-serif;
-                font-size: medium;
-                color: #000066 }
-    :link            { color: navy }
-    :link:visited    { color: navy }
-    :link:hover      { background: #FFFFCC; }
-    tr.rowitem:hover { background: #DDDDDD; } /* Does not work for IE */
-   -->
-  </STYLE>
- </HEAD>
- <BODY       BGCOLOR = "#CCCCFF">
-  <TABLE       WIDTH = "100%%"
-              BORDER = "0"
-         CELLSPACING = "0"
-               class = "page">
-   <TR       BGCOLOR = "#6699FF">
-    <TD       HEIGHT = "26"
-             COLSPAN = "4"
-               class = "header">CDR Advanced Search Results</TD>
-   </TR>
-   <TR       BGCOLOR = "#FFFFCC">
-    <TD      COLSPAN = "4">
-     <SPAN     class = "subhdr">%s</SPAN>
-    </TD>
-   </TR>
-   <TR>
-    <TD       NOWRAP
-             COLSPAN = "4"
-              HEIGHT = "20">&nbsp;</TD>
-   </TR>
-   <TR>
-    <TD       NOWRAP
-             COLSPAN = "4"
-               class = "page">
-     <span style="color: black;">%d documents match '%s'</span>
-    </TD>
-   </TR>
-   <TR>
-    <TD       NOWRAP
-             COLSPAN = "4"
-               class = "page">&nbsp;</TD>
-   </TR>
-""" % (subTitle, subTitle, nRows, cgi.escape(unicode(strings, 'latin-1')))
-    # Note cgi.escape call above to block XSS attack vulnerability
-    # discovered by Appscan
-
-#----------------------------------------------------------------------
-# Construct HTML page for advanced search results.
-#----------------------------------------------------------------------
-def advancedSearchResultsPage(docType, rows, strings, filter, session = None):
-    # We like the display on the web to be pretty.  The docType has been
-    # overloaded as title *and* docType.  I'm splitting the meaning here.
-    # --------------------------------------------------------------------
-    subTitle = docType
-    docType  = docType.replace(' ', '')
-
-    html = advancedSearchResultsPageTop(subTitle, len(rows), strings)
-
-    session = session and ("&%s=%s" % (SESSION, session)) or ""
-    for i in range(len(rows)):
-        docId = "CDR%010d" % rows[i][0]
-        title = cgi.escape(rows[i][1])
-        dtcol = "<TD>&nbsp;</TD>"
-        filt  = filter
-        if docType == 'Protocol':
-            dt = rows[i][2]
-
-            # This block is only needed if the filter is of type
-            # dictionary rather than a string (the filter name).
-            # In that case we want to display the docType on the
-            # result page and pick the appropriate filter for
-            # echo docType
-            # --------------------------------------------------
-            if len(filter) < 10:
-               filt = filter[dt]
-               dtcol = """\
-    <TD        WIDTH = "10%%"
-              VALIGN = "top">%s</TD>
-""" % dt
-
-        # XXX Consider using QcReport.py for all advanced search results pages.
-        if docType in ("Person", "Organization", "GlossaryTermConcept",
-                       "GlossaryTermName"):
-            href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
-        elif docType == 'Protocol' and dt == "CTGovProtocol":
-            href = "%s/QcReport.py?DocId=%s%s" % (BASE, docId, session)
-        elif docType == "Summary":
-            href = "%s/QcReport.py?DocId=%s&ReportType=nm%s" % (BASE, docId,
-                                                                session)
-        else:
-            href = "%s/Filter.py?DocId=%s&Filter=%s%s" % (BASE, docId,
-                                                          filt, session)
-        html += u"""\
-   <TR class="rowitem">
-    <TD       NOWRAP
-               WIDTH = "5%%"
-              VALIGN = "top">
-     <DIV      ALIGN = "right">%d.</DIV>
-    </TD>
-    <TD        WIDTH = "65%%">%s</TD>
-%s
-    <TD        WIDTH = "10%%"
-              VALIGN = "top">
-     <A         HREF = "%s">%s</A>
-    </TD>
-   </TR>
-""" % (i + 1, title.replace(";", "; "), dtcol, href, docId)
-
-        # Requested by LG, Issue #193.
-        if docType == "Protocol":
-            html += "<TR><TD COLWIDTH='3'>&nbsp;</TD></TR>\n"
-
-    return html + "  </TABLE>\n </BODY>\n</HTML>\n"
-
-#----------------------------------------------------------------------
 # Get the full user name for a given session.
 #----------------------------------------------------------------------
 def getFullUserName(session, conn):
@@ -3730,145 +5333,6 @@ def getFullUserName(session, conn):
         bail("Unable to find current user name")
     return name
 
-
-#----------------------------------------------------------------------
-# Borrowed from ActiveState's online Python cookbook.
-#----------------------------------------------------------------------
-def int_to_roman(inNum):
-   """
-   Convert an integer to Roman numerals.
-
-   Examples:
-   >>> int_to_roman(0)
-   Traceback (most recent call last):
-   ValueError: Argument must be between 1 and 3999
-
-   >>> int_to_roman(-1)
-   Traceback (most recent call last):
-   ValueError: Argument must be between 1 and 3999
-
-   >>> int_to_roman(1.5)
-   Traceback (most recent call last):
-   TypeError: expected integer, got <type 'float'>
-
-   >>> for i in range(1, 21): print int_to_roman(i)
-   ...
-   I
-   II
-   III
-   IV
-   V
-   VI
-   VII
-   VIII
-   IX
-   X
-   XI
-   XII
-   XIII
-   XIV
-   XV
-   XVI
-   XVII
-   XVIII
-   XIX
-   XX
-   >>> print int_to_roman(2000)
-   MM
-   >>> print int_to_roman(1999)
-   MCMXCIX
-   """
-   if type(inNum) != type(1):
-      raise TypeError("expected integer, got {!r}".format(type(inNum)))
-   if not 0 < inNum < 4000:
-      raise ValueError("Argument must be between 1 and 3999")
-   ints = (1000, 900,  500, 400, 100,  90, 50,  40, 10,  9,   5,  4,   1)
-   nums = ('M',  'CM', 'D', 'CD','C', 'XC','L','XL','X','IX','V','IV','I')
-   result = ""
-   for i in range(len(ints)):
-      count = int(inNum / ints[i])
-      result += nums[i] * count
-      inNum -= ints[i] * count
-   return result
-
-#--------------------------------------------------------------------
-# Colorize differences in the report.
-# Adapted from Bob's EmailerReports.py on the Electronic mailer server.
-#--------------------------------------------------------------------
-def colorDiffs(report, subColor='#FAFAD2', addColor='#F0E68C',
-                       atColor='#87CEFA'):
-    """
-    Colorizes the output of the GNU diff utility based on whether
-    lines begin with a '-', '+' or '@'.
-
-    Pass:
-        Text of report to colorize.
-        Color for '-' lines, default = Light goldenrod yellow
-        Color for '+' lines, default = Khaki
-        Color for '@' lines, default = Light sky blue
-    """
-    wrapper = textwrap.TextWrapper(subsequent_indent=' ', width=90)
-    lines = report.splitlines()
-    for i in range(len(lines)):
-        color = None
-        if lines[i].startswith('-'):
-            color = subColor
-        elif lines[i].startswith('+'):
-            color = addColor
-        elif lines[i].startswith('@'):
-            color = atColor
-
-        if color:
-            lines[i] = "<span style='background-color: %s'>%s</span>" % \
-                        (color, wrapper.fill(lines[i]))
-        else:
-            lines[i] = wrapper.fill(lines[i])
-    return "\n".join(lines)
-
-def markupTagForPrettyXml(match):
-    s = match.group(1)
-    if s.startswith('/'):
-        return "</@@TAG-START@@%s@@END-SPAN@@>" % s[1:]
-    trailingSlash = ''
-    if s.endswith('/'):
-        s = s[:-1]
-        trailingSlash = '/'
-    pieces = re.split("\\s", s, 1)
-    if len(pieces) == 1:
-        return "<@@TAG-START@@%s@@END-SPAN@@%s>" % (s, trailingSlash)
-    tag, attrs = pieces
-    pieces = ["<@@TAG-START@@%s@@END-SPAN@@" % tag]
-    for attr, delim in re.findall("(\\S+=(['\"]).*?\\2)", attrs):
-        name, value = attr.split('=', 1)
-        pieces.append(" @@NAME-START@@%s=@@END-SPAN@@"
-                      "@@VALUE-START@@%s@@END-SPAN@@" % (name, value))
-    pieces.append(trailingSlash)
-    pieces.append('>')
-    return "".join(pieces)
-
-def makeXmlPretty(doc):
-    import lxml.etree as etree
-    if type(doc) is unicode:
-        doc = doc.encode("utf-8")
-    tree = etree.XML(doc)
-    doc = unicode(etree.tostring(tree, pretty_print=True))
-    doc = re.sub("<([^>]+)>", markupTagForPrettyXml, doc)
-    doc = cgi.escape(doc)
-    doc = doc.replace('@@TAG-START@@', '<span class="xml-tag-name">')
-    doc = doc.replace('@@NAME-START@@', '<span class="xml-attr-name">')
-    doc = doc.replace('@@VALUE-START@@', '<span class="xml-attr-value">')
-    doc = doc.replace('@@END-SPAN@@', '</span>')
-    return doc
-
-def makeCssForPrettyXml(tagNameColor="blue", attrNameColor="maroon",
-                        attrValueColor="red", tagNameWeight="bold"):
-    return u"""\
-<style type="text/css">
- .xml-tag-name { color: %s; font-weight: %s; }
- .xml-attr-name { color: %s; }
- .xml-attr-value { color: %s; }
-</style>
-""" % (tagNameColor, tagNameWeight, attrNameColor, attrValueColor)
 
 #----------------------------------------------------------------------
 # Determine whether a parameter is a valid ISO date.
@@ -3956,7 +5420,7 @@ def valParmVal(val, **opts):
     Return:
         True = passed, False = failed, or no return if bailout.
     """
-    if hasattr(val, "__iter__"):
+    if isinstance(val, (list, set, tuple)):
         return all([valParmVal(v, **opts) for v in val])
     if not val and (opts.get("emptyOK") or opts.get("empty_ok")):
         return True
@@ -3975,7 +5439,7 @@ def valParmVal(val, **opts):
             return True
     else:
         values = opts.get("valList") or opts.get("val_list") or []
-        if isinstance(values, basestring):
+        if isinstance(values, str):
             values = [values]
         cval = val
         if icase:
@@ -3983,9 +5447,8 @@ def valParmVal(val, **opts):
             cval = val.lower()
         if cval in values:
             return True
-        fp = open("d:/tmp/val-parm-val.log", "a")
-        fp.write("cval=%s values=%s\n" % (cval, values))
-        fp.close()
+        with open(f"{cdr.TMP}/val-parm-val.log", "a", encoding="utf-8") as fp:
+            fp.write("cval=%s values=%s\n" % (cval, values))
     return _valParmHelper(val, bailout, reveal, msg)
 
 def valParmEmail(val, **opts):
@@ -4091,34 +5554,3 @@ def valParmDate(val, fmt="ISOdate", **opts):
 
     # Date check failed
     return _valParmHelper(val, bailout, reveal, msg)
-
-def log_fields(fields, **opts):
-    """
-    Log the parameters sent to a CGI script.
-
-    Pass:
-        fields    - from cgi.FieldStorage()
-        program   - name of script to be logged (optional)
-        logfile   - optional override of cdr.DEFAULT_LOGFILE
-
-    Return:
-        nothing
-    """
-    program = opts.get("program")
-    logfile = opts.get("logfile")
-    values = []
-    for name in fields.keys():
-        field = fields[name]
-        if hasattr(field, "value"):
-            value = field.value
-        else:
-            value = [item.value for item in field]
-        values.append((name, value))
-    if program:
-        message = "%s called with %s" % (repr(program), repr(dict(values)))
-    else:
-        message = repr(dict(values))
-    if logfile:
-        cdr.logwrite(message, logfile)
-    else:
-        cdr.logwrite(message)

@@ -28,7 +28,10 @@ class Tier:
       name - string containing the name of the tier represented by the values
 
     Properties:
-      drive - letter where the CDR is installed (D on the CDR servers)
+      basedir - primary location of the CDR files
+      etc - location of the CDR configuration files
+      drive - letter where the CDR is installed on Windows systems
+              (D on the CDR servers)
       passwords - dictionary of passwords keyed by a tuple of a lowercase
                   database name and user name for database accounts, or
                   keyed by the lowercase user name string for all other
@@ -40,13 +43,13 @@ class Tier:
       sql_server - FQDN for the database server
     """
 
-    # Patterns for finding settings files once we know which drive
+    # Names of CDR settings files.
     # the CDR lives on.
-    APPHOSTS = "{}:/etc/cdrapphosts.rc"
-    TIER = "{}:/etc/cdrtier.rc"
-    PASSWORDS = "{}:/etc/cdrpw"
-    DBPW = "{}:/etc/cdrdbpw"
-    PORTS = "{}:/etc/cdrdbports"
+    APPHOSTS = "cdrapphosts.rc"
+    TIER = "cdrtier.rc"
+    PASSWORDS = "cdrpw"
+    DBPW = "cdrdbpw"
+    PORTS = "cdrdbports"
 
     # Custom logging format.
     LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
@@ -62,15 +65,47 @@ class Tier:
 
         self.name = self.__get_tier_name(tier)
 
+    def __str__(self):
+        """Show the tier's name in string formatting."""
+        return self.name
+
+    @property
+    def basedir(self):
+        """
+        Find the directory where the cdr files are to be found
+
+        Start with an environment variable so this works on
+        other platforms than Windows for CDR client scripts.
+        """
+
+        if not hasattr(self, "_basedir"):
+            self._basedir = os.environ.get("CDR_BASEDIR")
+            if not self._basedir:
+                self._basedir = f"{self.drive}:/cdr"
+        return self._basedir
+
     @property
     def drive(self):
         """
-        Letter for the drive where the CDR lives
+        Letter for the drive where the CDR lives on a Windows system
         """
 
         if not hasattr(self, "_drive"):
             self._drive = Tier.find_cdr()
         return self._drive
+
+    @property
+    def etc(self):
+        """
+        Find the location of the CDR configuration files
+
+        Start with an environment variable so this works on
+        other platforms than Windows for CDR client scripts.
+        """
+
+        if not hasattr(self, "_etc"):
+            self._etc = os.environ.get("CDR_ETC") or f"{self.drive}:/etc"
+        return self._etc
 
     @property
     def hosts(self):
@@ -86,7 +121,7 @@ class Tier:
             return self._hosts
         hosts = {}
         prefix = "CBIIT:" + self.name
-        with open(self.APPHOSTS.format(self.drive)) as fp:
+        with open(f"{self.etc}/{self.APPHOSTS}") as fp:
             for line in fp:
                 line = line.strip()
                 if line.startswith(prefix):
@@ -103,7 +138,7 @@ class Tier:
         Where should we write our logging information?
         """
 
-        return self.drive + ":/cdr/Log"
+        return f"{self.basedir}/Log"
 
     @property
     def passwords(self):
@@ -119,12 +154,12 @@ class Tier:
         if hasattr(self, "_passwords"):
             return self._passwords
         passwords = {}
-        with open(self.PASSWORDS.format(self.drive)) as fp:
+        with open(f"{self.etc}/{self.PASSWORDS}") as fp:
             for line in fp:
                 name, password = line.strip().split(":", 1)
                 passwords[name.lower()] = password
         prefix = "CBIIT:" + self.name
-        with open(self.DBPW.format(self.drive)) as fp:
+        with open(f"{self.etc}/{self.DBPW}") as fp:
             for line in fp:
                 line = line.strip()
                 if line.startswith(prefix):
@@ -148,7 +183,7 @@ class Tier:
             return self._ports
         ports = {}
         prefix = self.name + ":"
-        with open(self.PORTS.format(self.drive)) as fp:
+        with open(f"{self.etc}/{self.PORTS}") as fp:
             for line in fp:
                 line = line.strip()
                 if line.startswith(prefix):
@@ -221,8 +256,8 @@ class Tier:
                 handler.setFormatter(formatter)
                 logger.addHandler(handler)
             if name == "session":
-                dbconn = opts["dbconn"]
-                logger.addHandler(self.SessionDBLogHandler(self.drive, dbconn))
+                args = self.basedir, opts["dbconn"]
+                logger.addHandler(self.SessionDBLogHandler(*args))
             if opts.get("console"):
                 stream_handler = logging.StreamHandler()
                 stream_handler.setFormatter(formatter)
@@ -275,7 +310,7 @@ class Tier:
         if name:
             return name.upper()
         try:
-            with open(self.TIER.format(self.drive)) as fp:
+            with open(f"{self.etc}/{self.TIER}") as fp:
                 return fp.read().strip()
         except:
             return "DEV"
@@ -390,7 +425,10 @@ class Tier:
     @classmethod
     def find_cdr(cls):
         """
-        Figure out which drive volume the CDR is installed on
+        Figure out which Windows drive volume the CDR is installed on
+
+        For non-windows systems, be sure to set CDR_BASEDIR and CDR_ETC
+        environment variables.
 
         Return:
           single character representing the CDR volume's drive letter
@@ -400,7 +438,7 @@ class Tier:
         """
 
         for letter in "DCEFGHIJKLMNOPQRSTUVWXYZ":
-            if os.path.exists(cls.APPHOSTS.format(letter)):
+            if os.path.exists(f"{letter}:/etc/{cls.APPHOSTS}"):
                 return letter
         raise Exception("CDR host file not found")
 
@@ -450,9 +488,9 @@ class Tier:
         INSERT = ("INSERT INTO session_log (thread_id, recorded, message) "
                   "VALUES (?, GETDATE(), ?)")
 
-        def __init__(self, drive, local):
+        def __init__(self, basedir, local):
             logging.Handler.__init__(self)
-            self.drive = drive
+            self.basedir = basedir
             self.local = local
 
         @property
@@ -472,7 +510,7 @@ class Tier:
                 try:
                     now = datetime.datetime.now()
                     name = now.strftime("logger-%Y%m%d%H%M%S.err")
-                    errpath = "{}:/cdr/Log/{}".format(self.drive, name)
+                    errpath = f"{self.basedir}/Log/{name}"
                     with open(errpath, "a") as fp:
                         fp.write("Failure formatting message: {}\n".format(e))
                 except:
@@ -498,9 +536,9 @@ class Tier:
                         try:
                             now = datetime.datetime.now()
                             name = now.strftime("dblogger-%Y%m%d%H%M%S.err")
-                            errpath = "{}:/cdr/Log/{}".format(self.drive, name)
+                            errpath = f"{self.basedir}/Log/{name}"
                             with open(errpath, "a") as fp:
-                                fp.write("DB logging failure: {}\n".format(e))
+                                fp.write(f"DB logging failure: {e}\n")
                         except:
                             raise
                             return
@@ -550,10 +588,10 @@ class Tier:
                             name = record.name
                             name = "{}-logger-{}.err".format(name, stamp)
                             try:
-                                drive = Tier().drive
+                                basedir = Tier().basedir
                             except:
-                                drive = "d"
-                            path = "{}:/cdr/Log/{}".format(drive, name)
+                                basedir = "d:/cdr"
+                            path = f"{basedir}/Log/{name}"
                             with open(path, "a") as fp:
                                 fp.write("{}\n".format(e))
                                 if message:

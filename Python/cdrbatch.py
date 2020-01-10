@@ -9,7 +9,7 @@
 import sys
 import string
 import cdr
-import cdrdb2 as cdrdb
+from cdrapi import db
 import cdrcgi
 
 #----------------------------------------------------------------------
@@ -26,6 +26,7 @@ ST_STOP       = 'Stop'          # Stop cleanly if possible
 ST_STOPPED    = 'Stopped'       # Job stopped cleanly before end
 ST_COMPLETED  = 'Completed'     # Job ran to completion
 ST_ABORTED    = 'Aborted'       # Abnormal termination due to internal error
+STATUSES = sorted([i[1] for i in vars().items() if i[0].startswith("ST_")])
 
 # Process type identifiers, see sendSignal()
 PROC_DAEMON   = 'daemon'        # Process is the batch job daemon
@@ -47,8 +48,10 @@ _ST_JOB_VALID = (ST_IN_PROCESS, ST_STOPPED, ST_COMPLETED, ST_ABORTED)
 
 # Others are future, or set by the queue method
 
-# Logfile name
-LF = cdr.DEFAULT_LOGDIR + "/BatchJobs.log"
+# Logging
+LOGNAME = "BatchJobs"
+LF = f"{cdr.DEFAULT_LOGDIR}/{LOGNAME}"
+LOGGER = cdr.Logging.get_logger(LOGNAME)
 
 #------------------------------------------------------------------
 # Exception class for batch processing
@@ -121,20 +124,20 @@ def sendSignal (conn, jobId, newStatus, whoami):
         msg = "Job must have been in process in order to be completed"
     if msg:
         msg = "status=%s: %s" % (status, msg)
-        cdr.logwrite (msg, LF)
+        LOGGER.error(msg)
         raise BatchException (msg)
 
     # Set the new status
     try:
         qry = """
           UPDATE batch_job
-             SET status = %s, status_dt = GETDATE()
-           WHERE id = %s"""
+             SET status = ?, status_dt = GETDATE()
+           WHERE id = ?"""
         conn.cursor().execute (qry, (newStatus, jobId))
 
     except Exception as e:
         msg = "Unable to update job status: %s" % e
-        cdr.logwrite (msg, LF)
+        LOGGER.error(msg)
         raise BatchException (msg)
 
 
@@ -171,7 +174,7 @@ def getJobStatus (idStr=None, name=None, ageStr=None, status=None):
     jobName   = normalCgi (name)
     if not status:
         jobStatus = None
-    elif type(status) == type(""):
+    elif isinstance(status, type("")):
         jobStatus = normalCgi (status)
     else:
         # Normalize to string or sequence of normalized strings
@@ -190,21 +193,21 @@ def getJobStatus (idStr=None, name=None, ageStr=None, status=None):
     # Must pass at least one arg
     if not jobId and not jobAge and not jobName and not jobStatus:
         msg = "Request for status without parameters"
-        cdr.logwrite (msg, LF)
+        LOGGER.error(msg)
         raise BatchException (msg)
 
     # Create query
     fields = "id", "name", "started", "status", "status_dt", "progress"
-    query = cdrdb.Query("batch_job", *fields).order("started")
+    query = db.Query("batch_job", *fields).order("started")
     if jobId:
         query.where(query.Condition("id", jobId))
     else:
         if jobName:
-            query.where(query.Condition("name", u"%" + jobName + u"%", "LIKE"))
+            query.where(query.Condition("name", "%" + jobName + "%", "LIKE"))
         if jobAge:
             query.where("started >= DATEADD(DAY, -%d, GETDATE())" % jobAge)
         if jobStatus:
-            if isinstance(jobStatus, basestring):
+            if isinstance(jobStatus, str):
                 query.where(query.Condition("status", jobStatus))
             else:
                 query.where(query.Condition("status", jobStatus, "IN"))
@@ -292,7 +295,7 @@ def activeCount (jobName):
 
     # Are there any jobs not in one of the active statuses?
     statuses = (ST_QUEUED, ST_INITIATING, ST_IN_PROCESS)
-    query = cdrdb.Query("batch_job", "COUNT(*)")
+    query = db.Query("batch_job", "COUNT(*)")
     query.where(query.Condition("status", statuses, "IN"))
     query.where(query.Condition("name", jobName, "LIKE"))
     query.where("started >= DATEADD(DAY, -1, GETDATE())")
@@ -375,17 +378,11 @@ class CdrBatch:
         # Need access to the database for anything we do
         self.__conn = None
         try:
-            self.__conn   = cdrdb.connect()
+            self.__conn   = db.connect(autocommit=True)
             self.__cursor = self.__conn.cursor()
         except Exception as e:
             # Job must not try to run itself
             self.fail("Unable to connect to database: %s" % e)
-
-        # Everything autocommitted on this cursor
-        try:
-            self.__conn.autocommit(True)
-        except Exception as e:
-            self.fail ("Setting connection autocommit %s" % e)
 
         # Gather parms if it's a new job
         if not self.__jobId:
@@ -411,7 +408,7 @@ class CdrBatch:
                     argKey, argVal = argPair
 
                     # Keys have to be strings
-                    if not isinstance(argKey, basestring):
+                    if not isinstance(argKey, str):
                         self.fail (
                           "Expecting job argument name of type string.\n" +
                           "Got keytype=%s for arg key=%s val=%s" %
@@ -429,7 +426,7 @@ class CdrBatch:
                             values[i] = ""
                         elif isinstance(value, (int, bool, float)):
                             values[i] = str(value)
-                        elif not isinstance(value, basestring):
+                        elif not isinstance(value, str):
                             self.fail("Got arg value of type %s for %s" %
                                       (type(value), argKey))
 
@@ -468,7 +465,7 @@ class CdrBatch:
         # Get info from database
         fields = ("name", "command", "process_id", "started", "status_dt",
                   "status", "email", "progress")
-        query = cdrdb.Query("batch_job", *fields)
+        query = db.Query("batch_job", *fields)
         query.where(query.Condition("id", self.__jobId))
         try:
             rows = query.execute(self.__cursor).fetchall()
@@ -486,7 +483,7 @@ class CdrBatch:
 
         # Get job parameters
         self.__args = {}
-        query = cdrdb.Query("batch_job_parm", "name", "value")
+        query = db.Query("batch_job_parm", "name", "value")
         query.where(query.Condition("job", self.__jobId))
         try:
             rows = query.execute(self.__cursor).fetchall()
@@ -499,13 +496,13 @@ class CdrBatch:
             argVal = row[1]
 
             # If this is the first value for this key, simply store it
-            if not self.__args.has_key (argKey):
+            if argKey not in self.__args:
                 self.__args[argKey] = argVal
 
             # If more than one, re-create the original list
             else:
                 # First one was loaded as a simple key, convert it to list
-                if type(self.__args[argKey]) != type([]):
+                if not isinstance(self.__args[argKey], type([])):
 
                     # Save value, delete key, re-create as a sequence
                     firstArg = self.__args[argKey]
@@ -568,25 +565,13 @@ class CdrBatch:
     # Value for an argument can be a string, or a list.
     # Data may have gone into the database as ASCII
     #   but always comes out as unicode
-    # Caller should say if he wants 16 bit unicode preserved
-    # Else we convert to utf-8.
     #------------------------------------------------------------------
-    def getParm(self, key, ucode=False):
+    def getParm(self, key):
         if key in self.__args:
             val = self.__args[key]
             if isinstance(val, (tuple, list)) and len(val) == 1:
                 val = val[0]
-            if ucode:
-                # Simply return what we have
-                return val
-            else:
-                # Convert to utf-8, but may have to do it on each list item
-                if type(val)==type([]):
-                    for i in range(len(val)):
-                        val[i] = val[i].encode('utf-8')
-                else:
-                    val = val.encode('utf-8')
-                return val
+            return val
         return None
 
 
@@ -612,11 +597,14 @@ class CdrBatch:
             self.__cursor.execute("""
                 INSERT INTO batch_job (name, command, started, status_dt,
                                        status, email)
-                     VALUES (%s, %s, GETDATE(), GETDATE(), %s, %s)
+                     VALUES (?, ?, GETDATE(), GETDATE(), ?, ?)
             """, (self.__jobName, self.__command, ST_QUEUED, self.__email))
 
         except Exception as e:
             self.fail("Database error queueing job: %s" % e)
+
+        if not self.__conn.autocommit:
+            cdrcgi.bail(f"autocommit has been turned off")
 
         # Get the job id
         try:
@@ -637,17 +625,19 @@ class CdrBatch:
             for key in self.__args.keys():
 
                 valSeq = self.__args[key]
-                if isinstance(valSeq, basestring):
+                if isinstance(valSeq, (str, bytes)):
                     valSeq = [valSeq]
 
                 # For each value in the sequence of values for this key
                 for val in valSeq:
-                    if not isinstance(val, unicode):
-                        val = val.decode("utf-8")
+                    if isinstance(val, bytes):
+                        val = str(val, "utf-8")
+                    else:
+                        val = str(val)
                     try:
                         self.__cursor.execute ("""
                           INSERT INTO batch_job_parm (job, name, value)
-                               VALUES (%s, %s, %s)
+                               VALUES (?, ?, ?)
                         """, (self.__jobId, key, val))
                     except Exception as e:
                         self.fail (
@@ -761,13 +751,11 @@ class CdrBatch:
         self.__progressMsg = newMsg
 
         # And in the database
-        if isinstance(newMsg, unicode):
-            newMsg = newMsg.encode("utf-8")
         try:
             self.__cursor.execute ("""
               UPDATE batch_job
-                 SET progress = %s, status_dt = GETDATE()
-               WHERE id = %s""", (newMsg, self.__jobId))
+                 SET progress = ?, status_dt = GETDATE()
+               WHERE id = ?""", (newMsg, self.__jobId))
         except Exception as e:
             self.fail ("Unable to update progress message: %s" % e)
 
@@ -776,12 +764,10 @@ class CdrBatch:
     # Write a message to the batch log
     #------------------------------------------------------------------
     def log(self, msg, logfile=LF):
-        """
-        Call cdr.logwrite to write a message to our logfile.
-        msg may be a tuple, see cdr.logwrite().
+        """Write a message to our logfile.
 
         Pass:
-            msg     - message string(s) to write.
+            msg     - message string (or sequence of strings) to write.
             logfile - where to write.
         """
         if self.__jobId:
@@ -791,13 +777,12 @@ class CdrBatch:
 
 
         # Construct a tuple of messages including job identification
-        if type (msg) == type(()) or type (msg) == type ([]):
+        if isinstance(msg, type(())) or isinstance(msg, type ([])):
             newMsg = newMsg + list(msg)
         else:
             newMsg.append (msg)
-        tupMsg = tuple(newMsg)
-
-        cdr.logwrite (tupMsg, logfile)
+        messages = tuple(newMsg)
+        LOGGER.info("\n".join(messages))
 
     #------------------------------------------------------------------
     # Show the user how to monitor the status of the report job.
@@ -821,7 +806,9 @@ class CdrBatch:
                             are passed as a sequence of strings (optional)
         """
         buttons = extra_buttons or []
-        if isinstance(buttons, basestring):
+        if isinstance(buttons, bytes):
+            buttons = str(buttons, "utf-8")
+        if isinstance(buttons, str):
             buttons = [buttons]
         parms   = "%s=%s&jobId=%s" % (cdrcgi.SESSION, session, self.__jobId)
         url     = "getBatchStatus.py?%s" % parms

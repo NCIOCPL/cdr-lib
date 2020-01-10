@@ -16,7 +16,7 @@ import sys
 import lxml.etree as etree
 import requests
 import cdr
-import cdrdb
+from cdrapi import db
 
 class NamedValue:
     """
@@ -73,7 +73,7 @@ class Concept:
     """
 
     logger = cdr.Logging.get_logger("nci_thesaurus", level="info")
-    REQUIRED = set(["code", "Preferred_Name"])
+    REQUIRED = {"code", "Preferred_Name"}
 
     def __init__(self, code=None, path=None):
         """
@@ -272,7 +272,7 @@ class Concept:
             include - whether this name should be added to the CDR document
         """
 
-        SKIP = set(["PreferredName", "ReviewStatus", "Comment", "OtherName"])
+        SKIP = {"PreferredName", "ReviewStatus", "Comment", "OtherName"}
         TERM_TYPE_MAP = {
             "PT"               : "Synonym", # "Preferred term",
             "AB"               : "Abbreviation",
@@ -348,7 +348,7 @@ class Concept:
 
         TYPE = "Health professional"
         NCIT = "NCI Thesaurus"
-        SKIP = set(["PreferredName", "ReviewStatus", "OtherName"])
+        SKIP = {"PreferredName", "ReviewStatus", "OtherName"}
 
         def __init__(self, property):
             """
@@ -534,7 +534,7 @@ class Concept:
         """
 
         start = datetime.datetime.now()
-        query = cdrdb.Query("query_term", "doc_id", "value")
+        query = db.Query("query_term", "doc_id", "value")
         query.where("path = '/Term/NCIThesaurusConcept'")
         query.where("value LIKE 'C%'")
         query.where("value NOT LIKE 'CDR%'")
@@ -545,8 +545,8 @@ class Concept:
                 concept = cls(code=concept_id)
                 term_doc = TermDoc(concept, cdr_id=cdr_id)
                 if term_doc.changes:
-                    print "%s\tCDR%s" % (concept_id, cdr_id)
-            except Exception, e:
+                    print("%s\tCDR%s" % (concept_id, cdr_id))
+            except Exception as e:
                 error = "comparing CDR%d to %r" % (cdr_id, concept_id)
                 Concept.logger.exception(error)
                 sys.stderr.write("%s: %s\n" % (error, e))
@@ -564,7 +564,7 @@ class Concept:
                    uses the --concept-id and --indent options)
         """
 
-        print json.dumps(cls.fetch(args.concept_id), indent=args.indent)
+        print(json.dumps(cls.fetch(args.concept_id), indent=args.indent))
 
     @classmethod
     def save_json(cls, args):
@@ -579,7 +579,7 @@ class Concept:
         name = "%s.json" % args.concept_id
         with open(name, "w") as fp:
             json.dump(cls.fetch(args.concept_id), fp, indent=args.indent)
-        print "saved", name
+        print("saved", name)
 
     @classmethod
     def print_xml(cls, args):
@@ -597,7 +597,7 @@ class Concept:
         """
 
         term_doc = TermDoc(cls(code=args.concept_id), cdr_id=args.cdr_id)
-        print term_doc.doc.xml
+        print(term_doc.doc.xml)
 
     @classmethod
     def save_xml(cls, args):
@@ -618,7 +618,7 @@ class Concept:
         term_doc = TermDoc(cls(code=args.concept_id), cdr_id = args.cdr_id)
         with open(name, "w") as fp:
             fp.write(term_doc.doc.xml)
-        print "saved", name
+        print("saved", name)
 
     @classmethod
     def print_changes(cls, args):
@@ -636,12 +636,12 @@ class Concept:
         term_doc = TermDoc(cls(code=args.concept_id), cdr_id = args.cdr_id)
         for change in term_doc.changes:
             if "definition" not in change.lower():
-                print change
+                print(change)
         for change in term_doc.changes:
             if "definition" in change.lower():
-                print change
+                print(change)
         if not term_doc.changes:
-            print "Term document unchanged"
+            print("Term document unchanged")
 
     @classmethod
     def count_properties(cls, args):
@@ -663,11 +663,11 @@ class Concept:
                 counts = {}
                 for p in concept.properties:
                     properties[p.name] = properties.get(p.name, 0) + 1
-                print name, concept.code, concept.preferred_name
-            except Exception, e:
+                print(name, concept.code, concept.preferred_name)
+            except Exception as e:
                 sys.stderr.write("%s : %s\n" % (name, e))
         for name in sorted(properties):
-            print "%7d %s" % (properties[name], name)
+            print("%7d %s" % (properties[name], name))
 
 class TermDoc:
     """
@@ -819,7 +819,7 @@ class TermDoc:
             Concept.fail("%s has no preferred name" % cdr_id)
         cdr_name, ncit_name = node.text, self.concept.preferred_name
         if Concept.normalize(cdr_name) != Concept.normalize(ncit_name):
-            why = u"%s is for %r, not %r" % (cdr_id, cdr_name, ncit_name)
+            why = "%s is for %r, not %r" % (cdr_id, cdr_name, ncit_name)
             Concept.fail(why)
         return root
 
@@ -879,7 +879,7 @@ class TermDoc:
                         vals.used.add(key)
         etree.strip_elements(self.root, "OtherName")
         position = self.find_position(Concept.OtherName.SKIP)
-        for key in reversed(nodes):
+        for key in reversed(list(nodes)):
             self.root.insert(position, nodes[key])
         for key in (set(vals.original) - vals.used):
             self.changes.add("dropped name %r" % vals.original[key])
@@ -986,7 +986,7 @@ class TermDoc:
             integer CDR document ID for the Term document; None if not found
         """
 
-        query = cdrdb.Query("query_term", "doc_id").unique()
+        query = db.Query("query_term", "doc_id").unique()
         query.where("path = '/Term/NCIThesaurusConcept'")
         query.where(query.Condition("value", code))
         row = query.execute().fetchone()
@@ -1075,7 +1075,7 @@ class TermDoc:
                 a normalized version of the string, and save both.
                 """
 
-                self.text = u"".join(node.itertext())
+                self.text = "".join(node.itertext())
                 self.normalized = Concept.normalize(self.text)
 
 if __name__ == "__main__":

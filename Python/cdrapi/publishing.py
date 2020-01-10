@@ -17,12 +17,6 @@ from cdrapi.docs import Doc
 from urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
-try:
-    basestring
-except:
-    basestring = str, bytes
-    unicode = str
-
 
 class Job:
     """
@@ -261,7 +255,8 @@ class Job:
                 undefined = set(requested) - set(defined)
                 if undefined:
                     messages = "Paramater(s) {} undefined"
-                    raise Exception(messages.format(", ".join(undefined)))
+                    #raise Exception(messages.format(", ".join(undefined)))
+                    raise Exception(messages.format(undefined))
                 defined.update(requested)
                 self.session.logger.info("job parms: %r", defined)
                 self._parms = defined
@@ -359,10 +354,13 @@ class Job:
                     query.join("doc_type t", "t.id = d.doc_type")
                     query.where("t.name = 'PublishingSystem'")
                     query.where(query.Condition("d.title", name))
-                    row = query.execute(self.cursor).fetchone()
-                    if not row:
+                    rows = query.execute(self.cursor).fetchall()
+                    if len(rows) > 1:
+                        raise Exception(f"multiple {name} docs")
+                    if not rows:
                         message = "Publishing system {!r} not found"
-                        raise Exception(message.format(self.system))
+                        raise Exception(message.format(name))
+                    row = rows[0]
                     opts["id"] = row.id
                     opts["title"] = name
             if opts["id"]:
@@ -413,7 +411,7 @@ class Job:
         try:
             job_id = self.__create()
             self.session.conn.commit()
-            self._job_id = job_id
+            self._id = job_id
             return job_id
         except:
             self.session.logger.exception("Job creation failed")
@@ -476,7 +474,7 @@ class Job:
         for i, name in enumerate(self.parms):
             self.session.logger.info("parms[%r] = %r", name, self.parms[name])
             try:
-                value = unicode(self.parms[name])
+                value = str(self.parms[name])
                 self.session.logger.debug("unicode value is %r", value)
             except:
                 value = self.parms[name].decode("utf-8")
@@ -660,7 +658,9 @@ class Job:
 
         class Specification:
             """
+            Instructions for processing the publishing job
             """
+
             def __init__(self, node):
                 self.__node = node
 
@@ -771,6 +771,7 @@ class Job:
                             value = Doc.get_text(node.find("ParmValue"), "")
                             self._parameters[name] = value
                     return self._parameters
+
 
 class DrupalClient:
     """

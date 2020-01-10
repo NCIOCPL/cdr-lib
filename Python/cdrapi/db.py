@@ -2,18 +2,10 @@
 DB-SIG compliant module for CDR database access.
 """
 
-import datetime
-import logging
+import platform
 import unittest
 import pyodbc
 from cdrapi import settings
-
-
-# Python 2/3 compatability
-try:
-    basestring
-except:
-    basestring = str
 
 
 def connect(**opts):
@@ -29,25 +21,34 @@ def connect(**opts):
     """
 
     tier = opts.get("tier") or settings.Tier()
-    if isinstance(tier, basestring):
+    if isinstance(tier, bytes):
+        tier = settings.Tier(tier.decode("utf-8"))
+    elif isinstance(tier, str):
         tier = settings.Tier(tier)
+    timeout = opts.get("timeout", Query.DEFAULT_TIMEOUT)
+    autocommit = opts.get("autocommit", False)
     user = opts.get("user", Query.CDRSQLACCOUNT)
     if user == "cdr":
         user = Query.CDRSQLACCOUNT
     password = tier.password(user, Query.DB)
     if not password:
         raise Exception("user {!r} unknown on {!r}".format(user, tier.name))
-    parms = dict(
-        Driver="{ODBC Driver 13 for SQL Server}",
-        Server="{},{}".format(tier.sql_server, tier.port(Query.DB)),
-        Database=opts.get("database", Query.DB),
-        Uid=user,
-        Pwd=password,
-        Timeout=opts.get("timeout", Query.DEFAULT_TIMEOUT)
-    )
-    connection_string = ";".join(["{}={}".format(*p) for p in parms.items()])
-    opts = dict(timeout=parms["Timeout"])
-    return pyodbc.connect(connection_string, **opts)
+    if platform.system().lower() == "windows":
+        parms = dict(
+            Driver="{ODBC Driver 17 for SQL Server}",
+            Server="{},{}".format(tier.sql_server, tier.port(Query.DB)),
+            Database=opts.get("database", Query.DB),
+            Uid=user,
+            Pwd=password,
+            Timeout=timeout
+        )
+        conn_string = ";".join(["{}={}".format(*p) for p in parms.items()])
+    else:
+        conn_string = f"DSN=CDR{tier.name.upper()};UID={user};PWD={password}"
+    opts = dict(timeout=timeout, autocommit=autocommit)
+    conn = pyodbc.connect(conn_string, **opts)
+    conn.timeout = timeout
+    return conn
 
 
 class Query:
@@ -224,7 +225,7 @@ class Query:
         """
         Sets maximum number of rows to return
         """
-        if type(limit) is not int:
+        if not isinstance(limit, int):
             raise Exception("limit must be integer")
         self._limit = limit
         self._str = None
@@ -567,9 +568,9 @@ class Query:
 
     @staticmethod
     def _add_sequence_or_value(to_be_added, collection):
-        if type(to_be_added) is list:
+        if isinstance(to_be_added, list):
             collection += to_be_added
-        elif type(to_be_added) is tuple:
+        elif isinstance(to_be_added, tuple):
             collection += list(to_be_added)
         else:
             collection.append(to_be_added)
@@ -651,7 +652,7 @@ class QueryTests(unittest.TestCase):
     def D(rows, cursor):
         """Get values as a dictionary"""
         n = [d[0] for d in cursor.description]
-        return [dict([(n[i], v) for i,v in enumerate(row)]) for row in rows]
+        return [dict([(n[i], v) for i, v in enumerate(row)]) for row in rows]
 
     def setUp(self):
         """
@@ -684,8 +685,8 @@ class QueryTests(unittest.TestCase):
         self.assertTrue(r == [(3,)])
     def test_03_group_by_and_having(self):
         q = self.Q("#t2", "i", "COUNT(*)").group("i").having("COUNT(*) > 2")
-        r = set([row[0] for row in q.execute(self.c).fetchall()])
-        self.assertTrue(r == set([42, 44]))
+        r = {row[0] for row in q.execute(self.c).fetchall()}
+        self.assertTrue(r == {42, 44})
     def test_04_left_outer_join_with_is_null(self):
         q = self.Q("#t1 a", "a.i", "b.n").outer("#t2 b", "b.i = a.i")
         r = self.V(q.where("b.n IS NULL").execute(self.c).fetchall())

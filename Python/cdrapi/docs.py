@@ -9,30 +9,11 @@ import re
 import sys
 import threading
 import time
+from urllib.parse import quote as url_quote
+from urllib.parse import unquote as url_unquote
 import dateutil.parser
 from lxml import etree
 from cdrapi.db import Query
-
-
-# ----------------------------------------------------------------------
-# Try to make the module compatible with both Python 2 and 3.
-# ----------------------------------------------------------------------
-from six import itervalues
-try:
-    basestring
-    base64encode = base64.encodestring
-    base64decode = base64.decodestring
-except:
-    base64encode = base64.encodebytes
-    base64decode = base64.decodebytes
-    basestring = str, bytes
-    unicode = str
-try:
-    from urllib.parse import quote as url_quote
-    from urllib.parse import unquote as url_unquote
-except ImportError:
-    from urllib import quote as url_quote
-    from urllib import unquote as url_unquote
 
 
 class Doc(object):
@@ -117,7 +98,7 @@ class Doc(object):
     MAX_LOCATION_LENGTH = INDEX_POSITION_WIDTH * MAX_INDEX_ELEMENT_DEPTH
 
     # Patterns for generating the values for columns in the query term tables
-    HEX_INDEX = "{{:0{}X}}".format(INDEX_POSITION_WIDTH)
+    HEX_INDEX = f"{{:0{INDEX_POSITION_WIDTH}X}}"
     INTEGERS = re.compile(r"\d+")
 
     # Codes indicating which markup revision should be applied
@@ -158,6 +139,7 @@ class Doc(object):
 
         Optional keyword arguments
           id - optional unique identifier for existing CDR document
+          doctype - string for the type of this CDR document
           xml - serialized tree for the XML document
           blob - binary large object (BLOB) for the document
           version - legal values are:
@@ -191,9 +173,11 @@ class Doc(object):
             return None
         query = Query("all_docs", "active_status")
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.cursor).fetchone()
-        assert row.active_status in "AID", "Invalid active_status value"
-        return row.active_status
+        rows = query.execute(self.cursor).fetchall()
+        assert rows, "Document not in database"
+        status = rows[0].active_status
+        assert status in "AID", "Invalid active_status value"
+        return status
 
     @property
     def blob(self):
@@ -209,10 +193,10 @@ class Doc(object):
             else:
                 query = Query("doc_blob", "data")
                 query.where(query.Condition("id", self._blob_id))
-                row = query.execute(self.cursor).fetchone()
-                if not row:
+                rows = query.execute(self.cursor).fetchall()
+                if not rows:
                     raise Exception("no blob found")
-                self._blob = row.data
+                self._blob = rows[0].data
         return self._blob
 
     @blob.setter
@@ -234,16 +218,16 @@ class Doc(object):
         query.where(query.Condition("doc_id", self.id))
         if self.version:
             query.where(query.Condition("doc_version", self.version))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
+        rows = query.execute(self.cursor).fetchall()
+        if not rows or not rows[0]:
             return None
-        blob_id = row.blob_id
+        blob_id = rows[0].blob_id
         query = Query("version_blob_usage u", "MIN(v.dt) AS dt")
         query.join("doc_version v", "v.id = u.doc_id", "v.num = u.doc_version")
         query.where(query.Condition("doc_id", self.id))
-        row = query.execute(self.cursor).fetchone()
-        if row:
-            return row.dt
+        rows = query.execute(self.cursor).fetchall()
+        if rows:
+            return rows[0].dt
         return self.last_saved
 
     @property
@@ -252,7 +236,7 @@ class Doc(object):
         Canonical string form for the CDR document ID (CDR9999999999)
         """
 
-        return "CDR{:010d}".format(self.id) if self.id else None
+        return f"CDR{self.id:010d}" if self.id else None
 
     @property
     def comment(self):
@@ -280,8 +264,8 @@ class Doc(object):
         query.join("usr u", "u.id = t.usr")
         query.where(query.Condition("t.document", self.id))
         query.where("a.name = 'ADD DOCUMENT'")
-        row = query.execute(self.cursor).fetchone()
-        if not row:
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
 
             # A small handful of documents bootstrapped the system without
             # the audit trail on June 22, 2002.
@@ -295,7 +279,7 @@ class Doc(object):
             user = Doc.User(2, "bkline", "Bob Kline")
             self._creation = Action(when, user)
         else:
-            self._creation = self.Action(row)
+            self._creation = self.Action(rows[0])
         return self._creation
 
     @property
@@ -304,7 +288,7 @@ class Doc(object):
         Give the document object its own cursor
         """
 
-        if not hasattr(self, "_cursor"):
+        if not hasattr(self, "_cursor") or self._cursor is None:
             self._cursor = self.session.conn.cursor()
         return self._cursor
 
@@ -328,7 +312,7 @@ class Doc(object):
         else:
             try:
                 result = self.filter("name:Fast Denormalization Filter")
-                self._denormalized_xml = unicode(result.result_tree)
+                self._denormalized_xml = str(result.result_tree)
             except:
                 self._denormalized_xml = self.xml
         return self._denormalized_xml
@@ -355,11 +339,11 @@ class Doc(object):
                 query.where(query.Condition("id", self.id))
                 if self.version:
                     query.where(query.Condition("num", self.version))
-                row = query.execute(self.cursor).fetchone()
-                if not row:
+                rows = query.execute(self.cursor).fetchall()
+                if not rows:
                     what = "version" if self.version else "document"
                     raise Exception(what + " not found")
-                self._doctype = Doctype(self.session, id=row.doc_type)
+                self._doctype = Doctype(self.session, id=rows[0].doc_type)
         return self._doctype
 
     @doctype.setter
@@ -368,7 +352,7 @@ class Doc(object):
         Set the document type according to the caller's document type name
         """
 
-        self._doctype = Doctype(name=value)
+        self._doctype = Doctype(self.session, name=value)
 
     @property
     def eids(self):
@@ -421,13 +405,13 @@ class Doc(object):
                 doc_id = self.cdr_id
             else:
                 suffix = "xml"
-                doc_id = "CDR{:d}".format(self.id)
+                doc_id = f"CDR{self.id:d}"
             if suffix is None:
                 raise Exception("Encoding missing or unsupported")
             suffix = suffix.lower()
             if suffix == "jpeg":
                 suffix = "jpg"
-            self._export_filename = "{}.{}".format(doc_id, suffix)
+            self._export_filename = f"{doc_id}.{suffix}"
         return self._export_filename
 
     @property
@@ -440,8 +424,8 @@ class Doc(object):
             return None
         query = Query("document", "first_pub")
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.cursor).fetchone()
-        date = row.first_pub
+        rows = query.execute(self.cursor).fetchall()
+        date = rows[0].first_pub
         if isinstance(date, datetime.datetime):
             return date.replace(microsecond=0)
         return date
@@ -459,8 +443,8 @@ class Doc(object):
             if self.id:
                 query = Query("document", "first_pub_knowable")
                 query.where(query.Condition("id", self.id))
-                row = query.execute(self.cursor).fetchone()
-                if row and row.first_pub_knowable == "Y":
+                rows = query.execute(self.cursor).fetchall()
+                if rows and rows[0].first_pub_knowable == "Y":
                     self._first_pub_knowable = True
         return self._first_pub_knowable
 
@@ -504,8 +488,8 @@ class Doc(object):
         query.where(query.Condition("doc_id", self.id))
         if self.version:
             query.where(query.Condition("doc_version", self.version))
-        row = query.execute(self.cursor).fetchone()
-        self._blob_id = row.blob_id if row else None
+        rows = query.execute(self.cursor).fetchall()
+        self._blob_id = rows[0].blob_id if rows else None
         return True if self._blob_id else False
 
     @property
@@ -590,8 +574,8 @@ class Doc(object):
         query = Query("doc_version", "MAX(num) AS n")
         query.where(query.Condition("id", self.id))
         query.where("publishable = 'Y'")
-        row = query.execute(self.cursor).fetchone()
-        return row.n if row else None
+        rows = query.execute(self.cursor).fetchall()
+        return rows[0].n if rows else None
 
     @property
     def last_saved(self):
@@ -611,6 +595,20 @@ class Doc(object):
         return None
 
     @property
+    def last_valid_version(self):
+        """
+        Integer for the most recently created publishable version, if any
+        """
+
+        if not self.id:
+            return None
+        query = Query("doc_version", "MAX(num) AS n")
+        query.where(query.Condition("id", self.id))
+        query.where("val_status = 'V'")
+        rows = query.execute(self.cursor).fetchall()
+        return rows[0].n if rows else None
+
+    @property
     def last_version(self):
         """
         Integer for the most recently saved version, if any; else None
@@ -620,8 +618,8 @@ class Doc(object):
             return None
         query = Query("doc_version", "MAX(num) AS n")
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.cursor).fetchone()
-        return row.n if row else None
+        rows = query.execute(self.cursor).fetchall()
+        return rows[0].n if rows else None
 
     @property
     def last_version_date(self):
@@ -633,8 +631,8 @@ class Doc(object):
             return None
         query = Query("doc_version", "MAX(updated_dt) as dt")
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.cursor).fetchone()
-        date = row.dt if row else None
+        rows = query.execute(self.cursor).fetchall()
+        date = rows[0].dt if rows else None
         if isinstance(date, datetime.datetime):
             return date.replace(microsecond=0)
         return date
@@ -657,8 +655,8 @@ class Doc(object):
         query.join("usr u", "u.id = c.usr")
         query.where(query.Condition("c.id", self.id))
         query.where("c.dt_in IS NULL")
-        row = query.execute(self.cursor).fetchone()
-        return self.Lock(row) if row else None
+        rows = query.execute(self.cursor).fetchall()
+        return self.Lock(rows[0]) if rows else None
 
     @property
     def modification(self):
@@ -677,8 +675,8 @@ class Doc(object):
         query.where(query.Condition("t.document", self.id))
         query.where("a.name = 'MODIFY DOCUMENT'")
         query.order("t.dt DESC").limit(1)
-        row = query.execute(self.cursor).fetchone()
-        return self.Action(row) if row else None
+        rows = query.execute(self.cursor).fetchall()
+        return self.Action(rows[0]) if rows else None
 
     @property
     def publishable(self):
@@ -691,11 +689,11 @@ class Doc(object):
         query = Query("doc_version", "publishable")
         query.where(query.Condition("id", self.id))
         query.where(query.Condition("num", self.version))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
-            message = "Information for version {} missing".format(self.version)
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
+            message = f"Information for version {self.version} missing"
             raise Exception(message)
-        return row.publishable == "Y"
+        return rows[0].publishable == "Y"
 
     @property
     def ready_for_review(self):
@@ -705,8 +703,8 @@ class Doc(object):
 
         query = Query("ready_for_review", "doc_id")
         query.where(query.Condition("doc_id", self.id))
-        row = query.execute(self.cursor).fetchone()
-        return True if row else False
+        rows = query.execute(self.cursor).fetchall()
+        return True if rows else False
 
     @property
     def resolved(self):
@@ -822,7 +820,7 @@ class Doc(object):
                 try:
                     version = version.lower()
                 except:
-                    raise Exception("invalid version {!r}".format(version))
+                    raise Exception(f"invalid version {version!r}")
 
                 # Current is an alias for non-versioned copy.
                 if version in ("current", "none"):
@@ -839,6 +837,8 @@ class Doc(object):
                     if not version:
                         raise Exception(self.NO_PUBLISHABLE_VERSIONS)
                     self._version = version
+                elif version.startswith("lastv"):
+                    self._version = self.last_valid_version
 
                 # Version labels have never been used, but you never know!
                 elif version.startswith("label "):
@@ -851,7 +851,7 @@ class Doc(object):
 
                 # We've run out of valid options.
                 else:
-                    error = "invalid version spec {}".format(version)
+                    error = f"invalid version spec {version}"
                     self.session.logger.exception(error)
                     raise Exception(error)
 
@@ -868,7 +868,7 @@ class Doc(object):
             return self._xml
         self._xml = self.__opts.get("xml")
         if self._xml:
-            if not isinstance(self._xml, unicode):
+            if not isinstance(self._xml, str):
                 self._xml = self._xml.decode("utf-8")
         elif self.id:
             if self.version:
@@ -877,10 +877,10 @@ class Doc(object):
             else:
                 query = Query("document", "xml")
             query.where(query.Condition("id", self.id))
-            row = query.execute(self.cursor).fetchone()
-            if not row:
+            rows = query.execute(self.cursor).fetchall()
+            if not rows:
                 raise Exception("no xml found")
-            self._xml = row.xml
+            self._xml = rows[0].xml
         return self._xml
 
     @xml.setter
@@ -895,7 +895,7 @@ class Doc(object):
         """
 
         self._xml = value
-        if self._xml and not isinstance(self._xml, unicode):
+        if self._xml and not isinstance(self._xml, str):
             self._xml = self._xml.decode("utf-8")
         self._root = self._denormalized_xml = self._resolved = None
 
@@ -933,7 +933,7 @@ class Doc(object):
         """
 
         # Make sure we have the required arguments.
-        self.session.log("add_external_usage({!r}, {!r})".format(usage, value))
+        self.session.log(f"add_external_usage({usage!r}, {value!r})")
         if not usage:
             raise Exception("Missing usage name")
         if not value:
@@ -943,26 +943,26 @@ class Doc(object):
         bogus = (opts.get("bogus") or "N").upper()
         mappable = (opts.get("mappable") or "Y").upper()
         assert bogus in "YN", "Bogus 'bogus' option"
-        assert mappable in "YN", "Invalidate 'mappable' options"
+        assert mappable in "YN", "Invalid 'mappable' options"
 
         # Find the usage ID and action name.
         query = Query("external_map_usage u", "u.id", "a.name")
         query.join("action a", "a.id = u.auth_action")
         query.where(query.Condition("u.name", usage))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
-            raise Exception("Unknown usage {!r}".format(usage))
-        usage_id, action = row
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
+            raise Exception(f"Unknown usage {usage!r}")
+        usage_id, action = list(rows[0])
 
         # Make sure the user is allowed to add a row for this usage.
         if not self.session.can_do(action):
-            message = "User not allowed to add {} mappings".format(usage)
+            message = f"User not allowed to add {usage} mappings"
             raise Exception(message)
 
         # Add the new mapping row.
         fields = dict(
             usage=usage_id,
-            value=unicode(value),
+            value=str(value),
             doc_id=self.id,
             usr=self.session.user_id,
             last_mod=datetime.datetime.now().replace(microsecond=0),
@@ -976,7 +976,7 @@ class Doc(object):
         self.cursor.execute(insert, values)
         self.session.conn.commit()
         self.cursor.execute("SELECT @@IDENTITY AS id")
-        return self.cursor.fetchone().id
+        return self.cursor.fetchall()[0].id
 
     def add_error(self, message, location=None, **opts):
         """
@@ -1021,8 +1021,11 @@ class Doc(object):
         """
 
         for name in parms:
-            if isinstance(parms[name], basestring):
-                parms[name] = etree.XSLT.strparam(parms[name])
+            value = parms[name]
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            if isinstance(value, str):
+                parms[name] = etree.XSLT.strparam(value)
         Resolver.local.docs.append(self)
         try:
             return transform(self.root)
@@ -1046,7 +1049,7 @@ class Doc(object):
           publishable - if True, mark version publishable if we create one
         """
 
-        self.session.log("Doc.check_in({!r}, {!r})".format(self.cdr_id, opts))
+        self.session.log(f"Doc.check_in({self.cdr_id!r}, {opts!r})")
         self.__check_in(audit=True, **opts)
         try:
             self.session.conn.commit()
@@ -1069,7 +1072,7 @@ class Doc(object):
           comment - optional string for the `checkout.comment` column
         """
 
-        self.session.log("Doc.check_out({!r}, {!r})".format(self.cdr_id, opts))
+        self.session.log(f"Doc.check_out({self.cdr_id!r}, {opts!r})")
         self.__check_out(**opts)
         self.session.conn.commit()
 
@@ -1093,7 +1096,7 @@ class Doc(object):
         """
 
         # Make sure the audit trail records don't step on each other.
-        self.session.log("Doc.delete({!r}, {!r})".format(self.cdr_id, opts))
+        self.session.log(f"Doc.delete({self.cdr_id!r}, {opts!r})")
         self.__audit_trail_delay()
 
         # Start with a clean slate.
@@ -1107,15 +1110,15 @@ class Doc(object):
         # Make sure the document isn't published.
         query = Query("pub_proc_cg", "id")
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.cursor).fetchone()
-        if row:
-            message = "Cannot delete published doc {}".format(self.cdr_id)
+        rows = query.execute(self.cursor).fetchall()
+        if rows:
+            message = f"Cannot delete published doc {self.cdr_id}"
             raise Exception(message)
 
         # Make sure it's not in the external mapping table.
         query = Query("external_map", "COUNT(*) AS n")
         query.where(query.Condition("doc_id", self.id))
-        if query.execute(self.cursor).fetchone().n > 0:
+        if query.execute(self.cursor).fetchall()[0].n > 0:
             message = "Cannot delete {} which is in the external mapping table"
             raise Exception(message.format(self.cdr_id))
 
@@ -1137,16 +1140,21 @@ class Doc(object):
                 # We got the green light to proceed with the deletion.
                 update = "UPDATE document SET active_status = 'D' WHERE id = ?"
                 for table in "query_term", "query_term_pub":
-                    delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
+                    delete = f"DELETE FROM {table} WHERE doc_id = ?"
                     self.cursor.execute(delete, (self.id,))
                 self.cursor.execute(update, (self.id,))
                 self.__audit_action("Doc.delete", "DELETE DOCUMENT", reason)
                 self.session.conn.commit()
+            else:
+                raise Exception(f"{self.cdr_id} has incoming links")
         except:
-            self.session.logger.exception("Deletion failed")
-            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.cursor.fetchone().tc:
-                self.cursor.execute("ROLLBACK TRANSACTION")
+            try:
+                self.session.logger.exception("Deletion failed")
+                self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+                if self.cursor.fetchall()[0].tc:
+                    self.cursor.execute("ROLLBACK TRANSACTION")
+            except:
+                pass
             raise
 
     def filter(self, *filters, **opts):
@@ -1185,8 +1193,7 @@ class Doc(object):
           by the XSL/T engine
         """
 
-        args = self.id, filters, opts
-        self.session.log("Doc.filter({!r}, {!r}, {!r})".format(*args))
+        self.session.log(f"Doc.filter({self.id!r}, {filters!r}, {opts!r})")
         for spec in filters:
             if not spec:
                 raise Exception("missing filter spec")
@@ -1284,8 +1291,7 @@ class Doc(object):
                 def __init__(self, parent, child):
                     self.parent, self.child = parent, child
         tree = Tree()
-        args = self.id, depth
-        self.session.log("Doc.get_tree({!r}, depth={!r})".format(*args))
+        self.session.log(f"Doc.get_tree({self.id!r}, depth={depth!r})")
         self.cursor.execute("{CALL cdr_get_term_tree (?,?)}", (self.id, depth))
         for child, parent in self.cursor.fetchall():
             tree.relationships.append(Tree.Relationship(parent, child))
@@ -1307,17 +1313,17 @@ class Doc(object):
           label - string for this label's name
         """
 
-        self.session.log("Doc.label({!r}, {!r})".format(self.id, label))
+        self.session.log(f"Doc.label({self.id!r}, {label!r})")
         assert self.version, "Missing version for label"
         query = Query("version_label", "id")
         query.where(query.Condition("name", label))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
-            raise Exception("Unable to find label {!r}".format(label))
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
+            raise Exception(f"Unable to find label {label!r}")
         names = "label, document, num"
-        values = row.id, self.id, self.version
-        insert = "INSERT INTO doc_version_label ({}) VALUES (?, ?, ?)"
-        self.cursor.execute(insert.format(names), values)
+        values = rows[0].id, self.id, self.version
+        insert = f"INSERT INTO doc_version_label ({names}) VALUES (?, ?, ?)"
+        self.cursor.execute(insert, values)
         self.session.conn.commit()
 
     def legacy_doc(self, **opts):
@@ -1353,7 +1359,7 @@ class Doc(object):
             etree.SubElement(cdr_doc, "CdrDocXml").text = xml
         if opts.get("get_blob") and self.has_blob:
             blob = etree.SubElement(cdr_doc, "CdrDocBlob", encoding="base64")
-            blob.text = base64encode(self.blob).decode("ascii")
+            blob.text = base64.encodebytes(self.blob).decode("ascii")
         return cdr_doc
 
     def legacy_doc_control(self, **opts):
@@ -1404,7 +1410,7 @@ class Doc(object):
             if value:
                 child = etree.SubElement(doc_control, tag)
                 try:
-                    child.text = unicode(value)
+                    child.text = str(value)
                 except:
                     #print(repr((tag, value)))
                     raise
@@ -1468,7 +1474,7 @@ class Doc(object):
           sequence of strings describing each inbound link
         """
 
-        self.session.log("Doc.link_report({})".format(self.id))
+        self.session.log(f"Doc.link_report({self.id})")
         query = Query("link_net n", "n.source_doc", "d.title", "n.target_frag")
         query.join("document d", "d.id = n.source_doc")
         query.where(query.Condition("n.target_doc", self.id))
@@ -1477,7 +1483,7 @@ class Doc(object):
         for row in query.execute(self.cursor).fetchall():
             link = pattern.format(row.source_doc, row.title)
             if row.target_frag:
-                link += " Fragment({})".format(row.target_frag)
+                link += f" Fragment({row.target_frag})"
             links.append(link)
         return links
 
@@ -1496,7 +1502,7 @@ class Doc(object):
             * comment for the version, if any (otherwise None)
         """
 
-        self.session.log("Doc.list_versions({}, {!r})".format(self.id, limit))
+        self.session.log(f"Doc.list_versions({self.id}, {limit!r})")
         fields = "num AS number", "dt AS saved", "comment"
         query = Query("doc_version", *fields).order("num DESC")
         query.where(query.Condition("id", self.id))
@@ -1504,12 +1510,29 @@ class Doc(object):
             query.limit(limit)
         return list(query.execute(self.cursor).fetchall())
 
+    def normalize(self):
+        """Make the document's XML easier to read and compare.
+
+        Removes unnecessary white space and normalizes attribute serialization.
+        """
+
+        args = self.session, self.doctype.name
+        element_only = Doctype.element_only_list(*args)
+        if element_only:
+            for node in self.root.iter("*"):
+                if node.tag in element_only:
+                    node.text = None
+                    for child in node.findall("*"):
+                        child.tail = None
+            self.xml = etree.tostring(self.root, encoding="unicode")
+
     def reindex(self):
         """
         Repopulate the search support tables for this document
 
         Called by:
           cdr.reindex()
+          self.set_status()
           client XML wrapper command CdrReindexDoc
 
         Return:
@@ -1521,7 +1544,7 @@ class Doc(object):
             raise Exception("reindex(): missing document id")
 
         # Make sure the object we have represents the latest XML.
-        self.session.log("Doc.reindex({})".format(self.id))
+        self.session.log(f"Doc.reindex({self.id})")
         doc = self
         last_pub_ver = doc.last_publishable_version
         last_saved = doc.last_saved
@@ -1545,10 +1568,13 @@ class Doc(object):
                 doc.update_query_terms(tables=["query_term_pub"])
             self.session.conn.commit()
         except Exception as e:
-            self.session.logger.exception("Reindex failed")
-            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.cursor.fetchone().tc:
-                self.cursor.execute("ROLLBACK TRANSACTION")
+            try:
+                self.session.logger.exception("Reindex failed")
+                self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+                if self.cursor.fetchall()[0].tc:
+                    self.cursor.execute("ROLLBACK TRANSACTION")
+            except:
+                pass
             raise
 
     def save(self, **opts):
@@ -1583,18 +1609,21 @@ class Doc(object):
           None
         """
 
-        self.session.log("Doc.save({}, {!r})".format(self.id, opts))
+        self.session.log(f"Doc.save({self.id}, {opts!r})")
         try:
             self.__audit_trail_delay()
             self.__save(**opts)
             self.session.conn.commit()
             self.cursor.close()
-            self._cursor = None
+            self._cursor = self.session.conn.commit()
         except:
-            self.session.logger.exception("Doc.save() failure")
-            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.cursor.fetchone().tc:
-                self.cursor.execute("ROLLBACK TRANSACTION")
+            try:
+                self.session.logger.exception("Doc.save() failure")
+                self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+                if self.cursor.fetchall()[0].tc:
+                    self.cursor.execute("ROLLBACK TRANSACTION")
+            except:
+                pass
             raise
 
     def set_status(self, status, **opts):
@@ -1613,8 +1642,7 @@ class Doc(object):
           None
         """
 
-        args = self.id, status, opts
-        self.session.log("Doc.set_status({}, {!r}, {!r})".format(*args))
+        self.session.log(f"Doc.set_status({self.id}, {status!r}, {opts!r})")
         if not self.doctype:
             raise Exception("Document not found")
         if not self.session.can_do("PUBLISH DOCUMENT", self.doctype.name):
@@ -1625,6 +1653,7 @@ class Doc(object):
             raise Exception("Status must be {} or {}".format(*valid))
         args = self.active_status, status
         self.session.logger.debug("Old status=%r new status=%r", *args)
+        need_to_reindex = self.active_status == self.DELETED
         if status != self.active_status:
             try:
                 self.__audit_trail_delay()
@@ -1633,11 +1662,16 @@ class Doc(object):
                 self._active_status = status
                 self.session.logger.debug("New status committed")
             except:
-                self.session.logger.exception("Doc.set_status() failure")
-                self.cursor.execute("SELECT @@TRANCOUNT AS tc")
-                if self.cursor.fetchone().tc:
-                    self.cursor.execute("ROLLBACK TRANSACTION")
+                try:
+                    self.session.logger.exception("Doc.set_status() failure")
+                    self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+                    if self.cursor.fetchall()[0].tc:
+                        self.cursor.execute("ROLLBACK TRANSACTION")
+                except:
+                    pass
                 raise
+            if need_to_reindex:
+                self.reindex()
 
     def unlabel(self, label):
         """
@@ -1651,15 +1685,15 @@ class Doc(object):
           label - string for this label's name
         """
 
-        self.session.log("Doc.unlabel({}, {!r})".format(self.id, label))
+        self.session.log(f"Doc.unlabel({self.id}, {label!r})")
         query = Query("version_label", "id")
         query.where(query.Condition("name", label))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
-            raise Exception("Unable to find label {!r}".format(label))
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
+            raise Exception(f"Unable to find label {label!r}")
         table = "doc_version_label"
-        delete = "DELETE FROM {} WHERE document = ? AND label = ?"
-        self.cursor.execute(delete.format(table), (self.id, row.id))
+        delete = f"DELETE FROM {table} WHERE document = ? AND label = ?"
+        self.cursor.execute(delete, (self.id, rows[0].id))
         self.session.conn.commit()
 
     def update_query_terms(self, **opts):
@@ -1686,12 +1720,12 @@ class Doc(object):
             return
 
         # Find out which elements and attributes get indexed (`paths`).
-        absolute_path = "path LIKE '/{}/%'".format(self.doctype.name)
+        absolute_path = f"path LIKE '/{self.doctype.name}/%'"
         relative_path = "path LIKE '//%'"
         query = Query("query_term_def", "path")
         query.where(query.Or(absolute_path, relative_path))
         rows = query.execute(self.cursor).fetchall()
-        paths = set([row.path for row in rows])
+        paths = {row.path for row in rows}
 
         # Collect the indexable values and store them.
         terms = set()
@@ -1711,7 +1745,7 @@ class Doc(object):
           True if the document's title was changed; otherwise False
         """
 
-        self.session.log("Doc.update_title({})".format(self.id))
+        self.session.log(f"Doc.update_title({self.id})")
         if self.id and self.title is not None:
             title = self.__create_title()
             if title is not None and self.title != title:
@@ -1748,22 +1782,25 @@ class Doc(object):
 
         # Hand off the work to the private validation method.
         start = datetime.datetime.now()
-        self.session.log("Doc.validate({}, {!r})".format(self.id, opts))
+        self.session.log(f"Doc.validate({self.id}, {opts!r})")
         self._errors = []
         try:
             self.__validate(**opts)
 
             # Find out if there are changes to the database; if so, commit them.
             self.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.cursor.fetchone().tc:
+            if self.cursor.fetchall()[0].tc:
                 self.session.conn.commit()
             elapsed = (datetime.datetime.now() - start).total_seconds()
             self.session.logger.info("validated doc in %f seconds", elapsed)
         except:
-            self.session.logger.exception("Validation failed")
-            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.cursor.fetchone().tc:
-                self.cursor.execute("ROLLBACK TRANSACTION")
+            try:
+                self.session.logger.exception("Validation failed")
+                self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+                if self.cursor.fetchall()[0].tc:
+                    self.cursor.execute("ROLLBACK TRANSACTION")
+            except:
+                pass
             raise
 
     # ------------------------------------------------------------------
@@ -1775,7 +1812,7 @@ class Doc(object):
         Transform the document using an XSL/T filter
 
         Pass:
-          filter_xml - utf-8 bytes for serialized XSL/T document
+          filter_xml - serialized XSL/T document
           doc - parse tree object for document to be filtered
           parser - optional object capable of resolving URLs
           parms - dictionary of  parameters to be passed to the filtering
@@ -1786,8 +1823,11 @@ class Doc(object):
         """
 
         for name in parms:
-            if isinstance(parms[name], basestring):
-                parms[name] = etree.XSLT.strparam(parms[name])
+            value = parms[name]
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            if isinstance(value, str):
+                parms[name] = etree.XSLT.strparam(value)
         transform = etree.XSLT(etree.fromstring(filter_xml, parser))
         try:
             doc = transform(doc, **parms)
@@ -1844,7 +1884,6 @@ class Doc(object):
         before = opts.get("before") or opts.get("date")
         opts = dict(version=version, before=before)
         filters = []
-        #print("filter_specs={}".format(filter_specs))
         for spec in filter_specs:
             spec = str(spec)
             if spec.startswith("set:"):
@@ -1856,7 +1895,6 @@ class Doc(object):
                     doc_id = Doc.id_from_title(name, self.cursor)
                 else:
                     doc_id = spec
-                #print("doc_id={} opts={}".format(doc_id, opts))
                 filters.append(self.get_filter(doc_id, **opts))
         return filters
 
@@ -1883,11 +1921,12 @@ class Doc(object):
         # Look up the primary key matching the action's name.
         query = Query("action", "id")
         query.where(query.Condition("name", action))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
             raise Exception("Invalid action {!r}".format(action))
 
         # Prepare and execute the INSERT statement.
+        row = rows[0]
         when = datetime.datetime.now().replace(microsecond=0)
         values = self.id, self.session.user_id, row.id, program, comment, when
         fields = "document", "usr", "action", "program", "comment", "dt"
@@ -1912,10 +1951,10 @@ class Doc(object):
         # Look up the primary key matching the action's name.
         query = Query("action", "id")
         query.where(query.Condition("name", action))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
-            raise Exception("Invalid action {!r}".format(action))
-        action_id = row.id
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
+            raise Exception(f"Invalid action {action!r}")
+        action_id = rows[0].id
 
         # Prepare and execute the INSERT statement for the new row.
         values = self.id, when, action_id
@@ -1948,12 +1987,12 @@ class Doc(object):
         if self.id:
             query = Query("audit_trail", "MAX(dt) AS dt")
             query.where(query.Condition("document", self.id))
-            last = query.execute(self.cursor).fetchone().dt
+            last = query.execute(self.cursor).fetchall()[0].dt
             now = datetime.datetime.now().replace(microsecond=0)
             logged = False
             while now == last:
                 if not logged:
-                    message = "{}: audit trail delay".format(self.cdr_id)
+                    message = f"{self.cdr_id}: audit trail delay"
                     self.session.logger.warning(message)
                     logged = True
                 time.sleep(.1)
@@ -2069,9 +2108,9 @@ class Doc(object):
             query.join("checkout c", "c.usr = u.id")
             query.where(query.Condition("c.id", self.id))
             query.where("c.dt_in IS NULL")
-            row = query.execute(self.cursor).fetchone()
-            if row:
-                user_id, name, fullname, checked_out = row
+            rows = query.execute(self.cursor).fetchall()
+            if rows:
+                user_id, name, fullname, checked_out = rows[0]
                 if user_id != self.session.user_id:
                     args = self.session.user_name, name, fullname, checked_out
                     message = "User {} cannot check-in document checked out "
@@ -2088,7 +2127,7 @@ class Doc(object):
 
         # Check the basic add/modify permission for this document type.
         action = "MODIFY" if self.id else "ADD"
-        if not self.session.can_do("{} DOCUMENT".format(action), doctype):
+        if not self.session.can_do(f"{action} DOCUMENT", doctype):
             args = action.lower(), doctype
             message = "user not authorized to {} {} documents".format(*args)
             raise Exception(message)
@@ -2123,32 +2162,32 @@ class Doc(object):
             query.where(query.Condition("title", title))
             if self.id:
                 query.where(query.Condition("id", self.id, "<>"))
-            row = query.execute(self.cursor).fetchone()
-            if row.n:
-                raise Exception("title {!r} already exists".format(title))
+            rows = query.execute(self.cursor).fetchall()
+            if rows[0].n:
+                raise Exception(f"title {title!r} already exists")
 
         # If the active_status is being changed, make sure that's allowed.
         active_status_change = None
         if self.id:
             query = Query("all_docs", "active_status")
             query.where(query.Condition("id", self.id))
-            row = query.execute(self.cursor).fetchone()
-            if not row:
-                raise Exception("document {} not found".format(self.cdr_id))
-            active_status = row.active_status
+            rows = query.execute(self.cursor).fetchall()
+            if not rows:
+                raise Exception(f"document {self.cdr_id} not found")
+            active_status = rows[0].active_status
         else:
             active_status = "A"
         new_active_status = opts.get("active_status") or active_status
         if "D" in (active_status, new_active_status):
             raise Exception("can't save deleted document")
-        message = "Invalid active_status value {!r}".format(new_active_status)
+        message = f"Invalid active_status value {new_active_status!r}"
         assert new_active_status in ("A", "I"), message
         if new_active_status != active_status:
             action = "block" if active_status == "A" else "unblock"
-            message = "user not authorized to {} document".format(action)
+            message = f"user not authorized to {action} document"
             if not self.session.can_do("PUBLISH DOCUMENT", doctype):
                 raise Exception(message)
-            active_status_change = "{} DOCUMENT".format(action.upper())
+            active_status_change = f"{action.upper()} DOCUMENT"
 
         # Inform caller know about any additional audit actions to be recorded.
         return active_status_change
@@ -2183,7 +2222,7 @@ class Doc(object):
         # Find all the links to CDR documents.
         namespaces = dict(cdr="cips.nci.nih.gov/cdr")
         for local_name in ("ref", "href"):
-            xpath = "//*[@cdr:{}]".format(local_name)
+            xpath = f"//*[@cdr:{local_name}]"
             name = Doc.qname(local_name)
             for node in doc.xpath(xpath, namespaces=namespaces):
                 link = Link(self, node, name)
@@ -2196,7 +2235,7 @@ class Doc(object):
         for node in doc.xpath("//*[@cdr:id]", namespaces=namespaces):
             cdr_id = node.get(Link.CDR_ID)
             if cdr_id in self._frag_ids:
-                message = "cdr:id {!r} used more than once".format(cdr_id)
+                message = f"cdr:id {cdr_id!r} used more than once"
                 self.add_error(message, node.get("cdr-eid"), type=self.LINK)
             else:
                 self._frag_ids.add(cdr_id)
@@ -2228,8 +2267,8 @@ class Doc(object):
         # Find out where we are and check for infinite recursion.
         if len(loc) > self.MAX_LOCATION_LENGTH:
             raise Exception("Indexing beyond max allowed depth")
-        path = "{}/{}".format(parent, node.tag)
-        wild = "//{}".format(node.tag)
+        path = f"{parent}/{node.tag}"
+        wild = f"//{node.tag}"
         max_length = self.MAX_SQLSERVER_INDEX_SIZE
         error_opts = dict(type=self.OTHER, level=self.LEVEL_WARNING)
         template = "Only {} characters of {} will be indexed"
@@ -2244,11 +2283,11 @@ class Doc(object):
             terms.add((path, loc, value))
 
         # Do the same thing for each of the element's attributes.
-        namespace = "{{{}}}".format(Doc.NS)
+        namespace = f"{{{Doc.NS}}}"
         for name in node.attrib:
             prefixed_name = name.replace(namespace, "cdr:")
-            full_attr_path = "{}/@{}".format(path, prefixed_name)
-            wild_attr_path = "//@{}".format(prefixed_name)
+            full_attr_path = f"{path}/@{prefixed_name}"
+            wild_attr_path = f"//@{prefixed_name}"
             if full_attr_path in paths or wild_attr_path in paths:
                 value = node.attrib[name]
                 if len(value) > max_length:
@@ -2274,14 +2313,14 @@ class Doc(object):
 
         query = Query("doc_type", "title_filter")
         query.where(query.Condition("id", self.doctype.id))
-        row = query.execute(self.cursor).fetchone()
-        if not row or not row.title_filter:
-            message = "doctype {} has no title filter"
-            self.session.logger.warning(message.format(self.doctype.name))
+        rows = query.execute(self.cursor).fetchall()
+        if not rows or not rows[0].title_filter:
+            message = "doctype %s has no title filter"
+            self.session.logger.warning(message, self.doctype.name)
             return None
         try:
             opts = dict(doc=self.resolved)
-            return unicode(self.filter(row.title_filter, **opts).result_tree)
+            return str(self.filter(rows[0].title_filter, **opts).result_tree)
         except:
             self.session.logger.exception("__create_title() failure")
             return None
@@ -2307,22 +2346,23 @@ class Doc(object):
         # Get the document's BLOB ID (if any).
         query = Query("doc_blob_usage", "blob_id")
         query.where(query.Condition("doc_id", self.id))
-        row = query.execute(self.cursor).fetchone()
-        blob_id = row.blob_id if row else None
+        rows = query.execute(self.cursor).fetchall()
+        blob_id = rows[0].blob_id if rows else None
 
         # Figure out what the next version number is for the document.
         query = Query("doc_version", "MAX(num) AS n")
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.cursor).fetchone()
-        version = (row.n if row and row.n else 0) + 1
+        rows = query.execute(self.cursor).fetchall()
+        version = (rows[0].n if rows and rows[0].n else 0) + 1
 
         # Assemble the values for the insertion SQL.
         cols = "val_status", "val_date", "title", "xml", "comment", "doc_type"
         query = Query("document", *cols)
         query.where(query.Condition("id", self.id))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
             raise Exception("Can't version a document which hasn't been saved")
+        row = rows[0]
         val_date = row.val_date
         if isinstance(val_date, datetime.datetime):
             val_date = val_date.replace(microsecond=0)
@@ -2385,8 +2425,8 @@ class Doc(object):
             query = Query(table, "blob_id")
             query.where(query.Condition("doc_id", self.id))
             rows = query.execute(self.cursor).fetchall()
-            blob_ids |= set([row.blob_id for row in rows])
-            delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
+            blob_ids |= {row.blob_id for row in rows}
+            delete = f"DELETE FROM {table} WHERE doc_id = ?"
             self.cursor.execute(delete, (self.id,))
 
         # Remove the BLOBs themselves.
@@ -2426,11 +2466,12 @@ class Doc(object):
             args = doc.cdr_id, doc.title
             message = "Document {} ({}) links to this document".format(*args)
             if frag_id:
-                message += " Fragment({})".format(frag_id)
+                message += f" Fragment({frag_id})"
             self.add_error(message, type=self.LINK)
 
         # Tell the caller not to proceed with the deletion (links were found).
         if opts.get("validate"):
+            self.session.logger.warning("Deletion of %s blocked", self.id)
             return False
 
         # Delete the links and tell the caller to proceed with the 'deletion'.
@@ -2456,7 +2497,7 @@ class Doc(object):
 
         for node in schema:
             if node.tag == Schema.ANNOTATION:
-                for child in node.findall("{}/pattern".format(Schema.APPINFO)):
+                for child in node.findall(f"{Schema.APPINFO}/pattern"):
                     rule_set = self.RuleSet(child)
                     if rule_set.name not in sets:
                         sets[rule_set.name] = []
@@ -2485,9 +2526,9 @@ class Doc(object):
         query.where(query.Condition("id", self.id))
         if self.version:
             query.where(query.Condition("num", self.version))
-        row = query.execute(self.cursor).fetchone()
-        if row:
-            return row[0]
+        rows = query.execute(self.cursor).fetchall()
+        if rows:
+            return rows[0][0]
         self.session.logger.warning("%s for %s not found", column, self.cdr_id)
         return None
 
@@ -2507,7 +2548,7 @@ class Doc(object):
             if node.tag in allowed:
                 if not node.get(Link.CDR_ID):
                     highest_fragment_id += 1
-                    fragment_id = "_{:d}".format(highest_fragment_id)
+                    fragment_id = f"_{highest_fragment_id:d}"
                     node.set(Link.CDR_ID, fragment_id)
         self._xml = etree.tostring(self.root, encoding="utf-8").decode("utf-8")
         self._resolved = None
@@ -2529,10 +2570,10 @@ class Doc(object):
 
         query = Query("filter_set", "id")
         query.where(query.Condition("name", name))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
             return []
-        return self.__get_filter_set_by_id(row.id, 0, **opts)
+        return self.__get_filter_set_by_id(rows[0].id, 0, **opts)
 
     def __get_filter_set_by_id(self, set_id, depth, **opts):
         """
@@ -2604,10 +2645,10 @@ class Doc(object):
         query.join("version_label l", "l.id = d.label")
         query.where(query.Condition("v.id", self.id))
         query.where(query.Condition("l.name", label))
-        row = query.execute(self.cursor).fetchone()
-        if not row.n:
-            raise Exception("no version labeled {}".format(label))
-        return row.n
+        rows = query.execute(self.cursor).fetchall()
+        if not rows[0].n:
+            raise Exception(f"no version labeled {label}")
+        return rows[0].n
 
     def __get_schema(self):
         """
@@ -2622,11 +2663,11 @@ class Doc(object):
 
         query = Query("document", "title")
         query.where(query.Condition("id", self.doctype.schema_id))
-        row = query.execute(self.cursor).fetchone()
-        assert row, "no schema for document type {}".format(self.doctype.name)
+        rows = query.execute(self.cursor).fetchall()
+        assert rows, f"no schema for document type {self.doctype.name}"
         parser = etree.XMLParser()
         parser.resolvers.add(self.SchemaResolver(self.cursor))
-        xml = self.get_schema_xml(row.title, self.cursor)
+        xml = self.get_schema_xml(rows[0].title, self.cursor)
         return etree.fromstring(xml.encode("utf-8"), parser)
 
     def __get_version_before(self, before, publishable=None):
@@ -2648,7 +2689,7 @@ class Doc(object):
             try:
                 when = dateutil.parser.parse(before)
             except:
-                message = "unrecognized date/time format: {!r}".format(before)
+                message = f"unrecognized date/time format: {before!r}"
                 raise Exception(message)
 
         # Workaround for bug in adodbapi.
@@ -2659,10 +2700,10 @@ class Doc(object):
         query.where(query.Condition("dt", when, "<"))
         if publishable is True:
             query.where("publishable = 'Y'")
-        row = query.execute(self.cursor).fetchone()
-        if not row:
-            raise Exception("no version before {}".format(when))
-        return row.n
+        rows = query.execute(self.cursor).fetchall()
+        if not rows:
+            raise Exception(f"no version before {when}")
+        return rows[0].n
 
     def __insert_eids(self, root=None):
         """
@@ -2681,8 +2722,18 @@ class Doc(object):
         if root is not None:
             eid = 1
             for node in root.iter("*"):
-                node.set("cdr-eid", "_{:d}".format(eid))
+                node.set("cdr-eid", f"_{eid:d}")
                 eid += 1
+
+    def __lt__(self, other):
+        """
+        Allow sorting of documents by normalized title.
+
+        Pass:
+            other - `Doc` object with which we are comparing this one.
+        """
+
+        return self.title.lower().strip() < other.title.lower().strip()
 
     def __namespaces_off(self, root):
         """
@@ -2698,7 +2749,7 @@ class Doc(object):
         """
 
         if root is not None:
-            NS = "{{{}}}".format(self.NS)
+            NS = f"{{{self.NS}}}"
             for node in root.iter("*"):
                 for name in node.attrib:
                     if name.startswith(NS):
@@ -2849,10 +2900,10 @@ class Doc(object):
         """
 
         action = "Block" if status == self.INACTIVE else "Unblock"
-        comment = opts.get("comment", "{}ing document".format(action))
+        comment = opts.get("comment", f"{action}ing document")
         args = "set_status()", "MODIFY DOCUMENT"
         when = self.__audit_action(*args, comment=opts.get("comment"))
-        self.__audit_added_action("{} DOCUMENT".format(action.upper()), when)
+        self.__audit_added_action(f"{action.upper()} DOCUMENT", when)
         update = "UPDATE all_docs SET active_status = ? WHERE id = ?"
         self.cursor.execute(update, (status, self.id))
 
@@ -2910,7 +2961,7 @@ class Doc(object):
         # case the title filter uses the document ID).
         if not self.id:
             self.cursor.execute("SELECT @@IDENTITY AS id")
-            self._id = int(self.cursor.fetchone().id)
+            self._id = int(self.cursor.fetchall()[0].id)
             title = self.__create_title()
             if title and title != fields["title"]:
                 update = "UPDATE document SET title = ? WHERE id = ?"
@@ -2949,15 +3000,15 @@ class Doc(object):
         # Find out if a BLOB is already connected to the document.
         query = Query("doc_blob_usage", "blob_id")
         query.where(query.Condition("doc_id", self.id))
-        row = query.execute(self.cursor).fetchone()
-        blob_id = row.blob_id if row else None
+        rows = query.execute(self.cursor).fetchall()
+        blob_id = rows[0].blob_id if rows else None
         if blob_id:
 
             # Find out if the BLOB is connected with any of the doc's versions.
             query = Query("version_blob_usage", "COUNT(*) AS n")
             query.where(query.Condition("blob_id", blob_id))
-            row = query.execute(self.cursor).fetchone()
-            blob_is_versioned = row.n > 0
+            rows = query.execute(self.cursor).fetchall()
+            blob_is_versioned = rows[0].n > 0
             if not self.blob:
 
                 # self.blob is an empty sequence of bytes; break the link.
@@ -2975,7 +3026,7 @@ class Doc(object):
             # We have a real BLOB--see if it has changed.
             query = Query("doc_blob", "data")
             query.where(query.Condition("id", blob_id))
-            blob = query.execute(self.cursor).fetchone().data
+            blob = query.execute(self.cursor).fetchall()[0].data
 
             # If the BLOB is unchanged we're done.
             if blob == self.blob:
@@ -3005,7 +3056,7 @@ class Doc(object):
 
         # Connect the document to the BLOB.
         self.cursor.execute("SELECT @@IDENTITY AS blob_id")
-        blob_id = self.cursor.fetchone().blob_id
+        blob_id = self.cursor.fetchall()[0].blob_id
         self.cursor.execute(dbu, (blob_id, self.id))
         return blob_id
 
@@ -3028,8 +3079,8 @@ class Doc(object):
         query = Query("link_net", "source_elem", "url")
         query.where(query.Condition("source_doc", self.id))
         rows = query.execute(self.cursor).fetchall()
-        old_links = set([tuple(row) for row in rows])
-        new_links = set([link.key for link in links if link.linktype])
+        old_links = {tuple(row) for row in rows}
+        new_links = {link.key for link in links if link.linktype}
         wanted = new_links - old_links
         unwanted = old_links - new_links
         args = len(wanted), len(unwanted)
@@ -3060,7 +3111,7 @@ class Doc(object):
         query = Query("link_fragment", "fragment")
         query.where(query.Condition("doc_id", self.id))
         rows = query.execute(self.cursor).fetchall()
-        old = set([row.fragment for row in rows])
+        old = {row.fragment for row in rows}
         new = self.frag_ids or set()
         wanted = new - old
         unwanted = old - new
@@ -3105,14 +3156,14 @@ class Doc(object):
         query = Query(table, "path", "node_loc", "value")
         query.where(query.Condition("doc_id", self.id))
         rows = query.execute(self.cursor).fetchall()
-        old_terms = set([tuple(row) for row in rows])
+        old_terms = {tuple(row) for row in rows}
 
         # Figure out what needs to be eliminated, what needs to be added.
         unwanted = old_terms - terms
         wanted = terms - old_terms
 
         # If the "optimized" approach will be inefficient, start fresh.
-        delete = "DELETE FROM {} WHERE doc_id = ?".format(table)
+        delete = f"DELETE FROM {table} WHERE doc_id = ?"
         if len(unwanted) > 1000 and len(unwanted) > len(terms) / 2:
             wanted = terms
             self.cursor.execute(delete, (self.id,))
@@ -3163,7 +3214,7 @@ class Doc(object):
         invalidates the `root` property, forcing it to be reparsed.
         """
 
-        self.xml = unicode(self.filter("name:Strip XMetaL PIs").result_tree)
+        self.xml = str(self.filter("name:Strip XMetaL PIs").result_tree)
 
     def __update_val_status(self, store):
         """
@@ -3276,7 +3327,7 @@ class Doc(object):
 
         # Check for an error found in Microsoft documents which schema
         # validation can't detect. Do this for all documents.
-        if re.search(u"[\uE000-\uF8FF]+", validation_xml):
+        if re.search("[\uE000-\uF8FF]+", validation_xml):
             message = "Document contains private use character(s)"
             self.add_error(message)
 
@@ -3378,7 +3429,7 @@ class Doc(object):
 
         if not self.doctype or not self.doctype.id:
             problem = "invalid" if self.doctype else "missing"
-            raise Exception("__validate_links(): {} doctype".format(problem))
+            raise Exception(f"__validate_links(): {problem} doctype")
         links = self.__collect_links(resolved)
         for link in links:
             if link.internal:
@@ -3406,14 +3457,13 @@ class Doc(object):
           comment - optional string describing the label's usage
         """
 
-        args = label, comment
-        session.log("Doc.create_label({!r}, comment={!r})".format(*args))
+        session.log(f"Doc.create_label({label!r}, comment={comment!r})")
         assert label, "Missing label name"
         cursor = session.conn.cursor()
         query = Query("version_label", "COUNT(*) AS n")
         query.where(query.Condition("name", label))
-        if query.execute(cursor).fetchone().n > 0:
-            raise Exception("Label {!r} already exists".format(label))
+        if query.execute(cursor).fetchall()[0].n > 0:
+            raise Exception(f"Label {label!r} already exists")
         insert = "INSERT INTO version_label (name, comment) VALUES (?, ?)"
         cursor.execute(insert, (label, comment))
         session.conn.commit()
@@ -3435,15 +3485,15 @@ class Doc(object):
           label - string name for label to be removed
         """
 
-        session.log("Doc.delete_label({!r})".format(label))
+        session.log(f"Doc.delete_label({label!r})")
         assert label, "Missing label name"
         cursor = session.conn.cursor()
         query = Query("version_label", "id")
         query.where(query.Condition("name", label))
-        row = query.execute(cursor).fetchone()
-        if not row:
-            raise Exception("Can't find label {!r}".format(label))
-        label_id = row.id
+        rows = query.execute(cursor).fetchall()
+        if not rows:
+            raise Exception(f"Can't find label {label!r}")
+        label_id = rows[0].id
         delete = "DELETE FROM doc_version_label WHERE label = ?"
         cursor.execute(delete, (label_id,))
         delete = "DELETE FROM version_label WHERE id = ?"
@@ -3453,7 +3503,7 @@ class Doc(object):
         except:
             cursor.execute("ROLLBACK TRANSACTION")
             session.logger.exception("delete_label() failure")
-            raise Exception("Failure deleting label {!r}".format(label))
+            raise Exception(f"Failure deleting label {label!r}")
 
     @staticmethod
     def extract_id(arg):
@@ -3461,8 +3511,10 @@ class Doc(object):
         Return the CDR document ID as an integer (ignoring fragment suffixes)
         """
 
-        if isinstance(arg, basestring):
-            return int(re.sub(r"[^\d]", "", str(arg).split("#")[0]))
+        if isinstance(arg, bytes):
+            arg = arg.decode("utf-8")
+        if isinstance(arg, str):
+            return int(re.sub(r"[^\d]", "", arg.split("#")[0]))
         return int(arg)
 
     @staticmethod
@@ -3507,9 +3559,9 @@ class Doc(object):
         query = Query("document", "xml")
         query.where(query.Condition("id", schema_id))
         try:
-            return query.execute(cursor).fetchone().xml
+            return query.execute(cursor).fetchall()[0].xml
         except:
-            raise Exception("schema {!r} not found".format(name))
+            raise Exception(f"schema {name!r} not found")
 
     @staticmethod
     def id_from_title(title, cursor=None):
@@ -3535,7 +3587,7 @@ class Doc(object):
         query.where(query.Condition("title", title))
         rows = query.execute(cursor).fetchall()
         if len(rows) > 1:
-            raise Exception("Multiple documents with title {}".format(title))
+            raise Exception(f"Multiple documents with title {title}")
         for row in rows:
             return row.id
         return None
@@ -3561,14 +3613,14 @@ class Doc(object):
 
         session.log("Doc.delete_failed_mailers()")
         class CleanupReport:
-            def __init__(self): self.deleted, self.errors = [],[]
+            def __init__(self): self.deleted, self.errors = [], []
         reason = "Deleting tracking document for failed mailer job"
         report = CleanupReport()
         cursor = session.conn.cursor()
         query = Query("query_term q", "q.doc_id").unique()
         query.join("pub_proc p", "p.id = q.int_val", "p.status = 'Failure'")
         query.where("q.path = '/Mailer/JobId'")
-        query.where("q.doc_id > {}".format(cls.LEGACY_MAILER_CUTOFF))
+        query.where(f"q.doc_id > {cls.LEGACY_MAILER_CUTOFF}")
         for row in query.execute(cursor).fetchall():
             try:
                 Doc(session, id=row.doc_id).delete(reason=reason)
@@ -3645,11 +3697,11 @@ class Doc(object):
 
         if doc_id is None:
             return None
-        if isinstance(doc_id, basestring):
-            if not isinstance(doc_id, unicode):
+        if isinstance(doc_id, (str, bytes)):
+            if isinstance(doc_id, bytes):
                 doc_id = doc_id.decode("ascii")
             doc_id = int(re.sub("[^0-9]", "", doc_id))
-        return "CDR{:010d}".format(doc_id)
+        return f"CDR{doc_id:010d}"
 
     @classmethod
     def qname(cls, local, ns=None):
@@ -3663,7 +3715,7 @@ class Doc(object):
 
         if ns is None:
             ns = cls.NS
-        return "{{{}}}{}".format(ns, local)
+        return f"{{{ns}}}{local}"
 
 
     # ------------------------------------------------------------------
@@ -3721,9 +3773,9 @@ class Doc(object):
             IF = Doc.qname("if", Filter.NS)
             CALL = Doc.qname("call-template", Filter.NS)
             WITH = Doc.qname("with-param", Filter.NS)
-            test = etree.Element(IF, test="not({})".format(self.test))
+            test = etree.Element(IF, test=f"not({self.test})")
             call = etree.SubElement(test, CALL, name="pack-error")
-            message = '"{}"'.format(self.message)
+            message = f'"{self.message}"'
             etree.SubElement(call, WITH, name="msg", select=message)
             return test
 
@@ -4198,7 +4250,7 @@ class Resolver(etree.Resolver):
             return self.__get_doc(scheme, parms, context)
         elif scheme == "cdrutil":
             return self.__run_function(parms, context)
-        raise Exception("unsupported url {!r}".format(self.url))
+        raise Exception(f"unsupported url {self.url!r}")
 
     def __get_doc(self, scheme, parms, context):
         """
@@ -4214,7 +4266,7 @@ class Resolver(etree.Resolver):
         """
 
         # Prepare for failure.
-        message = "Unable to resolve uri {!r}".format(parms)
+        message = f"Unable to resolve uri {parms!r}"
 
         # Documents (usually, but not always, Filters) can be fetched by name.
         if parms.startswith("name:"):
@@ -4227,7 +4279,7 @@ class Resolver(etree.Resolver):
             if not doc_id:
                 if scheme == "cdrx":
                     return self.resolve_string("<empty/>", context)
-                raise Exception("Filter {!r} not found".format(title))
+                raise Exception(f"Filter {title!r} not found")
             doc = Doc(self.session, id=doc_id, version=version)
             if doc.doctype.name == "Filter":
                 doc_xml = doc.get_filter(doc_id, version=version).xml
@@ -4249,7 +4301,7 @@ class Resolver(etree.Resolver):
                 try:
                     doc = Doc(self.session, id=doc_id, version=version)
                 except:
-                    message = "Doc({}) failure".format(parms)
+                    message = f"Doc({parms}) failure"
                     self.doc.session.logger.exception(message)
                     if scheme == "cdrx":
                         return self.resolve_string("<empty/>", context)
@@ -4259,7 +4311,7 @@ class Resolver(etree.Resolver):
             try:
                 doc = Doc(self.session, id=parms)
             except:
-                message = "Doc({}) failure".format(parms)
+                message = f"Doc({parms}) failure"
                 self.doc.session.logger.exception(message)
                 if scheme == "cdrx":
                     return self.resolve_string("<empty/>", context)
@@ -4284,7 +4336,8 @@ class Resolver(etree.Resolver):
         try:
             return self.resolve_string(doc.xml, context)
         except:
-            self.doc.session.logger.exception("resolve_string() failure")
+            msg = "resolve_string() [context=%r, scheme=%r]"
+            self.doc.session.logger.exception(msg, context, scheme)
             if scheme == "cdrx":
                 return self.resolve_string("<empty/>", context)
             raise Exception(message)
@@ -4314,11 +4367,11 @@ class Resolver(etree.Resolver):
         function, args = parms, None
         if "/" in parms:
             function, args = parms.split("/", 1)
-        method_name = "_{}".format(function.lower().replace("-", "_"))
+        method_name = f"_{function.lower().replace('-', '_')}"
         handler = getattr(self, method_name)
         if handler is not None:
             return handler(args, context)
-        error = "unsupported function {!r} in {!r}".format(function, self.url)
+        error = f"unsupported function {function!r} in {self.url!r}"
         raise Exception(error)
 
     def _date(self, args, context):
@@ -4340,8 +4393,8 @@ class Resolver(etree.Resolver):
             front, back = now.split(".", 1)
         else:
             front, back = now, ""
-        back = "{}000".format(back)[:3]
-        result.text = "{}.{}".format(front, back)
+        back = f"{back}000"[:3]
+        result.text = f"{front}.{back}"
         return self.__package_result(result, context)
 
     def _dedup_ids(self, args, context):
@@ -4478,7 +4531,7 @@ class Resolver(etree.Resolver):
                     col.set("null", "Y")
                 else:
                     try:
-                        col.text = unicode(v)
+                        col.text = str(v)
                     except:
                         col.text = v.decode("utf-8")
             r += 1
@@ -4501,9 +4554,9 @@ class Resolver(etree.Resolver):
         result = etree.Element("ValidZip")
         query = Query("zipcode", "zip")
         query.where(query.Condition("zip", args[:5]))
-        row = query.execute(self.cursor).fetchone()
-        if row and row.zip:
-            result.text = str(row.zip)[:5]
+        rows = query.execute(self.cursor).fetchall()
+        if rows and rows[0].zip:
+            result.text = str(rows[0].zip)[:5]
         return self.__package_result(result, context)
 
     def _extern_map(self, args, context):
@@ -4730,7 +4783,7 @@ class Term:
         try:
             doc_id = Doc.extract_id(node.get(Link.CDR_REF))
         except:
-            error = "No cdr:ref for parent of Term {}".format(self.cdr_id)
+            error = f"No cdr:ref for parent of Term {self.cdr_id}"
             raise Exception(failure)
         if doc_id not in self.parents:
             parent = Term.get_term(self.session, doc_id, depth + 1)
@@ -4751,7 +4804,7 @@ class Term:
 
         # Stop if recursion has gotten out of hand.
         if depth > cls.MAX_DEPTH:
-            error = "term hierarchy depth exceeded at CDR()".format(doc_id)
+            error = f"term hierarchy depth exceeded at CDR{doc_id}"
             raise Exception(error)
 
         # Pull the Term object from the cache if we already have it.
@@ -4796,7 +4849,7 @@ class Filter:
         """
 
         self.doc_id = doc_id
-        self.xml = xml.encode("utf-8") if isinstance(xml, unicode) else xml
+        self.xml = xml #.encode("utf-8") if isinstance(xml, str) else xml
         self.now = time.time()
 
 
@@ -4834,6 +4887,10 @@ class Doctype:
     Class of CDR documents controlled by a schema
     """
 
+    # Cache of elements for each doctype which have no #PCDATA nodes.
+    # Used by Doc.normalize().
+    ELEMENT_ONLY = {}
+
     def __init__(self, session, **opts):
         """
         Construct a new `Doctype` argument
@@ -4862,6 +4919,10 @@ class Doctype:
         self.__session = session
         self.__opts = opts
 
+    def __str__(self):
+        """How to display the document type."""
+        return self.name
+
     @property
     def active(self):
         """
@@ -4876,8 +4937,8 @@ class Doctype:
                 if self.id:
                     query = Query("doc_type", "active")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.cursor).fetchone()
-                    self._active = row.active if row else "Y"
+                    rows = query.execute(self.cursor).fetchall()
+                    self._active = rows[0].active if rows else "Y"
                 else:
                     self._active = "Y"
         assert self._active in "YN", "invalid doctype active value"
@@ -4900,8 +4961,8 @@ class Doctype:
             elif self.id:
                 query = Query("doc_type", "comment")
                 query.where(query.Condition("id", self.id))
-                row = query.execute(self.cursor).fetchone()
-                self._comment = row.comment if row else None
+                rows = query.execute(self.cursor).fetchall()
+                self._comment = rows[0].comment if rows else None
             else:
                 self._comment = None
             if self._comment:
@@ -4960,12 +5021,10 @@ class Doctype:
                 query = Query("format f", "f.name", "f.id")
                 query.join("doc_type t", "t.format = f.id")
                 query.where(query.Condition("t.id", self.id))
-                row = query.execute(self.cursor).fetchone()
-                if row:
-                    self._format, self._format_id = row
-                else:
-                    self._format = "xml"
-            else:
+                rows = query.execute(self.cursor).fetchall()
+                if rows:
+                    self._format, self._format_id = rows[0]
+            if not self._format:
                 self._format = "xml"
         return self._format
 
@@ -4974,7 +5033,7 @@ class Doctype:
         self._format = value
         format_id = self.__format_id_from_name(value)
         if format_id is None:
-            raise Exception("Unrecognized doctype format {!r}".format(value))
+            raise Exception(f"Unrecognized doctype format {value!r}")
         self._format_id = format_id
 
     @property
@@ -5005,8 +5064,8 @@ class Doctype:
                 if name:
                     query = Query("doc_type", "id")
                     query.where(query.Condition("name", name))
-                    row = query.execute(self.cursor).fetchone()
-                    self._id = row.id if row else None
+                    rows = query.execute(self.cursor).fetchall()
+                    self._id = rows[0].id if rows else None
                 else:
                     self.session.logger.warning("Doctype.id: NO NAME!!!")
         return self._id
@@ -5022,8 +5081,8 @@ class Doctype:
             if not self._name and self.id:
                 query = Query("doc_type", "name")
                 query.where(query.Condition("id", self.id))
-                row = query.execute(self.cursor).fetchone()
-                self._name = row.name if row else None
+                rows = query.execute(self.cursor).fetchall()
+                self._name = rows[0].name if rows else None
         return self._name
 
     @name.setter
@@ -5054,9 +5113,9 @@ class Doctype:
                 query = Query("document d", "d.id", "d.title")
                 query.join("doc_type t", "t.xml_schema = d.id")
                 query.where(query.Condition("t.id", self.id))
-                row = query.execute(self.cursor).fetchone()
-                if row:
-                    self._schema_id, self._schema = row
+                rows = query.execute(self.cursor).fetchall()
+                if rows:
+                    self._schema_id, self._schema = rows[0]
             else:
                 self.session.logger.warning("@schema: no doctype id")
                 self._schema = None
@@ -5070,7 +5129,7 @@ class Doctype:
         else:
             schema_id = Doc.id_from_title(value, self.cursor)
             if not schema_id:
-                raise Exception("Schema {!r} not found".format(value))
+                raise Exception(f"Schema {value!r} not found")
             self._schema_id = schema_id
 
     @property
@@ -5085,8 +5144,7 @@ class Doctype:
                 if schema_id:
                     self._schema_id = schema_id
                 else:
-                    message = "Schema {!r} not found".format(self.schema)
-                    raise Exception(message)
+                    raise Exception(f"Schema {self.schema!r} not found")
         return self._schema_id
 
     @property
@@ -5127,9 +5185,9 @@ class Doctype:
                 query = Query("document d", "d.id", "d.title")
                 query.join("doc_type t", "t.title_filter = d.id")
                 query.where(query.Condition("t.id", self.id))
-                row = query.execute(self.cursor).fetchone()
-                if row:
-                    self._title_filter_id, self._title_filter = row
+                rows = query.execute(self.cursor).fetchall()
+                if rows:
+                    self._title_filter_id, self._title_filter = rows[0]
             else:
                 self.session.logger.warning("@title_filter: no doctype id")
                 self._title_filter = None
@@ -5147,8 +5205,7 @@ class Doctype:
                 if _id:
                     self._title_filter_id = _id
                 else:
-                    message = "Filter {!r} not found".format(self.title_filter)
-                    raise Exception(message)
+                    raise Exception(f"Filter {self.title_filter!r} not found")
             else:
                 self._title_filter_id = None
         return self._title_filter_id
@@ -5165,8 +5222,8 @@ class Doctype:
                 if self.id:
                     query = Query("doc_type", "versioning")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.cursor).fetchone()
-                    self._versioning = row.versioning if row else "Y"
+                    rows = query.execute(self.cursor).fetchall()
+                    self._versioning = rows[0].versioning if rows else "Y"
                 else:
                     self._versioning = "Y"
         assert self._versioning in "YN", "invalid doctype versioning value"
@@ -5212,14 +5269,14 @@ class Doctype:
           client XML wrapper command CdrDelDocType
         """
 
-        self.session.log("Doctype.delete({!r})".format(self.name))
+        self.session.log(f"Doctype.delete({self.name!r})")
         if not self.session.can_do("DELETE DOCTYPE"):
             raise Exception("User not authorized to delete document types")
         if not self.id:
-            raise Exception("Document type {!r} not found".format(self.name))
+            raise Exception(f"Document type {self.name!r} not found")
         query = Query("all_docs", "COUNT(*) AS n")
         query.where(query.Condition("doc_type", self.id))
-        if query.execute(self.cursor).fetchone().n:
+        if query.execute(self.cursor).fetchall()[0].n:
             message = "Cannot delete document type for which documents exist"
             raise Exception(message)
         tables = [
@@ -5229,7 +5286,7 @@ class Doctype:
             ("doc_type", "id")
         ]
         for table, column in tables:
-            sql = "DELETE FROM {} WHERE {} = ?".format(table, column)
+            sql = f"DELETE FROM {table} WHERE {column} = ?"
             self.cursor.execute(sql, (self.id,))
         self.session.conn.commit()
 
@@ -5281,7 +5338,7 @@ class Doctype:
                        have separate versions created) or "N"
         """
 
-        self.session.log("Doctype.save({!r}, {!r})".format(self.name, opts))
+        self.session.log(f"Doctype.save({self.name!r}, {opts!r})")
         now = datetime.datetime.now().replace(microsecond=0)
         try:
             fields = {
@@ -5310,7 +5367,7 @@ class Doctype:
         else:
             names = sorted(fields)
             values = tuple([fields[name] for name in names] + [self.id])
-            assignments = ["{} = ?".format(name) for name in names]
+            assignments = [f"{name} = ?" for name in names]
             pattern = "UPDATE doc_type SET {} WHERE id = ?"
             sql = pattern.format(", ".join(assignments))
         self.session.logger.debug("sql=%s", sql)
@@ -5320,7 +5377,7 @@ class Doctype:
         if not self.id:
             self._created = now
             self.cursor.execute("SELECT @@IDENTITY AS id")
-            self._id = self.cursor.fetchone().id
+            self._id = self.cursor.fetchall()[0].id
         self.session.conn.commit()
         self.session.logger.debug("committed doctype %s", self.id)
         return self.id
@@ -5338,8 +5395,8 @@ class Doctype:
 
         query = Query("format", "id")
         query.where(query.Condition("name", name))
-        row = query.execute(self.cursor).fetchone()
-        return row.id if row else None
+        rows = query.execute(self.cursor).fetchall()
+        return rows[0].id if rows else None
 
     def __fetch_dates(self):
         """
@@ -5357,10 +5414,10 @@ class Doctype:
         if self.id:
             query = Query("doc_type", "created", "schema_date")
             query.where(query.Condition("id", self.id))
-            row = query.execute(self.cursor).fetchone()
-            if row:
+            rows = query.execute(self.cursor).fetchall()
+            if rows:
                 values = []
-                for value in row:
+                for value in rows[0]:
                     if isinstance(value, datetime.datetime):
                         value = value.replace(microsecond=0)
                     values.append(value)
@@ -5465,6 +5522,20 @@ class Doctype:
         return [row.name for row in query.execute(session.cursor).fetchall()]
 
     @staticmethod
+    def list_formats(session):
+        """Assemble the list of CDR document type format names.
+
+        Pass:
+          session - reference to object representing user's login
+
+        Return:
+          sequence of document type format names, sorted alphabetically
+        """
+
+        query = Query("format", "name").order("name")
+        return [row.name for row in query.execute(session.cursor).fetchall()]
+
+    @staticmethod
     def list_schema_docs(session):
         """
         Assemble the list of schema documents currently stored in the CDR
@@ -5485,6 +5556,43 @@ class Doctype:
         query.join("doc_type t", "t.id = d.doc_type")
         query.where("t.name = 'schema'")
         return [row.title for row in query.execute(session.cursor).fetchall()]
+
+    @staticmethod
+    def list_title_filters(session):
+        """Assemble the list of CDR document type format names.
+
+        Pass:
+          session - reference to object representing user's login
+
+        Return:
+          sequence of document type format names, sorted alphabetically
+        """
+
+        query = Query("document d", "d.title").order("d.title")
+        query.join("doc_type t", "t.id = d.doc_type")
+        query.where(query.Condition("d.title", "DocTitle for %", "LIKE"))
+        return [row.title for row in query.execute(session.cursor).fetchall()]
+
+    @classmethod
+    def element_only_list(cls, session, doctype):
+        """Get the list of elements without #PCDATA for a doctype.
+
+        Pass:
+            doctype - string naming document type; index into cache
+
+        Return:
+            set of strings for element tags
+        """
+
+        element_only = cls.ELEMENT_ONLY.get(doctype)
+        if element_only is None:
+            element_only = set()
+            schema = cls(session, name=doctype).schema
+            for line in str(DTD(session, name=schema)).splitlines():
+                if line.startswith("<!ELEMENT") and "#PCDATA" not in line:
+                    element_only.add(line.split()[1])
+            cls.ELEMENT_ONLY[doctype] = element_only
+        return element_only
 
 
 class DTD:
@@ -5577,7 +5685,7 @@ class DTD:
 
         self.values = dict()
         self.linking_elements = set()
-        lines = ["<!-- Generated from {} -->".format(self.name), ""]
+        lines = [f"<!-- Generated from {self.name} -->", ""]
         self.defined = set()
         self.top.define(lines)
         return "\n".join(lines) + "\n"
@@ -5587,7 +5695,7 @@ class DTD:
         Insert the type object into the `types` dictionary attribute
         """
 
-        assert t not in self.types, "duplicate type {}".format(t.name)
+        assert t not in self.types, f"duplicate type {t.name}"
         self.types[t.name] = t
 
 
@@ -5741,7 +5849,7 @@ class DTD:
             if self.name not in [element.name for element in elements]:
                 elements.append(self)
             if serialize:
-                return "{}{}".format(self.name, self.count_char)
+                return f"{self.name}{self.count_char}"
 
 
     class Type:
@@ -5812,7 +5920,7 @@ class DTD:
               DTD definition string for element
             """
 
-            return "<!ELEMENT {} (#PCDATA)>".format(element.name)
+            return f"<!ELEMENT {element.name} (#PCDATA)>"
 
         def define_attributes(self, element):
             """
@@ -5837,9 +5945,9 @@ class DTD:
               DTD equivalent for schema type if found; otherwise "CDATA"
             """
 
-            for n in ("ID", "IDREFS", "NMTOKEN", "NMTOKENS"):
-                if schema_type == "xsd:{}".format(n):
-                    return n
+            for name in ("ID", "IDREFS", "NMTOKEN", "NMTOKENS"):
+                if schema_type == f"xsd:{name}":
+                    return name
             return "CDATA"
 
 
@@ -5885,12 +5993,11 @@ class DTD:
             """
 
             if self.nmtokens:
-                return "({})".format("|".join(sorted(self.nmtokens)))
+                return f"({'|'.join(sorted(self.nmtokens))})"
             if "xsd:" in self.base:
                 return DTD.Type.map_type(self.base)
             base = self.dtd.types.get(self.base)
-            args = self.name, self.base
-            assert base, "{}: base type {} not found".format(*args)
+            assert base, f"{self.name}: base type {self.base} not found"
             return base.dtd_type()
 
 
@@ -5906,8 +6013,8 @@ class DTD:
 
         # Prepared error message for multiple content definitions
         CONTENT = "sequence", "choice", "simpleContent", "group"
-        CNAMES = ", ".join(["xsd:{}".format(c) for c in CONTENT])
-        ERROR = "complex type may only contain one of {}".format(CNAMES)
+        CNAMES = ", ".join([f"xsd:{c}" for c in CONTENT])
+        ERROR = f"complex type may only contain one of {CNAMES}"
 
         def __init__(self, dtd, node):
             """
@@ -5929,12 +6036,11 @@ class DTD:
                 if child.tag == Schema.ATTRIBUTE:
                     self.add_attribute(dtd, child)
                 elif self.content:
-                    raise Exception("{}: {}".format(self.name, self.ERROR))
+                    raise Exception(f"{self.name}: {self.ERROR}")
                 elif child.tag == Schema.SIMPLE_CONTENT:
                     self.model = DTD.TEXT_ONLY
                     extension = child.find(Schema.EXTENSION)
-                    message = "{}: missing extension".format(self.name)
-                    assert len(extension), message
+                    assert len(extension), f"{self.name}: missing extension"
                     self.base = extension.get("base")
                     for child in extension.findall(Schema.ATTRIBUTE):
                         self.add_attribute(dtd, child)
@@ -5949,7 +6055,7 @@ class DTD:
                     elif child.tag == Schema.GROUP:
                         self.content = DTD.Group(dtd, child)
                     else:
-                        raise Exception("{}: {}".format(self.name, self.ERROR))
+                        raise Exception(f"{self.name}: {self.ERROR}")
             dtd.add_type(self)
 
         def add_attribute(self, dtd, child):
@@ -5963,8 +6069,7 @@ class DTD:
 
             attribute = DTD.Attribute(dtd, child)
             if attribute.name in self.attributes:
-                values =  self.name, attribute.name
-                error = "Duplicate attribute {}/@{}".format(*values)
+                error = f"Duplicate attribute {self.name}/@{attribute.name}"
                 raise Exception(error)
             self.attributes[attribute.name] = attribute
 
@@ -5980,23 +6085,22 @@ class DTD:
             """
 
             if self.model == DTD.TEXT_ONLY:
-                return "<!ELEMENT {} (#PCDATA)>".format(element.name)
+                return f"<!ELEMENT {element.name} (#PCDATA)>"
             elif self.model == DTD.EMPTY:
-                return "<!ELEMENT {} EMPTY>".format(element.name)
+                return f"<!ELEMENT {element.name} EMPTY>"
             elif self.model == DTD.MIXED:
                 self.content.get_node(element.children)
                 children = "|".join([c.name for c in element.children])
-                names = element.name, children
-                return "<!ELEMENT {} (#PCDATA|{})*>".format(*names)
+                return f"<!ELEMENT {element.name} (#PCDATA|{children})*>"
             elif self.model == DTD.ELEMENT_ONLY:
                 content = self.content.get_node(element.children, True)
                 assert content, "Elements required for elementOnly content"
                 if not self.dtd.defined:
-                    content = "(CdrDocCtl,{})".format(content)
+                    content = f"(CdrDocCtl,{content})"
                 elif not content.startswith("("):
-                    content = "({})".format(content)
-                return "<!ELEMENT {} {}>".format(element.name, content)
-            raise Exception("{}: unrecognized content model".format(self.name))
+                    content = f"({content})"
+                return f"<!ELEMENT {element.name} {content}>"
+            raise Exception(f"{self.name}: unrecognized content model")
 
         def define_attributes(self, element):
             """
@@ -6016,7 +6120,7 @@ class DTD:
                 attributes.append(str(attribute))
                 values = attribute.values
                 if values:
-                    key = "{}@{}".format(element.name, attribute.name)
+                    key = f"{element.name}@{attribute.name}"
                     self.dtd.values[key] = values
             if not self.dtd.defined and "readonly" not in self.attributes:
                 attributes.append("readonly CDATA #IMPLIED")
@@ -6025,7 +6129,7 @@ class DTD:
                 if not self.dtd.defined:
                     attributes = ["xmlns:cdr CDATA #IMPLIED"] + attributes
                 attributes = " ".join(attributes)
-                return "<!ATTLIST {} {}>".format(element.name, attributes)
+                return f"<!ATTLIST {element.name} {attributes}>"
 
 
     class ChoiceOrSequence(CountedNode):
@@ -6081,8 +6185,8 @@ class DTD:
             if serialize:
                 string = self.separator.join(nodes)
                 if len(self.nodes) > 1:
-                    string = "({})".format(string)
-                return "{}{}".format(string, self.count_char)
+                    string = f"({string})"
+                return f"{string}{self.count_char}"
 
 
     class Choice(ChoiceOrSequence):
@@ -6160,7 +6264,7 @@ class DTD:
             self.name = node.get("name")
             dtd.session.logger.debug("Group %s", self.name)
             if self.name in dtd.groups:
-                message = "multiple definitions for group {}".format(self.name)
+                message = f"multiple definitions for group {self.name}"
                 raise Exception(message)
             nodes = []
             for child in node:
@@ -6168,8 +6272,7 @@ class DTD:
                     nodes.append(DTD.Choice(dtd, child))
                 elif child.tag == Schema.SEQUENCE:
                     nodes.append(DTD.Sequence(dtd, child))
-            args = self.name, len(nodes)
-            assert len(nodes) == 1, "group {} has {:d} nodes".format(*args)
+            assert len(nodes) == 1, f"group {self.name} has {len(nodes)} nodes"
             self.node = nodes[0]
             dtd.groups[self.name] = self
 
@@ -6251,7 +6354,7 @@ class DTD:
             """
 
             required = self.required and "REQUIRED" or "IMPLIED"
-            return "{} {} #{}".format(self.name, self.dtd_type(), required)
+            return f"{self.name} {self.dtd_type()} #{required}"
 
         def dtd_type(self):
             """
@@ -6266,8 +6369,7 @@ class DTD:
                 return DTD.Type.map_type(self.type_name)
             simple_type = self.dtd.types.get(self.type_name)
             if not simple_type:
-                vals = self.type_name, self.name
-                error = "unrecognized type {} for @{}".format(*vals)
+                error = f"unrecognized type {self.type_name} for @{self.name}"
                 raise Exception(error)
             return simple_type.dtd_type()
 
@@ -6299,7 +6401,7 @@ class DTD:
                 return False
             if 0xF900 < o < 0xFFFF:
                 return False
-            if c not in u".-_:\u00B7\u0e87":
+            if c not in ".-_:\u00B7\u0e87":
                 if unicodedata.category(c) not in cls.NAME_CHAR_CATEGORIES:
                     return False
         return True
@@ -6391,7 +6493,7 @@ class LinkType:
                      oddly, the custom logic in the properties does not
                      use this flag; I have not changed this behavior,
                      not knowing what such a change might break, but
-                     I susspect such a change would be a good idea
+                     I suspect such a change would be a good idea
         """
 
         self.__session = session
@@ -6451,6 +6553,13 @@ class LinkType:
             self.doctype = doctype
             self.element = element
 
+        def __lt__(self, other):
+            """Support sorting type document type name and element name."""
+
+            mine = self.doctype.name, self.element
+            hers = other.doctype.name, other.element
+            return mine < hers
+
     @property
     def sources(self):
         """
@@ -6486,8 +6595,8 @@ class LinkType:
             elif self.id:
                 query = Query("link_type", "comment")
                 query.where(query.Condition("id", self.id))
-                row = query.execute(self.cursor).fetchone()
-                self._comment = row.comment if row else None
+                rows = query.execute(self.cursor).fetchall()
+                self._comment = rows[0].comment if rows else None
 
                 # Clean up from an old CGI bug.
                 if self._comment == "None":
@@ -6535,12 +6644,12 @@ class LinkType:
             elif self.id:
                 query = Query("link_type", "chk_type")
                 query.where(query.Condition("id", self.id))
-                row = query.execute(self.cursor).fetchone()
-                self._chk_type = row.chk_type if row else None
+                rows = query.execute(self.cursor).fetchall()
+                self._chk_type = rows[0].chk_type if rows else None
             else:
                 self._chk_type = None
         if self._chk_type is not None:
-            message = "Invalid check type {!r}".format(self._chk_type)
+            message = f"Invalid check type {self._chk_type!r}"
             assert self._chk_type in self.CHECK_TYPES, message
         return self._chk_type
 
@@ -6556,8 +6665,8 @@ class LinkType:
             elif self.name:
                 query = Query("link_type", "id")
                 query.where(query.Condition("name", self.name))
-                row = query.execute(self.cursor).fetchone()
-                self._id = row.id if row else None
+                rows = query.execute(self.cursor).fetchall()
+                self._id = rows[0].id if rows else None
             else:
                 self._id = None
         return self._id
@@ -6580,8 +6689,8 @@ class LinkType:
                 if self.id:
                     query = Query("link_type", "name")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.cursor).fetchone()
-                    self._name = row.name if row else None
+                    rows = query.execute(self.cursor).fetchall()
+                    self._name = rows[0].name if rows else None
                 else:
                     self._name = None
         return self._name
@@ -6606,7 +6715,7 @@ class LinkType:
           possibly empty sequence of `Doc` objects
         """
 
-        self.session.log("LinkType.search({!r}, {!r})".format(self.name, opts))
+        self.session.log(f"LinkType.search({self.name!r}, {opts!r})")
         pattern = opts.get("pattern")
         limit = opts.get("limit")
         query = Query("document d", "d.id", "d.title").order("d.title")
@@ -6636,22 +6745,25 @@ class LinkType:
           client XML wrapper command CdrModLinkType
         """
 
-        self.session.log("LinkType.save({!r})".format(self.name))
+        self.session.log(f"LinkType.save({self.name!r})")
         action = "MODIFY LINKTYPE" if self.id else "ADD LINKTYPE"
         if not self.session.can_do(action):
-            raise Exception("User not authorized to perform {}".format(action))
+            raise Exception(f"User not authorized to perform {action}")
         if not self.targets:
-            raise Exception("Link type {} allows no targets".format(self.name))
+            raise Exception(f"Link type {self.name} allows no targets")
         if self.chk_type not in self.CHECK_TYPES:
-            raise Exception("Invalid check type {!r}".format(self.chk_type))
+            raise Exception(f"Invalid check type {self.chk_type!r}")
         try:
             self.__save()
             self.session.conn.commit()
         except:
-            self.session.logger.exception("LinkType.save() failure")
-            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.cursor.fetchone().tc:
-                self.cursor.execute("ROLLBACK TRANSACTION")
+            try:
+                self.session.logger.exception("LinkType.save() failure")
+                self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+                if self.cursor.fetchall()[0].tc:
+                    self.cursor.execute("ROLLBACK TRANSACTION")
+            except:
+                pass
             raise
 
     def delete(self):
@@ -6665,19 +6777,22 @@ class LinkType:
           client XML wrapper command CdrDelLinkType
         """
 
-        self.session.log("LinkType.delete({!r})".format(self.name))
+        self.session.log(f"LinkType.delete({self.name!r})")
         if not self.session.can_do("DELETE LINKTYPE"):
             raise Exception("User not authorized to delete link types")
         if not self.id:
-            raise Exception("Link type {} not found".format(self.name))
+            raise Exception(f"Link type {self.name} not found")
         try:
             self.__delete()
             self.session.conn.commit()
         except:
-            self.session.logger.exception("LinkType.delete() failure")
-            self.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.cursor.fetchone().tc:
-                self.cursor.execute("ROLLBACK TRANSACTION")
+            try:
+                self.session.logger.exception("LinkType.delete() failure")
+                self.cursor.execute("SELECT @@TRANCOUNT AS tc")
+                if self.cursor.fetchall()[0].tc:
+                    self.cursor.execute("ROLLBACK TRANSACTION")
+            except:
+                pass
             raise
 
     def __delete(self):
@@ -6707,7 +6822,7 @@ class LinkType:
             column = "link_id"
             if table == "link_target":
                 column = "source_link_type"
-            delete = "DELETE FROM {} WHERE {} = ?".format(table, column)
+            delete = f"DELETE FROM {table} WHERE {column} = ?"
             self.cursor.execute(delete, (self.id,))
 
     def __save(self):
@@ -6725,17 +6840,17 @@ class LinkType:
         values = [fields[name] for name in names]
         if self.id:
             values.append(self.id)
-            assignments = ", ".join(["{} = ?".format(name) for name in names])
-            sql = "UPDATE link_type SET {} WHERE id = ?".format(assignments)
+            assignments = ", ".join([f"{name} = ?" for name in names])
+            sql = f"UPDATE link_type SET {assignments} WHERE id = ?"
         else:
             names = ", ".join(names)
-            sql = "INSERT INTO link_type ({}) VALUES (?, ?, ?)".format(names)
+            sql = f"INSERT INTO link_type ({names}) VALUES (?, ?, ?)"
         self.cursor.execute(sql, tuple(values))
         if self.id:
             self.__drop_related_rows()
         else:
             self.cursor.execute("SELECT @@IDENTITY as id")
-            self._id = self.cursor.fetchone().id
+            self._id = self.cursor.fetchall()[0].id
 
         # Create the rows identifying which elements in which document
         # types can contain links of this type.
@@ -6748,16 +6863,16 @@ class LinkType:
                 raise Exception(message.format(*args))
             names = "link_id, doc_type, element"
             values = self.id, source.doctype.id, source.element
-            insert = "INSERT INTO link_xml ({}) VALUES (?, ?, ?)".format(names)
+            insert = f"INSERT INTO link_xml ({names}) VALUES (?, ?, ?)"
             self.cursor.execute(insert, values)
 
         # Create the rows identifying which document types can be targets
         # for this link type.
-        for target in itervalues(self.targets):
-            assert target.id, "doc type {} not found".format(target.name)
+        for target in self.targets.values():
+            assert target.id, f"doc type {target.name} not found"
             names = "source_link_type, target_doc_type"
             values = self.id, target.id
-            insert = "INSERT INTO link_target ({}) VALUES (?, ?)".format(names)
+            insert = f"INSERT INTO link_target ({names}) VALUES (?, ?)"
             try:
                 self.cursor.execute(insert, values)
             except:
@@ -6830,9 +6945,9 @@ class LinkType:
         query = Query("link_xml", "link_id")
         query.where(query.Condition("doc_type", doctype.id))
         query.where(query.Condition("element", element_tag))
-        row = query.execute(cursor).fetchone()
+        rows = query.execute(cursor).fetchall()
         cursor.close()
-        return cls(session, id=row.link_id) if row else None
+        return cls(session, id=rows[0].link_id) if rows else None
 
     @classmethod
     def get_property_types(cls, session):
@@ -6907,9 +7022,9 @@ class LinkType:
                 return self._id
             query = Query("link_prop_type", "id")
             query.where(query.Condition("name", self.name))
-            row = query.execute(self.cursor).fetchone()
-            if row:
-                self._id = row.id
+            rows = query.execute(self.cursor).fetchall()
+            if rows:
+                self._id = rows[0].id
                 return self._id
             return None
 
@@ -7074,7 +7189,7 @@ class LinkType:
             """
 
             if not self.assertions.test(link):
-                error = "Failed link target rule: {}".format(self.value)
+                error = f"Failed link target rule: {self.value}"
                 link.add_error(error)
 
         @property
@@ -7193,7 +7308,7 @@ class LinkType:
                 for node in self.nodes:
 
                     # If the node is a string, it's a Boolean connector.
-                    if isinstance(node, basestring):
+                    if isinstance(node, str):
                         connector = node
 
                         # If this is an "AND" and there's a sequence of "OR"
@@ -7325,7 +7440,7 @@ class LinkType:
 
                     # If the document should have the value, but doesn't,
                     # the link is invalid; same if it shouldn't but does.
-                    count = query.execute(cursor).fetchone()[0]
+                    count = query.execute(cursor).fetchall()[0][0]
                     if self.operator == "==":
                         result = count > 0
                     else:
@@ -7513,7 +7628,7 @@ class Link:
         # Make sure the document we're linking to actually exists.
         if not self.target_doc:
             what = LinkType.CHECK_TYPES[self.chk_type]
-            message = "No {} found for link target".format(what)
+            message = f"No {what} found for link target"
             self.add_error(message)
             return
 
@@ -7539,8 +7654,7 @@ class Link:
 
         # Make sure we're allowed to link from this element.
         if not self.linktype:
-            message = "linking not allowed from {}".format(self.element)
-            self.add_error(message)
+            self.add_error(f"linking not allowed from {self.element}")
             return
 
         # Make sure we're linking to an allowed document type.
@@ -7578,7 +7692,7 @@ class FilterSet:
         Optional positional arguments:
           id - primary key into the `filter_set` table
           name - string by which the set is known
-          desc - brief description of the set, used for UI
+          description - brief description of the set, used for UI
           notes - more extensive optional notes on the use of the filter set
           members - sequence of `Doc` and/or nested `FilterSet` objects
 
@@ -7589,6 +7703,10 @@ class FilterSet:
         self.__session = session
         self.__opts = opts
         self.session.logger.debug("FilterSet(opts=%s)", opts)
+
+    def __lt__(self, other):
+        """Make the filter sets sortable by name."""
+        return self.name.lower().strip() < other.name.lower().strip()
 
     @property
     def cursor(self):
@@ -7611,8 +7729,8 @@ class FilterSet:
             if not self._id and self.name:
                 query = Query("filter_set", "id")
                 query.where(query.Condition("name", self.name))
-                row = query.execute(self.cursor).fetchone()
-                self._id = row.id if row else None
+                rows = query.execute(self.cursor).fetchall()
+                self._id = rows[0].id if rows else None
         return self._id
 
     @property
@@ -7629,8 +7747,8 @@ class FilterSet:
                 if self.id:
                     query = Query("filter_set", "name")
                     query.where(query.Condition("id", self.id))
-                    row = query.execute(self.cursor).fetchone()
-                    self._name = row.name if row else None
+                    rows = query.execute(self.cursor).fetchall()
+                    self._name = rows[0].name if rows else None
         return self._name
 
     @property
@@ -7645,8 +7763,8 @@ class FilterSet:
             elif self.id:
                 query = Query("filter_set", "description")
                 query.where(query.Condition("id", self.id))
-                row = query.execute(self.cursor).fetchone()
-                self._description = row.description if row else None
+                rows = query.execute(self.cursor).fetchall()
+                self._description = rows[0].description if rows else None
             else:
                 self._description = None
         return self._description
@@ -7688,8 +7806,8 @@ class FilterSet:
             elif self.id:
                 query = Query("filter_set", "notes")
                 query.where(query.Condition("id", self.id))
-                row = query.execute(self.cursor).fetchone()
-                self._notes = row.notes if row else None
+                rows = query.execute(self.cursor).fetchall()
+                self._notes = rows[0].notes if rows else None
             else:
                 self._notes = None
         return self._notes
@@ -7714,24 +7832,24 @@ class FilterSet:
           client XML wrapper command CdrDelFilterSet
         """
 
-        self.session.log("FilterSet.delete({!r})".format(self.name))
+        self.session.log(f"FilterSet.delete({self.name!r})")
         if not self.session.can_do("DELETE FILTER SET"):
             raise Exception("User not authorized to delete filter sets.")
         if not self.id:
             if self.name:
-                raise Exception("Can't find filter set {}".format(self.name))
+                raise Exception(f"Can't find filter set {self.name}")
             else:
                 raise Exception("No filter set identified for deletion")
         query = Query("filter_set_member", "COUNT(*) AS n")
         query.where(query.Condition("subset", self.id))
-        if query.execute(self.cursor).fetchone().n > 0:
+        if query.execute(self.cursor).fetchall()[0].n > 0:
             raise Exception("Can't delete set which is itself a set member")
         try:
             return self.__delete()
         except:
             self.session.logger.exception("Validation failed")
             self.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.cursor.fetchone().tc:
+            if self.cursor.fetchall()[0].tc:
                 self.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
@@ -7745,7 +7863,7 @@ class FilterSet:
             ("filter_set", "id")
         ]
         for table, column in tables:
-            sql = "DELETE FROM {} WHERE {} = ?".format(table, column)
+            sql = f"DELETE FROM {table} WHERE {column} = ?"
             self.cursor.execute(sql, (self.id,))
         self.session.conn.commit()
 
@@ -7763,18 +7881,17 @@ class FilterSet:
           None
         """
 
-        self.session.log("FilterSet.save({!r})".format(self.name))
+        self.session.log(f"FilterSet.save({self.name!r})")
         action = "MODIFY FILTER SET" if self.id else "ADD FILTER SET"
         if not self.session.can_do(action):
             what = "modify" if self.id else "add"
-            message = "User not authorized to {} filter sets.".format(what)
-            raise Exception(message)
+            raise Exception(f"User not authorized to {what} filter sets.")
         try:
             return self.__save()
         except:
             self.session.logger.exception("Validation failed")
             self.cursor.execute("SELECT @@TRANCOUNT AS tc")
-            if self.cursor.fetchone().tc:
+            if self.cursor.fetchall()[0].tc:
                 self.cursor.execute("ROLLBACK TRANSACTION")
             raise
 
@@ -7808,13 +7925,13 @@ class FilterSet:
             for name in names:
                 value = fields[name]
                 if value is None:
-                    assignments.append("{} = NULL".format(name))
+                    assignments.append(f"{name} = NULL")
                 else:
-                    assignments.append("{} = ?".format(name))
+                    assignments.append(f"{name} = ?")
                     values.append(value)
             assignments = ", ".join(assignments)
             values.append(self.id)
-            sql = "UPDATE filter_set SET {} WHERE id = ?".format(assignments)
+            sql = f"UPDATE filter_set SET {assignments} WHERE id = ?"
 
         # Otherwise, create a new row in the `filter_set` table.
         else:
@@ -7828,7 +7945,7 @@ class FilterSet:
                     values.append(value)
             names = ", ".join(names)
             ph = ", ".join(placeholders)
-            sql = "INSERT INTO filter_set ({}) VALUES ({})".format(names, ph)
+            sql = f"INSERT INTO filter_set ({names}) VALUES ({ph})"
         self.session.logger.debug("sql=%s values=%s", sql, tuple(values))
         self.cursor.execute(sql, values)
 
@@ -7838,7 +7955,7 @@ class FilterSet:
             self.cursor.execute(delete, (self.id,))
         else:
             self.cursor.execute("SELECT @@IDENTITY AS id")
-            self._id = self.cursor.fetchone().id
+            self._id = self.cursor.fetchall()[0].id
 
         # Add the related rows for the set's members.
         names = "filter_set", "position", "filter", "subset"
@@ -7918,7 +8035,7 @@ class GlossaryTermName:
     """
 
     # Regular expressions uses to normalize the phrases for matching.
-    UNWANTED = re.compile(u"""['".,?!:;()[\]{}<>\u201C\u201D\u00A1\u00BF]+""")
+    UNWANTED = re.compile("""['".,?!:;()[\]{}<>\u201C\u201D\u00A1\u00BF]+""")
     TOKEN_SEP = re.compile(r"[\n\r\t -]+")
 
     def __init__(self, id, name):
@@ -7952,14 +8069,14 @@ class GlossaryTermName:
           sequence of `GlossaryTermName` objects
         """
 
-        session.log("GlossaryTermName.get_mappings({})".format(language))
+        session.log(f"GlossaryTermName.get_mappings({language})")
         names = dict()
         phrases = set()
         name_tag = "TermName" if language == "en" else "TranslatedName"
-        n_path = "/GlossaryTermName/{}/TermNameString".format(name_tag)
+        n_path = f"/GlossaryTermName/{name_tag}/TermNameString"
         s_path = "/GlossaryTermName/TermNameStatus"
-        e_path = "/GlossaryTermName/{}/@ExcludeFromGlossifier".format(name_tag)
-        e_cond = ["e.doc_id = n.doc_id", "e.path = '{}'".format(e_path)]
+        e_path = f"/GlossaryTermName/{name_tag}/@ExcludeFromGlossifier"
+        e_cond = ["e.doc_id = n.doc_id", f"e.path = '{e_path}'"]
         if language == "es":
             e_cond.append("LEFT(n.node_loc, 4) = LEFT(e.node_loc, 4)")
         query = Query("query_term n", "n.doc_id", "n.value")
@@ -8006,5 +8123,5 @@ class GlossaryTermName:
           normalized version of string
         """
 
-        phrase = cls.UNWANTED.sub(u"", cls.TOKEN_SEP.sub(u" ", phrase)).upper()
+        phrase = cls.UNWANTED.sub("", cls.TOKEN_SEP.sub(" ", phrase)).upper()
         return phrase.strip()
