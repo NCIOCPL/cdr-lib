@@ -3,8 +3,9 @@
 
 from argparse import ArgumentParser
 from datetime import datetime
-from json import load, loads
+from json import dumps, load, loads
 from re import compile
+from string import ascii_lowercase
 from sys import stderr
 from unicodedata import normalize, combining
 from elasticsearch5 import Elasticsearch
@@ -13,6 +14,7 @@ from cdr import Logging, getControlValue
 from cdrapi import db
 from cdrapi.docs import Doc
 from cdrapi.settings import Tier
+from cdrapi.users import Session
 
 
 class DictionaryAPILoader:
@@ -22,6 +24,9 @@ class DictionaryAPILoader:
     provide a class constant for ALIAS, HOST, PORT, TYPE, and INDEXDEF,
     and/or implement the corresponding methods. It can optionally give
     a different LOGNAME than that provided by this class.
+
+    January 2020: added constructor to save override options for some of
+    these values.
     """
 
     LOGNAME = "dictionary_loader"
@@ -36,6 +41,10 @@ class DictionaryAPILoader:
 
         self.__started = datetime.now()
         self.logger.info("Loading %d %s terms", len(self.ids), self.type)
+        if self.testing:
+            self.logger.info("Running in test mode")
+            if self.verbose:
+                stderr.write("Running in test mode")
         done = 0
         for term_id in self.ids:
             doc = self.Doc(self, term_id)
@@ -44,7 +53,10 @@ class DictionaryAPILoader:
             if self.verbose:
                 done += 1
                 stderr.write(f"\rindexed {done} of {len(self.ids)} terms")
-        self.create_alias()
+            if done >= self.limit:
+                break
+        if not self.testing:
+            self.create_alias()
         self.logger.info("aliased %s as %s", self.index, self.alias)
         self.logger.info("elapsed: %s", self.elapsed)
         if self.verbose:
@@ -140,7 +152,8 @@ class DictionaryAPILoader:
 
         if not hasattr(self, "_index"):
             self._index = f"{self.ALIAS}-{self.stamp}"
-            self.es.indices.create(index=self._index, body=self.indexdef)
+            if not self.testing:
+                self.es.indices.create(index=self._index, body=self.indexdef)
         return self._index
 
     @property
@@ -171,6 +184,15 @@ class DictionaryAPILoader:
                 self.logger.exception("Loading schema from %s", self.INDEXDEF)
                 raise Exception(f"can't load schema from {self.INDEXDEF}")
         return self._indexdef
+
+    @property
+    def limit(self):
+        """Throttle for testing."""
+
+        if not hasattr(self, "_limit"):
+            limit = self.opts.get("limit")
+            self._limit = int(limit) if limit else float("inf")
+        return self._limit
 
     @property
     def logger(self):
@@ -223,12 +245,32 @@ class DictionaryAPILoader:
         return self.__started
 
     @property
+    def testing(self):
+        """True if we should just dump the json instead of sending it."""
+
+        if not hasattr(self, "_testing"):
+            self._testing = True if self.opts.get("test") else False
+        return self._testing
+
+    @property
     def tier(self):
         """Which CDR server are we using?"""
 
         if not hasattr(self, "_tier"):
             self._tier = Tier(self.opts.get("tier"))
         return self._tier
+
+    @property
+    def transform(self):
+        """XSL/T filter used for this load."""
+
+        if not hasattr(self, "_transform"):
+            title = f"Index {self.type.capitalize()} Dictionary"
+            doc_id = Doc.id_from_title(title, self.cursor)
+            doc = Doc(Session("guest"), id=doc_id)
+            self._transform = etree.XSLT(doc.root)
+            self.logger.info("Loaded %r filter", title)
+        return self._transform
 
     @property
     def type(self):
@@ -245,36 +287,36 @@ class DictionaryAPILoader:
         return True if self.opts.get("verbose") else False
 
     class Doc:
-        """Override for specific dictionary types.
-
-        Internal class values are for transforming names to pretty URLs.
-        See `Doc.clean()` below.
-        """
-
-        _FROM = "\u03b1\u03b2\u03bc;_&\u2013/"
-        _TO = "abu-----"
-        _STRIP = "\",+().\xaa'\u2019[\uff1a:*\\]"
-        _TRANS = str.maketrans(_FROM, _TO, _STRIP)
-        _SPACES = compile(r"\s+")
-        AUDIENCE = {
-            "Health_professionals": "Health professional",
-            "Health_professional": "Health professional",
-            "Health professional": "Health professional",
-            "Health Professional": "Health professional",
-            "Patients": "Patient",
-            "Patient": "Patient",
-        }
+        """Override for specific dictionary types."""
 
         def __init__(self, loader, id):
             """Save the caller's values.
 
             Pass:
-                loader - access to the database and the current CDR session
+                loader - access to the database and runtime settings
                 id - integer for the document's CDR ID
             """
 
             self.__loader = loader
             self.__id = id
+
+        def index(self):
+            """Add nodes for this document to the ElasticSearch database."""
+
+            args = len(self.nodes), self.cdr_id
+            self.loader.logger.debug("%d nodes for %s", *args)
+            for node in self.nodes:
+                opts = dict(
+                    index=self.loader.index,
+                    doc_type=node.doc_type,
+                    body=node.values,
+                )
+                if node.id:
+                    opts["id"] = node.id
+                if self.loader.testing:
+                    print(dumps(opts, indent=2))
+                else:
+                    self.loader.es.index(**opts)
 
         @property
         def cdr_id(self):
@@ -288,39 +330,164 @@ class DictionaryAPILoader:
 
         @property
         def loader(self):
-            """Access to the database and the current CDR session."""
+            """Access to the database and runtime options."""
             return self.__loader
 
         @property
-        def root(self):
-            """Top node for the document's parsed XML tree."""
+        def nodes(self):
+            """Nodes to be added to the ElasticSearch database."""
 
-            if not hasattr(self, "_root"):
+            if not hasattr(self, "_nodes"):
                 query = self.__loader.Query("pub_proc_cg", "xml")
                 query.where(query.Condition("id", self.id))
                 xml = query.execute(self.__loader.cursor).fetchone().xml
                 try:
-                    self._root = etree.fromstring(xml)
+                    root = etree.fromstring(xml)
                 except:
-                    self._root = etree.fromstring(xml.encode("utf-8"))
-            return self._root
+                    root = etree.fromstring(xml.encode("utf-8"))
+                result = self.loader.transform(root)
+                self._nodes = []
+                for node in result.getroot().findall("node"):
+                    self._nodes.append(self.Node(node))
+            return self._nodes
 
-        @classmethod
-        def clean(cls, name):
-            """Prepare a term name for use as a pretty URL.
 
-            Uses logic implemented by Bryan P. in JavaScript as part of
+        class Node:
+            """Information for a record to be sent to ElasticSearch.
+
+            Class values are for transforming names to pretty URLs.
+            See `clean_pretty_url()` method, below, which uses logic
+            implemented by Bryan P. in JavaScript as part of
             github.com/NCIOCPL/wcms-cts-term-map-gen/blob/master/pdq_index.js
-            (see getFriendlyUrlForDisplayName() at line 44 ff.).
-
-            Pass:
-                name - string for the term name
-
-            Return:
-                scrubbed name string
+            (getFriendlyUrlForDisplayName() at line 44 ff.).
             """
 
-            name = cls._SPACES.sub("-", name).lower().translate(cls._TRANS)
-            nfkd = normalize("NFKD", name)
-            pretty_url = "".join([c for c in nfkd if not combining(c)])
-            return pretty_url.replace("%", "pct")
+            _FROM = "\u03b1\u03b2\u03bc;_&\u2013/"
+            _TO = "abu-----"
+            _STRIP = "\",+().\xaa'\u2019[\uff1a:*\\]"
+            TRANS = str.maketrans(_FROM, _TO, _STRIP)
+            SPACES = compile(r"\s+")
+
+            def __init__(self, node):
+                """Save the caller's information.
+
+                Pass:
+                    node - object for parsed node in the filtered result XML
+                """
+
+                self.__node = node
+
+            @property
+            def doc_type(self):
+                """String for the type of this record."""
+
+                if not hasattr(self, "_doc_type"):
+                    self._doc_type = self.__node.get("doc_type")
+                return self._doc_type
+
+            @property
+            def id(self):
+                """Optional unique ID for the record."""
+
+                if not hasattr(self, "_id"):
+                    self._id = self.__node.get("id")
+                return self._id
+
+            @property
+            def values(self):
+                """Dictionary of values for the _source of the record."""
+
+                if not hasattr(self, "_values"):
+                    self._values = self.__get_values(self.__node)
+                return self._values
+
+            def __get_values(self, node):
+                """Recursively extract values from the filtered XML.
+
+                Nodes which need further processing by Python to achieve
+                results which are difficult or impossible in XSL/T have
+                a `processor` attribute identifying the method to be
+                applied to the node to produce the desired value.
+                A node can also have a `type` attribute with one of the
+                following values:
+                  - array-member
+                      this value is to be enclosed in an array with
+                      all values having the same name as this one
+                  - false
+                      use Boolean 'False` as the value
+                  - true
+                      use Boolean `True` as the value
+                  - null
+                      use `None` (`null` in json)
+
+                Pass:
+                    node - object for parsed node in the filtered result XML
+
+                Return:
+                    dictionary of values or scalar
+                """
+
+                processor = node.get("processor")
+                if processor:
+                    getattr(self, processor)(node)
+                values = {}
+                for child in node:
+                    value = self.__get_values(child)
+                    child_type = child.get("type")
+                    if child_type == "array-member":
+                        if child.tag not in values:
+                            values[child.tag] = [value]
+                        else:
+                            values[child.tag].append(value)
+                    elif child_type == "false":
+                        values[child.tag] = False
+                    elif child_type == "true":
+                        values[child.tag] = True
+                    elif child_type == "null":
+                        values[child.tag] = None
+                    else:
+                        values[child.tag] = value
+                if values:
+                    return values
+                if node.text is None or not node.text:
+                    return None
+                return node.text
+
+            @classmethod
+            def clean_pretty_url(cls, node):
+                """Prepare a term name for use as a pretty URL.
+
+                Pass:
+                    node - XML node needing further processing
+
+                Return:
+                    scrubbed name string
+                """
+
+                name = node.text
+                name = cls.SPACES.sub("-", name).lower().translate(cls.TRANS)
+                nfkd = normalize("NFKD", name)
+                pretty_url = "".join([c for c in nfkd if not combining(c)])
+                return pretty_url.replace("%", "pct")
+
+            @classmethod
+            def lowercase_first_letter(cls, node):
+                """Get the first letter of the node's text value.
+
+                Pass:
+                    node - XML node needing further processing
+
+                Return:
+                    lowercase version of first character ("#" if not ASCII)
+                """
+
+                name = node.text
+                if name is None:
+                    return "#"
+                name = name.strip()
+                if not name:
+                    return "#"
+                letter = name[0].lower()
+                if letter not in ascii_lowercase:
+                    return "#"
+                return letter
