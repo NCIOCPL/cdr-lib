@@ -429,7 +429,7 @@ class DictionaryAPILoader:
 
                 processor = node.get("processor")
                 if processor:
-                    getattr(self, processor)(node)
+                    return getattr(self, processor)(node)
                 values = {}
                 for child in node:
                     value = self.__get_values(child)
