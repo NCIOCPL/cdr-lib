@@ -4353,6 +4353,7 @@ class Resolver(etree.Resolver):
           'docid' - get the ID of the current document
           'get-pv-num' - fetch the number of the doc's last publishable version
           'sql-query' - run a SQL query and return XML-wrapped results
+          'tier' - name for the current CDR tier
           'valid-zip' - look up a ZIP code and return its first 5 digits
 
         Pass:
@@ -4536,6 +4537,21 @@ class Resolver(etree.Resolver):
                         col.text = v.decode("utf-8")
             r += 1
         return self.__package_result(result, context)
+
+    def _tier(self, args, context):
+        """Identify the current CDR tier.
+
+        Pass:
+          args - ignored for this function
+          context - opaque information echoed back to the caller
+
+        Return:
+          `Tier` element containing name of the current CDR tier
+        """
+
+        tier = etree.Element("Tier")
+        tier.text = self.session.tier.name
+        return self.__package_result(tier, context)
 
     def _valid_zip(self, args, context):
         """
