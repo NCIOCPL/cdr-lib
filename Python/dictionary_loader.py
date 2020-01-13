@@ -345,7 +345,8 @@ class DictionaryAPILoader:
                     root = etree.fromstring(xml)
                 except:
                     root = etree.fromstring(xml.encode("utf-8"))
-                result = self.loader.transform(root)
+                tier = f"'{self.loader.tier.name}'"
+                result = self.loader.transform(root, tier=tier)
                 self._nodes = []
                 for node in result.getroot().findall("node"):
                     self._nodes.append(self.Node(node))
