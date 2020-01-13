@@ -46,7 +46,8 @@ class DictionaryAPILoader:
             if self.verbose:
                 stderr.write("Running in test mode")
         done = 0
-        for term_id in self.ids:
+        ids = self.opts.get("ids") or self.ids
+        for term_id in ids:
             doc = self.Doc(self, term_id)
             doc.index()
             self.logger.debug("loaded CDR%d", term_id)
