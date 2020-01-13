@@ -420,6 +420,21 @@ class DictionaryAPILoader:
                       use Boolean `True` as the value
                   - null
                       use `None` (`null` in json)
+                  - int
+                      convert the value to an integer
+
+                The "array-member" value can be combined with "int"
+                (or any of the other values, though it would not be
+                useful to have multiple True, False, or None instances
+                in an array). In that case, separate them (in either
+                order) with a space. For example:
+
+                  <width type="array-member int">571</width>
+                  <width type="array-member int">750</width>
+
+                which would be be converted by the code below to
+
+                  { "width": [571, 750] }
 
                 Pass:
                     node - object for parsed node in the filtered result XML
@@ -434,18 +449,20 @@ class DictionaryAPILoader:
                 values = {}
                 for child in node:
                     value = self.__get_values(child)
-                    child_type = child.get("type")
-                    if child_type == "array-member":
+                    child_types = child.get("type", "").split()
+                    if "array-member" in child_types:
                         if child.tag not in values:
                             values[child.tag] = [value]
                         else:
                             values[child.tag].append(value)
-                    elif child_type == "false":
+                    elif "false" in child_types:
                         values[child.tag] = False
-                    elif child_type == "true":
+                    elif "true" in child_types:
                         values[child.tag] = True
-                    elif child_type == "null":
+                    elif "null" in child_types:
                         values[child.tag] = None
+                    elif "int" in child_types:
+                        values[child.tag] = int(value)
                     else:
                         values[child.tag] = value
                 if values:
