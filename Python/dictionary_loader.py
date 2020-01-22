@@ -2,7 +2,7 @@
 """
 
 from argparse import ArgumentParser
-from datetime import datetime
+import datetime
 from json import dumps, load, loads
 from re import compile
 from string import ascii_lowercase
@@ -39,7 +39,7 @@ class DictionaryAPILoader:
     def run(self):
         """Load the dictionary into a new index and adjust the alias."""
 
-        self.__started = datetime.now()
+        self.__started = datetime.datetime.now()
         self.logger.info("Loading %d %s terms", len(self.ids), self.type)
         if self.testing:
             self.logger.info("Running in test mode")
@@ -56,12 +56,55 @@ class DictionaryAPILoader:
                 stderr.write(f"\rindexed {done} of {len(self.ids)} terms")
             if done >= self.limit:
                 break
+
         if not self.testing:
+
+            # If we don't do this, search won't find anything.
+            # XXX IS THIS STILL TRUE?
+            # self.es.indices.flush(index=self.index)
+
+            # Optimize the index.
+            opts = dict(max_num_segments=1, index=self.index)
+            self.es.indices.forcemerge(**opts)
+            self.logger.info("New index optimized")
+
+            # Point the canonical name to the new index.
             self.create_alias()
+
+            # Housekeeping.
+            self.cleanup()
+
         self.logger.info("aliased %s as %s", self.index, self.alias)
         self.logger.info("elapsed: %s", self.elapsed)
         if self.verbose:
             stderr.write("\ndone")
+
+    def cleanup(self):
+        """Drop old indices, keeping the latest ones as backup."""
+
+        pattern = f"{self.alias}-20"
+        date = datetime.date.today() - datetime.timedelta(self.days_to_keep)
+        stamp = date.strftime("%Y%m%d")
+        cutoff = f"{self.alias}-{stamp}"
+        self.logger.info("Cleanup cutoff: %s", cutoff)
+        indices = self.es.cat.indices(format="json")
+        candidates = []
+        for index in indices:
+            name = index["index"]
+            if name.startswith(pattern):
+                candidates.append(name)
+        kept = min(len(candidates), abs(self.indices_to_keep))
+        candidates = sorted(candidates)[:-abs(self.indices_to_keep)]
+        for name in candidates:
+            if name < cutoff and name != self.index:
+                self.logger.info("dropping index %s", name)
+                self.es.indices.delete(name)
+            else:
+                kept += 1
+        if kept == 1:
+            self.logger.info("Kept one index")
+        else:
+            self.logger.info("Kept %d indices", kept)
 
     def create_alias(self):
         """Point the canonical name for this dictionary to our new index."""
@@ -111,6 +154,11 @@ class DictionaryAPILoader:
         return self._cursor
 
     @property
+    def days_to_keep(self):
+        """Age in days for retention of older indices."""
+        return 5
+
+    @property
     def doctype(self):
         """Elasticsearch name for the type (plural is intentional)."""
         return "terms"
@@ -118,7 +166,7 @@ class DictionaryAPILoader:
     @property
     def elapsed(self):
         """Amount of time since this job was started."""
-        return datetime.now() - self.started
+        return datetime.datetime.now() - self.started
 
     @property
     def es(self):
@@ -185,6 +233,11 @@ class DictionaryAPILoader:
                 self.logger.exception("Loading schema from %s", self.INDEXDEF)
                 raise Exception(f"can't load schema from {self.INDEXDEF}")
         return self._indexdef
+
+    @property
+    def indices_to_keep(self):
+        """Minimum number of indices to retain during housekeeping."""
+        return 5
 
     @property
     def limit(self):
