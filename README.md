@@ -70,3 +70,18 @@ of specific types)
 terminology documents)
 * [WebService](Python/WebService.py) (used by glossifier and ClientRefresh
 services)
+
+## Unit Tests
+
+There are approximately 75 [regression tests](Python/test) of the CDR
+client-server commands. The implementation of the tests is in the Python
+script [run-tests.py](Python/test/run-tests.py), and the Windows batch file
+[run-tests.cmd](Python/test/run-tests.cmd) can be used to run the test
+suite twice, once invoking the API calls locally, from the current CDR
+server, and a second time running against the tunneling version of the API
+over HTTPS. It's always a good idea to run these tests periodically, and
+at least once for each release, immediately prior to deployment. There
+are no pipeline hooks for kicking off the tests automatically, though it
+might be reasonable to configure such an arrangement for commits to this
+repository at some point in the future. It takes under ten minutes to
+do the double run of the complete test suite.
