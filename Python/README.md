@@ -61,7 +61,7 @@ the mailer subsystem:
 The following modules provide additional common code support for the
 CDR system:
 
-* [cdr_dev_data](cdr_dev_data.py] (used by scripts to preserve data
+* [cdr_dev_data](cdr_dev_data.py) (used by scripts to preserve data
 on the DEV tier after a refresh from PROD)
 * [cdrdocobject](cdrdocobject.py) (classes representing CDR documents
 of specific types)
