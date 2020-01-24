@@ -23,20 +23,6 @@ implement the CDR web admin interface) should consider the use the
 Python CDR API classes directly, as in many cases this will result in
 simpler and more efficient code.
 
-## Database API Module
-
-The oritinal [cdrdb](cdrdb.py) module provided a custom implementation
-of the Python Database API Specification v2.0 (there were no suitable
-third-party implementations for working with SQL Server when the CDR
-was first built), as well as a Query class, modeled after the Drupal
-database API, for connecting to and querying the SQL Server CDR
-databases. The module's implementation was built on Microsoft's ADO/DB
-layer, using the win32com extensions to core Python which ship with
-ActiveState's Python distribution. The current implementation of this
-module is a wrapper for the [cdrapi.db](cdrapi/db.py) module, which is
-built over the third-party pyodbc module. Newer scripts should in most
-cases use the API module directly.
-
 ## CGI Module
 
 The [cdrcgi](cdrcgi.py) module implements classes and functions for
