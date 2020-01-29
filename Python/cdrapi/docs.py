@@ -13,6 +13,7 @@ from urllib.parse import quote as url_quote
 from urllib.parse import unquote as url_unquote
 import dateutil.parser
 from lxml import etree
+import requests
 from cdrapi.db import Query
 
 
@@ -4193,6 +4194,9 @@ class Resolver(etree.Resolver):
     # Expression for normalizing protocol IDs for eliminating duplicates.
     ID_KEY_STRIP = re.compile("[^A-Z0-9]+")
 
+    # URL pattern for the Enterprise Vocabulary System.
+    EVS = "https://evsrestapi.nci.nih.gov/evsrestapi/api/v1/ctrp/concept/{}/"
+
     # Thread-specific storage.
     local = Local()
 
@@ -4352,7 +4356,9 @@ class Resolver(etree.Resolver):
           'denormalizeTerm' - get a term document, possibly with upcoding
           'docid' - get the ID of the current document
           'get-pv-num' - fetch the number of the doc's last publishable version
+          'ncit-pn' - preferred term name from NCI thesaurus
           'sql-query' - run a SQL query and return XML-wrapped results
+          'tier' - name for the current CDR tier
           'valid-zip' - look up a ZIP code and return its first 5 digits
 
         Pass:
@@ -4491,6 +4497,28 @@ class Resolver(etree.Resolver):
         answer.text = str(doc.last_publishable_version or 0)
         return self.__package_result(answer, context)
 
+    def _ncit_pn(self, concept_id, context):
+        """
+        Get the preferred name for a concept from the NCI Thesaurus.
+
+        Pass:
+          concept_id - fondly known as the "C-name"; e.g., C2039
+          context - opaque information echoed back to the caller
+
+        Return:
+          a `PreferredName` element
+        """
+
+        element = etree.Element("PreferredName")
+        try:
+            url = self.EVS.format(concept_id.upper().strip())
+            response = requests.get(url)
+            element.text = response.json()["preferredName"]
+        except Exception:
+            self.session.logger.exception("failure resolving %s", concept_id)
+            element.text = ""
+        return self.__package_result(element, context)
+
     def _sql_query(self, args, context):
         """
         Run a database query and return the results as XML
@@ -4536,6 +4564,21 @@ class Resolver(etree.Resolver):
                         col.text = v.decode("utf-8")
             r += 1
         return self.__package_result(result, context)
+
+    def _tier(self, args, context):
+        """Identify the current CDR tier.
+
+        Pass:
+          args - ignored for this function
+          context - opaque information echoed back to the caller
+
+        Return:
+          `Tier` element containing name of the current CDR tier
+        """
+
+        tier = etree.Element("Tier")
+        tier.text = self.session.tier.name
+        return self.__package_result(tier, context)
 
     def _valid_zip(self, args, context):
         """
