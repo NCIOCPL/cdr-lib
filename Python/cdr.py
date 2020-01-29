@@ -4004,7 +4004,7 @@ def mailerCleanup(credentials, **opts):
             errors = []
             for node in response.node.findall("DeletedDoc"):
                 doc_ids.append(re.sub(r"[^\d]", "", get_text(node)))
-            for node in reponse.node.findall("Errors/Err"):
+            for node in response.node.findall("Errors/Err"):
                 errors.append(text_text(node))
             return (doc_ids, errors)
         error = ";".join(response.errors) or "missing response"
