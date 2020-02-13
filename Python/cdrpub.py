@@ -1828,12 +1828,13 @@ class Control:
         SSH = " ".join(SSH)
         FLAGS = "nrave" # for dry run
         FLAGS = "rave"
+        SSH_HOST = Tier().hosts["AKAMAI"]
         RSYNC = (
             f"{cdr.WORK_DRIVE}:\\cygwin\\bin\\rsync",
             "--delete",
             f'-{FLAGS} "{SSH}"',
             "./",
-            "sshacs@ncimedia.ssh.upload.akamai.com:media",
+            f"sshacs@{SSH_HOST}:media",
         )
         RSYNC = " ".join(RSYNC)
 
