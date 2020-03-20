@@ -743,6 +743,8 @@ class FormFieldFactory:
         """
 
         field = cls.__field(name, "file", **kwargs)
+        if kwargs.get("multiple"):
+            field.set("multiple")
         wrapper = cls.__wrapper(name, **kwargs)
         wrapper.append(field)
         return wrapper
