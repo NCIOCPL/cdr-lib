@@ -16,13 +16,17 @@ import base64
 import csv
 import datetime
 import glob
+import hashlib
+import io
 import json
 import os
 import re
 import subprocess
+import shutil
 import threading
 import time
 from lxml import etree, html
+from PIL import Image
 import cdr
 import cdr2gk
 from cdrapi import db
@@ -704,7 +708,6 @@ class Control:
         query.outer("pub_proc_cg_work w", "w.id = c.id")
         query.where("w.id IS NULL")
         query.where("a.active_status <> 'A'")
-        query.where("t.name <> 'Media'")
         query.where("v.doc_type IN ({})".format(types))
         cols = "id", "num", "vendor_job", "cg_job", "doc_type"
         args = self.PUSH_STAGE, ", ".join(cols), query
@@ -816,6 +819,7 @@ class Control:
 
         # Send the GateKeeper each of the exported documents.
         send_to_cms = dict()
+        media = dict()
         start = datetime.datetime.now()
         query = db.Query("pub_proc_cg_work", "id")
         query.where("xml IS NOT NULL")
@@ -835,6 +839,8 @@ class Control:
             query.where(query.Condition("id", doc_id))
             row = query.execute(self.cursor).fetchone()
             doc_type = self.GK_TYPES.get(row.doc_type, row.doc_type)
+            if doc_type == "Media":
+                media[doc_id] = row.num
             xml = self.XMLDECL.sub("", self.DOCTYPE.sub("", row.xml))
             group_num = group_nums.getDocGroupNum(doc_id)
             counter += 1
@@ -855,6 +861,8 @@ class Control:
         query.where(query.Condition("doc_type", self.EXCLUDED, "NOT IN"))
         rows = query.execute(self.cursor).fetchall()
         for row in rows:
+            if row.doc_type == "Media":
+                media[row.id] = None
             args = self.job.id, row.id
             self.logger.info("Job %d removing blocked document CDR%d", *args)
             doc_type = self.GK_TYPES.get(row.doc_type, row.doc_type)
@@ -889,6 +897,10 @@ class Control:
         )
         self.update_cms(self.session, **opts)
 
+        # Make sure Akamai has any changes to the media files.
+        if media:
+            self.Media.sync(self.session, self.logger, media)
+
     @classmethod
     def update_cms(cls, session, **opts):
         """
@@ -901,7 +913,7 @@ class Control:
         call might fail between batches. Nothing we can do about that
         very unlikely problem.
 
-        Implemented as a class method so that we can invoke use this
+        Implemented as a class method so that we can invoke this
         functionality without creating a real publishing job.
 
         Required positional argument:
@@ -1793,6 +1805,257 @@ class Control:
             query.where(query.Condition("p.parm_value", subset_name, "LIKE"))
             row = query.execute(cursor).fetchone()
             return row.job_id if row else None
+
+
+    class Media:
+        """Common functionality for publishing audio/video/image documents."""
+
+        BLOCKSIZE = 4096
+        AKAMAI = f"{cdr.BASEDIR}/akamai"
+        MEDIA = f"{AKAMAI}/media"
+        LOCK = f"{MEDIA}.locked"
+        OLD = f"{MEDIA}.old"
+        JPEG_QUALITY = 80
+        IMAGE_WIDTHS = 571, 750
+        TYPES = dict(jpg="image/jpeg", gif="image/gif", mp3="audio/mpeg")
+        STAMP = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        SSH = (
+            f"{cdr.WORK_DRIVE}:\\cygwin\\bin\\ssh",
+            f"-i {cdr.WORK_DRIVE}:/etc/akamai-pdq-{{}}",
+            "-oHostKeyAlgorithms=+ssh-dss",
+            "-oStrictHostKeyChecking=no",
+        )
+        SSH = " ".join(SSH)
+        FLAGS = "nrave" # for dry run
+        FLAGS = "rave"
+        SSH_HOST = Tier().hosts["AKAMAI"]
+        RSYNC = (
+            f"{cdr.WORK_DRIVE}:\\cygwin\\bin\\rsync",
+            "--delete",
+            f'-{FLAGS} "{SSH}"',
+            "./",
+            f"sshacs@{SSH_HOST}:media",
+        )
+        RSYNC = " ".join(RSYNC)
+
+        @classmethod
+        def clone(cls):
+            """Copy the media files to a new working directory.
+
+            Return:
+                string for the path to the copy
+            """
+
+            if not os.access(cls.LOCK, os.F_OK):
+                raise Exception("Locked media not found")
+            path = f"{cls.MEDIA}-{cls.STAMP}"
+            shutil.copytree(cls.LOCK, path)
+            command = f"{cdr.BASEDIR}/Bin/fix-permissions.cmd {path}"
+            opts = dict(merge_output=True)
+            process = cdr.run_command(command.replace("/", "\\"), **opts)
+            if process.returncode:
+                raise Exception(f"{command}: {process.stdout}")
+            return path
+
+        @classmethod
+        def get_files(cls, doc):
+            """Create an array of file objects for a media document.
+
+            Pass:
+                doc - `Doc` object for the media document
+
+            Return:
+                sequence of `Media.File` objects
+            """
+
+            if doc.export_filename.endswith(".mp3"):
+                path = f"audio/{doc.id:d}.mp3"
+                return [cls.File(path, doc.blob)]
+            image_bytes = io.BytesIO(doc.blob)
+            image = Image.open(image_bytes)
+            if image.mode == "P":
+                image = image.convert("RGB")
+            path = f"images/{doc.id:d}.jpg"
+            opts = dict(quality=cls.JPEG_QUALITY)
+            with io.BytesIO() as fp:
+                image.save(fp, "JPEG", **opts)
+                compressed_original = fp.getvalue()
+            files = [cls.File(path, compressed_original)]
+            for width in cls.IMAGE_WIDTHS:
+                path = f"images/{doc.id:d}-{width:d}.jpg"
+                if width < image.width:
+                    ratio = image.height / image.width
+                    height = int(round(width * ratio))
+                    size = width, height
+                    scaled_image = image.resize(size, Image.LANCZOS)
+                    with io.BytesIO() as fp:
+                        scaled_image.save(fp, "JPEG", **opts)
+                        image_bytes = fp.getvalue()
+                else:
+                    image_bytes = compressed_original
+                files.append(cls.File(path, image_bytes))
+            return files
+
+        @classmethod
+        def lock(cls):
+            """Rename the media directory to lock out other jobs."""
+
+            if os.access(cls.LOCK, os.F_OK):
+                raise Exception("The media directory is already locked")
+            if not os.access(cls.MEDIA, os.F_OK):
+                raise Exception("The media directory does not exist")
+            try:
+                os.rename(cls.MEDIA, cls.LOCK)
+            except Exception as e:
+                raise Exception(f"Unable to rename {cls.MEDIA}: {e}")
+
+        @classmethod
+        def promote(cls, directory):
+            """Move the new media set to the current published position.
+
+            Steps:
+              1. If media.old exists, remove it
+              2. Rename media.lock to media.old
+              3. Rename media-timestamp to media
+
+            Pass:
+                directory - path for the current job's working media directory
+            """
+
+            if not os.access(cls.LOCK, os.F_OK):
+                raise Exception("The media lock directory does not exist")
+            if os.access(cls.OLD, os.F_OK):
+                try:
+                    shutil.rmtree(cls.OLD)
+                except Exception as e:
+                    raise Exception(f"Unable to remove {cls.OLD}: {e}")
+            try:
+                os.rename(cls.LOCK, cls.OLD)
+            except Exception as e:
+                raise Exception(f"Unable to move {cls.LOCK} to {cls.OLD}: {e}")
+            try:
+                os.rename(directory, cls.MEDIA)
+            except Exception as e:
+                message = f"Unable to move {directory} to {cls.MEDIA}: {e}"
+                raise Exception(message)
+            command = f"{cdr.BASEDIR}/Bin/fix-permissions.cmd {cls.MEDIA}"
+            opts = dict(merge_output=True)
+            process = cdr.run_command(command.replace("/", "\\"), **opts)
+            if process.returncode:
+                raise Exception(f"{command}: {process.stdout}")
+
+        @classmethod
+        def remove(cls, doc_id, directory):
+            """Remove media files for a CDR document.
+
+            Pass:
+                doc_id - integer for the document's primary key
+                directory - string for the path to the working directory
+            """
+
+            for path in glob.glob(f"{directory}/images/{doc_id}.jpg"):
+                os.remove(path)
+            for path in glob.glob(f"{directory}/images/{doc_id}-*.jpg"):
+                os.remove(path)
+            for path in glob.glob(f"{directory}/audio/{doc_id}.mp3"):
+                os.remove(path)
+
+        @classmethod
+        def rsync(cls, tier, logger, directory):
+            """Update the media files on the Akamai server.
+
+            Pass:
+                tier - name of the tier on which we're running
+                directory - location of the working set of media files
+            """
+
+            command = cls.RSYNC.format(tier.lower())
+            logger.info("Running %s", command)
+            old = os.getcwd()
+            os.chdir(directory)
+            process = cdr.run_command(command, merge_output=True)
+            os.chdir(old)
+            if process.returncode:
+                raise Exception("rsync failure: %s", process.stdout)
+            logger.info("rsync output: %s", process.stdout)
+
+        @classmethod
+        def save(cls, doc, directory):
+            """Write the file(s) for the media doc to the working directory.
+
+            Pass:
+                doc - `Doc` object for the media document
+                directory - string for the path to the working directory
+            """
+
+            for f in cls.get_files(doc):
+                with open(f"{directory}/{f.path}", "wb") as fp:
+                    fp.write(f.bytes)
+
+        @classmethod
+        def sync(cls, session, logger, media):
+            """Refresh the set of media files and sync with Akamai.
+
+            Pass:
+                session - needed for Doc object creation
+                logger - capture what we're doing
+                media - dictionary of media document versions, index by CDR ID
+                        (version is None for media being removed)
+            """
+
+            # Make sure we have something to do.
+            if not media:
+                logger.warning("No media to sync: skipping this step")
+                return
+
+            # Make sure no other jobs interfere with us.
+            logger.info("Starting Media.sync()")
+            cls.lock()
+
+            # Create a staging area for the changes.
+            directory = cls.clone()
+            logger.info("Staging media in %s", directory)
+
+            # Make the required changes to the set of media files.
+            for doc_id in sorted(media):
+                version = media[doc_id]
+                if version:
+                    try:
+                        doc = Doc(session, id=doc_id, version=version)
+                        cls.save(doc, directory)
+                    except Exception:
+                        arg = f"version {version} of {doc.cdr_id}"
+                        logger.exception("Failure saving media for %s", arg)
+                        raise Exception(f"Failure saving media for {arg}")
+                else:
+                    try:
+                        cls.remove(doc_id, directory)
+                    except Exception:
+                        arg = f"CDR{doc_id}"
+                        logger.exception("Failure removing media for %s", arg)
+                        raise Exception(f"Failure removing media for {arg}")
+            cls.rsync(session.tier.name, logger, directory)
+            cls.promote(directory)
+
+        @classmethod
+        def unlock(cls):
+            """Restore the media directory by renaming it from media.locked."""
+
+            if os.access(cls.MEDIA, os.F_OK):
+                raise Exception("The media directory is already unlocked")
+            if not os.access(cls.LOCK, os.F_OK):
+                raise Exception("The media lock directory does not exist")
+            try:
+                os.rename(cls.LOCK, cls.MEDIA)
+            except Exception as e:
+                raise Exception(f"Unable to rename {cls.LOCK}: {e}")
+
+
+        class File:
+            """Wrapper for the path and bytes of a media file."""
+            def __init__(self, path, bytes):
+                self.path = path
+                self.bytes = bytes
 
 
 def main():
