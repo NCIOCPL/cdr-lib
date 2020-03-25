@@ -321,7 +321,7 @@ class DictionaryAPILoader:
         if not hasattr(self, "_transform"):
             title = f"Index {self.type.capitalize()} Dictionary"
             doc_id = Doc.id_from_title(title, self.cursor)
-            doc = Doc(Session("guest"), id=doc_id)
+            doc = Doc(Session("guest", tier=self.tier), id=doc_id)
             self._transform = etree.XSLT(doc.root)
             self.logger.info("Loaded %r filter", title)
         return self._transform
