@@ -1045,9 +1045,12 @@ class Control:
         #tier_extras = dict(DEV="-blue-dev", PROD="")
         #suffix = tier_extras.get(session.tier.name, "-qa")
         #replacement = f"https://www{suffix}.cancer.gov/images/cdr/live"
-        host = session.tier.hosts["CG"]
-        replacement = f"https://{host}/images/cdr/live"
-        target = "/images/cdr/live"
+        #host = session.tier.hosts["CG"]
+        #replacement = f"https://{host}/images/cdr/live"
+        #target = "/images/cdr/live"
+        target = "@@MEDIA-TIER@@"
+        tier = session.tier.name.lower()
+        replacement = f"-{tier}" if tier != "prod" else ""
 
         # Pull out the summary sections into sequence of separate dictionaries.
         transformed = xsl(root)
