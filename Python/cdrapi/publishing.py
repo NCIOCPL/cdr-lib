@@ -788,7 +788,7 @@ class DrupalClient:
     """
 
     MAX_RETRIES = 5
-    BATCH_SIZE = 25
+    BATCH_SIZE = 1
     URI_PATH = "/pdq/api"
     TYPES = dict(
         Summary=("pdq_cancer_information_summary", "cis"),
@@ -855,6 +855,18 @@ class DrupalClient:
 
         if not hasattr(self, "_batch_size"):
             self._batch_size = self.__opts.get("batch_size")
+            if self._batch_size:
+                self._batch_size = int(self._batch_size)
+            else:
+                self.__session.cursor.execute("""\
+                    SELECT val
+                      FROM ctl
+                     WHERE grp = 'Publishing'
+                       AND name = 'Drupal-PDQ-batchsize'
+                       AND inactivated IS NULL""")
+                row = self.__session.cursor.fetchone()
+                if row:
+                    self._batch_size = int(row.val)
             if self._batch_size:
                 self.logger.debug("Batch size set to %d", self._batch_size)
             else:
