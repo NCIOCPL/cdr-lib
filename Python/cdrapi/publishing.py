@@ -788,7 +788,7 @@ class DrupalClient:
     """
 
     MAX_RETRIES = 5
-    BATCH_SIZE = 1
+    BATCH_SIZE = 25
     URI_PATH = "/pdq/api"
     TYPES = dict(
         Summary=("pdq_cancer_information_summary", "cis"),
