@@ -69,7 +69,7 @@ cgitb.enable(display = cdr.isDevHost(), logdir = cdr.DEFAULT_LOGDIR)
 
 
 # Global values
-VERSION = "201909061106"
+VERSION = "202003230906"
 CDRCSS = "/stylesheets/cdr.css?v=%s" % VERSION
 DATETIMELEN = len("YYYY-MM-DD HH:MM:SS")
 TAMPERING = "CGI parameter tampering detected"
@@ -80,9 +80,9 @@ SESSION  = "Session"
 REQUEST  = "Request"
 DOCID    = "DocId"
 FILTER   = "Filter"
-BASE     = '/cgi-bin/cdr'
-MAINMENU = 'Admin Menu'
-DEVTOP   = 'Developer Menu'
+BASE     = "/cgi-bin/cdr"
+MAINMENU = "Admin Menu"
+DEVTOP   = "Developer Menu"
 TIER     = Tier()
 WEBSERVER= os.environ.get("SERVER_NAME") or TIER.hosts.get("APPC")
 SPLTNAME = WEBSERVER.lower().split(".")
@@ -133,15 +133,21 @@ class Controller:
     LOGNAME = "reports"
     LOGLEVEL = "INFO"
     METHOD = "post"
+    AUDIENCES = "Health Professional", "Patient"
+    LANGUAGES = "English", "Spanish"
+    INCLUDE_ANY_LANGUAGE_CHECKBOX = INCLUDE_ANY_AUDIENCE_CHECKBOX = False
+    SUMMARY_SELECTION_METHODS = "id", "title", "board"
 
     def __init__(self, **opts):
         """Set up a skeletal controller."""
+
         self.__started = datetime.datetime.now()
         self.__opts = opts
         self.logger.info("started %s", self.subtitle or "controller")
 
     def run(self):
         """Override in derived class if there are custom actions."""
+
         try:
             if self.request:
                 if self.request == self.ADMINMENU:
@@ -187,7 +193,6 @@ class Controller:
 
     def populate_form(self, page):
         """Stub, to be overridden by real controllers."""
-        pass
 
     def build_tables(self):
         """Stub, to be overridden by real controllers."""
@@ -212,6 +217,178 @@ class Controller:
             params[SESSION] = self.session.name
         params = urllib.parse.urlencode(params)
         return f"{script}?{params}"
+
+    def add_summary_selection_fields(self, page, **kwopts):
+        """
+        Display the fields used to specify which summaries should be
+        selected for a report, using one of several methods:
+
+            * by summary document ID
+            * by summary title
+            * by summary board
+
+        There are two branches taken by this method. If the user has
+        elected to select a summary by summary title, and the summary
+        title fragment matches more than one summary, then a follow-up
+        page is presented on which the user selects one of the summaries
+        and re-submits the report request. Otherwise, the user is shown
+        options for choosing a selection method, which in turn displays
+        the fields appropriate to that method dynamically. We also add
+        JavaScript functions to handle the dynamic control of field display.
+
+        Pass:
+            page     - Page object on which to show the fields
+            titles   - an optional array of SummaryTitle objects
+            audience - if False, omit Audience buttons (default is True)
+            language - if False, omit Language buttons (default is True)
+            id-label - optional string for the CDR ID field (defaults
+                       to "CDR ID" but can be overridden, for example,
+                       to say "CDR ID(s)" if multiple IDs are accepted)
+            id-tip   - optional string for the CDR ID field for popup
+                       help (e.g., "separate multiple IDs by spaces")
+
+        Return:
+            nothing (the form object is populated as a side effect)
+        """
+
+        #--------------------------------------------------------------
+        # Show the second stage in a cascading sequence of the form if we
+        # have invoked this method directly from build_tables(). Widen
+        # the form to accomodate the length of the title substrings
+        # we're showing.
+        #--------------------------------------------------------------
+        titles = kwopts.get("titles")
+        if titles:
+            page.form.append(page.hidden_field("method", "id"))
+            fieldset = page.fieldset("Choose Summary")
+            page.add_css("fieldset { width: 600px; }")
+            for t in titles:
+                opts = dict(label=t.display, value=t.id, tooltip=t.tooltip)
+                fieldset.append(page.radio_button("cdr-id", **opts))
+            page.form.append(fieldset)
+            self.new_tab_on_submit(page)
+
+        else:
+            # Fields for the original form.
+            fieldset = page.fieldset("Selection Method")
+            methods = "PDQ Board", "CDR ID", "Summary Title"
+            checked = True
+            for method in methods:
+                value = method.split()[-1].lower()
+                opts = dict(label=f"By {method}", value=value, checked=checked)
+                fieldset.append(page.radio_button("method", **opts))
+                checked = False
+            page.form.append(fieldset)
+            self.add_board_fieldset(page)
+            if opts.get("audience", True):
+                self.add_audience_fieldset(page)
+            if opts.get("language", True):
+                self.add_language_fieldset(page)
+            fieldset = page.fieldset("Summary Document ID")
+            fieldset.set("class", "by-id-block")
+            label = kwopts.get("id-label", "CDR ID")
+            opts = dict(label=label, tooltip=kwopts.get("id-tip"))
+            fieldset.append(page.text_field("cdr-id", **opts))
+            page.form.append(fieldset)
+            fieldset = page.fieldset("Summary Title")
+            fieldset.set("class", "by-title-block")
+            tooltip = "Use wildcard (%) as appropriate."
+            fieldset.append(page.text_field("title", tooltip=tooltip))
+            page.form.append(fieldset)
+            page.add_script(self.summary_selection_js)
+
+    def add_board_fieldset(self, page):
+        """Add checkboxes for the PDQ Editorial Boards.
+
+        Pass:
+            page - object on which we place the fields
+        """
+
+        fieldset = page.fieldset("Board")
+        fieldset.set("class", "by-board-block")
+        fieldset.set("id", "board-set")
+        opts = dict(label="All Boards", value="all", checked=True)
+        fieldset.append(page.checkbox("board", **opts))
+        boards = self.get_boards()
+        for id in sorted(boards, key=boards.get):
+            opts = dict(value=id, label=boards[id], classes="ind")
+            fieldset.append(page.checkbox("board", **opts))
+        page.form.append(fieldset)
+
+    def add_audience_fieldset(self, page):
+        """Add radio buttons for PDQ audience.
+
+        Pass:
+            page - object on which we place the fields
+        """
+
+        fieldset = page.fieldset("Audience")
+        fieldset.set("class", "by-board-block")
+        fieldset.set("id", "audience-block")
+        default = self.default_audience
+        if self.INCLUDE_ANY_AUDIENCE_CHECKBOX:
+            checked = False if default else True
+            opts = dict(label="Any", value="", checked=checked)
+            fieldset.append(page.radio_button("audience", **opts))
+        elif not default:
+            default = self.AUDIENCES[0]
+        for value in self.AUDIENCES:
+            checked = True if value == default else False
+            opts = dict(value=value, checked=checked)
+            fieldset.append(page.radio_button("audience", **opts))
+        page.form.append(fieldset)
+
+    def add_language_fieldset(self, page):
+        """Add radio buttons for summary language.
+
+        Pass:
+            page - object on which we place the fields
+        """
+
+        fieldset = page.fieldset("Language")
+        fieldset.set("class", "by-board-block")
+        fieldset.set("id", "language-block")
+        checked = True
+        if self.INCLUDE_ANY_LANGUAGE_CHECKBOX:
+            opts = dict(label="Any", value="", checked=True)
+            fieldset.append(page.radio_button("language", **opts))
+            checked = False
+        for value in self.LANGUAGES:
+            opts = dict(value=value, checked=checked)
+            fieldset.append(page.radio_button("language", **opts))
+            checked = False
+        page.form.append(fieldset)
+
+    def get_boards(self):
+        """Construct a dictionary of PDQ board names indexed by CDR ID."""
+
+        boards = cdr.Board.get_boards().values()
+        return dict([(board.id, board.short_name) for board in boards])
+
+    def new_tab_on_submit(self, page):
+        """
+        Take over the onclick event for the Submit button in order to
+        show the report in a new tab. This avoids the problem of the
+        request to resubmit a form unnecessarily when navigating back
+        to the base report request page through an intermediate page
+        (such as the one to choose from multiple matching titles).
+
+        Pass:
+            page - reference to the page object to which the script is added
+        """
+
+        page.add_script(f"""\
+jQuery("input[value='Submit']").click(function(e) {{
+    var parms = jQuery("form").serialize();
+    if (!/Request=Submit/.test(parms)) {{
+        if (parms)
+            parms += "&";
+        parms += "Request=Submit";
+    }}
+    var url = "{self.script}?" + parms;
+    window.open(url, "_blank");
+    e.preventDefault();
+}});""")
 
     @staticmethod
     def add_date_range_to_caption(caption, start, end):
@@ -309,6 +486,11 @@ class Controller:
         return self._cursor
 
     @property
+    def default_audience(self):
+        """Let a subclass override the default for the audience picklist."""
+        return None
+
+    @property
     def elapsed(self):
         """How long have we been running?"""
         return datetime.datetime.now() - self.started
@@ -359,6 +541,8 @@ class Controller:
             self._format = self.fields.getvalue("format")
             if not self._format:
                 self._format = self.__opts.get("format") or self.FORMATS[0]
+            if self._format not in self.FORMATS:
+                self.bail("invalid report format")
         return self._format
 
     @property
@@ -455,6 +639,49 @@ class Controller:
             if not isinstance(self._session, Session):
                 raise Exception("Not a session object")
         return self._session
+
+    @property
+    def summary_selection_js(self):
+        "Local JavaScript to manage sections of the form dynamically."
+
+        return """\
+function check_set(name, val) {
+    var all_selector = "#" + name + "-all";
+    var ind_selector = "#" + name + "-set .ind";
+    if (val == "all") {
+        if (jQuery(all_selector).prop("checked"))
+            jQuery(ind_selector).prop("checked", false);
+        else
+            jQuery(all_selector).prop("checked", true);
+    }
+    else if (jQuery(ind_selector + ":checked").length > 0)
+        jQuery(all_selector).prop("checked", false);
+    else
+        jQuery(all_selector).prop("checked", true);
+}
+function check_board(board) { check_set("board", board); }
+function check_method(method) {
+    switch (method) {
+        case 'id':
+            jQuery('.by-board-block').hide();
+            jQuery('.by-id-block').show();
+            jQuery('.by-title-block').hide();
+            break;
+        case 'board':
+            jQuery('.by-board-block').show();
+            jQuery('.by-id-block').hide();
+            jQuery('.by-title-block').hide();
+            break;
+        case 'title':
+            jQuery('.by-board-block').hide();
+            jQuery('.by-id-block').hide();
+            jQuery('.by-title-block').show();
+            break;
+    }
+}
+jQuery(function() {
+    check_method(jQuery("input[name='method']:checked").val());
+});"""
 
     @property
     def timestamp(self):
@@ -700,7 +927,7 @@ class FormFieldFactory:
         return wrapper
 
     @classmethod
-    def fieldset(cls, legend=None):
+    def fieldset(cls, legend=None, **opts):
         """Create an HTML fieldset element with an optional legend child.
 
         Optional keyword argument:
@@ -710,6 +937,10 @@ class FormFieldFactory:
                 string for optional legend to be displayed for the
                 fieldset
 
+            id
+
+                unique ID for the element
+
         Return:
 
             lxml object for a FIELDSET element
@@ -718,6 +949,8 @@ class FormFieldFactory:
         fieldset = cls.B.FIELDSET()
         if legend:
             fieldset.append(cls.B.LEGEND(legend))
+        if opts.get("id"):
+            fieldset.set("id", opts.get("id"))
         return fieldset
 
     @classmethod
@@ -2766,11 +2999,11 @@ class Control:
     DEVMENU  = DEVTOP
     SUBMIT = "Submit"
     LOG_OUT = "Log Out"
-    FORMATS = ("html", "excel")
+    FORMATS = "html", "excel"
     BOARD_NAME = "/Organization/OrganizationNameInformation/OfficialName/Name"
-    AUDIENCES = ("Health Professional", "Patient")
-    LANGUAGES = ("English", "Spanish")
-    SUMMARY_SELECTION_METHODS = ("id", "title", "board")
+    AUDIENCES = "Health Professional", "Patient"
+    LANGUAGES = "English", "Spanish"
+    SUMMARY_SELECTION_METHODS = "id", "title", "board"
     LOGNAME = "reports"
     LOGLEVEL = "INFO"
 
@@ -3237,7 +3470,7 @@ jQuery("input[value='Submit']").click(function(e) {
     var url = "%s?" + parms;
     window.open(url, "_blank");
     e.preventDefault();
-});""" % self.script);
+});""" % self.script)
 
     @staticmethod
     def toggle_display(function_name, show_value, class_name):
