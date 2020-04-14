@@ -1117,7 +1117,9 @@ class DrupalClient:
             if translation_of:
                 nid = self.lookup(translation_of)
                 if not nid:
-                    raise Exception("English summary must be saved first")
+                    msg = f"CDR{cdr_id}: English summary must be saved first"
+                    self.logger.error(msg)
+                    raise Exception(msg)
             else:
                 nid = self.lookup(values["cdr_id"])
             values["nid"] = nid

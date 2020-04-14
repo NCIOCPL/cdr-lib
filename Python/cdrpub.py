@@ -960,7 +960,7 @@ class Control:
         query.where("path = '/Summary/SummaryMetaData/SummaryLanguage'")
         query.where(query.Condition("doc_id", 0))
         query = str(query)
-        for doc_id in send:
+        for doc_id in sorted(send):
             doctype = send[doc_id]
             xsl = filters[doctype]
             root = cls.fetch_exported_doc(session, doc_id, table)
@@ -982,7 +982,7 @@ class Control:
 
         # Do a second pass for the translated content.
         xsl = filters["Summary"]
-        for doc_id in spanish:
+        for doc_id in sorted(spanish):
             root = cls.fetch_exported_doc(session, doc_id, table)
             args = session, doc_id, xsl, root
             values = cls.assemble_values_for_cis(*args)
