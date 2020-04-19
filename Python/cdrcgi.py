@@ -38,6 +38,7 @@ import cgi
 import cgitb
 import copy
 import datetime
+from email.utils import parseaddr as parse_email_address
 from html import escape as html_escape
 from io import BytesIO
 from operator import itemgetter
@@ -137,6 +138,7 @@ class Controller:
     LANGUAGES = "English", "Spanish"
     INCLUDE_ANY_LANGUAGE_CHECKBOX = INCLUDE_ANY_AUDIENCE_CHECKBOX = False
     SUMMARY_SELECTION_METHODS = "id", "title", "board"
+    EMAIL_PATTERN = re.compile(r"[^@]+@[^@\.]+\.[^@]+$")
 
     def __init__(self, **opts):
         """Set up a skeletal controller."""
@@ -426,6 +428,27 @@ jQuery("input[value='Submit']").click(function(e) {{
             return None
         year, month, date = iso_date.strip().split("-")
         return datetime.date(int(year), int(month), int(date))
+
+    @classmethod
+    def parse_email_address(cls, address):
+        """Pull out an email address from a string.
+
+        Performs a very simple validation, may improve it later, but full
+        RFC requires an incredible thousand-character regular expression.
+
+        Pass:
+            address - string which might have a display portion
+                      (e.g., "Joe Blow <joe@example.com>")
+
+        Return:
+            address portion of the string if validation passes
+            None if no valid address is found
+        """
+
+        realname, address = parse_email_address(address)
+        if address and cls.EMAIL_PATTERN.match(address) and ".." not in address:
+            return address
+        return None
 
     @property
     def HTMLPage(self):
@@ -5721,8 +5744,7 @@ def valParmEmail(val, **opts):
     msg = opts.get("msg")
 
     # Parse out the parts
-    from email.utils import parseaddr
-    (name, email) = parseaddr(val)
+    (name, email) = parse_email_address(val)
 
     # If it's completely screwed up
     if not email:
@@ -5730,7 +5752,7 @@ def valParmEmail(val, **opts):
 
     # Simple validation, may improve it later, but full RFC requires
     # an incredible thousand character regex.
-    match = re.search(r"[^@]+@[^@\.]+\.[^@]+$", email)
+    match = Controller.EMAIL_PATTERN.search(email)
     if match:
         return email
 
