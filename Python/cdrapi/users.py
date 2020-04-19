@@ -102,6 +102,14 @@ class Session:
     def cursor(self):
         return self.local.cursor
 
+    @property
+    def user(self):
+        """Account behind this session."""
+
+        if not hasattr(self, "_user"):
+            self._user = self.User(self, id=self.user_id)
+        return self._user
+
     def log(self, what):
         """
         Record what we're doing
