@@ -427,6 +427,26 @@ jQuery("input[value='Submit']").click(function(e) {{
         year, month, date = iso_date.strip().split("-")
         return datetime.date(int(year), int(month), int(date))
 
+    @staticmethod
+    def toggle_display(function_name, show_value, class_name):
+        """Create JavaScript function to show or hide elements.
+
+        Pass:
+            function_name  - name of the JavaScript function to create
+            show_value     - controlling element's value causing show
+            class_name     - class of which the controlled blocks are members
+        Return:
+            source code for JavaScript function
+        """
+
+        return f"""\
+function {function_name}(value) {{
+    if (value == "{show_value}")
+        jQuery(".{class_name}").show();
+    else
+        jQuery(".{class_name}").hide();
+}}"""
+
     @property
     def HTMLPage(self):
         """Allow overriding of page class."""
@@ -592,6 +612,7 @@ jQuery("input[value='Submit']").click(function(e) {{
                 }
             }
             self._report = Reporter(self.title, tables, **opts)
+            self.logger.info("report prepared")
         return self._report
 
     @property
@@ -682,6 +703,41 @@ function check_method(method) {
 jQuery(function() {
     check_method(jQuery("input[name='method']:checked").val());
 });"""
+
+    @property
+    def summary_titles(self):
+        """Find the summaries that match the user's title fragment.
+
+        Note that the user is responsible for adding any non-trailing
+        SQL wildcards to the fragment string. If the title is longer
+        than 60 characters, truncate with an ellipsis, but add a
+        tooltip showing the whole title. We create a local class for
+        the resulting list.
+
+        ONLY WORKS IF YOU IMPLEMENT THE `self.fragment` PROPERTY!!!
+        """
+
+        class SummaryTitle:
+            def __init__(self, doc_id, display, tooltip=None):
+                self.id = doc_id
+                self.display = display
+                self.tooltip = tooltip
+
+        query = self.Query("active_doc d", "d.id", "d.title")
+        query.join("doc_type t", "t.id = d.doc_type")
+        query.where("t.name = 'Summary'")
+        query.where(query.Condition("d.title", self.fragment + "%", "LIKE"))
+        query.order("d.title")
+        rows = query.execute(self.cursor).fetchall()
+        summaries = []
+        for doc_id, title in rows:
+            if len(title) > 60:
+                short_title = title[:57] + "..."
+                summary = SummaryTitle(doc_id, short_title, title)
+            else:
+                summary = SummaryTitle(doc_id, title)
+            summaries.append(summary)
+        return summaries
 
     @property
     def timestamp(self):
