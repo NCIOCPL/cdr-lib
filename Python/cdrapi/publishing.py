@@ -1093,8 +1093,12 @@ class DrupalClient:
             if len(parsed) > 1:
                 raise Exception("Ambiguous CDR ID {}".format(cdr_id))
             return int(parsed[0][0])
-        else:
+        elif response.status_code == 404:
             return None
+        else:
+            code = response.status_code
+            reason = response.reason
+            raise Exception("lookup returned code {code}: {reason}")
 
     def __check_nid(self, values):
         """
