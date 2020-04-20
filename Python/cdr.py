@@ -4067,7 +4067,7 @@ class Logging:
         logger.propagate = opts.get("propagate", False)
         if not logger.handlers or opts.get("multiplex"):
             path = opts.get("path", "%s/%s.log" % (DEFAULT_LOGDIR, name))
-            handler = logging.FileHandler(path)
+            handler = logging.FileHandler(path, encoding="utf-8")
             formatter = cls.Formatter(opts.get("format", cls.FORMAT))
             handler.setFormatter(formatter)
             logger.addHandler(handler)
