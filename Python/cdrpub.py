@@ -1410,7 +1410,7 @@ class Control:
         """
 
         default = cdr.getEmailList("Operator Publishing Notification")
-        email = self.job.parms.get("email") or ",".join(default)
+        email = self.job.email or ",".join(default)
         if email and "@" in email:
             recips = email.replace(";", ",").split(",")
             args = self.tier.name, self.job.id
