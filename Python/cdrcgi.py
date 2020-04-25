@@ -168,7 +168,7 @@ class Controller:
                 self.show_form()
         except Exception as e:
             self.logger.exception("Controller.run() failure")
-            bail(str(e))
+            bail(e)
 
     def show_form(self):
         """Populate an HTML page with a form and fields and send it."""
@@ -635,7 +635,6 @@ function {function_name}(value) {{
                 }
             }
             self._report = Reporter(self.title, tables, **opts)
-            self.logger.info("report prepared")
         return self._report
 
     @property
@@ -2690,6 +2689,9 @@ class Excel:
         (6, 9)
 
         In other words, 6 pixels wide.
+
+        To go back from chars to pixels:
+            pixels = int(round(6 * ((100 * chars - .5) / 100) + 5))
         """
         max_digit_width = 6
         pixels = int(re.sub("[^0-9]+", "", pixels))
