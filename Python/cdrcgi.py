@@ -739,27 +739,28 @@ jQuery(function() {
         ONLY WORKS IF YOU IMPLEMENT THE `self.fragment` PROPERTY!!!
         """
 
-        class SummaryTitle:
-            def __init__(self, doc_id, display, tooltip=None):
-                self.id = doc_id
-                self.display = display
-                self.tooltip = tooltip
-
-        query = self.Query("active_doc d", "d.id", "d.title")
-        query.join("doc_type t", "t.id = d.doc_type")
-        query.where("t.name = 'Summary'")
-        query.where(query.Condition("d.title", self.fragment + "%", "LIKE"))
-        query.order("d.title")
-        rows = query.execute(self.cursor).fetchall()
-        summaries = []
-        for doc_id, title in rows:
-            if len(title) > 60:
-                short_title = title[:57] + "..."
-                summary = SummaryTitle(doc_id, short_title, title)
-            else:
-                summary = SummaryTitle(doc_id, title)
-            summaries.append(summary)
-        return summaries
+        if not hasattr(self, "_summary_titles"):
+            class SummaryTitle:
+                def __init__(self, doc_id, display, tooltip=None):
+                    self.id = doc_id
+                    self.display = display
+                    self.tooltip = tooltip
+            fragment = f"{self.fragment}%"
+            query = self.Query("active_doc d", "d.id", "d.title")
+            query.join("doc_type t", "t.id = d.doc_type")
+            query.where("t.name = 'Summary'")
+            query.where(query.Condition("d.title", fragment, "LIKE"))
+            query.order("d.title")
+            rows = query.execute(self.cursor).fetchall()
+            self._summary_titles = []
+            for doc_id, title in rows:
+                if len(title) > 60:
+                    short_title = title[:57] + "..."
+                    summary = SummaryTitle(doc_id, short_title, title)
+                else:
+                    summary = SummaryTitle(doc_id, title)
+                self._summary_titles.append(summary)
+        return self._summary_titles
 
     @property
     def timestamp(self):
@@ -807,6 +808,7 @@ jQuery(function() {
             logger = cdr.Logging.get_logger(logfile)
             logger.error("cdrcgi bailout: %s", message)
         page.send()
+
 
 class FormFieldFactory:
     """Provide class methods for creating HTML form fields.
@@ -1839,7 +1841,6 @@ class HTMLPage(FormFieldFactory):
         if not hasattr(self, "_subtitle"):
             self._subtitle = self.__opts.get("subtitle")
         return self._subtitle
-
 
 
 class Reporter:
