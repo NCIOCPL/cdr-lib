@@ -36,6 +36,7 @@ This module has the following sections:
 # Packages from the standard library.
 import cgi
 import cgitb
+import collections
 import copy
 import datetime
 from email.utils import parseaddr as parse_email_address
@@ -139,6 +140,7 @@ class Controller:
     INCLUDE_ANY_LANGUAGE_CHECKBOX = INCLUDE_ANY_AUDIENCE_CHECKBOX = False
     SUMMARY_SELECTION_METHODS = "id", "title", "board"
     EMAIL_PATTERN = re.compile(r"[^@]+@[^@\.]+\.[^@]+$")
+    KEEP_COMPLETE_TITLES = False
 
     def __init__(self, **opts):
         """Set up a skeletal controller."""
@@ -532,6 +534,39 @@ function {function_name}(value) {{
     def default_audience(self):
         """Let a subclass override the default for the audience picklist."""
         return None
+
+    @property
+    def doc_titles(self):
+        """Cached lookup of CDR document titles by ID.
+
+        By default, only the portion of the title column's value before
+        the first semicolon is used. If "Inactive;" is at the front of
+        the title string the second segment of the title is used instead
+        (if it exists) and " (inactive)" is appended. To preserve the
+        entire contents of the title column's values, set the class-level
+        property `KEEP_COMPLETE_TITLES` to `True` in the derived class.
+        """
+
+        if not hasattr(self, "_doc_titles"):
+            class DocTitles(collections.UserDict):
+                def __init__(self, control):
+                    self.__control = control
+                    collections.UserDict.__init__(self)
+                def __getitem__(self, key):
+                    if key not in self.data:
+                        query = self.__control.Query("document", "title")
+                        query.where(query.Condition("id", key))
+                        row = query.execute(self.__control.cursor).fetchone()
+                        title = row.title.strip() if row else ""
+                        if not self.__control.KEEP_COMPLETE_TITLES:
+                            pieces = [p.strip() for p in row.title.split(";")]
+                            title = pieces[0]
+                            if title.lower() == "inactive" and len(pieces) > 1:
+                                title = f"{pieces[1]} (inactive)"
+                        self.data[key] = title or None
+                    return self.data[key]
+            self._doc_titles = DocTitles(self)
+        return self._doc_titles
 
     @property
     def elapsed(self):
@@ -1180,7 +1215,7 @@ class FormFieldFactory:
             default = kwargs.get("default")
             if not isinstance(default, (list, tuple, set)):
                 default = [default] if default else []
-            if multiple and len(default) > 1:
+            if not multiple and len(default) > 1:
                 error = "Multiple defaults specified for single picklist"
                 raise Exception(error)
             if isinstance(options, dict):
@@ -2354,6 +2389,15 @@ class Reporter:
                 book.merge(rownum, 1, rownum, len(self.columns))
                 rownum += 1
 
+            # Show the report date between caption and headers if requested.
+            if self.show_report_date:
+                report_date = f"Report date: {datetime.date.today()}"
+                book.merge(rownum, 1, rownum, len(self.columns))
+                book.write(rownum, 1, report_date, dict(font=book.bold))
+                rownum += 1
+                book.merge(rownum, 1, rownum, len(self.columns))
+                rownum += 1
+
             # Set the column headers and widths.
             colnum = 1
             styles["alignment"] = book.center_middle
@@ -2443,9 +2487,13 @@ class Reporter:
                 children = []
 
                 # Add the caption strings to the table if we have any.
-                if self.caption:
-                    nodes = [self.B.SPAN(self.caption[0])]
-                    for line in self.caption[1:]:
+                caption = list(self.caption)
+                if self.show_report_date:
+                    caption.append("")
+                    caption.append(f"Report date: {datetime.date.today()}")
+                if caption:
+                    nodes = [self.B.SPAN(caption[0])]
+                    for line in caption[1:]:
                         nodes.append(self.B.BR())
                         nodes.append(self.B.SPAN(line))
                     children.append(self.B.CAPTION(*nodes))
@@ -2511,6 +2559,11 @@ class Reporter:
             """
 
             return self.__opts.get("sheet_name")
+
+        @property
+        def show_report_date(self):
+            """If True, add the report date between the caption and headers."""
+            return True if self.__opts.get("show_report_date") else False
 
 
 class Excel:
