@@ -155,11 +155,11 @@ class Controller:
         try:
             if self.request:
                 if self.request == self.ADMINMENU:
-                    navigateTo("Admin.py", self.session.name)
+                    self.redirect("Admin.py")
                 elif self.request == self.REPORTS_MENU:
-                    navigateTo("Reports.py", self.session.name)
+                    self.redirect("Reports.py")
                 elif self.request == self.DEVMENU:
-                    navigateTo("DevSA.py", self.session.name)
+                    self.redirect("DevSA.py")
                 elif self.request == self.LOG_OUT:
                     logout(self.session.name)
                 elif self.request and self.request == self.SUBMIT:
@@ -205,6 +205,18 @@ class Controller:
     def log_elapsed(self):
         """Record how long this took."""
         self.logger.info(f"elapsed: {self.elapsed.total_seconds():f}")
+
+    def redirect(self, where, session=None, **params):
+        """Send the user to another page.
+
+        Pass:
+            where - base URL, up to but not including parameters
+            session - session string or object to override this session (opt)
+            params - dictionary of other named parameters
+        """
+
+        session = session or self.session
+        self.navigate_to(where, session, **params)
 
     def make_url(self, script, **params):
         """Create a URL.
@@ -280,7 +292,7 @@ class Controller:
             for method in methods:
                 value = method.split()[-1].lower()
                 opts = dict(label=f"By {method}", value=value, checked=checked)
-                fieldset.append(page.radio_button("method", **opts))
+                fieldset.append(page.radio_button("selection_method", **opts))
                 checked = False
             page.form.append(fieldset)
             self.add_board_fieldset(page)
@@ -414,6 +426,35 @@ jQuery("input[value='Submit']").click(function(e) {{
         elif end:
             return f"{caption} Through {end}"
         return caption
+
+    @staticmethod
+    def navigate_to(where, session, **params):
+        """Send the user to another page.
+
+        This is the non-instance version.
+        Pass:
+            where - base URL, up to but not including parameters (required)
+            session - session string or object (required)
+            params - dictionary of other named parameters
+        """
+
+        params[SESSION] = session
+        params = urllib.parse.urlencode(params)
+        print(f"Location:https://{WEBSERVER}{BASE}/{where}?{params}\n")
+        sys.exit(0)
+
+    @staticmethod
+    def send_page(page, text_type="html"):
+        """Send a string back to the web server using UTF-8 encoding.
+
+        Pass:
+            page - Unicode string for the page
+            text_type - typically "html" but sometimes "xml"
+        """
+
+        string = f"Content-type: text/{text_type};charset=utf-8\n\n{page}"
+        sys.stdout.buffer.write(string.encode("utf-8"))
+        sys.exit(0)
 
     @staticmethod
     def parse_date(iso_date):
@@ -692,6 +733,17 @@ function {function_name}(value) {{
             if self._script is None:
                 self._script = os.path.basename(sys.argv[0])
         return self._script
+
+    @property
+    def selection_method(self):
+        """How does the user want to identify summaries for the report?"""
+
+        if not hasattr(self, "_selection_method"):
+            name = "selection_method"
+            self._selection_method = self.fields.getvalue(name, "board")
+            if self._selection_method not in self.SUMMARY_SELECTION_METHODS:
+                self.bail()
+        return self._selection_method
 
     @property
     def session(self):
@@ -1219,7 +1271,8 @@ class FormFieldFactory:
                 error = "Multiple defaults specified for single picklist"
                 raise Exception(error)
             if isinstance(options, dict):
-                options = sorted(options.items(), key=itemgetter(1))
+                options = sorted(options.items(),
+                                 key=lambda o:str(o[1]).lower())
             for option in options:
                 if isinstance(option, (list, tuple)):
                     value, display = option
@@ -2166,6 +2219,8 @@ class Reporter:
                     self._classes.add("center")
                 elif self.right:
                     self._classes.add("right")
+                if self.middle:
+                    self._classes.add("middle")
             return self._classes
 
         @property
@@ -2304,6 +2359,11 @@ class Reporter:
         def classes(self):
             """Optional classes for the th element (HTML only)."""
             return self.__opts.get("classes")
+
+        @property
+        def colspan(self):
+            """How many columns does this header need to cover?"""
+            return self.__opts.get("colspan")
 
         @property
         def id(self):
@@ -2514,6 +2574,8 @@ class Reporter:
                                 th.set("class", column.classes)
                             else:
                                 th.set("class", " ".join(column.classes))
+                        if column.colspan:
+                            th.set("colspan", str(column.colspan))
                         tr.append(th)
                     children.append(self.B.THEAD(tr))
 
@@ -5528,12 +5590,9 @@ def sendPage(page, textType='html', parms='', docId='', docType='', docVer=''):
         args = docId, docType, docVer, parms
         parms = "DocId={}&DocType={}&DocVersion={}&{}".format(*args)
         print(f"Location: {url}?{parms}\n")
+        sys.exit(0)
     else:
-        sys.stdout.buffer.write(f"""\
-Content-type: text/{textType};charset=utf-8
-
-{page}""".encode("utf-8"))
-    sys.exit(0)
+        Controller.send_page(page, textType)
 
 #----------------------------------------------------------------------
 # Log out of the CDR session and put up a new login screen.
@@ -5562,10 +5621,7 @@ def logout(session):
 # Navigate to menu location or publish preview.
 #----------------------------------------------------------------------
 def navigateTo(where, session, **params):
-    params[SESSION] = session
-    params = urllib.parse.urlencode(params)
-    print(f"Location:https://{WEBSERVER}{BASE}/{where}?{params}\n")
-    sys.exit(0)
+    Controller.navigate_to(where, session, **params)
 
 #----------------------------------------------------------------------
 # Determine whether query contains unescaped wildcards.
