@@ -811,7 +811,7 @@ function check_selection_method(method) {
 }
 jQuery(function() {
     var method = jQuery("input[name='selection_method']:checked").val();
-    check_selection_method(jQuery(method);
+    check_selection_method(method);
 });"""
 
     @property
