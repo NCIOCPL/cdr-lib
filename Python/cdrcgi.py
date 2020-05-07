@@ -275,7 +275,7 @@ class Controller:
         #--------------------------------------------------------------
         titles = kwopts.get("titles")
         if titles:
-            page.form.append(page.hidden_field("method", "id"))
+            page.form.append(page.hidden_field("selection_method", "id"))
             fieldset = page.fieldset("Choose Summary")
             page.add_css("fieldset { width: 600px; }")
             for t in titles:
@@ -790,7 +790,7 @@ function check_set(name, val) {
         jQuery(all_selector).prop("checked", true);
 }
 function check_board(board) { check_set("board", board); }
-function check_method(method) {
+function check_selection_method(method) {
     switch (method) {
         case 'id':
             jQuery('.by-board-block').hide();
@@ -810,7 +810,8 @@ function check_method(method) {
     }
 }
 jQuery(function() {
-    check_method(jQuery("input[name='method']:checked").val());
+    var method = jQuery("input[name='selection_method']:checked").val();
+    check_selection_method(jQuery(method);
 });"""
 
     @property
