@@ -7626,11 +7626,16 @@ class Link:
             self.linktype = LinkType.lookup(*args)
             if self.linktype:
                 self.chk_type = self.linktype.chk_type
+                try:
+                    int_id = Doc.extract_id(doc_id)
+                    if int_id == doc.id:
+                        self.chk_type = "C"
+                except Exception:
+                    doc.session.logger.warning("invalid doc id %r", doc_id)
                 doc.session.logger.debug("link type is %s", self.linktype.name)
             else:
                 self.chk_type = "C"
                 doc.session.logger.debug("link type not found")
-            self.chk_type = self.linktype.chk_type if self.linktype else "C"
             version = self.VERSIONS[self.chk_type]
             try:
                 target_doc = Doc(doc.session, id=doc_id, version=version)
