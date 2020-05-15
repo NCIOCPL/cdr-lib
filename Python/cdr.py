@@ -3068,11 +3068,11 @@ def expandFilterSet(session, name, level=0, **opts):
         raise Exception('expandFilterSet', 'infinite nesting of sets')
     if name in _expandedFilterSetCache:
         return _expandedFilterSetCache[name]
-    filterSet = getFilterSet(session, name, host, port)
+    filterSet = getFilterSet(session, name, **opts)
     newSetMembers = []
     for member in filterSet.members:
-        if isinstance(member.id, type(9)):
-            nestedSet = expandFilterSet(session, member.name, level + 1)
+        if isinstance(member.id, int):
+            nestedSet = expandFilterSet(session, member.name, level+1, **opts)
             newSetMembers += nestedSet.members
         else:
             newSetMembers.append(member)
@@ -3091,7 +3091,6 @@ def expandFilterSets(session, **opts):
     """
 
     sets = {}
-    opts = dict(host=host, port=port)
     for fSet in getFilterSets(session):
         sets[fSet.name] = expandFilterSet(session, fSet.name, **opts)
     return sets
