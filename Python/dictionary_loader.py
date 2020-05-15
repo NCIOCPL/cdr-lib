@@ -173,7 +173,8 @@ class DictionaryAPILoader:
         """Connection to the Elasticsearch server."""
 
         if not hasattr(self, "_es"):
-            self._es = Elasticsearch([dict(host=self.host, port=self.port)])
+            opts = dict(host=self.host, port=self.port, timeout=300)
+            self._es = Elasticsearch([opts])
         return self._es
 
     @property
