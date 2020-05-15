@@ -218,6 +218,57 @@ class Controller:
         session = session or self.session
         self.navigate_to(where, session, **params)
 
+    def load_group(self, group):
+        """Fetch the active members of a named user group.
+
+        Pass:
+            group - name of group to fetch
+
+        Return:
+            dictionary of user names indexed by user ID
+        """
+
+        query = db.Query("usr u", "u.id", "u.fullname", "u.name")
+        query.join("grp_usr j", "j.usr = u.id")
+        query.join("grp g", "g.id = j.grp")
+        query.where("u.expired IS NULL")
+        query.where(query.Condition("g.name", group))
+        rows = query.execute(self.cursor).fetchall()
+        class Group:
+            def __init__(self, rows):
+                self.map = {}
+                for row in rows:
+                    self.map[row.id] = row.fullname or row.name
+                key = lambda pair: pair[1].lower()
+                self.items = sorted(self.map.items(), key=key)
+            def __getvalue__(self, key):
+                return self.map.get(key)
+        return Group(rows)
+
+    def load_valid_values(self, table_name):
+        """Factor out logic for collecting a valid values set.
+
+        This works because our tables for valid values have the
+        same structure.
+
+        Pass:
+            table_name - name of the database table for the values
+
+        Return:
+            a populated `Values` object
+        """
+
+        query = self.Query(table_name, "value_id", "value_name")
+        rows = query.order("value_pos").execute(self.cursor).fetchall()
+        class Values:
+            def __init__(self, rows):
+                self.map = {}
+                self.values = []
+                for value_id, value_name in rows:
+                    self.map[value_id] = value_name
+                    self.values.append((value_id, value_name))
+        return Values(rows)
+
     def make_url(self, script, **params):
         """Create a URL.
 
