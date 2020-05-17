@@ -1,8 +1,8 @@
 # CDR Python Modules
 
 This repository contains the package for the core CDR API functionality.
-For specific information on the modules in that package, consult its
-separate [README](Python/cdrapi/README.md) file.
+For specific information on the modules in [that package](Python/cdrapi),
+consult its separate [README](Python/cdrapi/README.md) file.
 
 In addition, there are individual modules providing a legacy wrapper
 for that API functionality, as well as common code to support the
