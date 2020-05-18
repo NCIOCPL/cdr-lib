@@ -282,7 +282,7 @@ class Controller:
 
         if SESSION not in params:
             params[SESSION] = self.session.name
-        params = urllib.parse.urlencode(params)
+        params = urllib.parse.urlencode(params, doseq=True)
         return f"{script}?{params}"
 
     def add_summary_selection_fields(self, page, **kwopts):
