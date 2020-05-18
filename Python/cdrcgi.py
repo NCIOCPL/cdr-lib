@@ -1643,7 +1643,7 @@ class HTMLPage(FormFieldFactory):
     """
 
     VERSION = "201909071039"
-    CDR_CSS = f"/stylesheets/cdr.css?v={VERSION}"
+    CDR_CSS = f"../../stylesheets/cdr.css?v={VERSION}"
     APIS = "https://ajax.googleapis.com/ajax/libs"
     JQUERY = f"{APIS}/jquery/3.4.1/jquery.min.js"
     JQUERY_UI = f"{APIS}/jqueryui/1.12.1/jquery-ui.min.js"
