@@ -183,6 +183,8 @@ class DictionaryAPILoader:
 
         if not hasattr(self, "_host"):
             self._host = self.opts.get("host")
+            if self.testing:
+                self._host = "example.com"
             if not self._host and hasattr(self, "HOST"):
                 self._host = self.HOST
             if not self._host:
