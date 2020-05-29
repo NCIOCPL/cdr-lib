@@ -378,8 +378,8 @@ class Controller:
         opts = dict(label="All Boards", value="all", checked=True)
         fieldset.append(page.checkbox("board", **opts))
         boards = self.get_boards()
-        for id in sorted(boards, key=boards.get):
-            opts = dict(value=id, label=boards[id], classes="ind")
+        for value, label in self.get_boards().items():
+            opts = dict(value=value, label=label, classes="ind")
             fieldset.append(page.checkbox("board", **opts))
         page.form.append(fieldset)
 
@@ -431,7 +431,8 @@ class Controller:
         """Construct a dictionary of PDQ board names indexed by CDR ID."""
 
         boards = cdr.Board.get_boards().values()
-        return dict([(board.id, board.short_name) for board in boards])
+        OD = collections.OrderedDict
+        return OD([(board.id, board.short_name) for board in boards])
 
     def new_tab_on_submit(self, page):
         """
@@ -880,26 +881,28 @@ jQuery(function() {
         """
 
         if not hasattr(self, "_summary_titles"):
-            class SummaryTitle:
-                def __init__(self, doc_id, display, tooltip=None):
-                    self.id = doc_id
-                    self.display = display
-                    self.tooltip = tooltip
-            fragment = f"{self.fragment}%"
-            query = self.Query("active_doc d", "d.id", "d.title")
-            query.join("doc_type t", "t.id = d.doc_type")
-            query.where("t.name = 'Summary'")
-            query.where(query.Condition("d.title", fragment, "LIKE"))
-            query.order("d.title")
-            rows = query.execute(self.cursor).fetchall()
-            self._summary_titles = []
-            for doc_id, title in rows:
-                if len(title) > 60:
-                    short_title = title[:57] + "..."
-                    summary = SummaryTitle(doc_id, short_title, title)
-                else:
-                    summary = SummaryTitle(doc_id, title)
-                self._summary_titles.append(summary)
+            self._summary_titles = None
+            if hasattr(self, "fragment") and self.fragment:
+                class SummaryTitle:
+                    def __init__(self, doc_id, display, tooltip=None):
+                        self.id = doc_id
+                        self.display = display
+                        self.tooltip = tooltip
+                fragment = f"{self.fragment}%"
+                query = self.Query("active_doc d", "d.id", "d.title")
+                query.join("doc_type t", "t.id = d.doc_type")
+                query.where("t.name = 'Summary'")
+                query.where(query.Condition("d.title", fragment, "LIKE"))
+                query.order("d.title")
+                rows = query.execute(self.cursor).fetchall()
+                self._summary_titles = []
+                for doc_id, title in rows:
+                    if len(title) > 60:
+                        short_title = title[:57] + "..."
+                        summary = SummaryTitle(doc_id, short_title, title)
+                    else:
+                        summary = SummaryTitle(doc_id, title)
+                    self._summary_titles.append(summary)
         return self._summary_titles
 
     @property
@@ -2327,6 +2330,16 @@ class Reporter:
             return self._sheet_styles
 
         @property
+        def style(self):
+            """Custom CSS specified directly on the element.
+
+            Not a best practice, but needed to work around bugs in
+            Microsoft Word.
+            """
+
+            return self.__opts.get("style")
+
+        @property
         def target(self):
             """Target for links.
 
@@ -2366,6 +2379,8 @@ class Reporter:
                     self._td.set("class", " ".join(self.classes))
                 if self.title:
                     self._td.set("title", self.title)
+                if self.style:
+                    self._td.set("style", self.style)
             return self._td
 
         @property

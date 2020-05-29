@@ -12,6 +12,7 @@ This module is now compatible with Python 3 and Python 2.
 """
 
 import base64
+import collections
 import datetime
 import logging
 import os
@@ -127,8 +128,8 @@ class Board:
         else:
             types = [f"PDQ {bt} Board" for bt in cls.BOARD_TYPES]
             query.where(query.Condition("t.value", types, "IN"))
-        boards = {}
-        for board_id, board_name in query.execute():
+        boards = collections.OrderedDict()
+        for board_id, board_name in query.order("n.value").execute():
             boards[board_id] = cls(board_id, name=board_name)
         return boards
 
