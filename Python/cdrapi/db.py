@@ -45,6 +45,8 @@ def connect(**opts):
         conn_string = ";".join(["{}={}".format(*p) for p in parms.items()])
     else:
         conn_string = f"DSN=CDR{tier.name.upper()};UID={user};PWD={password}"
+    if opts.get("debug"):
+        print(conn_string)
     opts = dict(timeout=timeout, autocommit=autocommit)
     conn = pyodbc.connect(conn_string, **opts)
     conn.timeout = timeout
