@@ -89,7 +89,8 @@ class Data:
             for path in glob.glob(f"{source}/*"):
                 doc_type = os.path.basename(path)
                 if doc_type != "tables":
-                    self.docs[doc_type] = DocType(doc_type, source)
+                    if not doc_type.startswith("scheduled-jobs."):
+                        self.docs[doc_type] = DocType(doc_type, source)
 
     def filter_set_member(self, row):
         """
