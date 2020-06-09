@@ -91,7 +91,9 @@ class Tier:
         """
 
         if not hasattr(self, "_drive"):
-            self._drive = Tier.find_cdr()
+            self._drive = os.environ.get("CDR_DRIVE")
+            if not self._drive:
+                self._drive = Tier.find_cdr()
         return self._drive
 
     @property
