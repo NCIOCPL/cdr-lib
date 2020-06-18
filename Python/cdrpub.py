@@ -1411,15 +1411,13 @@ class Control:
 
         default = cdr.getEmailList("Operator Publishing Notification")
         email = self.job.email or ",".join(default)
-        if email and "@" in email:
+        if "@" in email:
             recips = email.replace(";", ",").split(",")
-            args = self.tier.name, self.job.id
-            subject = "[{}] CDR Publishing Job {:d}".format(*args)
+            subject = f"[{self.tier}] CDR Publishing Job {self.job.id:d}"
             if with_link:
-                cgi_base = "https://{}/cgi-bin/cdr".format(cdr.APPC)
-                args = cgi_base, self.job.id
-                link = "{}/PubStatus.py?id={:d}".format(*args)
-                body = "{}\n\n{}".format(message, link)
+                cgi_base = f"https://{cdr.APPC}/cgi-bin/cdr"
+                link = f"{cgi_base}/PubStatus.py?id={self.job.id:d}"
+                body = f"{message}\n\n{link}"
             else:
                 body = message
             opts = dict(subject=subject, body=body)
