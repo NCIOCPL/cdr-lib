@@ -173,7 +173,8 @@ class DictionaryAPILoader:
         """Connection to the Elasticsearch server."""
 
         if not hasattr(self, "_es"):
-            self._es = Elasticsearch([dict(host=self.host, port=self.port)])
+            opts = dict(host=self.host, port=self.port, timeout=300)
+            self._es = Elasticsearch([opts])
         return self._es
 
     @property
@@ -182,6 +183,8 @@ class DictionaryAPILoader:
 
         if not hasattr(self, "_host"):
             self._host = self.opts.get("host")
+            if self.testing:
+                self._host = "example.com"
             if not self._host and hasattr(self, "HOST"):
                 self._host = self.HOST
             if not self._host:
@@ -321,7 +324,7 @@ class DictionaryAPILoader:
         if not hasattr(self, "_transform"):
             title = f"Index {self.type.capitalize()} Dictionary"
             doc_id = Doc.id_from_title(title, self.cursor)
-            doc = Doc(Session("guest"), id=doc_id)
+            doc = Doc(Session("guest", tier=self.tier), id=doc_id)
             self._transform = etree.XSLT(doc.root)
             self.logger.info("Loaded %r filter", title)
         return self._transform

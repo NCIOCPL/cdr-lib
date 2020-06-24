@@ -431,19 +431,20 @@ class BatchReport:
             db.Query object
         """
 
-        boards = ", ".join([str(board) for board in boards])
+        # Double conversion ensures we have integers, guarding against attacks.
+        boards = ", ".join([str(int(board)) for board in boards])
         if not language or language == "English":
             english_query = db.Query("query_term", "doc_id")
-            english_query.where("path = '%s'" % cls.SUMMARY_BOARD)
-            english_query.where("int_val in (%s)" % boards)
+            english_query.where(f"path = '{cls.SUMMARY_BOARD}'")
+            english_query.where(f"int_val in ({boards})")
             if language:
                 return english_query
         if not language or language == "Spanish":
             spanish_query = db.Query("query_term s", "s.doc_id")
-            spanish_query.join("query_term e", "e.int_val = s.doc_id")
+            spanish_query.join("query_term e", "e.doc_id = s.int_val")
             spanish_query.where("s.path = '/Summary/TranslationOf/@cdr:ref'")
-            spanish_query.where("e.path = '%s'" % cls.SUMMARY_BOARD)
-            spanish_query.where("e.int_val in (%s)" % boards)
+            spanish_query.where(f"e.path = '{cls.SUMMARY_BOARD}'")
+            spanish_query.where(f"e.int_val in ({boards})")
             if language:
                 return spanish_query
         return english_query.union(spanish_query)

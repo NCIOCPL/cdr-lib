@@ -12,6 +12,7 @@ This module is now compatible with Python 3 and Python 2.
 """
 
 import base64
+import collections
 import datetime
 import logging
 import os
@@ -127,8 +128,8 @@ class Board:
         else:
             types = [f"PDQ {bt} Board" for bt in cls.BOARD_TYPES]
             query.where(query.Condition("t.value", types, "IN"))
-        boards = {}
-        for board_id, board_name in query.execute():
+        boards = collections.OrderedDict()
+        for board_id, board_name in query.order("n.value").execute():
             boards[board_id] = cls(board_id, name=board_name)
         return boards
 
@@ -3068,11 +3069,11 @@ def expandFilterSet(session, name, level=0, **opts):
         raise Exception('expandFilterSet', 'infinite nesting of sets')
     if name in _expandedFilterSetCache:
         return _expandedFilterSetCache[name]
-    filterSet = getFilterSet(session, name, host, port)
+    filterSet = getFilterSet(session, name, **opts)
     newSetMembers = []
     for member in filterSet.members:
-        if isinstance(member.id, type(9)):
-            nestedSet = expandFilterSet(session, member.name, level + 1)
+        if isinstance(member.id, int):
+            nestedSet = expandFilterSet(session, member.name, level+1, **opts)
             newSetMembers += nestedSet.members
         else:
             newSetMembers.append(member)
@@ -3091,7 +3092,6 @@ def expandFilterSets(session, **opts):
     """
 
     sets = {}
-    opts = dict(host=host, port=port)
     for fSet in getFilterSets(session):
         sets[fSet.name] = expandFilterSet(session, fSet.name, **opts)
     return sets
@@ -4004,7 +4004,7 @@ def mailerCleanup(credentials, **opts):
             errors = []
             for node in response.node.findall("DeletedDoc"):
                 doc_ids.append(re.sub(r"[^\d]", "", get_text(node)))
-            for node in reponse.node.findall("Errors/Err"):
+            for node in response.node.findall("Errors/Err"):
                 errors.append(text_text(node))
             return (doc_ids, errors)
         error = ";".join(response.errors) or "missing response"
@@ -4067,7 +4067,7 @@ class Logging:
         logger.propagate = opts.get("propagate", False)
         if not logger.handlers or opts.get("multiplex"):
             path = opts.get("path", "%s/%s.log" % (DEFAULT_LOGDIR, name))
-            handler = logging.FileHandler(path)
+            handler = logging.FileHandler(path, encoding="utf-8")
             formatter = cls.Formatter(opts.get("format", cls.FORMAT))
             handler.setFormatter(formatter)
             logger.addHandler(handler)

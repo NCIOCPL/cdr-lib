@@ -1627,6 +1627,26 @@ class Doc(object):
                 pass
             raise
 
+    def collect_links(self):
+        """Public wrapper for __collect_links(), q.v."""
+
+        resolved = self.resolved
+        if resolved is None:
+            return None
+        return self.__collect_links(resolved)
+
+    def set_links(self):
+        """Refresh the linking information for this document.
+
+        Used when creating a stripped-down database for development
+        on a workstation.
+        """
+
+        resolved = self.resolved
+        if  resolved is not None:
+            self.__store_links(self.__collect_links(resolved))
+            self.session.conn.commit()
+
     def set_status(self, status, **opts):
         """
         Modify the `all_docs.active_status` value for the document
@@ -7606,11 +7626,16 @@ class Link:
             self.linktype = LinkType.lookup(*args)
             if self.linktype:
                 self.chk_type = self.linktype.chk_type
+                try:
+                    int_id = Doc.extract_id(doc_id)
+                    if int_id == doc.id:
+                        self.chk_type = "C"
+                except Exception:
+                    doc.session.logger.warning("invalid doc id %r", doc_id)
                 doc.session.logger.debug("link type is %s", self.linktype.name)
             else:
                 self.chk_type = "C"
                 doc.session.logger.debug("link type not found")
-            self.chk_type = self.linktype.chk_type if self.linktype else "C"
             version = self.VERSIONS[self.chk_type]
             try:
                 target_doc = Doc(doc.session, id=doc_id, version=version)

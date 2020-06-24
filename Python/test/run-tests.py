@@ -22,16 +22,12 @@ import cdr
 from cdrapi.users import Session
 from cdrapi import db
 
-try:
-    basestring
-except:
-    basestring = (str, bytes)
-    unicode = str
-
 
 class Tests(unittest.TestCase):
     USERNAME = "tester"
-    TIER = os.environ.get("TEST_MODE") == "remote" and cdr.Tier().name or None
+    REMOTE = os.environ.get("TEST_MODE") == "remote"
+    TEST_TIER = os.environ.get("TEST_TIER")
+    TIER = TEST_TIER or REMOTE and cdr.Tier().name or None
 
     def setUp(self):
         password = cdr.getpw(self.USERNAME)
@@ -40,7 +36,11 @@ class Tests(unittest.TestCase):
         Tests.session = Session.create_session(self.USERNAME, **opts).name
         Tests.TEST_DIR = os.path.dirname(os.path.realpath(__file__))
     def tearDown(self):
-        cdr.logout(self.session, tier=self.TIER)
+        try:
+            cdr.logout(self.session, tier=self.TIER)
+        except Exception as e:
+            print(f"session={self.session} tier={self.TIER}")
+            print(e)
 
     @staticmethod
     def make_password(length=16):
@@ -73,6 +73,7 @@ if FULL:
             self.__class__.session2 = session
             self.assertEqual(len(self.__class__.session2.name), 32)
             self.assertTrue(self.__class__.session2.active)
+
         def test_02_logout______(self):
             self.assertTrue(self.__class__.session2.active)
             opts = dict(tier=self.TIER)
@@ -236,11 +237,12 @@ if FULL:
     class _04DoctypeTests___(Tests):
 
         def __fix_xxtest_schema(self):
-            with open("{}/{}".format(self.TEST_DIR, "xxtest.xsd"), "rb") as fp:
+            with open(f"{self.TEST_DIR}/xxtest.xsd", encoding="utf-8") as fp:
                 xsd = fp.read().strip()
+            cursor = db.connect(tier=self.TIER).cursor()
             query = db.Query("document", "id", "xml")
             query.where("title = 'xxtest.xml'")
-            row = query.execute().fetchone()
+            row = query.execute(cursor).fetchone()
             if row:
                 id, xml = row
                 if xml.strip() == xsd:
@@ -256,8 +258,15 @@ if FULL:
                 cdr.addDoc(self.session, doc=doc, check_in="Y", tier=self.TIER)
 
         def test_16_add_doctype_(self):
-            with open("{}/{}".format(self.TEST_DIR, "dada.xsd"), "rb") as fp:
-                xsd = fp.read().decode("utf-8")
+            query = db.Query("document d", "d.id")
+            query.join("doc_type t", "t.id = d.doc_type")
+            query.where(query.Condition("d.title", "dada.xml"))
+            query.where(query.Condition("t.name", "schema"))
+            cursor = db.connect(tier=self.TIER).cursor()
+            for row in query.execute(cursor).fetchall():
+                cdr.delDoc(self.session, row.id, tier=self.TIER)
+            with open(f"{self.TEST_DIR}/dada.xsd", encoding="utf-8") as fp:
+                xsd = fp.read()
             ctrl = {"DocTitle": "dada.xml"}
             doc = cdr.makeCdrDoc(xsd, "schema", None, ctrl)
             response = cdr.addDoc(self.session, doc=doc, tier=self.TIER)
@@ -298,7 +307,7 @@ if FULL:
             opts = dict(tier=self.TIER)
             vv_list = cdr.getVVList(self.session, "dada", "gimte", **opts)
             self.assertIn("Niedersachsen", vv_list)
-            self.assertIn(u"K\xf6ln", vv_list)
+            self.assertIn("K\xf6ln", vv_list)
 
         def test_21_del_doctype_(self):
             try:
@@ -311,7 +320,8 @@ if FULL:
                 query.join("doc_type t", "t.id = d.doc_type")
                 query.where(query.Condition("d.title", "dada.xml"))
                 query.where(query.Condition("t.name", "schema"))
-                for row in query.execute().fetchall():
+                cursor = db.connect(tier=self.TIER).cursor()
+                for row in query.execute(cursor).fetchall():
                     cdr.delDoc(self.session, row.id, tier=self.TIER)
 
         def test_22_get_css_____(self):
@@ -507,17 +517,18 @@ if FULL:
             self.assertEqual(status, "I")
             query = db.Query("audit_trail", "COUNT(*) AS n")
             query.where(query.Condition("document", doc_id))
-            self.assertEqual(query.execute().fetchone().n, 2)
+            cursor = db.connect(tier=self.TIER).cursor()
+            self.assertEqual(query.execute(cursor).fetchone().n, 2)
             query = db.Query("audit_trail_added_action", "COUNT(*) AS n")
             query.where(query.Condition("document", doc_id))
-            self.assertEqual(query.execute().fetchone().n, 1)
+            self.assertEqual(query.execute(cursor).fetchone().n, 1)
             cdr.delDoc(self.session, doc_id, tier=self.TIER)
         def test_37_update_title(self):
             with open("{}/{}".format(self.TEST_DIR, "004.xml"), "rb") as fp:
                 filter1 = fp.read()
             with open("{}/{}".format(self.TEST_DIR, "005.xml"), "rb") as fp:
                 filter2 = fp.read()
-            conn = db.connect()
+            conn = db.connect(tier=self.TIER)
             cursor = conn.cursor()
             query = db.Query("doc_type", "title_filter")
             query.where("name = 'xxtest'")
@@ -555,7 +566,7 @@ if FULL:
             self.assertTrue(result)
             title = query.execute(cursor).fetchone().title
             self.assertEqual(title, "Modified title for gimte")
-            cdr.delDoc(self.session, doc_id)
+            cdr.delDoc(self.session, doc_id, tier=self.TIER)
         def test_38_english_map_(self):
             name = u"stage II cutaneous T-cell lymphoma"
             phrase = u"STAGE IIA CUTANEOUS T CELL LYMPHOMA"
@@ -632,17 +643,18 @@ if FULL:
             job_id, errors = result
             self.assertIsNotNone(job_id)
             self.assertIsNone(errors)
-            conn = db.connect()
+            conn = db.connect(tier=self.TIER)
             cursor = conn.cursor()
             sql = "UPDATE pub_proc SET status = 'Failure' WHERE id = ?"
             cursor.execute(sql, (int(job_id),))
             conn.commit()
         def test_43_mailrcleanup(self):
-            cdr.mailerCleanup(self.session)
+            cdr.mailerCleanup(self.session, tier=self.TIER)
             query = db.Query("pub_proc", "id").limit(2)
             query.where("status = 'Failure'")
             query.where("output_dir LIKE 'd:/cdr/Output/Mailer%'")
-            failed_jobs = [row.id for row in query.execute().fetchall()]
+            cursor = db.connect(tier=self.TIER).cursor()
+            failed_jobs = [row.id for row in query.execute(cursor).fetchall()]
             ctrl = dict(DocTitle="mailer cleanup test")
             template = "<Mailer><JobId>{}</JobId></Mailer>"
             xml = template.format(failed_jobs[0])
@@ -655,13 +667,14 @@ if FULL:
             opts["check_in"] = "Y"
             will_succeed = cdr.addDoc(self.session, **opts)
             self.assertTrue(will_succeed.startswith("CDR"))
-            session = cdr.login("cdrmailers", cdr.getpw("cdrmailers"))
-            deleted, errors = cdr.mailerCleanup(session)
+            opts = dict(password=cdr.getpw("cdrmailers"), tier=self.TIER)
+            session = Session.create_session("cdrmailers", **opts)
+            deleted, errors = cdr.mailerCleanup(session, tier=self.TIER)
             self.assertTrue(len(deleted) == 1)
             self.assertEqual(cdr.normalize(deleted[0]), will_succeed)
             self.assertTrue(len(errors) == 1)
             self.assertTrue("checked out by another user" in errors[0])
-            cdr.delDoc(self.session, will_fail)
+            cdr.delDoc(self.session, will_fail, tier=self.TIER)
 
     class _06FilterTests____(Tests):
         num_filters = 3
@@ -715,9 +728,9 @@ if FULL:
             self.assertEqual(filter_set.desc, self.set_desc)
             self.assertEqual(filter_set.notes, self.set_notes)
             self.assertTrue(isinstance(filter_set.members[0], cdr.IdAndName))
-            self.assertTrue(isinstance(filter_set.members[0].id, basestring))
+            self.assertTrue(isinstance(filter_set.members[0].id, str))
             self.assertTrue(isinstance(filter_set.members[-1], cdr.IdAndName))
-            self.assertFalse(isinstance(filter_set.members[-1].id, basestring))
+            self.assertFalse(isinstance(filter_set.members[-1].id, str))
         def test_49_del_flt_set_(self):
             name = self.set_name
             result = cdr.delFilterSet(self.session, name, tier=self.TIER)
@@ -743,6 +756,7 @@ if FULL:
             query = db.Query("query_term_pub", "doc_id")
             query.where("path = '/Term/TermType/TermTypeName'")
             query.where("value = 'Semantic type'")
+            cursor = db.connect(tier=self.TIER).cursor()
             if semantic_type:
                 return query.limit(1).execute(cursor).fetchone().doc_id
             sub_query = query
@@ -751,6 +765,7 @@ if FULL:
             query.join("pub_proc_cg c", "c.id = d.id")
             query.where("t.name = 'Term'")
             query.where(query.Condition("d.id", sub_query, "NOT IN"))
+            cursor = db.connect(tier=self.TIER).cursor()
             return query.limit(1).execute(cursor).fetchone().id
         def __make_test_xml(self, doc_id):
             pattern = '<xxtest xmlns:cdr="{}"><a cdr:ref="{}">x</a></xxtest>'
@@ -830,7 +845,7 @@ if FULL:
             types = cdr.getLinkProps(self.session, tier=self.TIER)
             self.assertEqual(len(types), 1)
             self.assertEqual(types[0].name, "LinkTargetContains")
-            self.assertTrue(isinstance(types[0].comment, basestring))
+            self.assertTrue(isinstance(types[0].comment, str))
         def test_56_get_tree____(self):
             opts = dict(tier=self.TIER)
             tree = cdr.getTree(self.session, self.BREAST_CANCER, **opts)
@@ -845,7 +860,8 @@ if FULL:
             query = db.Query("query_term", "doc_id").limit(1)
             query.where("path = '/Term/PreferredName'")
             query.where("value = 'bevacizumab'")
-            target = query.execute().fetchone().doc_id
+            cursor = db.connect(tier=self.TIER).cursor()
+            target = query.execute(cursor).fetchone().doc_id
             opts = dict(tier=self.TIER)
             args = self.session, "Summary", "Intervention", target
             result = cdr.check_proposed_link(*args, **opts)
@@ -868,7 +884,8 @@ if FULL:
             query = db.Query("query_term", "doc_id").limit(1)
             query.where("path = '/Term/PreferredName'")
             query.where("value = 'bevacizumab'")
-            target = query.execute().fetchone().doc_id
+            cursor = db.connect(tier=self.TIER).cursor()
+            target = query.execute(cursor).fetchone().doc_id
             links = cdr.get_links(self.session, target, tier=self.TIER)
             self.assertTrue(len(links) >= 2)
             self.assertTrue("bevacizumab" in "".join(links).lower())
@@ -932,7 +949,8 @@ if FULL:
         def test_64_reindex_doc_(self):
             query = db.Query("query_term_pub", "doc_id").limit(1)
             query.where("path LIKE '/Term%'")
-            doc_id = query.execute().fetchone().doc_id
+            cursor = db.connect(tier=self.TIER).cursor()
+            doc_id = query.execute(cursor).fetchone().doc_id
             result = cdr.reindex(self.session, doc_id, tier=self.TIER)
             self.assertIsNone(result)
         def test_65_search______(self):
@@ -1004,7 +1022,8 @@ if FULL:
             cdr.log_client_event(self.session, description, tier=self.TIER)
             query = db.Query("client_log", "event_time", "event_desc")
             query.limit(1).order("event_time DESC")
-            row = query.execute().fetchone()
+            cursor = db.connect(tier=self.TIER).cursor()
+            row = query.execute(cursor).fetchone()
             self.assertEqual(description, row.event_desc)
             delta = datetime.datetime.now() - row.event_time
             self.assertTrue(abs(delta.total_seconds()) < 5)
@@ -1016,7 +1035,8 @@ if FULL:
             self.assertTrue(isinstance(log_id, int))
             query = db.Query("dll_trace_log", "cdr_user", "session_id")
             query.where(query.Condition("log_id", log_id))
-            row = query.execute().fetchone()
+            cursor = db.connect(tier=self.TIER).cursor()
+            row = query.execute(cursor).fetchone()
             self.assertEqual(row.cdr_user, "joe")
             self.assertEqual(row.session_id, self.session)
 

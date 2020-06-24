@@ -64,7 +64,7 @@ class Session:
         self.tier = tier if isinstance(tier, Tier) else Tier(tier)
         opts = dict(level=loglevel, rolling=True, tier=self.tier)
         self.local = self.Local(**opts)
-        opts["dbconn"] = self.LoggingDBConnection()
+        opts["dbconn"] = self.LoggingDBConnection(self.tier)
         self.logger = self.tier.get_logger("session", **opts)
         try:
             self.cursor.execute(self.SELECT)
@@ -101,6 +101,14 @@ class Session:
     @property
     def cursor(self):
         return self.local.cursor
+
+    @property
+    def user(self):
+        """Account behind this session."""
+
+        if not hasattr(self, "_user"):
+            self._user = self.User(self, id=self.user_id)
+        return self._user
 
     def log(self, what):
         """
@@ -1375,6 +1383,6 @@ class Session:
 
 
     class LoggingDBConnection(threading.local):
-        def __init__(self):
-            self.conn = db.connect()
+        def __init__(self, tier=None):
+            self.conn = db.connect(tier=tier)
             self.cursor = self.conn.cursor()

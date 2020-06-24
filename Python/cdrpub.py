@@ -960,7 +960,7 @@ class Control:
         query.where("path = '/Summary/SummaryMetaData/SummaryLanguage'")
         query.where(query.Condition("doc_id", 0))
         query = str(query)
-        for doc_id in send:
+        for doc_id in sorted(send):
             doctype = send[doc_id]
             xsl = filters[doctype]
             root = cls.fetch_exported_doc(session, doc_id, table)
@@ -982,7 +982,7 @@ class Control:
 
         # Do a second pass for the translated content.
         xsl = filters["Summary"]
-        for doc_id in spanish:
+        for doc_id in sorted(spanish):
             root = cls.fetch_exported_doc(session, doc_id, table)
             args = session, doc_id, xsl, root
             values = cls.assemble_values_for_cis(*args)
@@ -1410,16 +1410,14 @@ class Control:
         """
 
         default = cdr.getEmailList("Operator Publishing Notification")
-        email = self.job.parms.get("email") or ",".join(default)
-        if email and "@" in email:
+        email = self.job.email or ",".join(default)
+        if "@" in email:
             recips = email.replace(";", ",").split(",")
-            args = self.tier.name, self.job.id
-            subject = "[{}] CDR Publishing Job {:d}".format(*args)
+            subject = f"[{self.tier}] CDR Publishing Job {self.job.id:d}"
             if with_link:
-                cgi_base = "https://{}/cgi-bin/cdr".format(cdr.APPC)
-                args = cgi_base, self.job.id
-                link = "{}/PubStatus.py?id={:d}".format(*args)
-                body = "{}\n\n{}".format(message, link)
+                cgi_base = f"https://{cdr.APPC}/cgi-bin/cdr"
+                link = f"{cgi_base}/PubStatus.py?id={self.job.id:d}"
+                body = f"{message}\n\n{link}"
             else:
                 body = message
             opts = dict(subject=subject, body=body)

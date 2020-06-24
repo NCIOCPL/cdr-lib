@@ -91,7 +91,9 @@ class Tier:
         """
 
         if not hasattr(self, "_drive"):
-            self._drive = Tier.find_cdr()
+            self._drive = os.environ.get("CDR_DRIVE")
+            if not self._drive:
+                self._drive = Tier.find_cdr()
         return self._drive
 
     @property
@@ -215,7 +217,7 @@ class Tier:
           level - optional verboxity for logging (default INFO)
           propagate - if True, the base handler also writes our entries
           multiplex - if True, add new handler even if there already is one
-          console - if True, add stram handler to write to stderr
+          console - if True, add stream handler to write to stderr
           dbconn - optional, for database logging handler
           rolling - if True, roll over to a new log each day at midnight;
                     won't work if `path` is also passed, unless the
@@ -254,6 +256,7 @@ class Tier:
                 else:
                     handler = self.ReleasingLogHandler(path, delay=True)
                 handler.setFormatter(formatter)
+                handler.encoding = "utf-8"
                 logger.addHandler(handler)
             if name == "session":
                 args = self.basedir, opts["dbconn"]
@@ -580,20 +583,20 @@ class Tier:
                         try:
                             message = None
                             try:
-                                message = self.format(message)
+                                message = self.format(record)
                             except:
                                 pass
                             now = datetime.datetime.now()
                             stamp = now.strftime("%Y%m%d%H%M%S")
                             name = record.name
-                            name = "{}-logger-{}.err".format(name, stamp)
+                            name = f"{name}-logger-{stamp}.err"
                             try:
                                 basedir = Tier().basedir
                             except:
                                 basedir = "d:/cdr"
                             path = f"{basedir}/Log/{name}"
-                            with open(path, "a") as fp:
-                                fp.write("{}\n".format(e))
+                            with open(path, "a", encoding="utf-8") as fp:
+                                fp.write(f"{e}\n")
                                 if message:
                                     try:
                                         fp.write("{!r}\n".format(message))
@@ -635,40 +638,39 @@ class Tier:
 
             # If we've rolled over to a new file, make it world-writable.
             if not os.path.exists(path):
-                fp = open(path, "w")
-                banner = " Rolling over to new daily session log {} "
-                fp.write("{}\n".format(banner.format(path).center(120, "=")))
-                fp.close()
+                with open(path, "w", encoding="utf-8") as fp:
+                    banner = f" Rolling over to new daily session log {path} "
+                    banner = banner.center(120, "=")
+                    fp.write(f"{banner}\n")
                 opts = dict(
                     stderr=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stdin=subprocess.PIPE,
-                    shell=True
+                    shell=True,
                 )
                 path = path.replace("/", "\\")
-                command = 'icacls "{}" /grant Everyone:(M)'.format(path)
+                command = f'icacls "{path}" /grant Everyone:(M)'
                 try:
                     stream = subprocess.Popen(command, **opts)
                     output, error = stream.communicate()
                     code = stream.returncode
                     if code:
                         name = now.strftime("logger-%Y%m%d%H%M%S.err")
-                        errpath = "d:/cdr/Log/{}".format(name)
-                        with open(errpath, "a") as fp:
-                            args = command, code
-                            fp.write("{!r} returned code {}\n".format(*args))
-                            fp.write("command output: {!r}\n".format(output))
-                            fp.write("error output: {!r}\n".format(error))
+                        errpath = f"d:/cdr/Log/{name}"
+                        with open(errpath, "a", encoding="utf-8") as fp:
+                            fp.write(f"{command!r} returned {code}\n")
+                            fp.write(f"command output: {output!r}\n")
+                            fp.write(f"error output: {error!r}\n")
                 except Exception as e:
                     try:
                         import traceback
-                        message = "rolling logfile to {!r}".format(path)
+                        message = f"rolling logfile to {path!r}"
                         name = now.strftime("logger-%Y%m%d%H%M%S.err")
-                        errpath = "d:/cdr/Log/{}".format(name)
-                        with open(errpath, "a") as fp:
-                            fp.write("{}\n".format(message))
-                            fp.write("command: {!r}\n".format(command))
-                            fp.write("{}\n".format(e))
+                        errpath = f"d:/cdr/Log/{name}"
+                        with open(errpath, "a", encoding="utf-8") as fp:
+                            fp.write(f"{message}\n")
+                            fp.write(f"command: {command!r}\n")
+                            fp.write(f"{e}\n")
                             traceback.print_exc(None, fp)
                     except:
                         pass

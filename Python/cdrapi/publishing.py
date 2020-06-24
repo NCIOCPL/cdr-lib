@@ -32,8 +32,8 @@ class Job:
       cursor - reference to the `Session`'s cursor object
       parms - name/value pairs overriding the control doc's parameters
       docs - list of documents requested or published for this job
-      email - string for the email address to which processing notifications
-              are sent
+      email - string for the email address(es) to which processing
+              notifications are sent
       force - If true, this is a hotfix/remove, so bypass 'Active' checks
       permissive - flag to suppress the requirement for publishable doc
                    versions
@@ -54,7 +54,7 @@ class Job:
           subsystem - string for the publishing subset for a new job
           parms - name/value pairs overriding the control doc's parameters
           docs - list of documents to be published for a new job
-          email - address to which reports should be sent for new job
+          email - address(es) to which reports should be sent for new job
           no_output - if True, job won't write published docs to disk
           permissive - if True, don't require documents to be "publishable"
           force - if True, this is a hotfix-remove job; doc needn't be active
@@ -149,18 +149,20 @@ class Job:
     @property
     def email(self):
         """
-        String for the email address to which processing notifications go
+        String for the email address(es) to which processing notifications go
         """
 
         if not hasattr(self, "_email"):
             if "email" in self.__opts:
                 self._email = self.__opts["email"]
+                if isinstance(self._email, (list, tuple)):
+                    self._email = ",".join(self._email)
             elif self.id:
                 query = Query("pub_proc", "email")
                 query.where(query.Condition("id", self.id))
                 row = query.execute(self.cursor).fetchone()
                 if not row:
-                    raise Exception("Job {} not found".format(self.id))
+                    raise Exception(f"Job {self.id} not found")
                 self._email = row.email
             else:
                 self._email = None
@@ -444,7 +446,7 @@ class Job:
             started=self.started,
             status="Ready",
             usr=self.session.user_id,
-            email=str(self.email),
+            email=self.email,
             output_dir="",
             no_output="Y" if self.no_output else "N"
         )
@@ -1029,23 +1031,28 @@ class DrupalClient:
           `Exception` if delete request failed
         """
 
-        url = "{}{}/{:d}?_format=json".format(self.base, self.URI_PATH, cdr_id)
-        self.logger.debug("URL for remove(): %s", url)
         # TODO: Get Acquia to fix their broken certificates.
-
+        url = "{}{}/{:d}?_format=json".format(self.base, self.URI_PATH, cdr_id)
+        self.logger.info("URL for remove(): %s", url)
+        if not self.lookup(cdr_id):
+            self.logger.warning("Drupal doesn't have CDR%d", cdr_id)
+            return
         tries = self.MAX_RETRIES
         while tries > 0:
             response = requests.delete(url, auth=self.auth, verify=False)
             if response.ok:
                 break
+            elif response.status_code == 404:
+                self.logger.warning("CDR%d already gone", cdr_id)
+                return
             tries -= 1
             if tries <= 0:
                 self.logger.error("CDR%d: %s", cdr_id, response.reason)
-                self.logger.debug(response.text)
+                self.logger.error(response.text)
                 raise Exception(response.reason)
             time.sleep(1)
-            args = cdr_id, response.reason
-            self.logger.warning("CDR%d: %s (trying again)", *args)
+            args = cdr_id, response.reason, response.status_code
+            self.logger.warning("CDR%d: %s %d (trying again)", *args)
 
         if not response.ok:
             raise Exception(response.reason)
@@ -1093,8 +1100,12 @@ class DrupalClient:
             if len(parsed) > 1:
                 raise Exception("Ambiguous CDR ID {}".format(cdr_id))
             return int(parsed[0][0])
-        else:
+        elif response.status_code == 404:
             return None
+        else:
+            code = response.status_code
+            reason = response.reason
+            raise Exception("lookup returned code {code}: {reason}")
 
     def __check_nid(self, values):
         """
@@ -1117,7 +1128,9 @@ class DrupalClient:
             if translation_of:
                 nid = self.lookup(translation_of)
                 if not nid:
-                    raise Exception("English summary must be saved first")
+                    msg = f"CDR{cdr_id}: English summary must be saved first"
+                    self.logger.error(msg)
+                    raise Exception(msg)
             else:
                 nid = self.lookup(values["cdr_id"])
             values["nid"] = nid

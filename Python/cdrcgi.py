@@ -36,8 +36,10 @@ This module has the following sections:
 # Packages from the standard library.
 import cgi
 import cgitb
+import collections
 import copy
 import datetime
+from email.utils import parseaddr as parse_email_address
 from html import escape as html_escape
 from io import BytesIO
 from operator import itemgetter
@@ -69,7 +71,7 @@ cgitb.enable(display = cdr.isDevHost(), logdir = cdr.DEFAULT_LOGDIR)
 
 
 # Global values
-VERSION = "201909061106"
+VERSION = "202003230906"
 CDRCSS = "/stylesheets/cdr.css?v=%s" % VERSION
 DATETIMELEN = len("YYYY-MM-DD HH:MM:SS")
 TAMPERING = "CGI parameter tampering detected"
@@ -80,9 +82,9 @@ SESSION  = "Session"
 REQUEST  = "Request"
 DOCID    = "DocId"
 FILTER   = "Filter"
-BASE     = '/cgi-bin/cdr'
-MAINMENU = 'Admin Menu'
-DEVTOP   = 'Developer Menu'
+BASE     = "/cgi-bin/cdr"
+MAINMENU = "Admin Menu"
+DEVTOP   = "Developer Menu"
 TIER     = Tier()
 WEBSERVER= os.environ.get("SERVER_NAME") or TIER.hosts.get("APPC")
 SPLTNAME = WEBSERVER.lower().split(".")
@@ -133,23 +135,31 @@ class Controller:
     LOGNAME = "reports"
     LOGLEVEL = "INFO"
     METHOD = "post"
+    AUDIENCES = "Health Professional", "Patient"
+    LANGUAGES = "English", "Spanish"
+    INCLUDE_ANY_LANGUAGE_CHECKBOX = INCLUDE_ANY_AUDIENCE_CHECKBOX = False
+    SUMMARY_SELECTION_METHODS = "id", "title", "board"
+    EMAIL_PATTERN = re.compile(r"[^@]+@[^@\.]+\.[^@]+$")
+    KEEP_COMPLETE_TITLES = False
 
     def __init__(self, **opts):
         """Set up a skeletal controller."""
+
         self.__started = datetime.datetime.now()
         self.__opts = opts
         self.logger.info("started %s", self.subtitle or "controller")
 
     def run(self):
         """Override in derived class if there are custom actions."""
+
         try:
             if self.request:
                 if self.request == self.ADMINMENU:
-                    navigateTo("Admin.py", self.session.name)
+                    self.redirect("Admin.py")
                 elif self.request == self.REPORTS_MENU:
-                    navigateTo("Reports.py", self.session.name)
+                    self.redirect("Reports.py")
                 elif self.request == self.DEVMENU:
-                    navigateTo("DevSA.py", self.session.name)
+                    self.redirect("DevSA.py")
                 elif self.request == self.LOG_OUT:
                     logout(self.session.name)
                 elif self.request and self.request == self.SUBMIT:
@@ -160,7 +170,7 @@ class Controller:
                 self.show_form()
         except Exception as e:
             self.logger.exception("Controller.run() failure")
-            bail(str(e))
+            bail(e)
 
     def show_form(self):
         """Populate an HTML page with a form and fields and send it."""
@@ -187,7 +197,6 @@ class Controller:
 
     def populate_form(self, page):
         """Stub, to be overridden by real controllers."""
-        pass
 
     def build_tables(self):
         """Stub, to be overridden by real controllers."""
@@ -196,6 +205,69 @@ class Controller:
     def log_elapsed(self):
         """Record how long this took."""
         self.logger.info(f"elapsed: {self.elapsed.total_seconds():f}")
+
+    def redirect(self, where, session=None, **params):
+        """Send the user to another page.
+
+        Pass:
+            where - base URL, up to but not including parameters
+            session - session string or object to override this session (opt)
+            params - dictionary of other named parameters
+        """
+
+        session = session or self.session
+        self.navigate_to(where, session, **params)
+
+    def load_group(self, group):
+        """Fetch the active members of a named user group.
+
+        Pass:
+            group - name of group to fetch
+
+        Return:
+            dictionary of user names indexed by user ID
+        """
+
+        query = db.Query("usr u", "u.id", "u.fullname", "u.name")
+        query.join("grp_usr j", "j.usr = u.id")
+        query.join("grp g", "g.id = j.grp")
+        query.where("u.expired IS NULL")
+        query.where(query.Condition("g.name", group))
+        rows = query.execute(self.cursor).fetchall()
+        class Group:
+            def __init__(self, rows):
+                self.map = {}
+                for row in rows:
+                    self.map[row.id] = row.fullname or row.name
+                key = lambda pair: pair[1].lower()
+                self.items = sorted(self.map.items(), key=key)
+            def __getvalue__(self, key):
+                return self.map.get(key)
+        return Group(rows)
+
+    def load_valid_values(self, table_name):
+        """Factor out logic for collecting a valid values set.
+
+        This works because our tables for valid values have the
+        same structure.
+
+        Pass:
+            table_name - name of the database table for the values
+
+        Return:
+            a populated `Values` object
+        """
+
+        query = self.Query(table_name, "value_id", "value_name")
+        rows = query.order("value_pos").execute(self.cursor).fetchall()
+        class Values:
+            def __init__(self, rows):
+                self.map = {}
+                self.values = []
+                for value_id, value_name in rows:
+                    self.map[value_id] = value_name
+                    self.values.append((value_id, value_name))
+        return Values(rows)
 
     def make_url(self, script, **params):
         """Create a URL.
@@ -210,8 +282,182 @@ class Controller:
 
         if SESSION not in params:
             params[SESSION] = self.session.name
-        params = urllib.parse.urlencode(params)
+        params = urllib.parse.urlencode(params, doseq=True)
         return f"{script}?{params}"
+
+    def add_summary_selection_fields(self, page, **kwopts):
+        """
+        Display the fields used to specify which summaries should be
+        selected for a report, using one of several methods:
+
+            * by summary document ID
+            * by summary title
+            * by summary board
+
+        There are two branches taken by this method. If the user has
+        elected to select a summary by summary title, and the summary
+        title fragment matches more than one summary, then a follow-up
+        page is presented on which the user selects one of the summaries
+        and re-submits the report request. Otherwise, the user is shown
+        options for choosing a selection method, which in turn displays
+        the fields appropriate to that method dynamically. We also add
+        JavaScript functions to handle the dynamic control of field display.
+
+        Pass:
+            page     - Page object on which to show the fields
+            titles   - an optional array of SummaryTitle objects
+            audience - if False, omit Audience buttons (default is True)
+            language - if False, omit Language buttons (default is True)
+            id-label - optional string for the CDR ID field (defaults
+                       to "CDR ID" but can be overridden, for example,
+                       to say "CDR ID(s)" if multiple IDs are accepted)
+            id-tip   - optional string for the CDR ID field for popup
+                       help (e.g., "separate multiple IDs by spaces")
+
+        Return:
+            nothing (the form object is populated as a side effect)
+        """
+
+        #--------------------------------------------------------------
+        # Show the second stage in a cascading sequence of the form if we
+        # have invoked this method directly from build_tables(). Widen
+        # the form to accomodate the length of the title substrings
+        # we're showing.
+        #--------------------------------------------------------------
+        titles = kwopts.get("titles")
+        if titles:
+            page.form.append(page.hidden_field("selection_method", "id"))
+            page.form.append(page.hidden_field("format", self.format))
+            fieldset = page.fieldset("Choose Summary")
+            page.add_css("fieldset { width: 600px; }")
+            for t in titles:
+                opts = dict(label=t.display, value=t.id, tooltip=t.tooltip)
+                fieldset.append(page.radio_button("cdr-id", **opts))
+            page.form.append(fieldset)
+            self.new_tab_on_submit(page)
+
+        else:
+            # Fields for the original form.
+            fieldset = page.fieldset("Selection Method")
+            methods = "PDQ Board", "CDR ID", "Summary Title"
+            checked = True
+            for method in methods:
+                value = method.split()[-1].lower()
+                opts = dict(label=f"By {method}", value=value, checked=checked)
+                fieldset.append(page.radio_button("selection_method", **opts))
+                checked = False
+            page.form.append(fieldset)
+            self.add_board_fieldset(page)
+            if opts.get("audience", True):
+                self.add_audience_fieldset(page)
+            if opts.get("language", True):
+                self.add_language_fieldset(page)
+            fieldset = page.fieldset("Summary Document ID")
+            fieldset.set("class", "by-id-block")
+            label = kwopts.get("id-label", "CDR ID")
+            opts = dict(label=label, tooltip=kwopts.get("id-tip"))
+            fieldset.append(page.text_field("cdr-id", **opts))
+            page.form.append(fieldset)
+            fieldset = page.fieldset("Summary Title")
+            fieldset.set("class", "by-title-block")
+            tooltip = "Use wildcard (%) as appropriate."
+            fieldset.append(page.text_field("title", tooltip=tooltip))
+            page.form.append(fieldset)
+            page.add_script(self.summary_selection_js)
+
+    def add_board_fieldset(self, page):
+        """Add checkboxes for the PDQ Editorial Boards.
+
+        Pass:
+            page - object on which we place the fields
+        """
+
+        fieldset = page.fieldset("Board")
+        fieldset.set("class", "by-board-block")
+        fieldset.set("id", "board-set")
+        opts = dict(label="All Boards", value="all", checked=True)
+        fieldset.append(page.checkbox("board", **opts))
+        boards = self.get_boards()
+        for value, label in self.get_boards().items():
+            opts = dict(value=value, label=label, classes="ind")
+            fieldset.append(page.checkbox("board", **opts))
+        page.form.append(fieldset)
+
+    def add_audience_fieldset(self, page):
+        """Add radio buttons for PDQ audience.
+
+        Pass:
+            page - object on which we place the fields
+        """
+
+        fieldset = page.fieldset("Audience")
+        fieldset.set("class", "by-board-block")
+        fieldset.set("id", "audience-block")
+        default = self.default_audience
+        if self.INCLUDE_ANY_AUDIENCE_CHECKBOX:
+            checked = False if default else True
+            opts = dict(label="Any", value="", checked=checked)
+            fieldset.append(page.radio_button("audience", **opts))
+        elif not default:
+            default = self.AUDIENCES[0]
+        for value in self.AUDIENCES:
+            checked = True if value == default else False
+            opts = dict(value=value, checked=checked)
+            fieldset.append(page.radio_button("audience", **opts))
+        page.form.append(fieldset)
+
+    def add_language_fieldset(self, page):
+        """Add radio buttons for summary language.
+
+        Pass:
+            page - object on which we place the fields
+        """
+
+        fieldset = page.fieldset("Language")
+        fieldset.set("class", "by-board-block")
+        fieldset.set("id", "language-block")
+        checked = True
+        if self.INCLUDE_ANY_LANGUAGE_CHECKBOX:
+            opts = dict(label="Any", value="", checked=True)
+            fieldset.append(page.radio_button("language", **opts))
+            checked = False
+        for value in self.LANGUAGES:
+            opts = dict(value=value, checked=checked)
+            fieldset.append(page.radio_button("language", **opts))
+            checked = False
+        page.form.append(fieldset)
+
+    def get_boards(self):
+        """Construct a dictionary of PDQ board names indexed by CDR ID."""
+
+        boards = cdr.Board.get_boards().values()
+        OD = collections.OrderedDict
+        return OD([(board.id, board.short_name) for board in boards])
+
+    def new_tab_on_submit(self, page):
+        """
+        Take over the onclick event for the Submit button in order to
+        show the report in a new tab. This avoids the problem of the
+        request to resubmit a form unnecessarily when navigating back
+        to the base report request page through an intermediate page
+        (such as the one to choose from multiple matching titles).
+
+        Pass:
+            page - reference to the page object to which the script is added
+        """
+
+        page.add_script(f"""\
+jQuery("input[value='Submit']").click(function(e) {{
+    var parms = jQuery("form").serialize();
+    if (!/Request=Submit/.test(parms)) {{
+        if (parms)
+            parms += "&";
+        parms += "Request=Submit";
+    }}
+    var url = "{self.script}?" + parms;
+    window.open(url, "_blank");
+    e.preventDefault();
+}});""")
 
     @staticmethod
     def add_date_range_to_caption(caption, start, end):
@@ -235,6 +481,35 @@ class Controller:
         return caption
 
     @staticmethod
+    def navigate_to(where, session, **params):
+        """Send the user to another page.
+
+        This is the non-instance version.
+        Pass:
+            where - base URL, up to but not including parameters (required)
+            session - session string or object (required)
+            params - dictionary of other named parameters
+        """
+
+        params[SESSION] = session
+        params = urllib.parse.urlencode(params)
+        print(f"Location:https://{WEBSERVER}{BASE}/{where}?{params}\n")
+        sys.exit(0)
+
+    @staticmethod
+    def send_page(page, text_type="html"):
+        """Send a string back to the web server using UTF-8 encoding.
+
+        Pass:
+            page - Unicode string for the page
+            text_type - typically "html" but sometimes "xml"
+        """
+
+        string = f"Content-type: text/{text_type};charset=utf-8\n\n{page}"
+        sys.stdout.buffer.write(string.encode("utf-8"))
+        sys.exit(0)
+
+    @staticmethod
     def parse_date(iso_date):
         """Convert a date string to a `datetime.date` object.
 
@@ -249,6 +524,47 @@ class Controller:
             return None
         year, month, date = iso_date.strip().split("-")
         return datetime.date(int(year), int(month), int(date))
+
+    @classmethod
+    def parse_email_address(cls, address):
+        """Pull out an email address from a string.
+
+        Performs a very simple validation, may improve it later, but full
+        RFC requires an incredible thousand-character regular expression.
+
+        Pass:
+            address - string which might have a display portion
+                      (e.g., "Joe Blow <joe@example.com>")
+
+        Return:
+            address portion of the string if validation passes
+            None if no valid address is found
+        """
+
+        realname, address = parse_email_address(address)
+        if address and cls.EMAIL_PATTERN.match(address) and ".." not in address:
+            return address
+        return None
+
+    @staticmethod
+    def toggle_display(function_name, show_value, class_name):
+        """Create JavaScript function to show or hide elements.
+
+        Pass:
+            function_name  - name of the JavaScript function to create
+            show_value     - controlling element's value causing show
+            class_name     - class of which the controlled blocks are members
+        Return:
+            source code for JavaScript function
+        """
+
+        return f"""\
+function {function_name}(value) {{
+    if (value == "{show_value}")
+        jQuery(".{class_name}").show();
+    else
+        jQuery(".{class_name}").hide();
+}}"""
 
     @property
     def HTMLPage(self):
@@ -309,6 +625,44 @@ class Controller:
         return self._cursor
 
     @property
+    def default_audience(self):
+        """Let a subclass override the default for the audience picklist."""
+        return None
+
+    @property
+    def doc_titles(self):
+        """Cached lookup of CDR document titles by ID.
+
+        By default, only the portion of the title column's value before
+        the first semicolon is used. If "Inactive;" is at the front of
+        the title string the second segment of the title is used instead
+        (if it exists) and " (inactive)" is appended. To preserve the
+        entire contents of the title column's values, set the class-level
+        property `KEEP_COMPLETE_TITLES` to `True` in the derived class.
+        """
+
+        if not hasattr(self, "_doc_titles"):
+            class DocTitles(collections.UserDict):
+                def __init__(self, control):
+                    self.__control = control
+                    collections.UserDict.__init__(self)
+                def __getitem__(self, key):
+                    if key not in self.data:
+                        query = self.__control.Query("document", "title")
+                        query.where(query.Condition("id", key))
+                        row = query.execute(self.__control.cursor).fetchone()
+                        title = row.title.strip() if row else ""
+                        if not self.__control.KEEP_COMPLETE_TITLES:
+                            pieces = [p.strip() for p in row.title.split(";")]
+                            title = pieces[0]
+                            if title.lower() == "inactive" and len(pieces) > 1:
+                                title = f"{pieces[1]} (inactive)"
+                        self.data[key] = title or None
+                    return self.data[key]
+            self._doc_titles = DocTitles(self)
+        return self._doc_titles
+
+    @property
     def elapsed(self):
         """How long have we been running?"""
         return datetime.datetime.now() - self.started
@@ -359,6 +713,8 @@ class Controller:
             self._format = self.fields.getvalue("format")
             if not self._format:
                 self._format = self.__opts.get("format") or self.FORMATS[0]
+            if self._format not in self.FORMATS:
+                self.bail("invalid report format")
         return self._format
 
     @property
@@ -432,6 +788,17 @@ class Controller:
         return self._script
 
     @property
+    def selection_method(self):
+        """How does the user want to identify summaries for the report?"""
+
+        if not hasattr(self, "_selection_method"):
+            name = "selection_method"
+            self._selection_method = self.fields.getvalue(name, "board")
+            if self._selection_method not in self.SUMMARY_SELECTION_METHODS:
+                self.bail()
+        return self._selection_method
+
+    @property
     def session(self):
         """Session object for this controller.
 
@@ -455,6 +822,88 @@ class Controller:
             if not isinstance(self._session, Session):
                 raise Exception("Not a session object")
         return self._session
+
+    @property
+    def summary_selection_js(self):
+        "Local JavaScript to manage sections of the form dynamically."
+
+        return """\
+function check_set(name, val) {
+    var all_selector = "#" + name + "-all";
+    var ind_selector = "#" + name + "-set .ind";
+    if (val == "all") {
+        if (jQuery(all_selector).prop("checked"))
+            jQuery(ind_selector).prop("checked", false);
+        else
+            jQuery(all_selector).prop("checked", true);
+    }
+    else if (jQuery(ind_selector + ":checked").length > 0)
+        jQuery(all_selector).prop("checked", false);
+    else
+        jQuery(all_selector).prop("checked", true);
+}
+function check_board(board) { check_set("board", board); }
+function check_selection_method(method) {
+    switch (method) {
+        case 'id':
+            jQuery('.by-board-block').hide();
+            jQuery('.by-id-block').show();
+            jQuery('.by-title-block').hide();
+            break;
+        case 'board':
+            jQuery('.by-board-block').show();
+            jQuery('.by-id-block').hide();
+            jQuery('.by-title-block').hide();
+            break;
+        case 'title':
+            jQuery('.by-board-block').hide();
+            jQuery('.by-id-block').hide();
+            jQuery('.by-title-block').show();
+            break;
+    }
+}
+jQuery(function() {
+    var method = jQuery("input[name='selection_method']:checked").val();
+    check_selection_method(method);
+});"""
+
+    @property
+    def summary_titles(self):
+        """Find the summaries that match the user's title fragment.
+
+        Note that the user is responsible for adding any non-trailing
+        SQL wildcards to the fragment string. If the title is longer
+        than 60 characters, truncate with an ellipsis, but add a
+        tooltip showing the whole title. We create a local class for
+        the resulting list.
+
+        ONLY WORKS IF YOU IMPLEMENT THE `self.fragment` PROPERTY!!!
+        """
+
+        if not hasattr(self, "_summary_titles"):
+            self._summary_titles = None
+            if hasattr(self, "fragment") and self.fragment:
+                class SummaryTitle:
+                    def __init__(self, doc_id, display, tooltip=None):
+                        self.id = doc_id
+                        self.display = display
+                        self.tooltip = tooltip
+                fragment = f"{self.fragment}%"
+                query = self.Query("active_doc d", "d.id", "d.title")
+                query.join("doc_type t", "t.id = d.doc_type")
+                query.where("t.name = 'Summary'")
+                query.where(query.Condition("d.title", fragment, "LIKE"))
+                query.order("d.title")
+                rows = query.execute(self.cursor).fetchall()
+                self._summary_titles = []
+                for doc_id, title in rows:
+                    if len(title) > 60:
+                        short_title = title[:57] + "..."
+                        summary = SummaryTitle(doc_id, short_title, title)
+                    else:
+                        summary = SummaryTitle(doc_id, title)
+                    self._summary_titles.append(summary)
+        return self._summary_titles
 
     @property
     def timestamp(self):
@@ -502,6 +951,7 @@ class Controller:
             logger = cdr.Logging.get_logger(logfile)
             logger.error("cdrcgi bailout: %s", message)
         page.send()
+
 
 class FormFieldFactory:
     """Provide class methods for creating HTML form fields.
@@ -700,7 +1150,7 @@ class FormFieldFactory:
         return wrapper
 
     @classmethod
-    def fieldset(cls, legend=None):
+    def fieldset(cls, legend=None, **opts):
         """Create an HTML fieldset element with an optional legend child.
 
         Optional keyword argument:
@@ -710,6 +1160,10 @@ class FormFieldFactory:
                 string for optional legend to be displayed for the
                 fieldset
 
+            id
+
+                unique ID for the element
+
         Return:
 
             lxml object for a FIELDSET element
@@ -718,6 +1172,8 @@ class FormFieldFactory:
         fieldset = cls.B.FIELDSET()
         if legend:
             fieldset.append(cls.B.LEGEND(legend))
+        if opts.get("id"):
+            fieldset.set("id", opts.get("id"))
         return fieldset
 
     @classmethod
@@ -743,6 +1199,8 @@ class FormFieldFactory:
         """
 
         field = cls.__field(name, "file", **kwargs)
+        if kwargs.get("multiple"):
+            field.set("multiple")
         wrapper = cls.__wrapper(name, **kwargs)
         wrapper.append(field)
         return wrapper
@@ -865,11 +1323,12 @@ class FormFieldFactory:
             default = kwargs.get("default")
             if not isinstance(default, (list, tuple, set)):
                 default = [default] if default else []
-            if multiple and len(default) > 1:
+            if not multiple and len(default) > 1:
                 error = "Multiple defaults specified for single picklist"
                 raise Exception(error)
             if isinstance(options, dict):
-                options = sorted(options.items(), key=itemgetter(1))
+                options = sorted(options.items(),
+                                 key=lambda o:str(o[1]).lower())
             for option in options:
                 if isinstance(option, (list, tuple)):
                     value, display = option
@@ -1187,7 +1646,7 @@ class HTMLPage(FormFieldFactory):
     """
 
     VERSION = "201909071039"
-    CDR_CSS = f"/stylesheets/cdr.css?v={VERSION}"
+    CDR_CSS = f"../../stylesheets/cdr.css?v={VERSION}"
     APIS = "https://ajax.googleapis.com/ajax/libs"
     JQUERY = f"{APIS}/jquery/3.4.1/jquery.min.js"
     JQUERY_UI = f"{APIS}/jqueryui/1.12.1/jquery-ui.min.js"
@@ -1528,7 +1987,6 @@ class HTMLPage(FormFieldFactory):
         return self._subtitle
 
 
-
 class Reporter:
     """Create web-based or Excel workbook reports.
 
@@ -1817,6 +2275,8 @@ class Reporter:
                     self._classes.add("center")
                 elif self.right:
                     self._classes.add("right")
+                if self.middle:
+                    self._classes.add("middle")
             return self._classes
 
         @property
@@ -1870,6 +2330,16 @@ class Reporter:
             return self._sheet_styles
 
         @property
+        def style(self):
+            """Custom CSS specified directly on the element.
+
+            Not a best practice, but needed to work around bugs in
+            Microsoft Word.
+            """
+
+            return self.__opts.get("style")
+
+        @property
         def target(self):
             """Target for links.
 
@@ -1909,6 +2379,8 @@ class Reporter:
                     self._td.set("class", " ".join(self.classes))
                 if self.title:
                     self._td.set("title", self.title)
+                if self.style:
+                    self._td.set("style", self.style)
             return self._td
 
         @property
@@ -1955,6 +2427,11 @@ class Reporter:
         def classes(self):
             """Optional classes for the th element (HTML only)."""
             return self.__opts.get("classes")
+
+        @property
+        def colspan(self):
+            """How many columns does this header need to cover?"""
+            return self.__opts.get("colspan")
 
         @property
         def id(self):
@@ -2037,6 +2514,15 @@ class Reporter:
                 book.write(rownum, 1, caption, styles)
                 rownum += 1
             if self.caption:
+                book.merge(rownum, 1, rownum, len(self.columns))
+                rownum += 1
+
+            # Show the report date between caption and headers if requested.
+            if self.show_report_date:
+                report_date = f"Report date: {datetime.date.today()}"
+                book.merge(rownum, 1, rownum, len(self.columns))
+                book.write(rownum, 1, report_date, dict(font=book.bold))
+                rownum += 1
                 book.merge(rownum, 1, rownum, len(self.columns))
                 rownum += 1
 
@@ -2129,9 +2615,13 @@ class Reporter:
                 children = []
 
                 # Add the caption strings to the table if we have any.
-                if self.caption:
-                    nodes = [self.B.SPAN(self.caption[0])]
-                    for line in self.caption[1:]:
+                caption = list(self.caption)
+                if self.show_report_date:
+                    caption.append("")
+                    caption.append(f"Report date: {datetime.date.today()}")
+                if caption:
+                    nodes = [self.B.SPAN(caption[0])]
+                    for line in caption[1:]:
                         nodes.append(self.B.BR())
                         nodes.append(self.B.SPAN(line))
                     children.append(self.B.CAPTION(*nodes))
@@ -2152,6 +2642,8 @@ class Reporter:
                                 th.set("class", column.classes)
                             else:
                                 th.set("class", " ".join(column.classes))
+                        if column.colspan:
+                            th.set("colspan", str(column.colspan))
                         tr.append(th)
                     children.append(self.B.THEAD(tr))
 
@@ -2197,6 +2689,11 @@ class Reporter:
             """
 
             return self.__opts.get("sheet_name")
+
+        @property
+        def show_report_date(self):
+            """If True, add the report date between the caption and headers."""
+            return True if self.__opts.get("show_report_date") else False
 
 
 class Excel:
@@ -2376,6 +2873,9 @@ class Excel:
         (6, 9)
 
         In other words, 6 pixels wide.
+
+        To go back from chars to pixels:
+            pixels = int(round(6 * ((100 * chars - .5) / 100) + 5))
         """
         max_digit_width = 6
         pixels = int(re.sub("[^0-9]+", "", pixels))
@@ -2764,11 +3264,11 @@ class Control:
     DEVMENU  = DEVTOP
     SUBMIT = "Submit"
     LOG_OUT = "Log Out"
-    FORMATS = ("html", "excel")
+    FORMATS = "html", "excel"
     BOARD_NAME = "/Organization/OrganizationNameInformation/OfficialName/Name"
-    AUDIENCES = ("Health Professional", "Patient")
-    LANGUAGES = ("English", "Spanish")
-    SUMMARY_SELECTION_METHODS = ("id", "title", "board")
+    AUDIENCES = "Health Professional", "Patient"
+    LANGUAGES = "English", "Spanish"
+    SUMMARY_SELECTION_METHODS = "id", "title", "board"
     LOGNAME = "reports"
     LOGLEVEL = "INFO"
 
@@ -3235,7 +3735,7 @@ jQuery("input[value='Submit']").click(function(e) {
     var url = "%s?" + parms;
     window.open(url, "_blank");
     e.preventDefault();
-});""" % self.script);
+});""" % self.script)
 
     @staticmethod
     def toggle_display(function_name, show_value, class_name):
@@ -5158,12 +5658,9 @@ def sendPage(page, textType='html', parms='', docId='', docType='', docVer=''):
         args = docId, docType, docVer, parms
         parms = "DocId={}&DocType={}&DocVersion={}&{}".format(*args)
         print(f"Location: {url}?{parms}\n")
+        sys.exit(0)
     else:
-        sys.stdout.buffer.write(f"""\
-Content-type: text/{textType};charset=utf-8
-
-{page}""".encode("utf-8"))
-    sys.exit(0)
+        Controller.send_page(page, textType)
 
 #----------------------------------------------------------------------
 # Log out of the CDR session and put up a new login screen.
@@ -5192,10 +5689,7 @@ def logout(session):
 # Navigate to menu location or publish preview.
 #----------------------------------------------------------------------
 def navigateTo(where, session, **params):
-    params[SESSION] = session
-    params = urllib.parse.urlencode(params)
-    print(f"Location:https://{WEBSERVER}{BASE}/{where}?{params}\n")
-    sys.exit(0)
+    Controller.navigate_to(where, session, **params)
 
 #----------------------------------------------------------------------
 # Determine whether query contains unescaped wildcards.
@@ -5486,8 +5980,7 @@ def valParmEmail(val, **opts):
     msg = opts.get("msg")
 
     # Parse out the parts
-    from email.utils import parseaddr
-    (name, email) = parseaddr(val)
+    (name, email) = parse_email_address(val)
 
     # If it's completely screwed up
     if not email:
@@ -5495,7 +5988,7 @@ def valParmEmail(val, **opts):
 
     # Simple validation, may improve it later, but full RFC requires
     # an incredible thousand character regex.
-    match = re.search(r"[^@]+@[^@\.]+\.[^@]+$", email)
+    match = Controller.EMAIL_PATTERN.search(email)
     if match:
         return email
 

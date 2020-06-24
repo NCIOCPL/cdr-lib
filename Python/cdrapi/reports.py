@@ -537,6 +537,37 @@ class Report:
             body.append(result.result_tree.getroot())
         return body
 
+    def _translated_media_doc(self):
+        """
+        Find corresponding translation of English media document.
+
+        Parameters:
+          EnglishMediaDoc - required CDR ID for the document for which
+                            we want to find the Spanish translation
+
+        Return:
+          XML document node with the following structure:
+            ReportBody
+              ReportName
+              TranslatedMediaDoc
+        """
+
+        english_id = self.__opts.get("EnglishMediaDoc")
+        if not english_id:
+            raise Exception("Missing required 'EnglishMediaDoc' parameter")
+        doc = Doc(self.session, id=english_id)
+        query = Query("query_term", "doc_id")
+        query.where("path = '/Media/TranslationOf/@cdr:ref'")
+        query.where(query.Condition("int_val", doc.id))
+        row = query.execute(self.cursor).fetchone()
+        if not row:
+            message = "No translated media found for {}".format(english_id)
+            raise Exception(message)
+        body = self.__start_body()
+        spanish_id = Doc.normalize_id(row.doc_id)
+        etree.SubElement(body, "TranslatedMediaDoc").text = spanish_id
+        return body
+
     def _translated_summary(self):
         """
         Find corresponding translation of English summary
