@@ -1359,7 +1359,7 @@ class Image(Section):
 
         # Find the first as well as the most recent publication dates
         # and make sure at least one of them falls within the report's
-        # date range. We know that we only re-send an image to GateKeeper
+        # date range. We know that we only re-send an image to Akamai
         # (recorded in the pub_proc_cg table, joined the base class's
         # query() method) if the image or the CDR document has changed,
         # so the pub_proc.started value (the date/time the publishing
