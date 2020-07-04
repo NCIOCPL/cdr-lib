@@ -779,9 +779,6 @@ class DrupalClient:
     """
     Client end of the PDQ RESTful APIs in the Drupal CMS
 
-    Provides functionality comparable to that provided for communicating
-    with the legacy GateKeeper APIs in the `cdr2gk` module.
-
     Class constants:
         BATCH_SIZE - maximum number of documents we can set to `published`
                      in a single chunk

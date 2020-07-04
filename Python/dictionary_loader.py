@@ -40,7 +40,8 @@ class DictionaryAPILoader:
         """Load the dictionary into a new index and adjust the alias."""
 
         self.__started = datetime.datetime.now()
-        self.logger.info("Loading %d %s terms", len(self.ids), self.type)
+        args = len(self.ids), self.type, self.host, self.port
+        self.logger.info("Loading %d %s terms to %s:%s", *args)
         if self.testing:
             self.logger.info("Running in test mode")
             if self.verbose:
