@@ -1102,7 +1102,7 @@ class DrupalClient:
         else:
             code = response.status_code
             reason = response.reason
-            raise Exception("lookup returned code {code}: {reason}")
+            raise Exception(f"lookup returned code {code}: {reason}")
 
     def __check_nid(self, values):
         """
