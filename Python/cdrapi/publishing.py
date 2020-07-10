@@ -1031,9 +1031,6 @@ class DrupalClient:
         # TODO: Get Acquia to fix their broken certificates.
         url = "{}{}/{:d}?_format=json".format(self.base, self.URI_PATH, cdr_id)
         self.logger.info("URL for remove(): %s", url)
-        if not self.lookup(cdr_id):
-            self.logger.warning("Drupal doesn't have CDR%d", cdr_id)
-            return
         tries = self.MAX_RETRIES
         while tries > 0:
             response = requests.delete(url, auth=self.auth, verify=False)
@@ -1094,7 +1091,7 @@ class DrupalClient:
             parsed = json.loads(response.text)
             if not parsed:
                 raise Exception("CDR ID {} not found".format(cdr_id))
-            if len(parsed) > 1:
+            if cdr_id > 0 and len(parsed) > 1:
                 raise Exception("Ambiguous CDR ID {}".format(cdr_id))
             return int(parsed[0][0])
         elif response.status_code == 404:
