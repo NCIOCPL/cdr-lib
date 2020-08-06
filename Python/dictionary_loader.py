@@ -419,6 +419,9 @@ class DictionaryAPILoader:
             implemented by Bryan P. in JavaScript as part of
             github.com/NCIOCPL/wcms-cts-term-map-gen/blob/master/pdq_index.js
             (getFriendlyUrlForDisplayName() at line 44 ff.).
+
+            See https://github.com/NCIOCPL/glossary-api/issues/98 for
+            explanation of MAX_PRETTY_URL_LENGTH.
             """
 
             _FROM = "\u03b1\u03b2\u03bc;_&\u2013/"
@@ -426,6 +429,7 @@ class DictionaryAPILoader:
             _STRIP = "\",+().\xaa'\u2019[\uff1a:*\\]"
             TRANS = str.maketrans(_FROM, _TO, _STRIP)
             SPACES = compile(r"\s+")
+            MAX_PRETTY_URL_LENGTH = 75
 
             def __init__(self, node):
                 """Save the caller's information.
@@ -544,7 +548,10 @@ class DictionaryAPILoader:
                 name = cls.SPACES.sub("-", name).lower().translate(cls.TRANS)
                 nfkd = normalize("NFKD", name)
                 pretty_url = "".join([c for c in nfkd if not combining(c)])
-                return pretty_url.replace("%", "pct")
+                pretty_url = pretty_url.replace("%", "pct")
+                if len(pretty_url) > cls.MAX_PRETTY_URL_LENGTH:
+                    return ""
+                return pretty_url
 
             @classmethod
             def lowercase_first_letter(cls, node):
