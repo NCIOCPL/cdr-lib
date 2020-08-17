@@ -348,9 +348,9 @@ class Controller:
                 checked = False
             page.form.append(fieldset)
             self.add_board_fieldset(page)
-            if opts.get("audience", True):
+            if kwopts.get("audience", True):
                 self.add_audience_fieldset(page)
-            if opts.get("language", True):
+            if kwopts.get("language", True):
                 self.add_language_fieldset(page)
             fieldset = page.fieldset("Summary Document ID")
             fieldset.set("class", "by-id-block")
