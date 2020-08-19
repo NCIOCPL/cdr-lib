@@ -779,9 +779,6 @@ class DrupalClient:
     """
     Client end of the PDQ RESTful APIs in the Drupal CMS
 
-    Provides functionality comparable to that provided for communicating
-    with the legacy GateKeeper APIs in the `cdr2gk` module.
-
     Class constants:
         BATCH_SIZE - maximum number of documents we can set to `published`
                      in a single chunk
@@ -1034,9 +1031,6 @@ class DrupalClient:
         # TODO: Get Acquia to fix their broken certificates.
         url = "{}{}/{:d}?_format=json".format(self.base, self.URI_PATH, cdr_id)
         self.logger.info("URL for remove(): %s", url)
-        if not self.lookup(cdr_id):
-            self.logger.warning("Drupal doesn't have CDR%d", cdr_id)
-            return
         tries = self.MAX_RETRIES
         while tries > 0:
             response = requests.delete(url, auth=self.auth, verify=False)
@@ -1097,7 +1091,7 @@ class DrupalClient:
             parsed = json.loads(response.text)
             if not parsed:
                 raise Exception("CDR ID {} not found".format(cdr_id))
-            if len(parsed) > 1:
+            if cdr_id > 0 and len(parsed) > 1:
                 raise Exception("Ambiguous CDR ID {}".format(cdr_id))
             return int(parsed[0][0])
         elif response.status_code == 404:
@@ -1105,7 +1099,7 @@ class DrupalClient:
         else:
             code = response.status_code
             reason = response.reason
-            raise Exception("lookup returned code {code}: {reason}")
+            raise Exception(f"lookup returned code {code}: {reason}")
 
     def __check_nid(self, values):
         """

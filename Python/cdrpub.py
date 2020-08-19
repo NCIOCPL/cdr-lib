@@ -28,13 +28,11 @@ import time
 from lxml import etree, html
 from PIL import Image
 import cdr
-import cdr2gk
 from cdrapi import db
 from cdrapi.docs import Doc
 from cdrapi.publishing import Job, DrupalClient
 from cdrapi.settings import Tier
 from cdrapi.users import Session
-from AssignGroupNums import GroupNums
 
 
 class Control:
@@ -48,9 +46,8 @@ class Control:
     RUN = "In process"
     SUCCESS = "Success"
     FAILURE = "Failure"
-    VERIFYING = "Verifying"
     WAIT = "Waiting user approval"
-    COMPLETED_STATUSES = SUCCESS, FAILURE, VERIFYING
+    COMPLETED_STATUSES = SUCCESS, FAILURE
     XMLDECL = re.compile(r"<\?xml[^?]+\?>\s*")
     DOCTYPE = re.compile(r"<!DOCTYPE[^>]*>\s*")
     NORMALIZE_SPACE = re.compile(r"\s+")
@@ -59,10 +56,6 @@ class Control:
     PUB = "Publishing"
     DEFAULT_BATCHSIZE = cdr.getControlValue(PUB, "batchsize", default=25)
     DEFAULT_NUMPROCS = cdr.getControlValue(PUB, "numprocs", default=8)
-    GK_TYPES = dict(
-        GlossaryTermName="GlossaryTerm",
-        Person="GeneticsProfessional"
-    )
     MEDIA_TYPES = dict(
         jpg="image/jpeg",
         gif="image/gif",
@@ -78,7 +71,6 @@ class Control:
 
         self.__job_id = job_id
         self.__opts = opts
-        self.__gk_prolog_sent = False
 
     # ------------------------------------------------------------------
     # TOP-LEVEL PROCESSING METHODS.
@@ -99,13 +91,6 @@ class Control:
             self.update_status(self.FAILURE, str(e))
             if self.work_dir and os.path.isdir(self.work_dir):
                 os.rename(self.work_dir, self.failure_dir)
-            if self.__gk_prolog_sent:
-                args = self.job.id, "Export", 0, "abort"
-                opts = dict(host=self.job.parms.get("GKServer"))
-                response = cdr2gk.sendJobComplete(*args, **opts)
-                if response.type != "OK":
-                    args = response.type, response.message
-                    self.logger.warning("GK abort response: %s (%s)", *args)
             self.notify("Job failed: {}".format(e))
 
     def __publish(self):
@@ -118,7 +103,7 @@ class Control:
         There are basically three kinds of publishing jobs:
           1. scripted (the script embodies all of the logic for the job)
           2. export (write filtered documents to the file syatem)
-          3. push (push results of an export job to cancer.gov's GateKeeper)
+          3. push (push results of an export job to the CMS and Akamai)
 
         Push jobs have a `SubSetName` parameter to identify the type of
         the corresponding export job. We use the presence of this parameter
@@ -158,9 +143,8 @@ class Control:
 
             # 3. Otherwise, this is a push job.
             else:
-                self.push_docs()
                 verb = "Pushed"
-                count = self.__num_pushed
+                count = self.push_docs()
 
             # Report the job's completion.
             elapsed = (datetime.datetime.now() - start).total_seconds()
@@ -169,10 +153,8 @@ class Control:
             if self.job.parms.get("ReportOnly") == "Yes":
                 message += " (status set to failure for 'ReportOnly' job)"
                 self.update_status(self.FAILURE, message)
-            elif self.status != self.VERIFYING:
-                self.update_status(self.SUCCESS, message)
             else:
-                self.post_message(message)
+                self.update_status(self.SUCCESS, message)
             self.notify(message, with_link=True)
 
             # Record documents published for the first time
@@ -468,18 +450,13 @@ class Control:
         query.where(query.Condition("pub_proc", self.job.id))
         query.where("failure IS NULL")
         if query.execute(self.cursor).fetchone().exported:
-            default_desc = "{} push job".format(self.job.subsystem.name)
-            desc = self.job.parms.get("GKPushJobDescription") or default_desc
             parms = dict(
                 DrupalServer=self.job.parms.get("DrupalServer"),
-                GKServer=self.job.parms["GKServer"],
-                GKPubTarget=self.job.parms["GKPubTarget"],
-                GKPushJobDescription=desc,
                 InteractiveMode=self.job.parms.get("InteractiveMode", "No")
             )
             opts = dict(
                 system="Primary",
-                subsystem="{}_{}".format(self.PUSH, self.job.subsystem.name),
+                subsystem=f"{self.PUSH}_{self.job.subsystem.name}",
                 parms=parms,
                 email=self.job.email,
                 no_output=True
@@ -496,31 +473,33 @@ class Control:
 
     def push_docs(self):
         """
-        Send the most recent export job's document to the GateKeeper
+        Send the most recent export job's document to the CMS and Akamai.
+
+        We also record the most recent copy of each document we have
+        exported, including documents which are not sent to the Drupal
+        CMS or to Akamai, in the pub_proc_cg table.
 
         Processing steps:
           1. Find the matching export job and queue its docs for pushing
-          2. Send the queued documents to the cancer.gov GateKeeper
+          2. Send the queued documents the CMS and to Akamai
           3. Update the `pub_proc_cg` and `pub_proc_doc` tables
-          4. Record the job's status as waiting for GK to confirm the push
+
+        Return:
+          integer for count of "pushed" documents (excluding removals)
         """
 
         # 1. Find the matching export job and queue its docs for pushing
         self.prep_push()
 
-        # 2. Send the queued documents to the cancer.gov GateKeeper
+        # 2. Send the queued documents to the CMS and Akamai
         self.send_docs()
 
         # 3. Update the `pub_proc_cg` and `pub_proc_doc` tables
-        self.record_pushed_docs()
-
-        # 4. Record the job's status as waiting for GK to confirm the push
-        if self.__num_pushed:
-            self.update_status(self.VERIFYING)
+        return self.record_pushed_docs()
 
     def prep_push(self):
         """
-        Find the corresponding export job and queue its docs for pushing to GK
+        Find the corresponding export job and queue its docs for pushing
         """
 
         # Find the export job we need to push.
@@ -599,7 +578,7 @@ class Control:
             id=None,
             doc_type=None,
             xml=None,
-            num=None
+            num=None,
         )
         names = sorted(fields)
         placeholders = ", ".join(["?"] * len(names))
@@ -643,7 +622,7 @@ class Control:
                     self.cursor.execute(insert, values)
                 self.conn.commit()
 
-        # Queue up documents which the GateKeeper doesn't already have.
+        # Queue up documents which are new.
         self.logger.info("Queuing new documents for push")
         cols = "v.id", doc_type, "d.subdir", "d.doc_version"
         query = db.Query("pub_proc_doc d", *cols)
@@ -736,14 +715,14 @@ class Control:
           serialized Media XML document
         """
 
-        paths = glob.glob("{}/CDR{:010d}.*".format(directory, doc_id))
+        paths = glob.glob(f"{directory}/CDR{doc_id:010d}.*")
         if not paths:
-            raise Exception("Media file for CDR{} not found".format(doc_id))
+            raise Exception(f"Media file for CDR{doc_id} not found")
         path = paths[0].replace("\\", "/")
         base, extension = os.path.splitext(path)
         extension = extension.replace(".", "")
         if extension not in self.MEDIA_TYPES:
-            raise Exception("Media type not supported for {}".format(path))
+            raise Exception(f"Media type not supported for {path}")
         media_type = self.MEDIA_TYPES[extension]
         with open(path, "rb") as fp:
             media_bytes = fp.read()
@@ -759,7 +738,7 @@ class Control:
         self.update_status(self.WAIT, "Waiting for push job release")
         query = db.Query("pub_proc", "status")
         query.where(query.Condition("id", self.job.id))
-        body = "Push job {:d} is waiting for approval.".format(self.job.id)
+        body = f"Push job {self.job.id:d} is waiting for approval."
         self.notify(body)
         while True:
             status = query.execute(self.cursor).fetchone().status
@@ -771,131 +750,63 @@ class Control:
             if status == self.WAIT:
                 time.sleep(10)
             else:
-                message = "Unexpected status {} for job {}"
-                raise Exception(message.format(status, self.job.id))
+                message = f"Unexpected status {status} for job {self.job.id}"
+                raise Exception(message)
 
     def send_docs(self):
         """
-        Send the documents for the push job to the GateKeeper
+        Send the documents for the push job to the CMS and to Akamai.
         """
 
-        # Make sure we've got something to push.
-        self.__num_pushed = 0
-        query = db.Query("pub_proc_cg_work", "COUNT(*) AS num_docs")
-        num_docs = query.execute(self.cursor).fetchone().num_docs
-        if not num_docs:
-            self.update_status(self.SUCCESS, "Nothing to push")
-            return
-
-        # Make sure the GateKeeper is awake and open for business.
-        gkopts = dict(host=self.job.parms.get("GKServer"))
-        target = self.job.parms["GKPubTarget"]
-        pub_type = self.job.parms["PubType"]
-        if pub_type.startswith("Hotfix"):
-            pub_type = "Hotfix"
-        response = cdr2gk.initiateRequest(pub_type, target, **gkopts)
-        if response.type != "OK":
-            args = response.type, response.message
-            raise Exception("GateKeeper: {} ({})".format(*args))
-        self.logger.info("GateKeeper is awake")
-
-        # Make any necessary tweaks to the last push ID if on a lower tier.
-        last_push = self.last_push
-        if last_push != response.details.lastJobId:
-            if self.tier.name == "PROD":
-                if self.job.parms.get("IgnoreGKJobIDMismatch") != "Yes":
-                    raise Exception("Aborting on job ID mismatch")
-            self.logger.warning("Last job ID override")
-            last_push = response.details.lastJobId
-
-        # Give the GateKeeper an idea of what we're about to send.
-        args = self.push_desc, self.job.id, pub_type, target, last_push
-        response = cdr2gk.sendDataProlog(*args, **gkopts)
-        if response.type != "OK":
-            args = response.type, response.message
-            raise Exception("GateKeeper: {} ({})".format(*args))
-        self.logger.info("Prolog sent to GateKeeper")
-        self.__gk_prolog_sent = True
-
-        # Send the GateKeeper each of the exported documents.
-        send_to_cms = dict()
-        media = dict()
-        start = datetime.datetime.now()
-        query = db.Query("pub_proc_cg_work", "id")
+        # Identify the documents to be sent to the Drupal CMS.
+        types = tuple(DrupalClient.TYPES)
+        query = db.Query("pub_proc_cg_work", "id", "doc_type")
         query.where("xml IS NOT NULL")
-        query.where(query.Condition("doc_type", self.EXCLUDED, "NOT IN"))
-        ids = [row.id for row in query.execute(self.cursor).fetchall()]
-        elapsed = (datetime.datetime.now() - start).total_seconds()
-        args = len(ids), elapsed
-        self.logger.info("Selected %d documents in %.2f seconds", *args)
-        start = datetime.datetime.now()
-        group_nums = GroupNums(self.job.id)
-        elapsed = (datetime.datetime.now() - start).total_seconds()
-        args = group_nums.getDocCount(), elapsed
-        self.logger.info("Grouped %d documents in %.2f seconds", *args)
-        counter = 0
-        for doc_id in ids:
-            query = db.Query("pub_proc_cg_work", "num", "doc_type", "xml")
-            query.where(query.Condition("id", doc_id))
-            row = query.execute(self.cursor).fetchone()
-            doc_type = self.GK_TYPES.get(row.doc_type, row.doc_type)
-            if doc_type == "Media":
-                media[doc_id] = row.num
-            xml = self.XMLDECL.sub("", self.DOCTYPE.sub("", row.xml))
-            group_num = group_nums.getDocGroupNum(doc_id)
-            counter += 1
-            args = (self.job.id, counter, "Export", doc_type, doc_id,
-                    row.num, group_num, xml.encode("utf-8"))
-            self.logger.info("Job %d pushing CDR%d", self.job.id, doc_id)
-            response = cdr2gk.sendDocument(*args, **gkopts)
-            if response.type != "OK":
-                args = response.type, response.message
-                raise Exception("GateKeeper: {} ({})".format(*args))
-            if row.doc_type in DrupalClient.TYPES:
-                send_to_cms[doc_id] = row.doc_type
-
-        # Tell the GateKeeper about the documents being removed.
-        remove_from_cms = dict()
-        query = db.Query("pub_proc_cg_work", "id", "num", "doc_type")
-        query.where("xml IS NULL")
-        query.where(query.Condition("doc_type", self.EXCLUDED, "NOT IN"))
+        query.where(query.Condition("doc_type", types, "IN"))
         rows = query.execute(self.cursor).fetchall()
-        for row in rows:
-            if row.doc_type == "Media":
-                media[row.id] = None
-            args = self.job.id, row.id
-            self.logger.info("Job %d removing blocked document CDR%d", *args)
-            doc_type = self.GK_TYPES.get(row.doc_type, row.doc_type)
-            counter += 1
-            args = (self.job.id, counter, "Remove", doc_type, row.id,
-                    row.num, group_nums.genNewUniqueNum())
-            response = cdr2gk.sendDocument(*args, **gkopts)
-            if response.type != "OK":
-                args = response.type, response.message
-                raise Exception("GateKeeper: {} ({})".format(*args))
-            if row.doc_type in DrupalClient.TYPES:
-                remove_from_cms[row.id] = row.doc_type
+        send_to_cms = dict([tuple(row) for row in rows])
+        self.logger.info("%d docs to be pushed to Drupal CMS", len(rows))
 
-        # Tell the GateKeeper we're all done.
-        self.__num_pushed = counter
-        args = self.job.id, pub_type, counter, "complete"
-        response = cdr2gk.sendJobComplete(*args, **gkopts)
-        if response.type != "OK":
-            args = response.type, response.message
-            raise Exception("GateKeeper: {} ({})".format(*args))
+        # Identify the documents to removed from the Drupal CMS.
+        query = db.Query("pub_proc_cg_work", "id", "doc_type")
+        query.where("xml IS NULL")
+        query.where(query.Condition("doc_type", types, "IN"))
+        remove_from_cms = dict()
+        for row in query.execute(self.cursor).fetchall():
+            remove_from_cms[row.id] = row.doc_type
+            args = row.doc_type, row.id
+            self.logger.info("removing %s CDR%d from Drupal CMS", *args)
 
         # Send the PDQ summaries to the Drupal CMS.
-        source = "pub_proc_cg_work"
-        server = self.job.parms.get("DrupalServer")
-        base = "https://{}".format(server) if server else None
-        opts = dict(
-            send=send_to_cms,
-            remove=remove_from_cms,
-            table=source,
-            logger=self.logger,
-            base=base,
-        )
-        self.update_cms(self.session, **opts)
+        if send_to_cms or remove_from_cms:
+            source = "pub_proc_cg_work"
+            server = self.job.parms.get("DrupalServer")
+            base = "https://{}".format(server) if server else None
+            opts = dict(
+                send=send_to_cms,
+                remove=remove_from_cms,
+                table=source,
+                logger=self.logger,
+                base=base,
+            )
+            self.update_cms(self.session, **opts)
+
+        # Identify the pushed media documents.
+        query = db.Query("pub_proc_cg_work", "id", "num")
+        query.where("xml IS NOT NULL")
+        query.where("doc_type = 'Media'")
+        rows = query.execute(self.cursor).fetchall()
+        media = dict([tuple(row) for row in rows])
+        self.logger.info("%d media document(s) to be pushed", len(media))
+
+        # Identify the media documents to be removed.
+        query = db.Query("pub_proc_cg_work", "id")
+        query.where("xml IS NULL")
+        query.where("doc_type = 'Media'")
+        rows = query.execute(self.cursor).fetchall()
+        for row in rows:
+            media[row.id] = None
+        self.logger.info("%d media document(s) to be removed", len(rows))
 
         # Make sure Akamai has any changes to the media files.
         if media:
@@ -904,14 +815,13 @@ class Control:
     @classmethod
     def update_cms(cls, session, **opts):
         """
-        Send new/modified summaries to Drupal and remove dropped content
+        Send new/modified summaries to Drupal and remove dropped content.
 
-        As with the push to GateKeeper, failure of any of these documents
-        will cause the entire job to be marked as a failure (and almost
-        always leave the content pushed to Drupal in a `draft` state).
-        I say "almost" because the edge case is that the `publish()`
-        call might fail between batches. Nothing we can do about that
-        very unlikely problem.
+        Failure of any of these documents will cause the entire job to
+        be marked as a failure (and almost always leave the content
+        pushed to Drupal in a `draft` state).  I say "almost" because
+        the edge case is that the `publish()` call might fail between
+        batches. Nothing we can do about that very unlikely problem.
 
         Implemented as a class method so that we can invoke this
         functionality without creating a real publishing job.
@@ -996,8 +906,10 @@ class Control:
         for doc_id in remove:
             client.remove(doc_id)
 
-        # Only after all the other steps are done, set pushed docs to published.
-        client.publish(pushed)
+        # Switch pushed docs from draft to published.
+        errors = client.publish(pushed)
+        if errors:
+            raise Exception(f"{len(errors)} Drupal publish errors; see logs")
 
         # Record how long it took.
         elapsed = (datetime.datetime.now() - start).total_seconds()
@@ -1036,23 +948,10 @@ class Control:
         if node is not None:
             translation_of = Doc.extract_id(node.get("ref"))
 
-        # Munging of image URLs based on instructions from Blair in
-        # Slack message to Volker and me 2019-02-28 11:20.
-        # Possibly a temporary solution?
-        # Now that QA is broken (indefinitely?) this advice no longer
-        # seems very attractive. Using what's in the host configuration
-        # file instead.
-        #tier_extras = dict(DEV="-blue-dev", PROD="")
-        #suffix = tier_extras.get(session.tier.name, "-qa")
-        #replacement = f"https://www{suffix}.cancer.gov/images/cdr/live"
-        #host = session.tier.hosts["CG"]
-        #replacement = f"https://{host}/images/cdr/live"
-        #target = "/images/cdr/live"
+        # Pull out the summary sections into sequence of separate dictionaries.
         target = "@@MEDIA-TIER@@"
         tier = session.tier.name.lower()
         replacement = f"-{tier}" if tier != "prod" else ""
-
-        # Pull out the summary sections into sequence of separate dictionaries.
         transformed = xsl(root)
         cls.consolidate_citation_references(transformed)
         xpath = "body/div/article/div[@class='pdq-sections']"
@@ -1319,6 +1218,9 @@ class Control:
         Use the information stored in the `pub_proc_cg_work` table.
         All of the work in this method is wrapped in a transaction
         so that everything succeeds or nothing is updated.
+
+        Return:
+            integer for number of documents "pushed" (not removed)
         """
 
         # Use a separate connection with a long timeout.
@@ -1372,16 +1274,21 @@ class Control:
                   WHERE w.xml IS NOT NULL
                     AND c.id IS NULL""")
 
+        # Get the number of "pushed" documents.
+        query = db.Query("pub_proc_cg_work", "COUNT(*) AS pushed")
+        query.where("xml IS NOT NULL")
+        pushed = query.execute(cursor).fetchone().pushed
+
         # Seal the deal.
         conn.commit()
         conn.close()
+        return pushed
 
     def normalize(self, xml):
         """
         Prepare document for comparison
 
-        Used to determine whether we should send a fresh copy of a
-        document to the GateKeeper.
+        Used to determine whether a document has changed.
 
         Pass:
           xml - string for serialized version of filtered CDR document
@@ -1427,7 +1334,7 @@ class Control:
             args = self.job.id, message
             self.logger.warning("Job %d: no recips for notification %r", *args)
         if self.__opts.get("level", "INFO").upper() == "DEBUG":
-            print("Job {:d}: {}".format(self.job.id, message))
+            print(f"Job {self.job.id:d}: {message}")
 
     def post_message(self, message):
         """
@@ -1438,7 +1345,7 @@ class Control:
         """
 
         self.logger.info("Job %d: %s", self.job.id, message)
-        messages = "[{}] {}".format(datetime.datetime.now(), message)
+        messages = f"[{datetime.datetime.now()}] {message}"
         update = "UPDATE pub_proc SET messages = ? WHERE id = ?"
         self.cursor.execute(update, (messages, self.job.id))
         self.conn.commit()
@@ -1455,12 +1362,12 @@ class Control:
         """
 
         date = "GETDATE()" if status in self.COMPLETED_STATUSES else "NULL"
-        update = """\
+        update = f"""\
             UPDATE pub_proc
                SET status = ?,
-                   completed = {}
+                   completed = {date}
              WHERE id = ?
-               AND status != 'Success'""".format(date)
+               AND status != 'Success'"""
         self.cursor.execute(update, (status, self.job.id))
         self.conn.commit
         if message:
@@ -1468,11 +1375,6 @@ class Control:
         else:
             self.logger.info("Job %d: set status to %s", self.job.id, status)
 
-    @classmethod
-    def wrap_for_cms(cls, doc, cdr_id):
-        """
-        Create a dictionary of values to be sent to the Drupal PDQ API
-        """
 
     # ------------------------------------------------------------------
     # PROPERTIES START HERE.
@@ -1490,7 +1392,7 @@ class Control:
                 self._conn = db.connect(**opts)
             except Exception as e:
                 self.logger.exception("unable to connect to database")
-                raise Exception("Database connection failure: {}".format(e))
+                raise Exception(f"Database connection failure: {e}")
         return self._conn
 
     @property
@@ -1525,24 +1427,6 @@ class Control:
         return self._job
 
     @property
-    def last_push(self):
-        """
-        Primary key for the most recent successful push job
-
-        Used to sychronize with the GateKeeper.
-        """
-
-        if not hasattr(self, "_last_push"):
-            push = "{}%".format(self.PUSH)
-            query = db.Query("pub_proc p", "MAX(p.id) AS id")
-            query.join("pub_proc_doc d", "d.pub_proc = p.id")
-            query.where(query.Condition("p.status", self.SUCCESS))
-            query.where(query.Condition("p.pub_subset", push, "LIKE"))
-            query.where(query.Condition("p.pub_system", self.job.system.id))
-            self._last_push = query.execute(self.cursor).fetchone().id
-        return self._last_push
-
-    @property
     def logger(self):
         """
         Standard library `Logger` object
@@ -1562,14 +1446,6 @@ class Control:
         return self.__opts.get("output-dir") or self.job.output_dir
 
     @property
-    def push_desc(self):
-        """
-        Description sent to the GateKeeper for the push job
-        """
-
-        return self.job.parms.get("GKPushJobDescription")
-
-    @property
     def session(self):
         """
         `Session` object representing a CDR login
@@ -1581,7 +1457,7 @@ class Control:
             query.where(query.Condition("p.id", self.__job_id))
             row = query.execute(self.cursor).fetchone()
             if not row:
-                raise Exception("Job {} not found".format(self.__job_id))
+                raise Exception(f"Job {self.__job_id} not found")
             user = row.name
             password = self.tier.passwords.get(user.lower()) or ""
             self._session = Session.create_session(user, password=password)
@@ -1672,7 +1548,7 @@ class Control:
                 self.SCRIPT,
                 control.session.name,
                 str(control.job.id),
-                str(control.spec_id)
+                str(control.spec_id),
             ]
 
         def run(self):
@@ -2073,7 +1949,6 @@ def main():
     parser.add_argument("--output", "-o")
     args = parser.parse_args()
     if args.debug:
-        cdr2gk.DEBUGLEVEL = 1
         opts["level"] = "DEBUG"
     if args.numprocs:
         opts["numprocs"] = args.numprocs

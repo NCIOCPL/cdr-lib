@@ -3658,8 +3658,8 @@ class Doc(object):
 
         Special-case handling for optimized filtering of many
         documents by the same filter. Example use case is tranforming
-        thousands of documents from what we give to GateKeeper for
-        cancer.gov into what we give to the PDQ data partners.
+        thousands of documents from what we give to the cancer.gov
+        web site into what we give to the PDQ data partners.
         We create the transform object once and use it many times.
 
         Pass:
