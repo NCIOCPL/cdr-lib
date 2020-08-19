@@ -4,10 +4,8 @@
 # what we would send to Cancer.gov is identical with what we sent
 # for the last push job.
 #
-# BZIssue::4855 - Add GKTarget Parameter to Re-publishing Job Interface
-#
 #----------------------------------------------------------------------
-import cdr, cdr2gk, cdrcgi, time
+import cdr, cdrcgi, time
 from cdrapi import db
 
 # Extra output to standard error file.
@@ -20,9 +18,8 @@ class CdrRepublisher:
     in such a way that suppresses the optimization which avoids
     re-sending a document which is identical to what was last sent
     to Cancer.gov for that document.  This functionality will be
-    useful not only for facilitating testing Cancer.gov's GateKeeper
-    software, but also for re-publishing documents which failed
-    processing after a previous push to Cancer.gov.
+    useful for re-publishing documents which failed processing
+    after a previous push to Cancer.gov.
 
     Instantiation of the object requires that a CDR session has
     been established using a login account with sufficient permission
@@ -102,8 +99,7 @@ class CdrRepublisher:
 
     def republish(self, addNewLinkedDocuments,
                   docList = None, jobList = None, docType = None,
-                  docTypeAll = False, failedOnly = True, email = '',
-                  gkHost = '', gkPubTarget = ''):
+                  docTypeAll = False, failedOnly = True, email = ''):
 
 
         """
@@ -180,20 +176,6 @@ class CdrRepublisher:
                                         job completes; also used for
                                         reporting failures if this
                                         method hits an exception
-                gkHost                - optional string containing the
-                                        fully qualified host name (or
-                                        IP address) for the GateKeeper
-                                        server, in order to override
-                                        the default as determined by the
-                                        cdr2gk module
-                gkPubTarget           - optional string containing the
-                                        GateKeeper target.  This is
-                                        typically set to 'Preview' for
-                                        testing.  Valid values would be
-                                        (Gatekeeper, Preview, Live).
-                                        This value overrides the default
-                                        as determinded by the cdr2gk
-                                        module.
 
             Returns:
 
@@ -327,14 +309,6 @@ class CdrRepublisher:
             # Create the export job, which in turn creates the follow-on push
             # job.
             parms = []
-            if gkHost:
-                parms.append(('GKServer', gkHost))
-                message = "republish(): setting GateKeeper host to %s"
-                self.__logger.info(message, gkHost)
-            if gkPubTarget:
-                parms.append(('GKPubTarget', gkPubTarget))
-                message = "republish(): setting GateKeeper target to %s"
-                self.__logger.info(message, gkPubTarget)
             opts = dict(parms=parms, docList=docs, email=email)
             opts["tier"] = self.__tier
             resp = cdr.publish(self.__credentials, pubSystem, pubSubset, **opts)
