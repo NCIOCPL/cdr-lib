@@ -327,7 +327,6 @@ class Controller:
         titles = kwopts.get("titles")
         if titles:
             page.form.append(page.hidden_field("selection_method", "id"))
-            page.form.append(page.hidden_field("format", self.format))
             fieldset = page.fieldset("Choose Summary")
             page.add_css("fieldset { width: 600px; }")
             for t in titles:
