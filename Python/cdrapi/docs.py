@@ -335,7 +335,7 @@ class Doc(object):
             elif not self.id:
                 self._doctype = None
             else:
-                table = "doc_version" if self.version else "document"
+                table = "doc_version" if self.version else "all_docs"
                 query = Query(table, "doc_type")
                 query.where(query.Condition("id", self.id))
                 if self.version:

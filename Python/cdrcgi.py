@@ -2011,6 +2011,9 @@ class Reporter:
         table = R.Table(rows, columns=columns, caption="Document Types")
         report = R("Simple Report", table)
         report.send("html")
+
+    Look at ReportTemplate.py in the cgi directory for a more comprehensive
+    guide to the features of this class and its nested classes.
     """
 
     def __init__(self, title, tables, **opts):
