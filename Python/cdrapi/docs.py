@@ -1135,8 +1135,8 @@ class Doc(object):
         # Make sure we back out any pending transactions if we fail.
         try:
 
-            # Take care of any links to this document.
-            if self.__delete_incoming_links(**opts):
+            # Take care of any links to/from this document.
+            if self.__delete_links(**opts):
 
                 # We got the green light to proceed with the deletion.
                 update = "UPDATE document SET active_status = 'D' WHERE id = ?"
@@ -2458,9 +2458,9 @@ class Doc(object):
         # Wipe the cached information about the BLOB.
         self._blob = self._blob_id = None
 
-    def __delete_incoming_links(self, **opts):
+    def __delete_links(self, **opts):
         """
-        Remove links to this document in preparation for marking it deleted
+        Remove links to/from this document so it can be marked as deleted
 
         Optional keyword argument:
           validate - if True, just record the links as problems
@@ -2477,10 +2477,6 @@ class Doc(object):
         query.where(query.Condition("source_doc", self.id, "<>"))
         rows = query.execute(self.cursor).fetchall()
 
-        # If no inbound links, the document can be marked as deleted.
-        if not rows:
-            return True
-
         # Record the inbound links as errors.
         for doc_id, frag_id in rows:
             doc = Doc(self.session, id=doc_id)
@@ -2491,14 +2487,15 @@ class Doc(object):
             self.add_error(message, type=self.LINK)
 
         # Tell the caller not to proceed with the deletion (links were found).
-        if opts.get("validate"):
+        if rows and opts.get("validate"):
             self.session.logger.warning("Deletion of %s blocked", self.id)
             return False
 
         # Delete the links and tell the caller to proceed with the 'deletion'.
         delete_sql = (
             "DELETE FROM link_fragment WHERE doc_id = ?",
-            "DELETE FROM link_net WHERE target_doc = ?"
+            "DELETE FROM link_net WHERE target_doc = ?",
+            "DELETE FROM link_net WHERE source_doc = ?",
         )
         for sql in delete_sql:
             self.cursor.execute(sql, (self.id,))
