@@ -276,7 +276,7 @@ class DictionaryAPILoader:
         """TCP/IP port on which we connect."""
 
         if not hasattr(self, "_port"):
-            port = self.opts.get("")
+            port = self.opts.get("port")
             if not port and hasattr(self, "PORT"):
                 port = self.PORT
             if not port:
