@@ -8117,7 +8117,7 @@ class GlossaryTermName:
         self.phrases = set()
 
     @classmethod
-    def get_mappings(cls, session, language="en"):
+    def get_mappings(cls, session, language="en", dictionary=None):
         """
         Fetch the mappings of phrases to English or Spanish glossary term names
 
@@ -8129,6 +8129,7 @@ class GlossaryTermName:
         Pass:
           session - reference to object for current login
           language - "en" (the default) or "es"
+          dictionary - optional dictionary to narrow the returned set
 
         Return:
           sequence of `GlossaryTermName` objects
@@ -8144,13 +8145,23 @@ class GlossaryTermName:
         e_cond = ["e.doc_id = n.doc_id", f"e.path = '{e_path}'"]
         if language == "es":
             e_cond.append("LEFT(n.node_loc, 4) = LEFT(e.node_loc, 4)")
-        query = Query("query_term n", "n.doc_id", "n.value")
+        query = Query("query_term n", "n.doc_id", "n.value").unique()
         query.join("query_term s", "s.doc_id = n.doc_id")
         query.outer("query_term e", *e_cond)
         query.where(query.Condition("n.path", n_path))
         query.where(query.Condition("s.path", s_path))
         query.where("s.value <> 'Rejected'")
         query.where("(e.value IS NULL OR e.value <> 'Yes')")
+        if dictionary:
+            translated = "Translated" if language == "es" else ""
+            definition = f"{translated}TermDefinition"
+            d_path = f"/GlossaryTermConcept/{definition}/Dictionary"
+            c_path = "/GlossaryTermName/GlossaryTermConcept/@cdr:ref"
+            query.join("query_term c", "c.doc_id = n.doc_id")
+            query.where(query.Condition("c.path", c_path))
+            query.join("query_term d", "d.doc_id = c.int_val")
+            query.where(query.Condition("d.path", d_path))
+            query.where(query.Condition("d.value", dictionary))
         for doc_id, name in query.execute(session.cursor).fetchall():
             term_name = names[doc_id] = GlossaryTermName(doc_id, name)
             phrase = cls.normalize(name)
