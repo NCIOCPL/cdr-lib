@@ -575,6 +575,14 @@ if FULL:
             index = dict([(n.id, n) for n in names])
             self.assertEqual(index[43966].name, name)
             self.assertTrue(phrase in index[43966].phrases)
+            total = len(names)
+            opts = dict(tier=self.TIER, dictionary="Genetics")
+            names = cdr.get_glossary_map(self.session, "en", **opts)
+            self.assertTrue(len(names) > 0)
+            self.assertTrue(len(names) < total)
+            opts = dict(tier=self.TIER, dictionary="bogus")
+            names = cdr.get_glossary_map(self.session, "en", **opts)
+            self.assertEqual(len(names), 0)
         def test_39_spanish_map_(self):
             name = u"microscopio electr\xf3nico"
             phrase = u"ELECTR\xd3NICA"
@@ -583,6 +591,14 @@ if FULL:
             index = dict([(n.id, n) for n in names])
             self.assertEqual(index[44025].name, name)
             self.assertTrue(phrase in index[44025].phrases)
+            total = len(names)
+            opts = dict(tier=self.TIER, dictionary="Genetics")
+            names = cdr.get_glossary_map(self.session, "es", **opts)
+            self.assertTrue(len(names) > 0)
+            self.assertTrue(len(names) < total)
+            opts = dict(tier=self.TIER, dictionary="bogus")
+            names = cdr.get_glossary_map(self.session, "es", **opts)
+            self.assertEqual(len(names), 0)
         def test_40_last_doc_ver(self):
             ctrl = dict(DocTitle="last version test")
             xml = u"<xxtest><a>dada</a></xxtest>"
