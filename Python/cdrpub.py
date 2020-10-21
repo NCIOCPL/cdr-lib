@@ -1701,6 +1701,7 @@ class Control:
             f"-i {cdr.WORK_DRIVE}:/etc/akamai-pdq-{{}}",
             "-oHostKeyAlgorithms=+ssh-dss",
             "-oStrictHostKeyChecking=no",
+            "-oIdentitiesOnly=yes",
         )
         SSH = " ".join(SSH)
         FLAGS = "nrave" # for dry run
