@@ -657,6 +657,7 @@ class CdrBatch:
             exit    - true=exit here, else raise exception.
             logfile - if caller doesn't want the standard batch job log.
         """
+
         # Normalize reason, mainly for unicode
         reason = str(why)
 
@@ -790,9 +791,9 @@ class CdrBatch:
     def show_status_page(self, session, title, subtitle, script,
                          extra_buttons=None):
         """
-        Build a cdrcgi.Page object showing a link which can be followed
-        to view the status of the batch job just queued up.  Send the
-        page to the user's browser.
+        Build a cdrcgi.HTMLPage object showing a link which can be followed
+        to view the status of the batch job just queued up.  Send the page
+        to the user's browser.
 
         Pass:
             session       - message string(s) to write
@@ -805,22 +806,36 @@ class CdrBatch:
                             be passed as a string; multiple buttons
                             are passed as a sequence of strings (optional)
         """
-        buttons = extra_buttons or []
-        if isinstance(buttons, bytes):
-            buttons = str(buttons, "utf-8")
-        if isinstance(buttons, str):
-            buttons = [buttons]
-        parms   = "%s=%s&jobId=%s" % (cdrcgi.SESSION, session, self.__jobId)
-        url     = "getBatchStatus.py?%s" % parms
-        link    = cdrcgi.Page.B.A("link", href=url)
-        start   = "To monitor the status of the job, click this "
-        item    = "View Batch Job Status"
-        finish  = " or use the CDR Administration menu to select '%s'." % item
-        page    = cdrcgi.Page(title, subtitle=subtitle, action=script,
-                              buttons=buttons + [cdrcgi.MAINMENU, "Log Out"],
-                              session=session)
-        page.add("<fieldset>")
-        page.add(page.B.H4("Report has been queued for background processing"))
-        page.add(page.B.P(start, link, finish))
-        page.add("</fieldset>")
+
+        button_names = extra_buttons or []
+        if isinstance(button_names, bytes):
+            button_names = str(button_names, "utf-8")
+        if not isinstance(button_names, (list, tuple)):
+            button_names = [button_names]
+        button_names += [cdrcgi.MAINMENU, cdrcgi.Controller.LOG_OUT]
+        buttons = []
+        for name in button_names:
+            if isinstance(name, str):
+                button = cdrcgi.HTMLPage.button(name)
+            else:
+                button = name
+            buttons.append(button)
+        parms = f"{cdrcgi.SESSION}={session}&jobId={self.__jobId}"
+        url = f"getBatchStatus.py?{parms}"
+        link = cdrcgi.HTMLPage.B.A("link", href=url)
+        start = "To monitor the status of the job, click this "
+        item = "View Batch Job Status"
+        finish = f" or use the CDR Administration menu to select '{item}'."
+        opts = dict(
+            session=session,
+            buttons=buttons,
+            action=script,
+            subtitle=subtitle,
+        )
+        page = cdrcgi.HTMLPage(cdrcgi.Controller.TITLE, **opts)
+        fieldset = page.fieldset()
+        message = "Report has been queued for background processing"
+        fieldset.append(page.B.H4(message))
+        fieldset.append(page.B.P(start, link, finish))
+        page.form.append(fieldset)
         page.send()
