@@ -142,7 +142,7 @@ class BatchReport:
             open(path, "wb").write(report.encode("utf-8"))
         else:
             workbook = self.create_excel_report()
-            name += ".xls"
+            name += ".xlsx"
             path = "%s/%s" % (self.REPORTS_BASE, name)
             workbook.save(path)
         self.logger.info("Saved %s", path)
@@ -219,9 +219,9 @@ class BatchReport:
         add the worksheets to it.
         """
 
-        self.styles = cdrcgi.ExcelStyles()
+        self.excel = cdrcgi.Excel(wrap=True)
         self.add_sheets()
-        return self.styles.book
+        return self.excel.book
 
     def add_sheets(self):
         """
@@ -499,9 +499,11 @@ class BatchReport:
         args = vars(arg_parser.parse_args())
         cls.announce_test(args)
         filename = args.pop("filename")
-        job = CdrBatch(jobName=cls.NAME, command=cls.CMD, args=args.items())
+        args = list(args.items())
+        job = CdrBatch(jobName=cls.NAME, command=cls.CMD, args=args)
         if format == "html":
-            open(filename, "wb").write(cls(job).create_html_report())
+            report = cls(job).create_html_report()
+            open(filename, "wb").write(report.encode("utf-8"))
         else:
             cls(job).create_excel_report().save(filename)
         sys.stderr.write("\nsaved %s\n\n" % filename)
@@ -1132,7 +1134,8 @@ class PageTitleMismatches(URLChecker):
             if not self.boards:
                 parms.append(self.B.LI("Board: Any"))
             else:
-                boards = cdrcgi.Control.get_pdq_editorial_boards()
+                boards = cdr.Board.get_boards().values()
+                boards = dict([(b.id, b.short_name) for b in boards])
                 names = [boards[id] for id in self.boards]
                 for name in names:
                     parms.append(self.B.LI("Board: %s" % name))
@@ -1605,7 +1608,7 @@ class PronunciationRecordingsReport(BatchReport):
         query.where("e.path = '/Media/PhysicalMedia/SoundData/SoundEncoding'")
         query.where("e.value = 'MP3'")
         query.where("c.value = 'pronunciation'")
-        query.where("d.created BETWEEN '%s' and '%s 23:59:59'" % (begin, end))
+        query.where(f"d.created BETWEEN '{begin}' and '{end} 23:59:59'")
         if self.language == 'en':
             query.where("t.value NOT LIKE '%-Spanish'")
         elif self.language == 'es':
@@ -1615,10 +1618,10 @@ class PronunciationRecordingsReport(BatchReport):
         docs = []
         for doc_id, title, created in rows:
             docs.append(self.MediaDoc(self.cursor, doc_id, title, created))
-            message = "processed %d of %d" % (len(docs), len(rows))
+            message = f"processed {len(docs):d} of {len(rows):d}"
             self.job.setProgressMsg(message)
             if self.verbose:
-                sys.stderr.write("\r%s" % message)
+                sys.stderr.write(f"\r{message}")
             if self.limit and len(docs) >= self.limit:
                 self.logger.info("abbrieviating test run at %d of %d docs",
                                  len(docs), len(rows))
@@ -1627,28 +1630,32 @@ class PronunciationRecordingsReport(BatchReport):
                 self.logger.info("test concluded after %s seconds",
                                  self.elapsed)
                 break
-        sheet = self.styles.add_sheet("Pronunciations")
-        widths = (10, 35, 35, 30, 15, 30, 15, 15, 15, 15)
+        self.excel.add_sheet("Pronunciations")
+        widths = 10, 35, 35, 30, 15, 30, 15, 15, 15, 15
         headers = ("CDRID", "Title", "Proposed Glossary Terms",
                    "Processing Status", "Processing Status Date",
                    "Comments", "Last Version Publishable?",
                    "Date First Published", "Date Last Modified",
                    "Published Date")
         assert(len(widths) == len(headers))
-        for i, chars in enumerate(widths):
-            sheet.col(i).width = self.styles.chars_to_width(chars)
+        for i, width in enumerate(widths, start=1):
+            self.excel.set_width(i, width)
         lang = { "en": "English", "es": "Spanish" }.get(self.language, "ALL")
-        title = "Audio Pronunciation Recordings Tracking Report - %s" % lang
+        title = f"Audio Pronunciation Recordings Tracking Report - {lang}"
         if self.throttle:
             title += " [TRUNCATED FOR TESTING]"
-        sheet.write_merge(0, 0, 0, len(widths) - 1, title, self.styles.banner)
-        dates = "From %s - %s" % (self.begin, self.end)
-        sheet.write_merge(1, 1, 0, len(widths) - 1, dates, self.styles.header)
-        for col, header in enumerate(headers):
-            sheet.write(2, col, header, self.styles.header)
-        row = 3
+        styles = dict(alignment=self.excel.center_middle, font=self.excel.bold)
+        self.excel.merge(1, 1, 1, len(headers))
+        self.excel.write(1, 1, title, styles)
+        dates = f"From {self.begin} - {self.end}"
+        self.excel.merge(2, 1, 2, len(headers))
+        self.excel.write(2, 1, dates, styles)
+        for col, header in enumerate(headers, start=1):
+            self.excel.write(3, col, header, styles)
+        row = 4
         for doc in sorted(docs):
-            row = doc.add_row(sheet, row, self.styles)
+            row = doc.add_row(self.excel, row)
+
 
     class MediaDoc:
         """
@@ -1713,21 +1720,23 @@ class PronunciationRecordingsReport(BatchReport):
                         self.comments.append(child.text)
                 break
 
-        def add_row(self, sheet, row, styles):
+        def add_row(self, book, row):
             """
             Add a row to the worksheet for this Media document.
             """
 
-            sheet.write(row, 0, self.doc_id, styles.center)
-            sheet.write(row, 1, self.title, styles.left)
-            sheet.write(row, 2, "; ".join(self.glossary_terms), styles.left)
-            sheet.write(row, 3, self.status, styles.left)
-            sheet.write(row, 4, self.fix_date(self.status_date), styles.center)
-            sheet.write(row, 5, "; ".join(self.comments), styles.left)
-            sheet.write(row, 6, self.last_ver_publishable, styles.center)
-            sheet.write(row, 7, self.fix_date(self.first_pub), styles.center)
-            sheet.write(row, 8, self.fix_date(self.last_mod), styles.center)
-            sheet.write(row, 9, self.fix_date(self.pub_date), styles.center)
+            left = dict(alignment=book.left)
+            center = dict(alignment=book.center)
+            book.write(row, 1, self.doc_id, center)
+            book.write(row, 2, self.title, left)
+            book.write(row, 3, "; ".join(self.glossary_terms), left)
+            book.write(row, 4, self.status, left)
+            book.write(row, 5, self.fix_date(self.status_date), center)
+            book.write(row, 6, "; ".join(self.comments), left)
+            book.write(row, 7, self.last_ver_publishable, center)
+            book.write(row, 8, self.fix_date(self.first_pub), center)
+            book.write(row, 9, self.fix_date(self.last_mod), center)
+            book.write(row, 10, self.fix_date(self.pub_date), center)
             return row + 1
 
         def __lt__(self, other):
@@ -1763,7 +1772,7 @@ class PronunciationRecordingsReport(BatchReport):
         """
 
         from cdrbatch import CdrBatch
-        parser = cls.arg_parser(".xls")
+        parser = cls.arg_parser(".xlsx")
         parser.add_argument("--start", default="2015-01-01")
         parser.add_argument("--end", default=str(datetime.date.today()))
         parser.add_argument("--language", choices=cls.LANGS, default="ALL")
@@ -1835,7 +1844,6 @@ class Control:
     def run_tests(cls):
         for report_class in cls.get_testable_report_classes():
             report_class.test_harness()
-            #print 'CdrLongReports.py "%s"' % report_class
 
     @classmethod
     def usage(cls):

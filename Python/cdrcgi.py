@@ -56,6 +56,7 @@ import lxml.etree as etree
 import lxml.html
 import lxml.html.builder
 import openpyxl
+import openpyxl.workbook.views
 import xlsxwriter
 import xlwt
 
@@ -327,7 +328,6 @@ class Controller:
         titles = kwopts.get("titles")
         if titles:
             page.form.append(page.hidden_field("selection_method", "id"))
-            page.form.append(page.hidden_field("format", self.format))
             fieldset = page.fieldset("Choose Summary")
             page.add_css("fieldset { width: 600px; }")
             for t in titles:
@@ -348,9 +348,9 @@ class Controller:
                 checked = False
             page.form.append(fieldset)
             self.add_board_fieldset(page)
-            if opts.get("audience", True):
+            if kwopts.get("audience", True):
                 self.add_audience_fieldset(page)
-            if opts.get("language", True):
+            if kwopts.get("language", True):
                 self.add_language_fieldset(page)
             fieldset = page.fieldset("Summary Document ID")
             fieldset.set("class", "by-id-block")
@@ -2011,6 +2011,9 @@ class Reporter:
         table = R.Table(rows, columns=columns, caption="Document Types")
         report = R("Simple Report", table)
         report.send("html")
+
+    Look at ReportTemplate.py in the cgi directory for a more comprehensive
+    guide to the features of this class and its nested classes.
     """
 
     def __init__(self, title, tables, **opts):
@@ -2723,6 +2726,8 @@ class Excel:
 
     MIME_SUBTYPE = "vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     MIME_TYPE = f"application/{MIME_SUBTYPE}"
+    WINDOW_WIDTH = 25000
+    WINDOW_HEIGHT = 15000
     from openpyxl.utils import get_column_letter
 
     def __init__(self, title=None, **opts):
@@ -2750,6 +2755,7 @@ class Excel:
             path = f"{directory}/{path}"
         with open(path, "wb") as fp:
             self.book.save(fp)
+        return path
 
     def send(self):
         headers = (
@@ -2822,6 +2828,9 @@ class Excel:
         """Create a workbook with no sheets."""
         if not hasattr(self, "_book"):
             self._book = openpyxl.Workbook()
+            for view in self._book.views:
+                view.windowWidth = self.WINDOW_WIDTH
+                view.windowHeight = self.WINDOW_HEIGHT
             if not self.__opts.get("keep_initial_sheet"):
                 for sheet in self._book.worksheets:
                     self._book.remove(sheet)
@@ -3237,7 +3246,7 @@ NEWLINE  = "@@@NEWLINE-PLACEHOLDER@@@"
 BR       = "@@@BR-PLACEHOLDER@@@"
 bail     = Controller.bail
 
-class Control:
+class DeprecatedControl:
     """
     Base class for top-level controller for a CGI script, which
     puts up a request form (typically for a report), collects
@@ -3785,9 +3794,9 @@ jQuery(function() {
     check_method(jQuery("input[name='method']:checked").val());
 });"""
 
-xlwt.add_palette_colour("hdrbg", 0x21)
+###  XXX xlwt.add_palette_colour("hdrbg", 0x21)
 
-class ExcelStyles:
+class DeprecatedExcelStyles:
     """
     Styles for an Excel workbook.
 
@@ -4172,7 +4181,7 @@ class ExcelStyles:
         for i, chars in enumerate(widths):
             cls.set_width(sheet, i, chars)
 
-class Page:
+class DeprecatedPage:
     """
     Object used to build a web page.
 
@@ -4823,7 +4832,7 @@ function check_ra(val) {
         page._finish()
         print("".join(page._html))
 
-class Report:
+class DeprecatedReport:
     """
     CDR Report which can be rendered as an HTML page or as an Excel workbook.
 
@@ -5483,6 +5492,10 @@ def header(title, banner, subtitle, *args, **kwargs):
     so we catch those ("script" and "buttons") either way. The old
     numBreaks, bkgd, and formExtra keyword arguments are now ignored.
 
+    As of 2020-09-21 there is now only one CGI script which uses this
+    function: QcReport.py. If that ever gets rewritten, we can retire
+    this legacy function.
+
     Required positional arguments:
 
         title
@@ -5669,20 +5682,26 @@ def logout(session):
 
     # Make sure we have a session to log out of.
     if not session: bail('No session found.')
+    if isinstance(session, str):
+        session = Session(session)
 
     # Perform the logout.
     message = "Session Logged Out Successfully"
     try:
-        cdr.logout(session)
+        session.logout()
     except Exception as e:
         message = str(e)
 
     # Display a page with a link to log back in.
-    title   = "CDR Administration"
-    buttons = ["Log In"]
-    action="/cgi-bin/secure/admin.py"
-    page = Page(title, subtitle=message, buttons=buttons, action=action)
-    page.add(Page.B.P("Thanks for spending quality time with the CDR!"))
+    opts = dict(
+        buttons=[HTMLPage.button("Log In")],
+        action="/cgi-bin/secure/admin.py",
+        subtitle=message,
+    )
+    page = HTMLPage(Controller.PAGE_TITLE, **opts)
+    mesg = "\u263a Thanks for spending quality time with the CDR! \u263a"
+    para = HTMLPage.B.P(mesg, HTMLPage.B.CLASS("news center"))
+    page.form.append(para)
     page.send()
 
 #----------------------------------------------------------------------

@@ -226,6 +226,18 @@ class Job:
             self._validating = self.__opts.get("validate", True)
         return self._validating
 
+    def get_blob(self, doc_id):
+        """Override this if you have blobs which need to be saved.
+
+        Pass:
+            doc_id - integer for CDR document ID
+
+        Return:
+            bytes or None (this stub version always returns None)
+        """
+
+        return None
+
     def run(self):
         """
         Transform a batch of CDR documents
@@ -597,7 +609,8 @@ Run completed.
                 reason=self.job.comment,
                 comment=self.job.comment,
                 show_warnings=True,
-                tier=self.job.tier
+                tier=self.job.tier,
+                blob=self.blob,
             )
             doc_id, errors = cdr.repDoc(self.job.session, **opts)
             if not doc_id:
@@ -612,6 +625,14 @@ Run completed.
                 for warning in warnings:
                     self.job.logger.warning("%s: %s" % (self.cdr_id, warning))
             self.saved.add(label)
+
+        @property
+        def blob(self):
+            """Binary object to save with the document, if any."""
+
+            if not hasattr(self, "_blob"):
+                self._blob = self.job.get_blob(self.id)
+            return self._blob
 
         @property
         def ever_validated(self):

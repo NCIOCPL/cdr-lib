@@ -335,7 +335,7 @@ class Doc(object):
             elif not self.id:
                 self._doctype = None
             else:
-                table = "doc_version" if self.version else "document"
+                table = "doc_version" if self.version else "all_docs"
                 query = Query(table, "doc_type")
                 query.where(query.Condition("id", self.id))
                 if self.version:
@@ -1135,8 +1135,8 @@ class Doc(object):
         # Make sure we back out any pending transactions if we fail.
         try:
 
-            # Take care of any links to this document.
-            if self.__delete_incoming_links(**opts):
+            # Take care of any links to/from this document.
+            if self.__delete_links(**opts):
 
                 # We got the green light to proceed with the deletion.
                 update = "UPDATE document SET active_status = 'D' WHERE id = ?"
@@ -2458,9 +2458,9 @@ class Doc(object):
         # Wipe the cached information about the BLOB.
         self._blob = self._blob_id = None
 
-    def __delete_incoming_links(self, **opts):
+    def __delete_links(self, **opts):
         """
-        Remove links to this document in preparation for marking it deleted
+        Remove links to/from this document so it can be marked as deleted
 
         Optional keyword argument:
           validate - if True, just record the links as problems
@@ -2477,10 +2477,6 @@ class Doc(object):
         query.where(query.Condition("source_doc", self.id, "<>"))
         rows = query.execute(self.cursor).fetchall()
 
-        # If no inbound links, the document can be marked as deleted.
-        if not rows:
-            return True
-
         # Record the inbound links as errors.
         for doc_id, frag_id in rows:
             doc = Doc(self.session, id=doc_id)
@@ -2491,14 +2487,15 @@ class Doc(object):
             self.add_error(message, type=self.LINK)
 
         # Tell the caller not to proceed with the deletion (links were found).
-        if opts.get("validate"):
+        if rows and opts.get("validate"):
             self.session.logger.warning("Deletion of %s blocked", self.id)
             return False
 
         # Delete the links and tell the caller to proceed with the 'deletion'.
         delete_sql = (
             "DELETE FROM link_fragment WHERE doc_id = ?",
-            "DELETE FROM link_net WHERE target_doc = ?"
+            "DELETE FROM link_net WHERE target_doc = ?",
+            "DELETE FROM link_net WHERE source_doc = ?",
         )
         for sql in delete_sql:
             self.cursor.execute(sql, (self.id,))
@@ -8120,7 +8117,7 @@ class GlossaryTermName:
         self.phrases = set()
 
     @classmethod
-    def get_mappings(cls, session, language="en"):
+    def get_mappings(cls, session, language="en", dictionary=None):
         """
         Fetch the mappings of phrases to English or Spanish glossary term names
 
@@ -8132,6 +8129,7 @@ class GlossaryTermName:
         Pass:
           session - reference to object for current login
           language - "en" (the default) or "es"
+          dictionary - optional dictionary to narrow the returned set
 
         Return:
           sequence of `GlossaryTermName` objects
@@ -8147,13 +8145,23 @@ class GlossaryTermName:
         e_cond = ["e.doc_id = n.doc_id", f"e.path = '{e_path}'"]
         if language == "es":
             e_cond.append("LEFT(n.node_loc, 4) = LEFT(e.node_loc, 4)")
-        query = Query("query_term n", "n.doc_id", "n.value")
+        query = Query("query_term n", "n.doc_id", "n.value").unique()
         query.join("query_term s", "s.doc_id = n.doc_id")
         query.outer("query_term e", *e_cond)
         query.where(query.Condition("n.path", n_path))
         query.where(query.Condition("s.path", s_path))
         query.where("s.value <> 'Rejected'")
         query.where("(e.value IS NULL OR e.value <> 'Yes')")
+        if dictionary:
+            translated = "Translated" if language == "es" else ""
+            definition = f"{translated}TermDefinition"
+            d_path = f"/GlossaryTermConcept/{definition}/Dictionary"
+            c_path = "/GlossaryTermName/GlossaryTermConcept/@cdr:ref"
+            query.join("query_term c", "c.doc_id = n.doc_id")
+            query.where(query.Condition("c.path", c_path))
+            query.join("query_term d", "d.doc_id = c.int_val")
+            query.where(query.Condition("d.path", d_path))
+            query.where(query.Condition("d.value", dictionary))
         for doc_id, name in query.execute(session.cursor).fetchall():
             term_name = names[doc_id] = GlossaryTermName(doc_id, name)
             phrase = cls.normalize(name)

@@ -2754,17 +2754,21 @@ def get_glossary_map(credentials, lang, **opts):
     Optional keyword arguments:
       tier - optional; one of DEV, QA, STAGE, PROD
       host - deprecated alias for tier
+      dictionary - "Genetics" or "Cancer.gov" (optional)
 
     Return:
       sequence of `GlossaryTermName` objects
     """
 
     tier = opts.get("tier") or opts.get("host") or None
+    dictionary = opts.get("dictionary")
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        return GlossaryTermName.get_mappings(session, lang)
+        return GlossaryTermName.get_mappings(session, lang, dictionary)
     tag = "CdrGetGlossaryMap" if lang == "en" else "CdrGetSpanishGlossaryMap"
     command = etree.Element(tag)
+    if dictionary:
+        etree.SubElement(command, "Dictionary").text = dictionary
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == tag + "Resp":
             terms = []

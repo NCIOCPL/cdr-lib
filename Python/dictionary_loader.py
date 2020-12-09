@@ -276,7 +276,7 @@ class DictionaryAPILoader:
         """TCP/IP port on which we connect."""
 
         if not hasattr(self, "_port"):
-            port = self.opts.get("")
+            port = self.opts.get("port")
             if not port and hasattr(self, "PORT"):
                 port = self.PORT
             if not port:
@@ -570,6 +570,8 @@ class DictionaryAPILoader:
                 name = name.strip()
                 if not name:
                     return "#"
+                nfkd = normalize("NFKD", name)
+                name = "".join([c for c in nfkd if not combining(c)])
                 letter = name[0].lower()
                 if letter not in ascii_lowercase:
                     return "#"
