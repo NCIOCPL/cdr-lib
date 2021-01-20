@@ -2755,6 +2755,7 @@ def get_glossary_map(credentials, lang, **opts):
       tier - optional; one of DEV, QA, STAGE, PROD
       host - deprecated alias for tier
       dictionary - "Genetics" or "Cancer.gov" (optional)
+      audience - "Patient" or "Health Professional" (optional)
 
     Return:
       sequence of `GlossaryTermName` objects
@@ -2762,13 +2763,17 @@ def get_glossary_map(credentials, lang, **opts):
 
     tier = opts.get("tier") or opts.get("host") or None
     dictionary = opts.get("dictionary")
+    audience = opts.get("audience")
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
-        return GlossaryTermName.get_mappings(session, lang, dictionary)
+        opts = dict(language=lang, dictionary=dictionary, audience=audience)
+        return GlossaryTermName.get_mappings(session, **opts)
     tag = "CdrGetGlossaryMap" if lang == "en" else "CdrGetSpanishGlossaryMap"
     command = etree.Element(tag)
     if dictionary:
         etree.SubElement(command, "Dictionary").text = dictionary
+    if audience:
+        etree.SubElement(command, "Audience").text = audience
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == tag + "Resp":
             terms = []
