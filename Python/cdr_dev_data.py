@@ -5,6 +5,7 @@
 import datetime
 import glob
 import os
+from pathlib import Path
 
 class Data:
     """
@@ -247,30 +248,61 @@ class DocType:
         self.name = name
         self.docs = {}
         self.map = {}
+
         if isinstance(source, str):
             for doc_path in glob.glob(f"{source}/{name}/*.cdr"):
-                with open(doc_path) as fp:
-                    doc = eval(fp.read())
+                text = Path(doc_path).read_text()
+                doc = eval(text)
                 doc_id, title = doc[:2]
                 key = title.lower().strip()
+
+                # Summary document types could include duplicates because
+                # English and Spanish docs could use identical names (i.e.
+                # Delirium or 714-X).
+                # The PullDevData.py script prevents those from being
+                # used as test documents.
+                # --------------------------------------------------------
                 if key in self.docs:
                     raise Exception(f"too many {name} docs with title {title}")
                 self.docs[key] = tuple(doc)
                 self.map[doc_id] = title
         else:
+            self.cursor = source
             source.execute("""\
 SELECT d.id, d.title, d.xml
   FROM document d
   JOIN doc_type t
     ON t.id = d.doc_type
  WHERE t.name = ?""", name)
-            row = source.fetchone()
-            while row:
+            rows = source.fetchall()
+
+            for row in rows:
                 doc_id, doc_title, doc_xml = row
                 key = doc_title.lower().strip()
-                if key in self.docs:
+
+                if key in self.docs and key not in self.prohibited:
                     message = "too many {} docs with title {} in database"
                     raise Exception(message.format(name, doc_title))
                 self.docs[key] = tuple(row)
                 self.map[doc_id] = doc_title
-                row = source.fetchone()
+
+
+    @property
+    def prohibited(self):
+        if not hasattr(self, "_prohibited"):
+            self._prohibited = set()
+            self.cursor.execute("""\
+            	select title
+	              from document d
+	              join doc_type dt
+	                on d.doc_type = dt.id
+	             where dt.name = ?
+	             group by title
+	            having count(*) > 1 """, self.name)
+            _rows = self.cursor.fetchall()
+
+            for _title, in _rows:
+                self._prohibited.add(_title.lower().strip())
+
+        return self._prohibited
+
