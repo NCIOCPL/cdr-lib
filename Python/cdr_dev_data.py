@@ -175,7 +175,7 @@ class Table:
         self.path = self.cols = self.values = self.map = self.names = None
         if isinstance(source, str):
             path = f"{source}/tables/{name}"
-            self.values = [tuple(eval(row)) for row in open(path)]
+            self.values = [tuple(eval(row)) for row in open(path, encoding="utf-8")]
             self.cols = self.values.pop(0)
         else:
             source.execute(f"SELECT * FROM {name}")
@@ -251,7 +251,8 @@ class DocType:
 
         if isinstance(source, str):
             for doc_path in glob.glob(f"{source}/{name}/*.cdr"):
-                text = Path(doc_path).read_text()
+                text = Path(doc_path).read_text(encoding='utf-8')
+
                 doc = eval(text)
                 doc_id, title = doc[:2]
                 key = title.lower().strip()
