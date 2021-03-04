@@ -293,13 +293,13 @@ SELECT d.id, d.title, d.xml
         if not hasattr(self, "_prohibited"):
             self._prohibited = set()
             self.cursor.execute("""\
-            	select title
-	              from document d
-	              join doc_type dt
-	                on d.doc_type = dt.id
-	             where dt.name = ?
-	             group by title
-	            having count(*) > 1 """, self.name)
+               select title
+                 from document d
+                 join doc_type dt
+                   on d.doc_type = dt.id
+                where dt.name = ?
+                group by title
+               having count(*) > 1 """, self.name)
             _rows = self.cursor.fetchall()
 
             for _title, in _rows:
