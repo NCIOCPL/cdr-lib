@@ -782,12 +782,18 @@ class DrupalClient:
     Class constants:
         BATCH_SIZE - maximum number of documents we can set to `published`
                      in a single chunk
+        PRUNE_BATCH_SIZE - maximum number of nodes to process at one time
+                           when clearing out older node revisions
+        ORPHAN_BATCH_SIZE - how many summary section orphan deletions to
+                            request at a time
         URI_PATH - used for routing of PDQ RESTful API requests
         TYPES - names used for the types of PDQ documents we publish
     """
 
     MAX_RETRIES = 5
     BATCH_SIZE = 25
+    PRUNE_BATCH_SIZE = 10
+    ORPHAN_BATCH_SIZE = 1000
     URI_PATH = "/pdq/api"
     TYPES = dict(
         Summary=("pdq_cancer_information_summary", "cis"),
@@ -951,14 +957,14 @@ class DrupalClient:
         self.logger.info("Pushed CDR%d to %s as node %d", *args)
         return nid
 
-    def publish(self, documents):
+    def publish(self, documents, **opts):
         """
         Ask the CMS to set the specified documents to the `published` state.
 
         We have to break the batch into chunks small enough that memory
         usage will not be an issue.
 
-        Pass:
+        Required positional argument:
           documents - sequence of tuples for the PDQ documents which should
                       be switched from `draft` to `published` state, each
                       tuple containing:
@@ -972,6 +978,12 @@ class DrupalClient:
                               (448617, 226, "es"),
                               (742114, 136, "en"),
                           ]
+
+        Optional keyword argument:
+          cleanup - if `True` (the default), invoke the services to drop
+                    older revisions of the nodes being published, as well
+                    as summary section entities which have no parent
+                    summary nodes
 
         Return:
           possibly empty dictionary of error messages, indexed by the
@@ -1014,6 +1026,10 @@ class DrupalClient:
                         errors[cdr_id] = err
                         self.logger.error("CDR%d: %s", cdr_id, err)
                     break
+        if opts.get("cleanup", True):
+            nodes = sorted({doc[1] for doc in documents})
+            self.prune_revisions(nodes)
+            self.drop_orphans()
         self.logger.info("%d errors found marking docs published", len(errors))
         return errors
 
@@ -1100,6 +1116,58 @@ class DrupalClient:
             code = response.status_code
             reason = response.reason
             raise Exception(f"lookup returned code {code}: {reason}")
+
+    def prune_revisions(self, nodes):
+        """
+        Ask the CMS to remove older revisions for the published nodes.
+
+        Pass:
+          nodes - ordered sequence of IDs for the published nodes
+        """
+
+        url = f"{self.base}{self.URI_PATH}/prune"
+        offset = 0
+        while offset < len(nodes):
+            node_ids = nodes[offset:offset+self.PRUNE_BATCH_SIZE]
+            offset += self.PRUNE_BATCH_SIZE
+            data = dict(nodes=node_ids, keep=3)
+            opts = dict(json=data, auth=self.auth, verify=False)
+            tries = self.MAX_RETRIES
+            while tries > 0:
+                tries -= 1
+                response = requests.patch(url, **opts)
+                if response.ok:
+                    message = "dropped revisions %s for node %s"
+                    for nid, vids in json.loads(response.text):
+                        self.logger.info(message, vids, nid)
+                    offset += self.PRUNE_BATCH_SIZE
+                    break
+                elif tries:
+                    message = "prune_revisions(): %s (trying again)"
+                    self.logger.warning(message, response.reason)
+                    time.sleep(1)
+                else:
+                    self.logger.error("prune_revisions: %s", response.reason)
+
+    def drop_orphans(self):
+        """
+        Ask the CMS to remove summary sections without parent CIS nodes.
+        """
+
+        url = f"{self.base}{self.URI_PATH}/cis/prune"
+        opts = dict(json=self.ORPHAN_BATCH_SIZE, auth=self.auth, verify=False)
+        message = "dropped revisions %s for summary section %s"
+        while True:
+            response = requests.patch(url, **opts)
+            if response.ok:
+                dropped = json.loads(response.text)
+                if not dropped:
+                    break
+                for pid, vids in dropped:
+                    self.logger.info(message, vids, pid)
+            else:
+                self.logger.error("drop_orphans(): %s", response.reason)
+                break
 
     def __check_nid(self, values):
         """
