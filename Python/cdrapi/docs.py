@@ -8177,7 +8177,9 @@ class GlossaryTermName:
             if dictionary and audience:
                 query.where("LEFT(a.path, 4) = LEFT(d.path, 4)")
         for doc_id, name in query.execute(session.cursor).fetchall():
-            term_name = names[doc_id] = GlossaryTermName(doc_id, name)
+            term_name = names.get(doc_id)
+            if term_name is None:
+                term_name = names[doc_id] = GlossaryTermName(doc_id, name)
             phrase = cls.normalize(name)
             if phrase and phrase not in phrases:
                 phrases.add(phrase)
