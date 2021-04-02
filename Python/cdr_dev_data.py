@@ -5,6 +5,7 @@
 import datetime
 import glob
 import os
+import re
 from pathlib import Path
 
 class Data:
@@ -279,7 +280,15 @@ SELECT d.id, d.title, d.xml
 
             for row in rows:
                 doc_id, doc_title, doc_xml = row
-                key = doc_title.lower().strip()
+
+                # The GTC title is build from the DefinitionText and will
+                # likely contain extra spaces and newlines.  This regex
+                # will strip them out to normalize the key
+                # -------------------------------------------------------
+                if name == 'GlossaryTermConcept':
+                    key = re.sub('(\n+)( *)', ' ', doc_title.lower().strip())
+                else:
+                    key = doc_title.lower().strip()
 
                 if key in self.docs and key not in self.prohibited:
                     message = "too many {} docs with title {} in database"
