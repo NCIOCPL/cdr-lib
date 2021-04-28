@@ -4527,13 +4527,16 @@ class Resolver(etree.Resolver):
         """
 
         element = etree.Element("PreferredName")
+        element.text = ""
         try:
-            url = self.EVS.format(concept_id.upper().strip())
-            response = requests.get(url)
-            element.text = response.json()["preferredName"]
+            if concept_id:
+                url = self.EVS.format(concept_id.upper().strip())
+                response = requests.get(url)
+                element.text = response.json()["preferredName"]
+            else:
+                self.session.logger.error("missing required concept ID")
         except Exception:
             self.session.logger.exception("failure resolving %s", concept_id)
-            element.text = ""
         return self.__package_result(element, context)
 
     def _sql_query(self, args, context):
