@@ -1606,8 +1606,14 @@ class Control:
                 pattern = "thread %05d retrying %d documents"
                 args = self.ident, len(docs)
             self.control.logger.info(pattern, *args)
-            stream = subprocess.Popen(self.args + docs, **self.OPTS)
+            args = self.args + [str(self.ident)] + docs
+            stream = subprocess.Popen(args, **self.OPTS)
+            args = self.ident, int(stream.pid)
+            message = "thread %05d launching process %05d"
+            self.control.logger.info(message, *args)
             stdout, stderr = stream.communicate()
+            if not (stream.returncode or stdout or stderr):
+                self.control.logger.info("thread %05d pid %05d back", *args)
             if stream.returncode:
                 args = self.ident, stream.returncode
                 self.control.logger.error("thread %05d got return %d", *args)
