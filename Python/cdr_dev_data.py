@@ -189,7 +189,8 @@ class Table:
                     if isinstance(value, datetime.datetime):
                         value = str(value)
                     values.append(value)
-                self.values.append(values)
+                self.values.append(tuple(values))
+
         self.rows = [self._row_dict(row) for row in self.values]
         if "name" in self.cols:
             names = [row["name"] for row in self.rows]
@@ -286,7 +287,7 @@ SELECT d.id, d.title, d.xml
                 # will strip them out to normalize the key
                 # -------------------------------------------------------
                 if name == 'GlossaryTermConcept':
-                    key = re.sub('(\n+)( *)', ' ', doc_title.lower().strip())
+                    key = re.sub(r"\s+", " ", doc_title.lower().strip())
                 else:
                     key = doc_title.lower().strip()
 
@@ -302,13 +303,13 @@ SELECT d.id, d.title, d.xml
         if not hasattr(self, "_prohibited"):
             self._prohibited = set()
             self.cursor.execute("""\
-               select title
-                 from document d
-                 join doc_type dt
-                   on d.doc_type = dt.id
-                where dt.name = ?
-                group by title
-               having count(*) > 1 """, self.name)
+            	select title
+	              from document d
+	              join doc_type dt
+	                on d.doc_type = dt.id
+	             where dt.name = ?
+	             group by title
+	            having count(*) > 1 """, self.name)
             _rows = self.cursor.fetchall()
 
             for _title, in _rows:
