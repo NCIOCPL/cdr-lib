@@ -7,49 +7,19 @@
 # JIRA::OCECDR-4153 - strip unwanted OtherName and Definition blocks
 # JIRA::OCECDR-4226 - complete rewrite to use new EVS API
 # JIRA::OCECDR-4338 - make module adaptable to volatile API
+# JIRA::OCECDR-5038 - rewrite for yet another EVS API (our sixth!)
 #----------------------------------------------------------------------
 
 import datetime
 import json
 import re
+import string
 import sys
 import lxml.etree as etree
 import requests
 import cdr
 from cdrapi import db
 
-class NamedValue:
-    """
-    Value stored in the JSON returned by the EVS API.
-
-    As far as I have been able to determine through reverse engineering
-    (the team maintaining the API has failed so far to provide the
-    documentation they promised), the bits we're interested in are
-    stored using the following structure:
-
-        dictionary
-            predicate
-                name -> used as the name in our own object
-            value
-                literal
-                    value -> used as the value in our object
-
-    Hoisted outside of the Concept namespace so it can be used as a base
-    class for both properties and qualifiers.
-    """
-
-    @staticmethod
-    def get_value(dictionary):
-        """
-        Extract the string value for the property or qualifier.
-
-        Ensure that our assumption about how the value is stored
-        is correct.
-        """
-
-        value = dictionary["value"]
-        assert len(value) == 1, "property has %d values" % len(value)
-        return value[0]["literal"]["value"]
 
 class Concept:
     """
@@ -57,7 +27,7 @@ class Concept:
 
     Class values:
         logger - for recording processing information and failures
-        REQUIRED - names of properties which are required singletons
+        NAME_PROPS - types for synonym properties
 
     Instance values:
         code - unique identifier for the concept record in the EVS
@@ -73,64 +43,152 @@ class Concept:
     """
 
     logger = cdr.Logging.get_logger("nci_thesaurus", level="info")
-    REQUIRED = {"code", "Preferred_Name"}
+    NAME_PROPS = "CAS_Registry", "NSC_CODE", "IND_Code"
+    DEFINITION_TYPES = "DEFINITION", "ALT_DEFINITION"
+    PUNCTUATION = re.compile(f"[{re.escape(string.punctuation)}]")
 
-    def __init__(self, code=None, path=None):
+
+    def __init__(self, **opts):
         """
         Fetch, parse, and validate the properties for a thesaurus concept.
 
-        The parts of the structure we're interested in are:
+        The parts of the structure we're interested in are (* means zero
+        or more occurrences):
 
-            EntityDescriptionMsg
-                entityDescription
-                    namedEntity
-                        property[, property ...]
-                            predicate
-                            value
-                            [propertyQualifier, [...]]
+          code
+          name
+          synonyms*
+            name
+            group
+            source
+          definitions*
+            definition
+            type
+            source
+          properties*
+            type
+            value
 
-        See NamedValue above for the composition of properties and
-        qualifiers.
-
-        Pass exactly one of:
+        Pass exactly one of the following options:
             code - thesaurus concept ID (fetch the concept using the API)
             path - location of concept JSON stored in a file
+            values - dictionary of nested, keyed values for the concept
         """
 
-        self.logger.info("Concept(code=%r, path=%r)", code, path)
-        assert code or path, "code or path must be provided"
-        assert not(code and path), "code and path are mutually exclusive"
-        for name in self.REQUIRED:
-            setattr(self, name.lower(), None)
-        self.synonyms = []
-        self.definitions = []
-        self.cas_codes = []
-        self.nsc_codes = []
-        self.ind_codes = []
-        dictionary = path and self.load(path) or self.fetch(code)
-        entity = self.get_named_entity(dictionary)
-        self.properties = [self.Property(p) for p in entity["property"]]
-        for property in self.properties:
-            self.logger.debug("property name: %s", property.name)
-            if property.name in self.REQUIRED:
-                name = property.name.lower()
-                old = getattr(self, name, None)
-                assert old is None, "%s already set to %s" % (name, old)
-                setattr(self, name, property.value)
-            elif property.name in ("DEFINITION", "ALT_DEFINITION"):
-                self.definitions.append(self.Definition(property))
-            elif property.name == "FULL_SYN":
-                self.synonyms.append(self.OtherName(property))
-            elif property.name == "CAS_Registry":
-                self.cas_codes.append(self.OtherName(property))
-            elif property.name == "NSC_Code":
-                self.nsc_codes.append(self.OtherName(property))
-            elif property.name == "IND_Code":
-                self.ind_codes.append(self.OtherName(property))
-        for name in self.REQUIRED:
-            name = name.lower()
-            assert getattr(self, name, None) is not None, "%s missing" % name
-        self.logger.info("loaded %s", self.code)
+        self.__opts = opts
+
+    @property
+    def cas_codes(self):
+        """Codes for the Chemical Abstract Service."""
+
+        if not hasattr(self, "_cas_codes"):
+            self._cas_codes = []
+            for code in self.properties.get("CAS_Registry", []):
+                self._cas_codes.append(self.OtherName(code, "CAS_Registry"))
+        return self._cas_codes
+
+    @property
+    def code(self):
+        """Unique identifier for the concept record in the EVS."""
+
+        if not hasattr(self, "_code"):
+            self._code = self.values.get("code", "").strip()
+        return self._code
+
+    @property
+    def definitions(self):
+        """Primary or alternate definitions for the concept."""
+
+        if not hasattr(self, "_definitions"):
+            self._definitions = []
+            for values in self.values.get("definitions", []):
+                if values.get("type") in self.DEFINITION_TYPES:
+                    definition = self.Definition(values)
+                    if definition.text:
+                        self._definitions.append(definition)
+        return self._definitions
+
+    @property
+    def ind_codes(self):
+        """FDA Investigational New Drug codes."""
+
+        if not hasattr(self, "_ind_codes"):
+            self._ind_codes = []
+            for code in self.properties.get("IND_Code", []):
+                self._ind_codes.append(self.OtherName(code, "IND_Code"))
+        return self._ind_codes
+
+    @property
+    def nsc_codes(self):
+        """Cancer Chemotherapy National Service Center codes."""
+
+        if not hasattr(self, "_nsc_codes"):
+            self._nsc_codes = []
+            for code in self.properties.get("NSC_Code", []):
+                self._nsc_codes.append(self.OtherName(code, "NSC_Code"))
+        return self._nsc_codes
+
+    @property
+    def preferred_name(self):
+        """The preferred name for the concept in the EVS."""
+
+        if not hasattr(self, "_preferred_name"):
+            self._preferred_name = self.values.get("name", "").strip()
+        return self._preferred_name
+
+    @property
+    def properties(self):
+        """Dictionary of named properties."""
+
+        if not hasattr(self, "_properties"):
+            self._properties = {}
+            for property in self.values.get("properties", []):
+                name = property.get("type")
+                if name:
+                    value = property.get("value", "").strip()
+                    if value:
+                        if name not in self._properties:
+                            self._properties[name] = []
+                        self._properties[name].append(value)
+        return self._properties
+
+    @property
+    def synonyms(self):
+        """Other names for the concept."""
+
+        if not hasattr(self, "_synonyms"):
+            self._synonyms = []
+            for synonym in self.values.get("synonyms", []):
+                if synonym.get("type") == "FULL_SYN":
+                    name = synonym.get("name", "").strip()
+                    if name:
+                        group = synonym.get("termGroup", "").strip()
+                        source = synonym.get("source", "").strip()
+                        args = name, group, source
+                        self._synonyms.append(self.OtherName(*args))
+        return self._synonyms
+
+    @property
+    def values(self):
+        """EVS values pulled from API or file if we don't already have them."""
+
+        if not hasattr(self, "_values"):
+            values = self.__opts.get("values")
+            code = self.__opts.get("code")
+            path = self.__opts.get("path")
+            error = "code or path or values must be provided"
+            assert code or path or values, error
+            error = "only one option can be passed"
+            assert not(code and path and values), error
+            if values:
+                self._values = values
+                self.logger.info("Concept values passed directly.")
+            elif path:
+                self.logger.info("Loading concept from %r", path)
+                self._values = self.load(path)
+            else:
+                self._values = self.fetch(code)[0]
+        return self._values
 
     def add(self, session):
         """
@@ -166,7 +224,7 @@ class Concept:
         return TermDoc(self, session, cdr_id, **opts).save()
 
     @classmethod
-    def fetch(cls, code, format="json"):
+    def fetch(cls, code):
         """
         Retrieve and unpack the JSON for a thesaurus concept.
 
@@ -177,16 +235,14 @@ class Concept:
             dictionary of values for the concept
         """
 
-        url = cls.URL(code, format)
+        url = cls.URL(code)
         cls.logger.info(url)
+        cls.logger.info("Fetching concept %r from %r", code, url)
         response = requests.get(url)
         if response.status_code != 200:
-            raise Exception("fetching concept %s: %d (%s)" % (code,
-                            response.status_code, response.reason))
-        elif format == "json":
-            return json.loads(response.content)
-        elif format == "xml":
-            return etree.fromstring(response.content)
+            message = f"{response.status_code}, ({response.reason})"
+            raise Exception(message)
+        return json.loads(response.content)
 
     @staticmethod
     def load(path):
@@ -200,10 +256,11 @@ class Concept:
             dictionary of values for the concept
         """
 
-        return json.loads(open(path, "rb").read())
+        with open(path, "rb") as fp:
+            return json.load(fp)
 
     @staticmethod
-    def normalize(text):
+    def normalize(text, **opts):
         """
         Prepare a string value for comparison.
 
@@ -214,6 +271,7 @@ class Concept:
 
         Pass:
             text - original value
+            strip_punctuation - if True also remove punctuation
 
         Return:
             lowercase version of string with spacing normalized
@@ -222,24 +280,9 @@ class Concept:
         step1 = text.strip().lower()
         step2 = re.sub(r"\s+", " ", step1, re.U)
         step3 = re.sub(r"[^\w ]", "", step2, re.U)
+        if opts.get("strip_punctuation"):
+            return Concept.PUNCTUATION.sub("", step3, re.U)
         return step3
-
-    @staticmethod
-    def get_named_entity(dictionary):
-        """
-        Dig out the node in the dictionary which contains all the values
-        we need.
-
-        Pass:
-            dictionary - complete unencoded value returned by the EVS API
-
-        Return:
-            the namnedEntity node three levels deep in the dictionary
-        """
-
-        entity_description_message = dictionary["EntityDescriptionMsg"]
-        entity_description = entity_description_message["entityDescription"]
-        return entity_description["namedEntity"]
 
     @classmethod
     def fail(cls, problem, exception=False):
@@ -256,6 +299,7 @@ class Concept:
         else:
             cls.logger.error(problem)
         raise Exception(problem)
+
 
     class OtherName:
         """
@@ -289,25 +333,21 @@ class Concept:
             "NSC_Code"         : "NSC code",
             "CAS_Registry"     : "CAS Registry name"
         }
-        def __init__(self, property):
+
+        def __init__(self, name, group, source=None):
             """
             Extract the values we'll need for generating an OtherName block.
 
             Pass:
-                property - dictionary of values in the EVS for the name
+                name - string for the other name
+                group - string for the type of name
+                source - string for the name source
             """
 
-            self.name = property.value
-            self.group = property.name
-            self.source = None
-            self.include = True
-            if property.name == "FULL_SYN":
-                for qualifier in property.qualifiers:
-                    if qualifier.name == "representational-form":
-                        self.group = qualifier.value
-                    elif qualifier.name == "property-source":
-                        self.source = qualifier.value
-                        self.include = self.source == "NCI"
+            self.name = name
+            self.group = group
+            self.source = source
+            self.include = source == "NCI" if source else True
 
         def convert(self, concept_code, status="Unreviewed"):
             """
@@ -318,7 +358,7 @@ class Concept:
                 status - whether CIAT needs to review the name
             """
 
-            term_type = self.TERM_TYPE_MAP.get(self.group, "????")
+            term_type = self.TERM_TYPE_MAP.get(self.group, "????" + self.group)
             node = etree.Element("OtherName")
             etree.SubElement(node, "OtherTermName").text = self.name
             etree.SubElement(node, "OtherNameType").text = term_type
@@ -331,6 +371,7 @@ class Concept:
                 child.text = concept_code
             etree.SubElement(node, "ReviewStatus").text = status
             return node
+
 
     class Definition:
         """
@@ -350,20 +391,16 @@ class Concept:
         NCIT = "NCI Thesaurus"
         SKIP = {"PreferredName", "ReviewStatus", "OtherName"}
 
-        def __init__(self, property):
+        def __init__(self, values):
             """
             Extract the values we'll need for generating a Dictionary block.
 
             Pass:
-                property - dictionary of values in the EVS for the name
+                values - dictionary of values in the EVS for the definition
             """
 
-            self.text = property.value
-            self.source = None
-            for qualifier in property.qualifiers:
-                if qualifier.name == "property-source":
-                    assert self.source is None, "definition source already set"
-                    self.source = qualifier.value
+            self.text = values.get("definition", "").strip()
+            self.source = values.get("source", "").strip()
 
         def convert(self, status="Unreviewed"):
             """
@@ -389,57 +426,6 @@ class Concept:
             text = re.sub(r"^NCI\|", "", self.text.strip())
             return re.sub(r"\s*\(NCI[^)]*\)", "", text)
 
-    class Property(NamedValue):
-        """
-        A single piece of information about the thesaurus concept.
-
-        For more information, see the documentation of the base
-        class NamedValue above.
-
-        Instance values:
-            name - the name of the property (e.g., FULL_SYN or DEFINITION)
-            value - string value for the property (e.g., a name for the concept)
-            qualifiers - sequence of additional information about the
-                         property (for example, the source of a definition,
-                         or the type ("group") of a synonym)
-        """
-
-        def __init__(self, dictionary):
-            """
-            Extract the name, value, and qualifiers for this property.
-
-            Pass:
-                EVS node contining this property's information
-            """
-
-            self.name = dictionary["predicate"]["name"]
-            self.value = self.get_value(dictionary)
-            qualifiers = dictionary.get("propertyQualifier") or []
-            self.qualifiers = [self.Qualifier(q) for q in qualifiers]
-
-        class Qualifier(NamedValue):
-            """
-            Piece of additional information about a concept's property.
-
-            For more information, see the documentation of the base
-            class NamedValue above.
-
-            Instance values:
-                name - identifies which piece of additional information
-                       this is
-                value - the additional information itself
-            """
-
-            def __init__(self, dictionary):
-                """
-                Extract the name and value for the qualifier.
-
-                Pass:
-                    EVS node contining this qualifier's information
-                """
-
-                self.name = dictionary["predicate"]["name"]
-                self.value = self.get_value(dictionary)
 
     class URL:
         """
@@ -448,42 +434,49 @@ class Concept:
         Class values:
             SCHEME - they have recently switched to https (as mandated)
             HOST - DNS name for the service
-            PATH - location of requested resource, with placeholder for
-                   the unique identifier of a specific concept
-            PARMS - identification of requested format (JSON)
+            PATH - location of requested resource
+            PARMS - placeholders for request values
             TEMPLATE - the assembled pattern for constructing a URL,
                        with a placeholder for the unique identifier
                        of a specific EVS concept record
         """
 
-        GRP = cdr.getControlGroup("thesaurus")
-        SCHEME = GRP.get("scheme", "https")
-        HOST = GRP.get("host", "lexevscts2.nci.nih.gov")
-        DFLT_PATH = "lexevscts2/codesystem/NCI_Thesaurus/entity/{self.code}"
-        PATH = GRP.get("path", DFLT_PATH)
-        PARMS = GRP.get("parms", "format={self.format}")
-        TEMPLATE = "{}://{}/{}?{}".format(SCHEME, HOST, PATH, PARMS)
+        GROUP = cdr.getControlGroup("thesaurus")
+        SCHEME = GROUP.get("scheme", "https")
+        HOST = GROUP.get("host", "api-evsrest.nci.nih.gov")
+        DFLT_PATH = "api/v1/concept/ncit"
+        PATH = GROUP.get("path", DFLT_PATH)
+        DFLT_PARMS = "include={self.include}&list={self.codes}"
+        PARMS = GROUP.get("parms", DFLT_PARMS)
+        TEMPLATE = f"{SCHEME}://{HOST}/{PATH}?{PARMS}"
 
-        def __init__(self, code, format="json"):
+        def __init__(self, codes, include="full"):
             """
-            Store the concept identifier without leading or trailing spaces.
+            Remember what we need for contructing a URL for fetching concepts.
 
             Pass:
-                code - the unique identifier of a specifie EVS concept record
+                codes - comma-separated list of concept codes
+                include - indicator of how much data to return; comma-
+                          separated list of any of the following values:
+                          minimal, summary, full, associations, children,
+                          definitions, disjointWith, inverseAssociations,
+                          inverseRoles, maps, parents, properties, roles,
+                          synonyms (default is full)
             """
 
-            self.code = code.strip()
-            self.format = format
+            self.codes = codes
+            self.include = include
 
         def __str__(self):
             """
-            Plug the concept code for a specific concept into the template.
+            Plug in the parameters for the URL.
 
             Return:
-                string containing the URL for retrieving the concept record
+                string containing the URL for retrieving the concept record(s)
             """
 
             return self.TEMPLATE.format(self=self)
+
 
     @classmethod
     def test(cls):
@@ -596,7 +589,8 @@ class Concept:
                    uses the --concept-id and (optionally) --cdr-id options)
         """
 
-        term_doc = TermDoc(cls(code=args.concept_id), cdr_id=args.cdr_id)
+        opts = dict(cdr_id=args.cdr_id, ignore_repository=True)
+        term_doc = TermDoc(cls(code=args.concept_id), **opts)
         print(term_doc.doc.xml)
 
     @classmethod
@@ -615,8 +609,9 @@ class Concept:
         """
 
         name = "%s.xml" % args.concept_id
-        term_doc = TermDoc(cls(code=args.concept_id), cdr_id = args.cdr_id)
-        with open(name, "w") as fp:
+        opts = dict(cdr_id=args.cdr_id, ignore_repository=True)
+        term_doc = TermDoc(cls(code=args.concept_id), **opts)
+        with open(name, "wb") as fp:
             fp.write(term_doc.doc.xml)
         print("saved", name)
 
@@ -669,6 +664,7 @@ class Concept:
         for name in sorted(properties):
             print("%7d %s" % (properties[name], name))
 
+
 class TermDoc:
     """
     CDR Term document, created or updated from the corresponding EVS concept.
@@ -704,12 +700,14 @@ class TermDoc:
             concept - EVS concept information to be used in the Term document
             session - CDR session used for retrieving/saving the document
             cdr_id - Term document to be updated, or None if new document
+            ignore_repository - Don't check to see if the CDR doc exists
         """
 
         self.concept = concept
         self.session = session
         self.skip_other_names = opts.get("skip_other_names", False)
         self.skip_definitions = opts.get("skip_definitions", False)
+        self.ignore_repository = opts.get("ignore_repository", False)
         self.published = False
         self.cdr_id = None
         self.doc = cdr_id and self.load(cdr_id) or self.create()
@@ -930,8 +928,9 @@ class TermDoc:
 
         code = self.concept.code
         cdr_id = self.lookup(code)
-        if cdr_id:
-            Concept.fail("%s already imported as CDR%d" % (code, cdr_id))
+        if not self.ignore_repository:
+            if cdr_id:
+                Concept.fail("%s already imported as CDR%d" % (code, cdr_id))
         root = etree.Element("Term", nsmap=self.NSMAP)
         node = etree.SubElement(root, "PreferredName")
         node.text = self.concept.preferred_name
@@ -991,6 +990,7 @@ class TermDoc:
         query.where(query.Condition("value", code))
         row = query.execute().fetchone()
         return row and row[0] or None
+
 
     class Values:
         """
@@ -1057,6 +1057,7 @@ class TermDoc:
                     what = "definition" + (count > 1 and "s" or "")
                     changes.add("%s %d %s" % (verb, count, what))
 
+
         class Value:
             """
             Original and normalized versions of an OtherName or
@@ -1077,6 +1078,7 @@ class TermDoc:
 
                 self.text = "".join(node.itertext())
                 self.normalized = Concept.normalize(self.text)
+
 
 if __name__ == "__main__":
     """
