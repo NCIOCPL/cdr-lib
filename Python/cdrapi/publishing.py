@@ -1140,7 +1140,6 @@ class DrupalClient:
                     message = "dropped revisions %s for node %s"
                     for nid, vids in json.loads(response.text):
                         self.logger.info(message, vids, nid)
-                    offset += self.PRUNE_BATCH_SIZE
                     break
                 elif tries:
                     message = "prune_revisions(): %s (trying again)"
