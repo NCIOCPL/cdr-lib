@@ -4527,13 +4527,16 @@ class Resolver(etree.Resolver):
         """
 
         element = etree.Element("PreferredName")
+        element.text = ""
         try:
-            url = self.EVS.format(concept_id.upper().strip())
-            response = requests.get(url)
-            element.text = response.json()["preferredName"]
+            if concept_id:
+                url = self.EVS.format(concept_id.upper().strip())
+                response = requests.get(url)
+                element.text = response.json()["preferredName"]
+            else:
+                self.session.logger.error("missing required concept ID")
         except Exception:
             self.session.logger.exception("failure resolving %s", concept_id)
-            element.text = ""
         return self.__package_result(element, context)
 
     def _sql_query(self, args, context):
@@ -8117,7 +8120,7 @@ class GlossaryTermName:
         self.phrases = set()
 
     @classmethod
-    def get_mappings(cls, session, language="en", dictionary=None):
+    def get_mappings(cls, session, **opts):
         """
         Fetch the mappings of phrases to English or Spanish glossary term names
 
@@ -8126,16 +8129,22 @@ class GlossaryTermName:
           client XML wrapper command CdrGetGlossaryMap
           client XML wrapper command CdrGetSpanishGlossaryMap
 
-        Pass:
+        Required positional argument:
           session - reference to object for current login
+
+        Optional keyword arguments:
           language - "en" (the default) or "es"
           dictionary - optional dictionary to narrow the returned set
+          audience - optional audience to narrow the returned set
 
         Return:
           sequence of `GlossaryTermName` objects
         """
 
-        session.log(f"GlossaryTermName.get_mappings({language})")
+        session.log(f"GlossaryTermName.get_mappings(opts={opts})")
+        language = opts.get("language") or "en"
+        dictionary = opts.get("dictionary")
+        audience = opts.get("audience")
         names = dict()
         phrases = set()
         name_tag = "TermName" if language == "en" else "TranslatedName"
@@ -8152,18 +8161,28 @@ class GlossaryTermName:
         query.where(query.Condition("s.path", s_path))
         query.where("s.value <> 'Rejected'")
         query.where("(e.value IS NULL OR e.value <> 'Yes')")
-        if dictionary:
-            translated = "Translated" if language == "es" else ""
-            definition = f"{translated}TermDefinition"
-            d_path = f"/GlossaryTermConcept/{definition}/Dictionary"
+        if dictionary or audience:
             c_path = "/GlossaryTermName/GlossaryTermConcept/@cdr:ref"
             query.join("query_term c", "c.doc_id = n.doc_id")
             query.where(query.Condition("c.path", c_path))
-            query.join("query_term d", "d.doc_id = c.int_val")
-            query.where(query.Condition("d.path", d_path))
-            query.where(query.Condition("d.value", dictionary))
+            translated = "Translated" if language == "es" else ""
+            definition = f"{translated}TermDefinition"
+            if dictionary:
+                d_path = f"/GlossaryTermConcept/{definition}/Dictionary"
+                query.join("query_term d", "d.doc_id = c.int_val")
+                query.where(query.Condition("d.path", d_path))
+                query.where(query.Condition("d.value", dictionary))
+            if audience:
+                a_path = f"/GlossaryTermConcept/{definition}/Audience"
+                query.join("query_term a", "a.doc_id = c.int_val")
+                query.where(query.Condition("a.path", a_path))
+                query.where(query.Condition("a.value", audience))
+            if dictionary and audience:
+                query.where("LEFT(a.path, 4) = LEFT(d.path, 4)")
         for doc_id, name in query.execute(session.cursor).fetchall():
-            term_name = names[doc_id] = GlossaryTermName(doc_id, name)
+            term_name = names.get(doc_id)
+            if term_name is None:
+                term_name = names[doc_id] = GlossaryTermName(doc_id, name)
             phrase = cls.normalize(name)
             if phrase and phrase not in phrases:
                 phrases.add(phrase)
