@@ -961,23 +961,22 @@ class Control:
             svpc = 1
         if root.get("SuppressOnThisPageSection") == "Yes":
             suppress_otp = 1
+        partner_merge_set = root.get("PartnerMergeSet") == "Yes"
 
         # Pull out the summary sections into sequence of separate dictionaries.
         intro_text_index = None
-        is_partner_merge_set = root.get("PartnerMergeSet") == "Yes"
-        is_svpc = root.get("SVPC")
         for i, node in enumerate(root.findall("SummarySection")):
             types = []
             for child in node.findall("SectMetaData/SectionType"):
                 types.append(Doc.get_text(child, ""))
-            if "Introductory Text" in types and not is_partner_merge_set:
+            if "Introductory Text" in types and not partner_merge_set:
                 if intro_text_index is not None:
                     error = "CDR{} has multiple introductory text sections"
                     raise Exception(error.format(doc_id))
                 intro_text_index = i
             else:
                 title = Doc.get_text(node.find("Title"), "").strip()
-                if not title and not is_partner_merge_set and not is_svpc:
+                if not title and not partner_merge_set and not svpc:
                     if types:
                         types = ", ".join(types)
                         types = f"of type(s) {types}"
