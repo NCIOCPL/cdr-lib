@@ -4212,7 +4212,8 @@ class Resolver(etree.Resolver):
     ID_KEY_STRIP = re.compile("[^A-Z0-9]+")
 
     # URL pattern for the Enterprise Vocabulary System.
-    EVS = "https://evsrestapi.nci.nih.gov/evsrestapi/api/v1/ctrp/concept/{}/"
+    EVS = "https://api-evsrest.nci.nih.gov/api/v1/concept/ncit/{}"
+    EVS = f"{EVS}?include=minimal"
 
     # Thread-specific storage.
     local = Local()
@@ -4532,7 +4533,7 @@ class Resolver(etree.Resolver):
             if concept_id:
                 url = self.EVS.format(concept_id.upper().strip())
                 response = requests.get(url)
-                element.text = response.json()["preferredName"]
+                element.text = response.json()["name"]
             else:
                 self.session.logger.error("missing required concept ID")
         except Exception:
