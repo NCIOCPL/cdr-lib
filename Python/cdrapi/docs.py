@@ -1782,6 +1782,9 @@ class Doc(object):
         Determine whether the document conforms to the rules for its type
 
         External wrapper for __validate(), committing changes to database.
+        The answer to the question "did the document pass validation?" is
+        in the `errors` property. If the property is empty, the document
+        passed the validation checks. Otherwise, the document is invalid.
 
         Called by:
           cdr.valDoc()
@@ -4566,11 +4569,15 @@ class Resolver(etree.Resolver):
             raise Exception("wrong number of sql query placeholder values")
         if Query.PLACEHOLDER != "?":
             query = query.replace("?", Query.PLACEHOLDER)
+        result = etree.Element("SqlResult")
         self.session.logger.debug("query: %r", query)
         self.session.logger.debug("values: %r", values)
-        self.cursor.execute(query, tuple(values))
+        try:
+            self.cursor.execute(query, tuple(values))
+        except Exception:
+            self.session.logger.exception("query=%r values=%r", query, values)
+            return self.__package_result(result, context)
         names = [col[0] for col in self.cursor.description]
-        result = etree.Element("SqlResult")
         r = 1
         for values in self.cursor.fetchall():
             row = etree.SubElement(result, "row", id=str(r))
