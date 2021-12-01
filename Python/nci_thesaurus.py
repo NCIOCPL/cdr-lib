@@ -694,7 +694,7 @@ class TermDoc:
 
     def __init__(self, concept, session="guest", cdr_id=None, **opts):
         """
-        Create of update the cdr.Doc object for this Term document.
+        Create or update the cdr.Doc object for this Term document.
 
         Pass:
             concept - EVS concept information to be used in the Term document
