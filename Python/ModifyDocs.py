@@ -246,6 +246,9 @@ class Job:
         invoked by this base class method.
         """
 
+        self.failures = {}
+        self.successes = set()
+        self.unavailable = set()
         if not self.testing:
             self.logger.info("Running in real mode, updating the database")
         else:
@@ -271,6 +274,7 @@ class Job:
                 self.doc = self.Doc(self, doc_id)
                 self.logger.info("Processing %s", self.doc)
                 self.doc.save_changes()
+                self.successes.add(doc_id)
                 if self.doc.saved:
                     counts["saved"] += 1
                 if "cwd" in self.doc.changed:
@@ -282,10 +286,12 @@ class Job:
                 for version_type in self.doc.saved:
                     types[version_type] = types.get(version_type, 0) + 1
             except Job.DocumentLocked as info:
+                self.unavailable.add(doc_id)
                 needs_unlock = False
                 counts["locked"] += 1
                 self.logger.warning(str(info))
-            except Exception:
+            except Exception as e:
+                self.failures[doc_id] = str(e)
                 self.logger.exception("Document %d", doc_id)
                 counts["errors"] += 1
                 if counts["errors"] > self.max_errors:
