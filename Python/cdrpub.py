@@ -26,6 +26,7 @@ import shutil
 import threading
 import time
 from lxml import etree, html
+from lxml.html import builder as B
 from PIL import Image
 import cdr
 from cdrapi import db
@@ -34,7 +35,7 @@ from cdrapi.publishing import Job, DrupalClient
 from cdrapi.settings import Tier
 from cdrapi.users import Session
 from urllib.parse import urlparse
-
+from copy import deepcopy
 
 class Control:
     """
@@ -64,6 +65,11 @@ class Control:
     )
     SHORT_TITLE_MAX = 100
     DESCRIPTION_MAX = 600
+    ABOUT_THIS = "_section_AboutThis_1"
+    IN_THIS_SECTION = dict(
+        en="In This Section",
+        es="En esta secci\xf3n",
+    )
 
     def __init__(self, job_id, **opts):
         """
@@ -941,6 +947,8 @@ class Control:
         node = meta.find("SummaryURL")
         if node is None:
             raise Exception("CDR{:d} has no SummaryURL".format(doc_id))
+        langs = dict(English="en", Spanish="es")
+        langcode = langs[Doc.get_text(meta.find("SummaryLanguage"))]
         try:
             url = urlparse(node.get("xref")).path
         except:
@@ -1001,6 +1009,33 @@ class Control:
             else:
                 section_title = Doc.get_text(h2, "").strip()
                 node.remove(h2)
+            # XXX TODO: remove "False and " from the next line when the CMS
+            #           is ready (that is, when the JavaScript currently
+            #           implementing this logic has been removed from the CMS.
+            if False and intro_text_index != i and node.get("id") != cls.ABOUT_THIS:
+                headers = list(node.iter("h3", "h4"))
+                if headers and "kpBox" not in headers[0].get("id", ""):
+                    links = B.UL()
+                    nested_links = None
+                    for header in headers:
+                        link = deepcopy(header)
+                        link.set("href", "#" + link.get("id"))
+                        del link.attrib["id"]
+                        link.tag = "a"
+                        if header.tag == "h3":
+                            nested_links = None
+                            links.append(B.LI(link))
+                        else:
+                            if nested_links is None:
+                                nested_links = B.UL(B.LI(link))
+                                links.append(nested_links)
+                            else:
+                                nested_links.append(B.LI(link))
+                    h6 = B.H6(cls.IN_THIS_SECTION[langcode])
+                    nav = B.E("nav", h6, links)
+                    nav.set("class", "in-this-section")
+                    nav.set("role", "navigation")
+                    node.insert(0, nav)
             body = html.tostring(node).decode("utf-8")
             body = body.replace(target, replacement)
             if intro_text_index == i:
@@ -1017,7 +1052,6 @@ class Control:
             i += 1
 
         # Pull everything together.
-        langs = dict(English="en", Spanish="es")
         audience = Doc.get_text(meta.find("SummaryAudience"))
         description = Doc.get_text(meta.find("SummaryDescription"))
         if len(description) > cls.DESCRIPTION_MAX:
@@ -1036,7 +1070,7 @@ class Control:
             description=description,
             summary_type=Doc.get_text(meta.find("SummaryType")),
             audience=audience.replace(" prof", " Prof"),
-            language=langs[Doc.get_text(meta.find("SummaryLanguage"))],
+            language=langcode,
             posted_date=Doc.get_text(root.find("DateFirstPublished")),
             updated_date=Doc.get_text(root.find("DateLastModified")),
             type="pdq_cancer_information_summary",
