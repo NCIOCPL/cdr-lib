@@ -4478,7 +4478,7 @@ def normalize(id):
     if isinstance(id, type(9)):
         idNum = id
     else:
-        digits = re.sub('[^\d]', '', id)
+        digits = re.sub(r"[^\d]", "", id)
         idNum  = int(digits)
     return "CDR%010d" % idNum
 
@@ -4546,7 +4546,8 @@ BASEDIR = _Control.TIER.basedir
 FIX_PERMISSIONS = f"{BASEDIR}/Bin/fix-permissions.cmd".replace("/", "\\")
 ETC = _Control.TIER.etc
 APPC = _Control.TIER.hosts["APPC"]
-FQDN = open(f"{BASEDIR}/etc/hostname").read().strip()
+with open(f"{BASEDIR}/etc/hostname") as fp:
+    FQDN = fp.read().strip()
 HOST_NAMES = FQDN.split(".")[0], FQDN, "https://" + FQDN
 CBIIT_NAMES = APPC.split(".")[0], APPC, "https://" + APPC
 OPERATOR = "NCIPDQoperator@mail.nih.gov"

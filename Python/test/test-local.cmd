@@ -5,5 +5,5 @@ set PYTHONPATH=%TESTPATH%\..
 set TESTSCRIPT=%TESTPATH%\run-tests.py
 ECHO.
 ECHO testing locally
-python %TESTSCRIPT% %*
+python -X dev %TESTSCRIPT% %*
 endlocal
