@@ -6,7 +6,8 @@ import platform
 import unittest
 import pyodbc
 from cdrapi import settings
-
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 def connect(**opts):
     """
