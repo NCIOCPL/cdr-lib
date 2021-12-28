@@ -218,7 +218,7 @@ class Controller:
             group - name of group to fetch
 
         Return:
-            dictionary of user names indexed by user ID
+            dictionary-like object of user names indexed by user ID
         """
 
         query = db.Query("usr u", "u.id", "u.fullname", "u.name")
@@ -229,7 +229,6 @@ class Controller:
         rows = query.execute(self.cursor).fetchall()
 
         class Group:
-
             def __init__(self, rows):
                 self.map = {}
                 for row in rows:
