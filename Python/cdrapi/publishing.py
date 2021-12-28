@@ -4,10 +4,7 @@ Manage CDR publishing jobs and provide acceess to the Drupal CMS
 
 import datetime
 import json
-import logging
 import time
-import threading
-from six import iteritems
 import dateutil.parser
 import requests
 from cdrapi.db import Query
@@ -247,7 +244,7 @@ class Job:
                 self._parms = {}
                 for name, value in query.execute(self.cursor).fetchall():
                     if value is not None:
-                        value = value.strip() # bug in adodbapi
+                        value = value.strip()  # bug in adodbapi
                     self._parms[name] = value
             else:
                 if not self.subsystem:
@@ -257,7 +254,6 @@ class Job:
                 undefined = set(requested) - set(defined)
                 if undefined:
                     messages = "Paramater(s) {} undefined"
-                    #raise Exception(messages.format(", ".join(undefined)))
                     raise Exception(messages.format(undefined))
                 defined.update(requested)
                 self.session.logger.info("job parms: %r", defined)
@@ -371,7 +367,6 @@ class Job:
                 self._system = None
         return self._system
 
-
     # ------------------------------------------------------------------
     # PUBLIC METHODS START HERE.
     # ------------------------------------------------------------------
@@ -415,13 +410,12 @@ class Job:
             self.session.conn.commit()
             self._id = job_id
             return job_id
-        except:
+        except Exception:
             self.session.logger.exception("Job creation failed")
             self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
             if self.session.cursor.fetchone().tc:
                 self.session.cursor.execute("ROLLBACK TRANSACTION")
             raise
-
 
     # ------------------------------------------------------------------
     # PRIVATE METHODS START HERE.
@@ -464,7 +458,7 @@ class Job:
             self._output_dir = "{}/Job{}".format(base_dir, job_id)
             update = "UPDATE pub_proc SET output_dir = ? WHERE id = ?"
             self.cursor.execute(update, (self.output_dir, job_id))
-        else: # workaround for https://sourceforge.net/p/adodbapi/bugs/27/
+        else:  # workaround for https://sourceforge.net/p/adodbapi/bugs/27/
             update = "UPDATE pub_proc SET output_dir = '' WHERE id = ?"
             self.cursor.execute(update, (job_id,))
 
@@ -478,7 +472,7 @@ class Job:
             try:
                 value = str(self.parms[name])
                 self.session.logger.debug("unicode value is %r", value)
-            except:
+            except Exception:
                 value = self.parms[name].decode("utf-8")
                 self.session.logger.debug("decoded value is %r", value)
             values = job_id, i + 1, name, value
@@ -516,8 +510,6 @@ class Job:
         query.where("status NOT IN ('Success', 'Failure')")
         row = query.execute(self.cursor).fetchone()
         return row.id if row else None
-
-
 
     # ------------------------------------------------------------------
     # NESTED CLASSES START HERE.
@@ -1197,7 +1189,6 @@ class DrupalClient:
             values["nid"] = nid
         if "nid" not in values:
             values["nid"] = None
-
 
     class CatalogEntry:
         """

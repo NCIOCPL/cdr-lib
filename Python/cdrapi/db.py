@@ -9,6 +9,7 @@ from cdrapi import settings
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+
 def connect(**opts):
     """
     Connect to the CDR database using known login account.
@@ -302,7 +303,7 @@ class Query:
 
         # Make sure the parameters have been assembled.
         if self._str is None:
-            dummy = str(self)
+            str(self)
         return self._parms
 
     def _align(self, keyword, rest=""):
@@ -360,10 +361,12 @@ class Query:
         if self._limit is not None:
             select += " TOP %d" % self._limit
         self._indent = len(select)
-        for attribute, keywords in (
+        pairs = (
             (self._order, "ORDER BY"),
             (self._outer, "LEFT OUTER JOIN"),
-            (self._group, "GROUP BY")):
+            (self._group, "GROUP BY"),
+        )
+        for attribute, keywords in pairs:
             if attribute:
                 needed = len(keywords) - self._indent
                 if needed > 0:
@@ -383,7 +386,7 @@ class Query:
                 raise Exception("Virtual tables must have an alias")
 
             # SQL Server won't accept placeholders here.
-            sql = str(self._table)
+            str(self._table)
             if self._table._parms:
                 raise Exception("Placeholders not allowed in virtual table")
 
@@ -578,7 +581,6 @@ class Query:
         else:
             collection.append(to_be_added)
 
-
     class Condition:
         """
         Test of a value (typically, but not necessarily a column; could
@@ -593,7 +595,6 @@ class Query:
             self.value = val
             self.test = test
     C = Condition
-
 
     class Or:
         """
@@ -622,7 +623,6 @@ class Query:
             supported for combinations of AND and OR condition sets.
             """
             self.conditions = conditions
-
 
     class Join:
         """
@@ -682,24 +682,29 @@ class QueryTests(unittest.TestCase):
         q = self.Q("#t1", "i").limit(1).order("1 DESC")
         r = self.V(q.execute(self.c, timeout=10).fetchall())
         self.assertTrue(r == [(45,)])
+
     def test_02_join_with_count(self):
         q = self.Q("#t1", "COUNT(DISTINCT #t1.i)").join("#t2", "#t2.i = #t1.i")
         r = self.V(q.execute(self.c).fetchall())
         self.assertTrue(r == [(3,)])
+
     def test_03_group_by_and_having(self):
         q = self.Q("#t2", "i", "COUNT(*)").group("i").having("COUNT(*) > 2")
         r = {row[0] for row in q.execute(self.c).fetchall()}
         self.assertTrue(r == {42, 44})
+
     def test_04_left_outer_join_with_is_null(self):
         q = self.Q("#t1 a", "a.i", "b.n").outer("#t2 b", "b.i = a.i")
         r = self.V(q.where("b.n IS NULL").execute(self.c).fetchall())
         self.assertTrue(r == [(45, None,)])
+
     def test_05_nested_ors_and_ands(self):
         q = self.Q("#t1 a", "a.n").join("#t2 b", "b.i = a.i").unique()
         q.where(self.Q.Or("a.n LIKE 'E%'", ("a.i < 44", "b.n LIKE '%o%'")))
         q.where("a.n <> 'Volker'")
         r = self.V(q.execute(self.c).fetchall())
         self.assertTrue(r == [('Alan',)])
+
     def test_06_condition_object_with_placeholders(self):
         v = ('biology', 'physics')
         q = self.Q("#t1 a", "a.n").join("#t2 b", "b.i = a.i").unique().order(1)
@@ -719,11 +724,13 @@ class QueryTests(unittest.TestCase):
         q = self.Q("#t3", "n").order(1)
         r = [r[0] for r in q.execute(self.c).fetchall()]
         self.assertTrue(r == ["Alan", "Bob", "Elmer", "Volker"])
+
     def test_09_nested_query(self):
         q = self.Q("#t1", "n")
         q.where(self.C("i", self.Q("#t2", "i").unique(), "NOT IN"))
         r = self.V(q.execute(self.c).fetchall())
         self.assertTrue(r == [("Elmer",)])
+
     def test_10_dictionary_results(self):
         c = connect(user="CdrGuest").cursor()
         c.execute("CREATE TABLE #t1 (i INT, n VARCHAR(32))")
@@ -744,12 +751,14 @@ class QueryTests(unittest.TestCase):
         q.where(self.C("i", self.Q("#t2", "i").unique(), "NOT IN"))
         r = self.D(q.execute(c).fetchall(), c)
         self.assertTrue(r == [{"n": "Elmer"}])
+
     def test_11_union_with_virtual_queries(self):
         q1 = self.Q("#t2", "n").limit(1).alias("q1").order("n")
         q2 = self.Q("#t2", "n").limit(1).alias("q2").order("n DESC")
         u = self.Q(q1, "*").union(self.Q(q2, "*"))
         r = [r[0] for r in u.execute(self.c).fetchall()]
         self.assertTrue(r == ["aviation", "volleyball"])
+
 
 if __name__ == "__main__":
     unittest.main()

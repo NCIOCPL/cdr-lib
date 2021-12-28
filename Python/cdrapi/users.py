@@ -3,9 +3,7 @@ Control for who can use the CDR and what they can do
 """
 
 import binascii
-import datetime
 import hashlib
-import logging
 import random
 import re
 import socket
@@ -71,7 +69,7 @@ class Session:
             if self.cursor.fetchall()[0][0] > 0:
                 self.cursor.execute(self.UPDATE)
                 self.conn.commit()
-        except:
+        except Exception:
             if not Session.CLEAR_FAILURE_LOGGED:
                 self.logger.exception("Unable to clear stale sessions")
                 Session.CLEAR_FAILURE_LOGGED = True
@@ -90,7 +88,7 @@ class Session:
         try:
             self.cursor.execute(update, (self.id,))
             self.conn.commit()
-        except:
+        except Exception:
             self.logger.exception("Unable to set last_act")
             raise
 
@@ -162,7 +160,6 @@ class Session:
         if not rows:
             raise Exception("Can't duplicate invalid or expired session")
         row = rows[0]
-        name = row.name
         comment = "Session duplicated from id={}".format(self.name)
         opts = dict(comment=comment, tier=self.tier.name)
         return self.__create_session(self.conn, row.id, **opts)
@@ -656,7 +653,6 @@ class Session:
             cursor.execute(delete)
             session.conn.commit()
 
-
     class Group:
         """
         Named CDR group representing zero or more CDR accounts
@@ -783,7 +779,8 @@ class Session:
                 if "users" in self.__opts:
                     self._users = self.__opts["users"]
                 elif self.id:
-                    query = db.Query("usr u", "u.name").unique().order("u.name")
+                    query = db.Query("usr u", "u.name").unique()
+                    query.order("u.name")
                     query.join("grp_usr g", "g.usr = u.id")
                     query.where(query.Condition("g.grp", self.id))
                     self._users = [u.name for u in query.execute(self.cursor)]
@@ -967,7 +964,6 @@ class Session:
                     insert = "INSERT INTO grp_action(grp, action, doc_type)"
                     insert += " VALUES(?, ?, ?)"
                     cursor.execute(insert, (self.id, action_id, doctype_id))
-
 
     class User:
         """
@@ -1242,7 +1238,7 @@ class Session:
             try:
                 self.__save(password)
                 self.session.conn.commit()
-            except:
+            except Exception:
                 self.session.logger.exception("User.save() failure")
                 self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
                 if self.session.cursor.fetchall()[0].tc:
@@ -1329,7 +1325,6 @@ class Session:
             self.session.cursor.execute(delete, (self.id,))
             self.session.conn.commit()
 
-
     class Cache:
         """
         Optimization for retrieval of filters, filter sets, and terms
@@ -1364,7 +1359,6 @@ class Session:
             with self.filter_set_lock:
                 self.filter_sets = {}
 
-
     class Local(threading.local):
         """
         Thread-specific storage for session
@@ -1380,7 +1374,6 @@ class Session:
             self.__dict__.update(kw)
             self.conn = db.connect(tier=self.tier.name)
             self.cursor = self.conn.cursor()
-
 
     class LoggingDBConnection(threading.local):
         def __init__(self, tier=None):

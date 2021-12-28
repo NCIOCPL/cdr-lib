@@ -9,6 +9,7 @@ from lxml import etree
 from cdrapi.db import Query, connect as db_connect
 from cdrapi.docs import Doc
 
+
 class Report:
     """
     Canned report which can be invoked through the HTTPS tunneling API
@@ -99,7 +100,6 @@ class Report:
         if handler is None:
             raise Exception("Report {!r} not implemented".format(self.name))
         return handler()
-
 
     # ------------------------------------------------------------------
     # INDIVIDUAL REPORT METHODS START HERE.
@@ -265,7 +265,7 @@ class Report:
             raise Exception("Missing required 'InactivityLength' parameter")
         try:
             years, months, days = [int(digits) for digits in deltas.split("-")]
-        except:
+        except Exception:
             message = "InactivityLength parameter must be in YYYY-MM-DD format"
             raise Exception(message)
         delta = relativedelta(years=years, months=months, days=days)
@@ -379,13 +379,13 @@ class Report:
                    "LEFT(s.node_loc, 8) = LEFT(t.node_loc, 8)")
         query.outer("query_term d", "d.doc_id = t.doc_id",
                     "d.path = '{}'".format(d_path),
-                   "LEFT(d.node_loc, 8) = LEFT(t.node_loc, 8)")
+                    "LEFT(d.node_loc, 8) = LEFT(t.node_loc, 8)")
         query.outer("query_term p", "p.doc_id = t.doc_id",
                     "p.path = '{}'".format(p_path),
-                   "LEFT(p.node_loc, 8) = LEFT(t.node_loc, 8)")
+                    "LEFT(p.node_loc, 8) = LEFT(t.node_loc, 8)")
         query.outer("query_term k", "k.doc_id = t.doc_id",
                     "k.path = '{}'".format(k_path),
-                   "LEFT(k.node_loc, 8) = LEFT(t.node_loc, 8)")
+                    "LEFT(k.node_loc, 8) = LEFT(t.node_loc, 8)")
         query.where("n.path = '{}'".format(n_path))
         query.where("t.path = '{}'".format(t_path))
         query.where("s.path = '{}'".format(s_path))
@@ -457,7 +457,7 @@ class Report:
             raise Exception("Missing required 'Link' parameter")
         try:
             doc_id, frag_id = link.split("#", 1)
-        except:
+        except Exception:
             raise Exception("Link parameter must include fragment ID")
         parms = dict(fragId=etree.XSLT.strparam(frag_id))
         doc = Doc(self.session, id=doc_id)

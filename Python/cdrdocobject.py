@@ -1,32 +1,35 @@
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # Types for data extracted from CDR documents of specific document types.
-#----------------------------------------------------------------------
-import cdr, sys, xml.dom.minidom, time
+# ----------------------------------------------------------------------
+import cdr
+import time
+import xml.dom.minidom
 
-#------------------------------------------------------------------
+# ------------------------------------------------------------------
 # Constants for adding a person's title to his address
-#------------------------------------------------------------------
-TITLE_OMITTED    = 0    # Do not print person's PersonTitle
-TITLE_AFTER_NAME = 1    # Print it below his name, if name present
-TITLE_AFTER_ORG  = 2    # Print it below org name, if present
+# ------------------------------------------------------------------
+TITLE_OMITTED = 0     # Do not print person's PersonTitle
+TITLE_AFTER_NAME = 1  # Print it below his name, if name present
+TITLE_AFTER_ORG = 2   # Print it below org name, if present
 
-#------------------------------------------------------------------
+
+# ------------------------------------------------------------------
 # Object for a personal name.
-#------------------------------------------------------------------
+# ------------------------------------------------------------------
 class PersonalName:
     def __init__(self, node):
         """
         Parameters:
             node - PersonName or Name subelement DOM node
         """
-        self.__givenName     = ""
+        self.__givenName = ""
         self.__middleInitial = ""
-        self.__surname       = ""
-        self.__prefix        = ""
-        self.__genSuffix     = ""
-        self.__proSuffixes   = []
-        suffixElems          = ("StandardProfessionalSuffix",
-                                "CustomProfessionalSuffix")
+        self.__surname = ""
+        self.__prefix = ""
+        self.__genSuffix = ""
+        self.__proSuffixes = []
+        suffixElems = ("StandardProfessionalSuffix",
+                       "CustomProfessionalSuffix")
         for child in node.childNodes:
             if child.nodeName == "GivenName":
                 self.__givenName = cdr.getTextContent(child).strip()
@@ -45,14 +48,14 @@ class PersonalName:
             elif child.nodeName == "GenerationSuffix":
                 self.__genSuffix = cdr.getTextContent(child).strip()
 
-    def getGivenName       (self): return self.__givenName
-    def getMiddleInitial   (self): return self.__middleInitial
-    def getSurname         (self): return self.__surname
-    def getPrefix          (self): return self.__prefix
-    def getGenSuffix       (self): return self.__genSuffix
-    def getProSuffixes     (self): return list(self.__proSuffixes)
+    def getGivenName(self): return self.__givenName
+    def getMiddleInitial(self): return self.__middleInitial
+    def getSurname(self): return self.__surname
+    def getPrefix(self): return self.__prefix
+    def getGenSuffix(self): return self.__genSuffix
+    def getProSuffixes(self): return list(self.__proSuffixes)
 
-    def format(self, useSuffixes = True, usePrefix = True):
+    def format(self, useSuffixes=True, usePrefix=True):
         """
         Return value:
             String containing formatted name, e.g.:
@@ -72,10 +75,11 @@ class PersonalName:
                 name = "%s, %s" % (name, rest)
         return name
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Object to hold information about contact information for a person
 # or organization.  Base class for Person.Contact and Org.Contact.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 class ContactInfo:
     """
     Public methods:
@@ -152,10 +156,10 @@ class ContactInfo:
             Returns a new (possibly modified) list of lines.
     """
 
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Parse contact information from XML fragment.
-    #------------------------------------------------------------------
-    def __init__(self, xmlFragment, personTitleHandling = TITLE_OMITTED):
+    # ------------------------------------------------------------------
+    def __init__(self, xmlFragment, personTitleHandling=TITLE_OMITTED):
         """
         Parameters:
             xmlFragment    - Either DOM object for parsed address XML,
@@ -163,21 +167,21 @@ class ContactInfo:
                              address.
                              The top node should be <AddressElements>
         """
-        self.__addressee      = None
-        self.__personalName   = None
-        self.__orgs           = []   # Main + parent orgs in right order
-        self.__street         = []
-        self.__city           = None
-        self.__citySuffix     = None
-        self.__state          = None
-        self.__country        = None
-        self.__postalCode     = None
-        self.__codePos        = None
-        self.__personTitle    = None
-        self.__phone          = None
-        self.__fax            = None
-        self.__email          = None
-        self.__ptHandling     = personTitleHandling
+        self.__addressee = None
+        self.__personalName = None
+        self.__orgs = []  # Main + parent orgs in right order
+        self.__street = []
+        self.__city = None
+        self.__citySuffix = None
+        self.__state = None
+        self.__country = None
+        self.__postalCode = None
+        self.__codePos = None
+        self.__personTitle = None
+        self.__phone = None
+        self.__fax = None
+        self.__email = None
+        self.__ptHandling = personTitleHandling
 
         if type(xmlFragment) in (str, bytes):
             dom = xml.dom.minidom.parseString(xmlFragment)
@@ -196,7 +200,7 @@ class ContactInfo:
                     self.__personalName = PersonalName(node)
                     self.__addressee = self.__personalName.format()
                 elif node.nodeName == 'OrgName':
-                    self.__orgs.append (cdr.getTextContent(node).strip())
+                    self.__orgs.append(cdr.getTextContent(node).strip())
                 elif node.nodeName == 'ParentNames':
                     orgParentNode = node
                 elif node.nodeName == 'PersonTitle':
@@ -212,46 +216,46 @@ class ContactInfo:
         if orgParentNode:
             self.__parseOrgParents(orgParentNode)
 
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Public access methods.
-    #------------------------------------------------------------------
-    def getStreetLines    (self): return tuple(self.__street)
-    def getOrgs           (self): return tuple(self.__orgs)
-    def getCity           (self): return self.__city
-    def getCitySuffix     (self): return self.__citySuffix
-    def getState          (self): return self.__state
-    def getCountry        (self): return self.__country
-    def getPostalCode     (self): return self.__postalCode
-    def getCodePosition   (self): return self.__codePos
-    def getAddressee      (self): return self.__addressee
-    def getPersonalName   (self): return self.__personalName
-    def getPersonTitle    (self): return self.__personTitle
-    def getPhone          (self): return self.__phone
-    def getFax            (self): return self.__fax
-    def getEmail          (self): return self.__email
+    # ------------------------------------------------------------------
+    def getStreetLines(self): return tuple(self.__street)
+    def getOrgs(self): return tuple(self.__orgs)
+    def getCity(self): return self.__city
+    def getCitySuffix(self): return self.__citySuffix
+    def getState(self): return self.__state
+    def getCountry(self): return self.__country
+    def getPostalCode(self): return self.__postalCode
+    def getCodePosition(self): return self.__codePos
+    def getAddressee(self): return self.__addressee
+    def getPersonalName(self): return self.__personalName
+    def getPersonTitle(self): return self.__personTitle
+    def getPhone(self): return self.__phone
+    def getFax(self): return self.__fax
+    def getEmail(self): return self.__email
 
     # Caller may need to manipulate the name line of the address
-    def setAddressee (self, nameStr): self.__addressee = nameStr
+    def setAddressee(self, nameStr): self.__addressee = nameStr
 
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Construct a list of strings representing the lines of a
     # formatted address.  This part of address formatting is broken
     # out separately, so we can hand out the lines without the
     # formatting for routines like the one which creates address
     # label sheets (which use uppercase versions of the address
     # line strings).
-    #------------------------------------------------------------------
-    def getAddressLines(self, includeNameAndTitle = True,
-                        includeOrgs = True):
+    # ------------------------------------------------------------------
+    def getAddressLines(self, includeNameAndTitle=True,
+                        includeOrgs=True):
 
-        #--------------------------------------------------------------
+        # --------------------------------------------------------------
         # Start with an empty list.
-        #--------------------------------------------------------------
+        # --------------------------------------------------------------
         lines = []
 
-        #--------------------------------------------------------------
+        # --------------------------------------------------------------
         # Add the addressee's name if requested.
-        #--------------------------------------------------------------
+        # --------------------------------------------------------------
         if includeNameAndTitle:
             if self.__addressee:
                 lines.append(self.__addressee)
@@ -259,9 +263,9 @@ class ContactInfo:
                 if self.__personTitle:
                     lines.append(self.__personTitle)
 
-        #--------------------------------------------------------------
+        # --------------------------------------------------------------
         # Add organization lines.
-        #--------------------------------------------------------------
+        # --------------------------------------------------------------
         if includeOrgs:
             for org in self.__orgs:
                 if org:
@@ -270,32 +274,37 @@ class ContactInfo:
             if self.__personTitle:
                 lines.append(self.__personTitle)
 
-        #--------------------------------------------------------------
+        # --------------------------------------------------------------
         # Now we get to the actual postal address lines.
-        #--------------------------------------------------------------
-        city    = self.getCity()
-        suffix  = self.getCitySuffix()
-        state   = self.getState()
-        zip     = self.getPostalCode()
-        pos     = self.getCodePosition()
+        # --------------------------------------------------------------
+        city = self.getCity()
+        suffix = self.getCitySuffix()
+        state = self.getState()
+        zip = self.getPostalCode()
+        pos = self.getCodePosition()
         country = self.getCountry()
-        line    = ""
-        city    = ("%s %s" % (city or "", suffix or "")).strip()
+        line = ""
+        city = ("%s %s" % (city or "", suffix or "")).strip()
         for street in self.__street:
             if street:
                 lines.append(street)
         if zip and pos == "before City":
             line = zip
-            if city: line += " "
-        if city: line += city
+            if city:
+                line += " "
+        if city:
+            line += city
         if zip and pos == "after City":
-            if line: line += " "
+            if line:
+                line += " "
             line += zip
         if state:
-            if line: line += ", "
+            if line:
+                line += ", "
             line += state
         if zip and (not pos or pos == "after PoliticalUnit_State"):
-            if line: line += " "
+            if line:
+                line += " "
             line += zip
         if line:
             lines.append(line)
@@ -307,21 +316,21 @@ class ContactInfo:
         elif zip and pos == "after Country":
             lines.append(zip)
 
-        #--------------------------------------------------------------
+        # --------------------------------------------------------------
         # We're done.
-        #--------------------------------------------------------------
+        # --------------------------------------------------------------
         return lines
 
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Check to see if a line is just U.S. (or the equivalent).
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     def lineIsUS(line):
         return line.strip().upper() in ("US", "USA", "U.S.", "U.S.A.")
     lineIsUS = staticmethod(lineIsUS)
 
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Perform word wrap if needed.
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     def wrapLines(lines, wrapAt):
         needWrap = False
         for line in lines:
@@ -351,9 +360,9 @@ class ContactInfo:
         return newLines
     wrapLines = staticmethod(wrapLines)
 
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Extract postal address element values.
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     def __parsePostalAddress(self, node):
         """
         Extracts individual elements from street address, storing
@@ -379,10 +388,10 @@ class ContactInfo:
                 elif child.nodeName == "CodePosition":
                     self.__codePos = cdr.getTextContent(child).strip()
 
-    #------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Extract and sort (if necessary) organization name values of parents
-    #------------------------------------------------------------------
-    def __parseOrgParents (self, node):
+    # ------------------------------------------------------------------
+    def __parseOrgParents(self, node):
         """
         Parses a ParentNames element, extracting organization names
         and appending them, in the right order, to the list of
@@ -403,12 +412,13 @@ class ContactInfo:
         if parentsFirst:
             self.__orgs.reverse()
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Object for a CDR Person.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 class Person:
 
-    def getCipsContactId(docId, conn = None):
+    def getCipsContactId(docId, conn=None):
         path = '/Person/PersonLocations/CIPSContact'
         rows = cdr.getQueryTermValueForId(path, docId, conn)
         if not rows:
@@ -417,29 +427,30 @@ class Person:
     getCipsContactId = staticmethod(getCipsContactId)
 
     class Contact(ContactInfo):
-        def __init__(self, cdrId, fragId, filt = 'Person Address Fragment'):
+        def __init__(self, cdrId, fragId, filt='Person Address Fragment'):
             filters = ['name:%s' % filt]
             parms = (('fragId', fragId),)
-            result = cdr.filterDoc('guest', filters, cdrId, parm = parms)
+            result = cdr.filterDoc('guest', filters, cdrId, parm=parms)
             if type(result) in (str, bytes):
                 raise Exception("Person.Contact(%s, %s): %s" %
                                 (cdrId, fragId, result))
             ContactInfo.__init__(self, result[0])
 
     class CipsContact(Contact):
-        def __init__(self, cdrId, conn = None,
-                     filt = 'Person Address Fragment'):
+        def __init__(self, cdrId, conn=None,
+                     filt='Person Address Fragment'):
             fragId = Person.getCipsContactId(cdrId, conn)
             if not fragId:
                 raise Exception("no CIPS Contact for %s" % cdrId)
             Person.Contact.__init__(self, cdrId, fragId, filt)
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Object for a CDR Organization.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 class Organization:
 
-    def getCipsContactId(docId, conn = None):
+    def getCipsContactId(docId, conn=None):
         path = '/Organization/OrganizationLocations/CIPSContact'
         rows = cdr.getQueryTermValueForId(path, docId, conn)
         if not rows:
@@ -449,52 +460,53 @@ class Organization:
 
     class Contact(ContactInfo):
         def __init__(self, cdrId, fragId,
-                     filt = 'Organization Address Fragment'):
+                     filt='Organization Address Fragment'):
             filters = ['name:%s' % filt]
             parms = (('fragId', fragId),)
-            result = cdr.filterDoc('guest', filters, cdrId, parm = parms)
+            result = cdr.filterDoc('guest', filters, cdrId, parm=parms)
             if type(result) in (str, bytes):
                 raise Exception("Organization.Contact(%s, %s): %s" %
                                 (cdrId, fragId, result))
             ContactInfo.__init__(self, result[0])
 
     class CipsContact(Contact):
-        def __init__(self, cdrId, conn = None,
-                     filt = 'Organization Address Fragment'):
+        def __init__(self, cdrId, conn=None,
+                     filt='Organization Address Fragment'):
             fragId = Organization.getCipsContactId(cdrId, conn)
             if not fragId:
                 raise Exception("no CIPS Contact for %s" % cdrId)
             Organization.Contact.__init__(self, cdrId, fragId, filt)
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Object for a CDR InScopeProtocol document.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 class Protocol:
     "Modeled on protocol information used for OPS-like reports."
 
     def __init__(self, id, node):
         "Create a protocol object from the XML document."
-        self.id         = id
-        self.leadOrgs   = []
-        self.statuses   = []
-        self.status     = ""
-        self.primaryId  = ""
-        self.otherIds   = []
-        self.firstPub   = ""
-        self.closed     = ""
-        self.completed  = ""
+        self.id = id
+        self.leadOrgs = []
+        self.statuses = []
+        self.status = ""
+        self.primaryId = ""
+        self.otherIds = []
+        self.firstPub = ""
+        self.closed = ""
+        self.completed = ""
         self.studyTypes = []
         self.categories = []
-        self.sources    = []
-        self.designs    = []
-        self.pupLink    = []
-        self.sponsors   = []
-        self.title      = ""
-        self.origTitle  = ""
-        self.phases     = []
-        profTitle       = ""
-        patientTitle    = ""
-        originalTitle   = ""
+        self.sources = []
+        self.designs = []
+        self.pupLink = []
+        self.sponsors = []
+        self.title = ""
+        self.origTitle = ""
+        self.phases = []
+        profTitle = ""
+        patientTitle = ""
+        originalTitle = ""
         for child in node.childNodes:
             if child.nodeName == "ProtocolSponsors":
                 for grandchild in child.childNodes:
@@ -530,7 +542,7 @@ class Protocol:
                                     self.otherIds.append(value)
             elif child.nodeName == "ProtocolTitle":
                 titleType = child.getAttribute("Type")
-                value     = cdr.getTextContent(child)
+                value = cdr.getTextContent(child)
                 if value:
                     if titleType == "Professional":
                         profTitle = value
@@ -568,8 +580,8 @@ class Protocol:
         elif patientTitle:
             self.title = patientTitle
         orgStatuses = []
-        statuses    = {}
-        i           = 0
+        statuses = {}
+        i = 0
         for leadOrg in self.leadOrgs:
             if leadOrg.role == 'Primary' and leadOrg.pupLink:
                 self.pupLink = leadOrg.pupLink
@@ -577,8 +589,6 @@ class Protocol:
             for orgStatus in leadOrg.statuses:
                 startDate = orgStatus.startDate
                 val = (i, orgStatus.name)
-                #print "val: %s" % repr(val)
-                #print "orgStatuses: %s" % repr(orgStatuses)
                 statuses.setdefault(startDate, []).append(val)
             i += 1
         keys = sorted(statuses.keys())
@@ -586,7 +596,7 @@ class Protocol:
             for i, orgStatus in statuses[startDate]:
                 try:
                     orgStatuses[i] = orgStatus
-                except:
+                except Exception:
                     print("statuses: %s" % repr(statuses))
                     print("orgStatuses: %s" % repr(orgStatuses))
                     raise
@@ -625,13 +635,17 @@ class Protocol:
                 return status
         return ""
 
-    def hadStatus(self, start, end, statuses = ("Active",
-                                                "Approved-not yet active",
-                                                "Temporarily closed")):
+    def hadStatus(self, start, end, statuses=None):
         """
         Did this protocol have any of these status values at any time
         during the indicated range of dates?
         """
+        if statuses is None:
+            statuses = (
+                "Active",
+                "Approved-not yet active",
+                "Temporarily closed",
+            )
         for status in self.statuses:
             if status.endDate > start:
                 if status.startDate <= end:
@@ -641,12 +655,14 @@ class Protocol:
 
     class Status:
         "Protocol status for a given range of dates."
-        def __init__(self, name, startDate, endDate = None):
-            self.name      = name
+        def __init__(self, name, startDate, endDate=None):
+            self.name = name
             self.startDate = startDate
-            self.endDate   = endDate
+            self.endDate = endDate
+
         def __lt__(self, other):
             return self.sortkey < other.sortkey
+
         @property
         def sortkey(self):
             return self.startDate, self.endDate
@@ -655,8 +671,8 @@ class Protocol:
         "Lead Organization for a protocol, with all its status history."
         def __init__(self, node):
             self.statuses = []
-            self.role     = None
-            self.pupLink  = None
+            self.role = None
+            self.pupLink = None
             for child in node.childNodes:
                 if child.nodeName == "LeadOrgProtocolStatuses":
                     for grandchild in child.childNodes:

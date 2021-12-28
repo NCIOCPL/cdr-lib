@@ -37,28 +37,21 @@ This module has the following sections:
 import cgi
 import cgitb
 import collections
-import copy
 import datetime
 from email.utils import parseaddr as parse_email_address
-from html import escape as html_escape
-from io import BytesIO
-from operator import itemgetter
 import os
 import re
 import sys
-import textwrap
 import time
-import urllib.request, urllib.parse, urllib.error
-import xml.sax.saxutils
+import urllib.error
+import urllib.parse
+import urllib.request
 
 # Third-party libraries/packages.
-import lxml.etree as etree
 import lxml.html
 import lxml.html.builder
 import openpyxl
 import openpyxl.workbook.views
-import xlsxwriter
-import xlwt
 
 # Project modules.
 import cdr
@@ -68,37 +61,36 @@ from cdrapi.users import Session
 
 
 # Turn on debugging for CGI scripts.
-cgitb.enable(display = cdr.isDevHost(), logdir = cdr.DEFAULT_LOGDIR)
+cgitb.enable(display=cdr.isDevHost(), logdir=cdr.DEFAULT_LOGDIR)
 
 
 # Global values
-VERSION = "202003230906"
+VERSION = "202112271351"
 CDRCSS = "/stylesheets/cdr.css?v=%s" % VERSION
 DATETIMELEN = len("YYYY-MM-DD HH:MM:SS")
 TAMPERING = "CGI parameter tampering detected"
 USERNAME = "UserName"
 PASSWORD = "Password"
-PORT     = "Port"
-SESSION  = "Session"
-REQUEST  = "Request"
-DOCID    = "DocId"
-FILTER   = "Filter"
-BASE     = "/cgi-bin/cdr"
+PORT = "Port"
+SESSION = "Session"
+REQUEST = "Request"
+DOCID = "DocId"
+FILTER = "Filter"
+BASE = "/cgi-bin/cdr"
 MAINMENU = "Admin Menu"
-DEVTOP   = "Developer Menu"
-TIER     = Tier()
-WEBSERVER= os.environ.get("SERVER_NAME") or TIER.hosts.get("APPC")
+DEVTOP = "Developer Menu"
+TIER = Tier()
+WEBSERVER = os.environ.get("SERVER_NAME") or TIER.hosts.get("APPC")
 SPLTNAME = WEBSERVER.lower().split(".")
 THISHOST = SPLTNAME[0]
-ISPLAIN  = "." not in THISHOST
-DOMAIN   = "." + ".".join(SPLTNAME[1:])
-DAY_ONE  = cdr.URDATE
+ISPLAIN = "." not in THISHOST
+DOMAIN = "." + ".".join(SPLTNAME[1:])
+DAY_ONE = cdr.URDATE
 
 
-#----------------------------------------------------------------------#
-#                        NEW CLASSES -- USE THESE                      #
-#----------------------------------------------------------------------#
-
+# ----------------------------------------------------------------------#
+#                         NEW CLASSES -- USE THESE                      #
+# ----------------------------------------------------------------------#
 
 class Controller:
     """Base class for top-level controller for a CGI script.
@@ -129,7 +121,7 @@ class Controller:
     SUBTITLE = None
     REPORTS_MENU = SUBMENU = "Reports Menu"
     ADMINMENU = MAINMENU
-    DEVMENU  = DEVTOP
+    DEVMENU = DEVTOP
     SUBMIT = "Submit"
     LOG_OUT = "Log Out"
     FORMATS = "html", "excel"
@@ -235,15 +227,20 @@ class Controller:
         query.where("u.expired IS NULL")
         query.where(query.Condition("g.name", group))
         rows = query.execute(self.cursor).fetchall()
+
         class Group:
+
             def __init__(self, rows):
                 self.map = {}
                 for row in rows:
                     self.map[row.id] = row.fullname or row.name
-                key = lambda pair: pair[1].lower()
-                self.items = sorted(self.map.items(), key=key)
+                items = self.map.items()
+                values = [(val[1].lower(), val[0], val[1]) for val in items]
+                self.items = [vals[1:] for vals in sorted(values)]
+
             def __getvalue__(self, key):
                 return self.map.get(key)
+
         return Group(rows)
 
     def load_valid_values(self, table_name):
@@ -261,6 +258,7 @@ class Controller:
 
         query = self.Query(table_name, "value_id", "value_name")
         rows = query.order("value_pos").execute(self.cursor).fetchall()
+
         class Values:
             def __init__(self, rows):
                 self.map = {}
@@ -319,12 +317,12 @@ class Controller:
             nothing (the form object is populated as a side effect)
         """
 
-        #--------------------------------------------------------------
+        # --------------------------------------------------------------
         # Show the second stage in a cascading sequence of the form if we
         # have invoked this method directly from build_tables(). Widen
         # the form to accomodate the length of the title substrings
         # we're showing.
-        #--------------------------------------------------------------
+        # --------------------------------------------------------------
         titles = kwopts.get("titles")
         if titles:
             page.form.append(page.hidden_field("selection_method", "id"))
@@ -377,7 +375,6 @@ class Controller:
         fieldset.set("id", "board-set")
         opts = dict(label="All Boards", value="all", checked=True)
         fieldset.append(page.checkbox("board", **opts))
-        boards = self.get_boards()
         for value, label in self.get_boards().items():
             opts = dict(value=value, label=label, classes="ind")
             fieldset.append(page.checkbox("board", **opts))
@@ -542,8 +539,9 @@ jQuery("input[value='Submit']").click(function(e) {{
         """
 
         realname, address = parse_email_address(address)
-        if address and cls.EMAIL_PATTERN.match(address) and ".." not in address:
-            return address
+        if address and cls.EMAIL_PATTERN.match(address):
+            if ".." not in address:
+                return address
         return None
 
     @staticmethod
@@ -642,10 +640,13 @@ function {function_name}(value) {{
         """
 
         if not hasattr(self, "_doc_titles"):
+
             class DocTitles(collections.UserDict):
+
                 def __init__(self, control):
                     self.__control = control
                     collections.UserDict.__init__(self)
+
                 def __getitem__(self, key):
                     if key not in self.data:
                         query = self.__control.Query("document", "title")
@@ -939,7 +940,8 @@ jQuery(function() {
             No return. Exits here.
         """
 
-        opts = dict(banner=banner, subtitle="An error has occurred", scripts=[])
+        subtitle = "An error has occurred"
+        opts = dict(banner=banner, subtitle=subtitle, scripts=[])
         page = HTMLPage("CDR Error", **opts)
         page.body.append(page.B.P(str(message), page.B.CLASS("error")))
         if extra:
@@ -1328,7 +1330,7 @@ class FormFieldFactory:
                 raise Exception(error)
             if isinstance(options, dict):
                 options = sorted(options.items(),
-                                 key=lambda o:str(o[1]).lower())
+                                 key=lambda o: str(o[1]).lower())
             for option in options:
                 if isinstance(option, (list, tuple)):
                     value, display = option
@@ -2158,7 +2160,6 @@ class Reporter:
     def wrap(self):
         return self.__opts.get("wrap", True)
 
-
     class Cell:
         """Data for one cell in a report table."""
 
@@ -2239,10 +2240,11 @@ class Reporter:
                 nextcol = c2 + 1
                 book.merge(r1, c1, r2, c2)
                 colnum = c1
-            cell = book.write(rownum, colnum, values, styles)
             # This resulted in horrible performance. Use formula instead.
-            #if self.href:
-            #    cell.hyperlink = self.href
+            # cell = book.write(rownum, colnum, values, styles)
+            # if self.href:
+            #     cell.hyperlink = self.href
+            book.write(rownum, colnum, values, styles)
             return nextcol
 
         @property
@@ -2417,7 +2419,6 @@ class Reporter:
                     self._values = [""]
             return self._values
 
-
     class Column:
         """Header and properties for one column in a report table."""
 
@@ -2480,7 +2481,6 @@ class Reporter:
         def width(self):
             """Minimum width of column (e.g., '40px')."""
             return self.__opts.get("width")
-
 
     class Table:
         """Grid of rows and columns for the report.
@@ -2781,7 +2781,7 @@ class Excel:
     def hyperlink(self):
         """Font styling we want for links."""
         if not hasattr(self, "_hyperlink"):
-            opts = dict(color = "000000FF", underline="single")
+            opts = dict(color="000000FF", underline="single")
             self._hyperlink = openpyxl.styles.Font(**opts)
         return self._hyperlink
 
@@ -2909,7 +2909,7 @@ class AdvancedSearch(FormFieldFactory):
     """
 
     INCLUDE_ROWS = True
-    FILTER = None
+    FILTER = SUBTITLE = DOCTYPE = None
     DBQuery = db.Query
 
     def __init__(self):
@@ -2917,6 +2917,7 @@ class AdvancedSearch(FormFieldFactory):
         self.session = Session(getSession(self.fields) or "guest")
         self.request = self.fields.getvalue("Request")
         self.search_fields = []
+        self.query_fields = []
 
     @property
     def fields(self):
@@ -2935,7 +2936,7 @@ class AdvancedSearch(FormFieldFactory):
             try:
                 message = "AdvancedSearch.run(request=%r)"
                 self.session.logger.exception(message, self.request)
-            except:
+            except Exception:
                 bail(f"Unable to log exception {e}")
             bail(f"AdvancedSearch.run() failure: {e}")
 
@@ -2948,7 +2949,7 @@ class AdvancedSearch(FormFieldFactory):
     def show_report(self):
         args = self.query_fields, self.DOCTYPE, self.match_all
         self.query = query = self.Query(*args)
-        self.rows = rows =query.execute(self.session.cursor).fetchall()
+        self.rows = rows = query.execute(self.session.cursor).fetchall()
         connector = " and " if self.match_all else " or "
         strings = connector.join([repr(c) for c in query.criteria])
         subtitle = self.SUBTITLE
@@ -3005,7 +3006,6 @@ class AdvancedSearch(FormFieldFactory):
         """Valid active_status value for non-deleted CDR documents."""
         return [("A", "Active"), ("I", "Inactive")]
 
-
     class Form(HTMLPage):
         BUTTONS = (
             HTMLPage.button("Search"),
@@ -3013,6 +3013,7 @@ class AdvancedSearch(FormFieldFactory):
         )
         TITLE = "CDR Advanced Search"
         MATCH_ALL_HELP = "If unchecked any field match will succeed."
+
         def __init__(self, session, subtitle, fields, **kwargs):
             if "buttons" not in kwargs:
                 buttons = self.BUTTONS
@@ -3044,7 +3045,6 @@ class AdvancedSearch(FormFieldFactory):
                 fieldset.append(self.checkbox("match_all", **opts))
             else:
                 self.form.append(self.hidden_field("match_all", "yes"))
-
 
     class ResultsPage(HTMLPage):
 
@@ -3104,7 +3104,6 @@ class AdvancedSearch(FormFieldFactory):
                     tr.append(self.B.TD(title, self.B.CLASS("doc-title")))
                     table.append(tr)
 
-
     class QueryField:
         """Information used to plug one field into the search query."""
 
@@ -3163,7 +3162,7 @@ class AdvancedSearch(FormFieldFactory):
                 Or = Query.Or
 
                 # Create a query object.
-                columns = f"d.id", "d.title" #, f"'{self.doctype}' AS doctype"
+                columns = "d.id", "d.title"
                 self._query = Query("document d", *columns).order("d.title")
 
                 # Add the conditions: one for each field with a value.
@@ -3234,17 +3233,16 @@ class AdvancedSearch(FormFieldFactory):
                     self._query.where(Or(*conditions))
 
             # All the fields with values have been folded into the query.
-            #bail(str(self._query))
             return self._query
 
 
-## NEWLINE  = "@@@NEWLINE-PLACEHOLDER@@@"
-## BR       = "@@@BR-PLACEHOLDER@@@"
-bail     = Controller.bail
+# NEWLINE = "@@@NEWLINE-PLACEHOLDER@@@"
+# BR = "@@@BR-PLACEHOLDER@@@"
+bail = Controller.bail
 
-#----------------------------------------------------------------------#
+# ----------------------------------------------------------------------#
 # LEGACY GLOBAL FUNCTIONS -- USE NEW CDRAPI MODULES INSTEAD IF YOU CAN #
-#----------------------------------------------------------------------#
+# ----------------------------------------------------------------------#
 
 
 def header(title, banner, subtitle, *args, **kwargs):
@@ -3324,8 +3322,6 @@ def header(title, banner, subtitle, *args, **kwargs):
     if button_labels:
         buttons = []
         for label in button_labels:
-            if label == "Load":
-                buttons.append(HTMLPage.button(button))
             buttons.append(HTMLPage.button(label))
         opts["buttons"] = buttons
     page = HTMLPage(title, **opts)
@@ -3342,9 +3338,9 @@ def header(title, banner, subtitle, *args, **kwargs):
     return "".join(html.split("</body>")[:-1])
 
 
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # Scrubber
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def scrubStr(chkStr, charset="[^A-Za-z0-9 -]", bailout=True,
              msg="Invalid content in data"):
     """
@@ -3372,15 +3368,16 @@ def scrubStr(chkStr, charset="[^A-Za-z0-9 -]", bailout=True,
 
     return scrub
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Get a session ID based on current form field values.
 # Can't use this funtion to log into the CDR any more (OCECDR-3849).
 # Validate the returned value.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def getSession(fields, **opts):
     try:
         session = fields.getvalue(SESSION, None)
-    except:
+    except Exception:
         return "guest"
 
     # Bail if required session is missing. I'm tempted to make required
@@ -3397,7 +3394,7 @@ def getSession(fields, **opts):
     query.where("ended IS NULL")
     try:
         rows = query.execute(opts.get("cursor")).fetchall()
-    except:
+    except Exception:
         # Looks like there's a bug in ADODB, triggered when a query
         # parameter is longer than the target column's definition.
         bail("Invalid session ID")
@@ -3406,18 +3403,20 @@ def getSession(fields, **opts):
 
     return session
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Get the name of the submitted request. Scrub the returned value.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def getRequest(fields):
     return scrubStr(fields.getvalue(REQUEST, None))
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Send an HTML page back to the client.
 # If the parms parameter gets passed we need to redirect the output
 # and run the QCforWord.py script to properly convert the HTML output
 # to Word.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def sendPage(page, textType='html', parms='', docId='', docType='', docVer=''):
     """
     Send a completed page of text to stdout, assumed to be piped by a
@@ -3448,13 +3447,15 @@ def sendPage(page, textType='html', parms='', docId='', docType='', docVer=''):
     else:
         Controller.send_page(page, textType)
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Log out of the CDR session and put up a new login screen.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def logout(session):
 
     # Make sure we have a session to log out of.
-    if not session: bail('No session found.')
+    if not session:
+        bail('No session found.')
     if isinstance(session, str):
         session = Session(session)
 
@@ -3477,32 +3478,37 @@ def logout(session):
     page.form.append(para)
     page.send()
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Navigate to menu location or publish preview.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def navigateTo(where, session, **params):
     Controller.navigate_to(where, session, **params)
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Determine whether query contains unescaped wildcards.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def getQueryOp(query):
     escaped = 0
     for char in query:
         if char == '\\':
             escaped = not escaped
-        elif not escaped and char in "_%": return "LIKE"
+        elif not escaped and char in "_%":
+            return "LIKE"
     return "="
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Escape single quotes in string.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def getQueryVal(val):
     return val.replace("'", "''")
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Helper function to reduce SQL injection possibilities in input
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def sanitize(formStr, dType='str', maxLen=None, noSemis=True,
              quoteQuotes=True, noDashDash=True, excp=False):
     """
@@ -3538,7 +3544,7 @@ def sanitize(formStr, dType='str', maxLen=None, noSemis=True,
         if dType == 'int':
             try:
                 int(newStr)
-            except ValueError as info:
+            except ValueError:
                 if excp:
                     raise
                 return None
@@ -3602,9 +3608,10 @@ def sanitize(formStr, dType='str', maxLen=None, noSemis=True,
     # Return (possibly modified) string
     return newStr
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Get the full user name for a given session.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def getFullUserName(session, conn):
     try:
         cursor = conn.cursor()
@@ -3615,16 +3622,17 @@ def getFullUserName(session, conn):
                     ON session.usr = usr.id
                  WHERE session.name = ?""", session)
         name = cursor.fetchone()[0]
-    except:
+    except Exception:
         bail("Unable to find current user name")
     return name
 
 
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # Determine whether a parameter is a valid ISO date.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def is_date(date):
     return re.match(r"^\d\d\d\d-\d\d-\d\d$", str(date)) and True or False
+
 
 def _valParmHelper(val, bailout=True, reveal=True, msg=None):
     """
@@ -3654,21 +3662,23 @@ def _valParmHelper(val, bailout=True, reveal=True, msg=None):
     # Caller just wants pass/fail, no bail
     return False
 
+
 # Default values for valParm functions
 # To change defaults for all valParm calls in a single script:
 # In the script that imports cdrcgi:
 #    cdrcgi.BAILOUT_DEFAULT = False # A new value for all valParm calls
 # Other scripts are unaffected
-BAILOUT_DEFAULT = True # True = bail() if validation faile
-REVEAL_DEFAULT  = True # True = Reveal invalid values to the user
+BAILOUT_DEFAULT = True  # True = bail() if validation faile
+REVEAL_DEFAULT = True   # True = Reveal invalid values to the user
 
 # Some common, frequently used, pre-tested, validation patterns
 VP_UNSIGNED_INT = r'^\d+$'
-VP_SIGNED_INT   = r'^(-|\+)?\d+$'
-VP_PADDED_INT   = r'^\s*\d+\s*$'
-VP_SIGNED_PAD   = r'^\s*(-|\+)?\d+\s*$'
-VP_US_ZIPCODE   = r'^\s*\d{5}(-\d{4})?\s*$'
-VP_DATETIME     = r"^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$"
+VP_SIGNED_INT = r'^(-|\+)?\d+$'
+VP_PADDED_INT = r'^\s*\d+\s*$'
+VP_SIGNED_PAD = r'^\s*(-|\+)?\d+\s*$'
+VP_US_ZIPCODE = r'^\s*\d{5}(-\d{4})?\s*$'
+VP_DATETIME = r"^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$"
+
 
 def valParmVal(val, **opts):
     """
@@ -3737,6 +3747,7 @@ def valParmVal(val, **opts):
             fp.write("cval=%s values=%s\n" % (cval, values))
     return _valParmHelper(val, bailout, reveal, msg)
 
+
 def valParmEmail(val, **opts):
     """
     Validate an email format.
@@ -3785,6 +3796,7 @@ def valParmEmail(val, **opts):
         return email
 
     return _valParmHelper(val, bailout, reveal, msg)
+
 
 def valParmDate(val, fmt="ISOdate", **opts):
     """

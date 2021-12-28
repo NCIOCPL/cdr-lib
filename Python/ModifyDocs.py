@@ -159,7 +159,7 @@ class Job:
             path = "{}/GlobalChange/{}".format(cdr.BASEDIR, stamp)
             try:
                 makedirs(path)
-            except:
+            except Exception:
                 self.logger.exception("Creating %s", path)
                 raise
             self._output_directory = path
@@ -356,7 +356,7 @@ Run completed.
                 with open(errors_path, "wb") as fp:
                     for error in errors:
                         fp.write(error.encode("utf-8") + b"\n")
-        except:
+        except Exception:
             self.logger.exception("Failure writing XML pair")
             raise
 
@@ -388,12 +388,10 @@ Run completed.
 
         raise NotImplementedError("must override transform() method")
 
-
     class DocumentLocked(Exception):
         """
         Custom exception indicating that we can't check out a document
         """
-
 
     class Doc(object):
         """
@@ -582,7 +580,8 @@ Run completed.
                         logger.warning(val_warning, "new cwd", self.cdr_id)
             if errors_to_log:
                 for error in errors_to_log:
-                    logger.warning("%s: %r", self.cdr_id, error.encode("utf-8"))
+                    logger.warning("%s: %r",
+                                   self.cdr_id, error.encode("utf-8"))
 
         def save(self, label, doc_str, ver, pub, val):
             """

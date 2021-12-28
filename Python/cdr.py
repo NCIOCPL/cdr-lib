@@ -9,6 +9,8 @@ database) the commands are tunneled through an HTTPS web service, which
 in turn invokes the new Python implementation of the functionality.
 
 This module is now compatible with Python 3 and Python 2.
+
+2021-12-27: Python 2 is no longer supported.
 """
 
 import base64
@@ -18,7 +20,6 @@ import logging
 import os
 import re
 import sys
-import traceback
 import requests
 from lxml import etree
 from cdrapi import db as cdrdb
@@ -45,16 +46,21 @@ class Board:
     EDITORIAL = "Editorial"
     ADVISORY = "Advisory"
     BOARD_TYPES = EDITORIAL, ADVISORY
+
     def __init__(self, id, **opts):
         self.__id = id
         self.__opts = opts
+
     def __str__(self):
         return self.short_name
+
     def __repr__(self):
         return f"{self.name} (CDR{self.id})"
+
     @property
     def id(self):
         return self.__id
+
     @property
     def cursor(self):
         if not hasattr(self, "_cursor"):
@@ -62,6 +68,7 @@ class Board:
             if not self._cursor:
                 self._cursor = cdrdb.connect().cursor()
         return self._cursor
+
     @property
     def name(self):
         if not hasattr(self, "_name"):
@@ -73,6 +80,7 @@ class Board:
                 for row in query.execute(self.cursor):
                     self._name = row.value
         return self._name
+
     @property
     def type(self):
         if not hasattr(self, "_type"):
@@ -84,6 +92,7 @@ class Board:
                     elif self.ADVISORY.lower() in self.name.lower():
                         self._type = self.ADVISORY
         return self._type
+
     @property
     def short_name(self):
         """Trimmed version of the name, suitable for web form picklists."""
@@ -96,6 +105,7 @@ class Board:
                     if self._short_name.endswith(suffix):
                         self._short_name = self._short_name[:-len(suffix)]
         return self._short_name
+
     @property
     def tab_name(self):
         """Version of the name short enough to fit on an Excel tab."""
@@ -104,8 +114,10 @@ class Board:
         if "alternative" in self.short_name.lower():
             return "IACT"
         return self.short_name
+
     def __lt__(self, other):
         return (self.name or "") < (other.name or "")
+
     @classmethod
     def get_boards(cls, board_type=EDITORIAL, cursor=None):
         """Dictionary of PDQ boards, indexed by Organization document ID.
@@ -132,7 +144,6 @@ class Board:
         for board_id, board_name in query.order("n.value").execute():
             boards[board_id] = cls(board_id, name=board_name)
         return boards
-
 
 
 # ======================================================================
@@ -163,6 +174,7 @@ def getControlValue(group, name, default=None, tier=None):
     row = query.execute(cursor).fetchone()
     return row.val if row else default
 
+
 def getControlGroup(group, tier=None):
     """
     Fetch a named group of CDR control values
@@ -183,6 +195,7 @@ def getControlGroup(group, tier=None):
     for name, value in query.execute(cursor).fetchall():
         group[name] = value
     return group
+
 
 def updateCtl(credentials, action, **opts):
     """
@@ -346,23 +359,23 @@ class User:
 
     def __init__(self,
                  name,
-                 password = '',
-                 fullname = None,
-                 office   = None,
-                 email    = None,
-                 phone    = None,
-                 groups   = None,
-                 comment  = None,
-                 authMode = "network"):
-        self.name         = name
-        self.password     = password
-        self.fullname     = fullname
-        self.office       = office
-        self.email        = email
-        self.phone        = phone
-        self.groups       = groups or []
-        self.comment      = comment
-        self.authMode     = authMode
+                 password='',
+                 fullname=None,
+                 office=None,
+                 email=None,
+                 phone=None,
+                 groups=None,
+                 comment=None,
+                 authMode="network"):
+        self.name = name
+        self.password = password
+        self.fullname = fullname
+        self.office = office
+        self.email = email
+        self.phone = phone
+        self.groups = groups or []
+        self.comment = comment
+        self.authMode = authMode
 
 
 def getUser(credentials, name, **opts):
@@ -412,6 +425,7 @@ def getUser(credentials, name, **opts):
             return User(name, **opts)
         raise Exception(";".join(response.errors) or "missing response")
     raise Exception("missing response")
+
 
 def putUser(credentials, name, user, **opts):
     """
@@ -475,6 +489,7 @@ def putUser(credentials, name, user, **opts):
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
 
+
 def delUser(credentials, name, **opts):
     """
     Mark the user's account as expired
@@ -504,6 +519,7 @@ def delUser(credentials, name, **opts):
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
 
+
 def getUsers(credentials, **opts):
     """
     Get the list of name for active CDR user accounts
@@ -530,6 +546,7 @@ def getUsers(credentials, **opts):
             return [get_text(child) for child in node.findall("UserName")]
         raise Exception(";".join(response.errors) or "missing response")
     raise Exception("missing response")
+
 
 def canDo(session, action, doctype="", **opts):
     """
@@ -558,6 +575,7 @@ def canDo(session, action, doctype="", **opts):
                 return response.node.text == "Y"
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
+
 
 def checkAuth(session, pairs, **opts):
     """
@@ -603,6 +621,7 @@ def checkAuth(session, pairs, **opts):
             return auth
         raise Exception(";".join(response.errors) or "missing response")
     raise Exception("missing response")
+
 
 def getActions(credentials, **opts):
     """
@@ -787,7 +806,7 @@ def getGroup(credentials, name, **opts):
     for response in _Control.send_command(session, command, tier):
         if response.node.tag == command.tag + "Resp":
             group = Session.Group(actions={}, users=[])
-            #LOGGER.info("starting with actions=%s", group.actions)
+            # LOGGER.info("starting with actions=%s", group.actions)
             for child in response.node.findall("*"):
                 if child.tag == "GrpName":
                     group.name = child.text
@@ -801,15 +820,17 @@ def getGroup(credentials, name, **opts):
                     action = get_text(child.find("Action"))
                     doctype = get_text(child.find("DocType"))
                     if group.actions is None:
-                        #LOGGER.info("setting actions->{}")
+                        # LOGGER.info("setting actions->{}")
                         group.actions = {}
-                    #else:
-                        #LOGGER.info("no, actions is already %s", group.actions)
+                    # else:
+                        # LOGGER.info("no, actions is already %s",
+                        #             group.actions)
                     if action not in group.actions:
                         group.actions[action] = []
                     group.actions[action].append(doctype or "")
-                    #LOGGER.info("added action %s -> %s", action, group.actions)
-            #LOGGER.info("return group with actions=%s", group.actions)
+                    # LOGGER.info("added action %s -> %s",
+                    #             action, group.actions)
+            # LOGGER.info("return group with actions=%s", group.actions)
             return group
         raise Exception(";".join(response.errors) or "missing response")
     raise Exception("missing response")
@@ -936,7 +957,8 @@ class dtinfo:
                 if c and c != "CdrDocCtl"]
 
     def __repr__(self):
-        if self.error: return self.error
+        if self.error:
+            return self.error
         return f"""\
 [CDR Document Type]
             Name: {self.type or ""}
@@ -953,6 +975,7 @@ class dtinfo:
          Comment:
 {self.comment or ""}
 """
+
 
 def getDoctype(credentials, name, **opts):
     """
@@ -974,7 +997,7 @@ def getDoctype(credentials, name, **opts):
     session = _Control.get_session(credentials, tier)
     if isinstance(session, Session):
         doctype = Doctype(session, name=name)
-        values = doctype.vv_lists
+        values = doctype.vv_lists or {}
         vv_lists = [(name, values[name]) for name in sorted(values)]
         args = dict(
             name=doctype.name,
@@ -1018,6 +1041,7 @@ def getDoctype(credentials, name, **opts):
         else:
             raise Exception(";".join(response.errors) or "missing response")
     raise Exception("missing response")
+
 
 def addDoctype(credentials, info, **opts):
     """
@@ -1074,6 +1098,7 @@ def addDoctype(credentials, info, **opts):
             raise Exception(";".join(response.errors) or "missing response")
     raise Exception("missing response")
 
+
 def modDoctype(credentials, info, **opts):
     """
     Modify existing document type information in the CDR
@@ -1127,6 +1152,7 @@ def modDoctype(credentials, info, **opts):
             raise Exception(";".join(response.errors) or "missing response")
     raise Exception("missing response")
 
+
 def delDoctype(credentials, name, **opts):
     """
     Delete document type from the CDR
@@ -1156,6 +1182,7 @@ def delDoctype(credentials, name, **opts):
                 return
             raise Exception(";".join(response.errors) or "missing response")
         raise Exception("missing response")
+
 
 def getVVList(credentials, doctype, element, **opts):
     """
@@ -1207,6 +1234,7 @@ def getVVList(credentials, doctype, element, **opts):
     # Give the caller the sequence of values
     return values
 
+
 def getDoctypes(credentials, **opts):
     """
     Get the list of active CDR document types
@@ -1231,6 +1259,7 @@ def getDoctypes(credentials, **opts):
         else:
             raise Exception(";".join(response.errors) or "missing response")
     raise Exception("missing response")
+
 
 def getSchemaDocs(credentials, **opts):
     """
@@ -1438,6 +1467,7 @@ def makeCdrDoc(xml, docType, docId=None, ctrl=None):
     etree.SubElement(doc, "CdrDocXml").text = etree.CDATA(str(xml))
     return etree.tostring(doc, encoding="utf-8")
 
+
 def _put_doc(session, command_name, **opts):
     """
     Create and submit the XML command node for adding or replacing a CDR doc
@@ -1492,8 +1522,8 @@ def _put_doc(session, command_name, **opts):
             if isinstance(doc, str):
                 doc = doc.encode("utf-8")
             cdr_doc = etree.fromstring(doc)
-    except:
-        error = cls.wrap_error("Unable to parse document")
+    except Exception:
+        error = _Control.wrap_error("Unable to parse document")
         if opts.get("show_warnings") or opts.get("showWarnings"):
             return None, error
         return error
@@ -1504,8 +1534,8 @@ def _put_doc(session, command_name, **opts):
         try:
             with open(filename, "rb") as fp:
                 blob = fp.read()
-        except:
-            error = cls.wrap_error("unable to read BLOB file")
+        except Exception:
+            error = _Control.wrap_error("unable to read BLOB file")
             if opts.get("show_warnings") or opts.get("showWarnings"):
                 return None, error
             return error
@@ -1547,7 +1577,7 @@ def _put_doc(session, command_name, **opts):
         else:
             etree.SubElement(doc_control, "DocActiveStatus").text = status
 
-    #Plug the CdrDoc node into the command.
+    # Plug the CdrDoc node into the command.
     command.append(cdr_doc)
 
     # Submit the command and extract the return values from the response.
@@ -1566,6 +1596,7 @@ def _put_doc(session, command_name, **opts):
             raise Exception(error)
     raise Exception("missing response")
     return command
+
 
 def addDoc(credentials, **opts):
     """
@@ -1625,9 +1656,10 @@ def addDoc(credentials, **opts):
     # Create and submit the command for the tunneling API.
     try:
         return _put_doc(session, "CdrAddDoc", **opts)
-    except:
+    except Exception:
         LOGGER.exception("CdrAddDoc")
         raise
+
 
 def repDoc(credentials, **opts):
     """
@@ -1657,7 +1689,7 @@ def repDoc(credentials, **opts):
     # Create and submit the command for the tunneling API.
     try:
         return _put_doc(session, "CdrRepDoc", **opts)
-    except:
+    except Exception:
         LOGGER.exception("CdrRepDoc")
         raise
 
@@ -1717,6 +1749,7 @@ def getDoc(credentials, docId, *args, **opts):
         return Doc(doc_bytes, encoding="utf-8")
     return doc_bytes
 
+
 def delDoc(credentials, doc_id, **opts):
     """
     Mark a CDR document as deleted
@@ -1759,6 +1792,7 @@ def delDoc(credentials, doc_id, **opts):
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
     raise Exception("missing response")
+
 
 def lastVersions(credentials, doc_id, **opts):
     """
@@ -1803,6 +1837,7 @@ def lastVersions(credentials, doc_id, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+
 def listVersions(credentials, doc_id, **opts):
     """
     Find information about the last versions of a document
@@ -1845,6 +1880,7 @@ def listVersions(credentials, doc_id, **opts):
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
+
 
 def filterDoc(credentials, filter, docId=None, **opts):
     """
@@ -2003,6 +2039,7 @@ def filterDoc(credentials, filter, docId=None, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+
 def create_label(credentials, label, **opts):
     """
     Create a name which can be used to tag a set of document versions
@@ -2035,6 +2072,7 @@ def create_label(credentials, label, **opts):
             raise Exception(error)
         raise Exception("missing response")
 
+
 def delete_label(credentials, label, **opts):
     """
     Remove a name previously made available for tagging document versions
@@ -2062,6 +2100,7 @@ def delete_label(credentials, label, **opts):
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
         raise Exception("missing response")
+
 
 def label_doc(credentials, doc_id, version, label, **opts):
     """
@@ -2096,6 +2135,7 @@ def label_doc(credentials, doc_id, version, label, **opts):
             raise Exception(error)
         raise Exception("missing response")
 
+
 def unlabel_doc(credentials, doc_id, label, **opts):
     """
     Create a name which can be used to tag a set of document version
@@ -2126,6 +2166,7 @@ def unlabel_doc(credentials, doc_id, label, **opts):
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
         raise Exception("missing response")
+
 
 def setDocStatus(credentials, docId, newStatus, **opts):
     """
@@ -2160,6 +2201,7 @@ def setDocStatus(credentials, docId, newStatus, **opts):
             raise Exception(error)
         raise Exception("missing response")
 
+
 def getDocStatus(credentials, docId, tier=None):
     """
     Retrieve the active status for a document
@@ -2179,6 +2221,7 @@ def getDocStatus(credentials, docId, tier=None):
         raise Exception("Invalid document ID {!r}".format(docId))
     return row.active_status
 
+
 def unblockDoc(credentials, docId, **opts):
     """
     Set document status to "A" (active)
@@ -2197,6 +2240,7 @@ def unblockDoc(credentials, docId, **opts):
     """
 
     setDocStatus(credentials, docId, "A", **opts)
+
 
 def updateTitle(credentials, docId, **opts):
     """
@@ -2232,6 +2276,7 @@ def updateTitle(credentials, docId, **opts):
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
+
 
 def valDoc(credentials, doctype, **opts):
     """
@@ -2296,7 +2341,7 @@ def valDoc(credentials, doctype, **opts):
                 doc = root
             else:
                 xml = doc.decode("utf-8")
-        except:
+        except Exception:
             xml = doc.decode("utf-8")
         if xml is not None:
             doc = etree.Element("CdrDoc")
@@ -2352,6 +2397,7 @@ def valDoc(credentials, doctype, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+
 def reindex(credentials, doc_id, **opts):
     """
     Reindex the specified document
@@ -2378,6 +2424,7 @@ def reindex(credentials, doc_id, **opts):
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
         raise Exception("missing response")
+
 
 def checkOutDoc(credentials, doc_id, **opts):
     """
@@ -2420,6 +2467,7 @@ def checkOutDoc(credentials, doc_id, **opts):
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
         raise Exception("missing response")
+
 
 def unlock(credentials, doc_id, **opts):
     """
@@ -2471,14 +2519,14 @@ class LockedDoc(object):
     """
 
     def __init__(self, row):
-        self.__userId       = row.uid
-        self.__userAbbrev   = row.username
+        self.__userId = row.uid
+        self.__userAbbrev = row.username
         self.__userFullName = row.fullname
-        self.__docId        = row.id
-        self.__docVersion   = row.version
-        self.__docType      = row.doctype
-        self.__docTitle     = row.title
-        self.__dateOut      = row.dt_out
+        self.__docId = row.id
+        self.__docVersion = row.version
+        self.__docType = row.doctype
+        self.__docTitle = row.title
+        self.__dateOut = row.dt_out
 
     # Read-only property accessors
     def getUserId(self): return self.__userId
@@ -2549,6 +2597,7 @@ def isCheckedOut(doc_id, conn=None):
         cursor.close()
     return LockedDoc(row) if row else None
 
+
 def get_links(credentials, doc_id, **opts):
     """
     Find the links to a CDR document
@@ -2579,17 +2628,20 @@ def get_links(credentials, doc_id, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+
 class Term:
     def __init__(self, id, name):
-        self.id       = id
-        self.name     = name
-        self.parents  = []
+        self.id = id
+        self.name = name
+        self.parents = []
         self.children = []
 
+
 class TermSet:
-    def __init__(self, error = None):
+    def __init__(self, error=None):
         self.terms = {}
         self.error = error
+
 
 def getTree(credentials, doc_id, **opts):
     """
@@ -2651,6 +2703,7 @@ def getTree(credentials, doc_id, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+
 def getCssFiles(credentials, **opts):
     """
     Get the CSS files used by the client
@@ -2693,6 +2746,7 @@ def getCssFiles(credentials, **opts):
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
+
 
 def addExternalMapping(credentials, usage, value, **opts):
     """
@@ -2742,6 +2796,7 @@ def addExternalMapping(credentials, usage, value, **opts):
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
+
 
 def get_glossary_map(credentials, lang, **opts):
     """
@@ -2827,6 +2882,7 @@ def getFilters(credentials, **opts):
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
+
 
 def getFilterSets(credentials, **opts):
     """
@@ -2979,6 +3035,7 @@ class FilterSet:
             lines.append(f"{member_type} {member_id} ({member_name})")
         return "\n".join(lines) + "\n"
 
+
 def addFilterSet(credentials, filter_set, **opts):
     """
     Create a new CDR filter set
@@ -2988,6 +3045,7 @@ def addFilterSet(credentials, filter_set, **opts):
 
     return filter_set.save(credentials, new=True, **opts)
 
+
 def repFilterSet(credentials, filter_set, **opts):
     """
     Replace an existing CDR filter set
@@ -2996,6 +3054,7 @@ def repFilterSet(credentials, filter_set, **opts):
     """
 
     return filter_set.save(credentials, new=False, **opts)
+
 
 def getFilterSet(credentials, name, **opts):
     """
@@ -3049,7 +3108,10 @@ def getFilterSet(credentials, name, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+
 _expandedFilterSetCache = {}
+
+
 def expandFilterSet(session, name, level=0, **opts):
     """
     Find all of the filters loaded for a filter set.
@@ -3091,6 +3153,7 @@ def expandFilterSet(session, name, level=0, **opts):
     _expandedFilterSetCache[name] = filterSet
     return filterSet
 
+
 def expandFilterSets(session, **opts):
     """
     Perform the filter set expansion for all filter sets in the system
@@ -3104,6 +3167,7 @@ def expandFilterSets(session, **opts):
     for fSet in getFilterSets(session):
         sets[fSet.name] = expandFilterSet(session, fSet.name, **opts)
     return sets
+
 
 def delFilterSet(credentials, name, **opts):
     """
@@ -3165,6 +3229,7 @@ class LinkType:
         lines += [self.linkChkType or "?", self.comment or "[NO COMMENT]"]
         return ",\n    ".join(lines) + "\n)"
 
+
 class LinkPropType:
     """
     Custom property type for a CDR link types
@@ -3179,6 +3244,7 @@ class LinkPropType:
     def __init__(self, name, comment=None):
         self.name = name
         self.comment = comment
+
 
 def getLinkTypes(credentials, **opts):
     """
@@ -3206,6 +3272,7 @@ def getLinkTypes(credentials, **opts):
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
+
 
 def getLinkType(credentials, name, **opts):
     """
@@ -3263,6 +3330,7 @@ def getLinkType(credentials, name, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+
 def putLinkType(credentials, name, linktype, action, **opts):
     """
     Add a new CDR link type or update an existing one
@@ -3308,7 +3376,7 @@ def putLinkType(credentials, name, linktype, action, **opts):
             try:
                 cls = getattr(APILinkType, name)
                 property = cls(session, name, value, comment)
-            except:
+            except Exception:
                 raise Exception(message.format(name))
             if not isinstance(property, APILinkType.Property):
                 raise Exception(message.format(name))
@@ -3345,6 +3413,7 @@ def putLinkType(credentials, name, linktype, action, **opts):
             raise Exception(error)
         raise Exception("missing response")
 
+
 def delLinkType(credentials, name, **opts):
     """
     Remove a link type from the CDR
@@ -3374,6 +3443,7 @@ def delLinkType(credentials, name, **opts):
             error = ";".join(response.errors) or "missing response"
             raise Exception(error)
         raise Exception("missing response")
+
 
 def getLinkProps(credentials, **opts):
     """
@@ -3407,6 +3477,7 @@ def getLinkProps(credentials, **opts):
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
+
 
 def search_links(credentials, source_type, element, **opts):
     """
@@ -3462,6 +3533,7 @@ def search_links(credentials, source_type, element, **opts):
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
+
 
 def check_proposed_link(credentials, source_type, element, target, **opts):
     """
@@ -3559,7 +3631,7 @@ def publish(credentials, pubSystem, pubSubset, **opts):
             doc_id, version = doc_string, None
         try:
             docs.append((doc_id, version))
-        except:
+        except Exception:
             return None, "<Errors><Err>Invalid version</Err></Errors>"
 
     # Handle the request locally if possible.
@@ -3633,6 +3705,7 @@ def publish(credentials, pubSystem, pubSubset, **opts):
         return (None, error)
     return (None, "missing response")
 
+
 def clear_cache(credentials):
     """
     Clear the cache for filters, filter sets, and term documents
@@ -3659,19 +3732,20 @@ class PubStatus:
     def __init__(self, id, pubSystem, pubSubset, parms, userName, outputDir,
                  started, completed, status, messages, email, docList,
                  errors):
-        self.id        = id
+        self.id = id
         self.pubSystem = pubSystem
         self.pubSubset = pubSubset
-        self.parms     = parms
-        self.userName  = userName
+        self.parms = parms
+        self.userName = userName
         self.outputDir = outputDir
-        self.started   = started
+        self.started = started
         self.completed = completed
-        self.status    = status
-        self.messages  = messages
-        self.email     = email
-        self.docList   = docList
-        self.errors    = errors
+        self.status = status
+        self.messages = messages
+        self.email = email
+        self.docList = docList
+        self.errors = errors
+
 
 def pubStatus(self, jobId, getDocInfo=False):
     return "XXX this is a stub"
@@ -3732,9 +3806,10 @@ class QueryResult:
     """
 
     def __init__(self, docId, docType, docTitle):
-        self.docId      = docId
-        self.docType    = docType
-        self.docTitle   = docTitle
+        self.docId = docId
+        self.docType = docType
+        self.docTitle = docTitle
+
     def __repr__(self):
         return "%s (%s) %s\n" % (self.docId, self.docType, self.docTitle)
 
@@ -3803,6 +3878,7 @@ def search(credentials, *tests, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+
 def listQueryTermRules(credentials, **opts):
     """
     Return the list of available query term rules
@@ -3829,6 +3905,7 @@ def listQueryTermRules(credentials, **opts):
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
+
 
 def listQueryTermDefs(credentials, **opts):
     """
@@ -3862,6 +3939,7 @@ def listQueryTermDefs(credentials, **opts):
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
+
 
 def addQueryTermDef(credentials, path, rule=None, **opts):
     """
@@ -3898,6 +3976,7 @@ def addQueryTermDef(credentials, path, rule=None, **opts):
             raise Exception(error)
         raise Exception("missing response")
 
+
 def delQueryTermDef(credentials, path, rule=None, **opts):
     """
     Delete an existing query term definition from the CDR
@@ -3933,6 +4012,7 @@ def delQueryTermDef(credentials, path, rule=None, **opts):
             raise Exception(error)
         raise Exception("missing response")
 
+
 def log_client_event(credentials, description, **opts):
     """
     Capture a record of something that happened in the XMetaL client
@@ -3965,6 +4045,7 @@ def log_client_event(credentials, description, **opts):
             raise Exception(error)
         raise Exception("missing response")
 
+
 def save_client_trace_log(credentials, log_data, **opts):
     """
     Capture the contents of the trace debugging log from the XMetaL client
@@ -3996,6 +4077,7 @@ def save_client_trace_log(credentials, log_data, **opts):
         raise Exception(error)
     raise Exception("missing response")
 
+
 def mailerCleanup(credentials, **opts):
     """
     Mark tracking documents generated by failed mailer jobs as deleted
@@ -4014,16 +4096,18 @@ def mailerCleanup(credentials, **opts):
             for node in response.node.findall("DeletedDoc"):
                 doc_ids.append(re.sub(r"[^\d]", "", get_text(node)))
             for node in response.node.findall("Errors/Err"):
-                errors.append(text_text(node))
+                errors.append(get_text(node))
             return (doc_ids, errors)
         error = ";".join(response.errors) or "missing response"
         raise Exception(error)
     raise Exception("missing response")
 
+
 def bail(why):
     """Complain to web client and exit."""
     print(f"Content-type: text/plain\n\n{why}\n")
     exit(0)
+
 
 class Logging:
     """
@@ -4103,6 +4187,7 @@ class IdAndName:
         self.id = id
         self.name = name
 
+
 class _Control:
     """
     Wrap internals supporting the legacy CDR Python client interface.
@@ -4122,7 +4207,7 @@ class _Control:
         HAVE_LOCAL_DB_ACCESS = True
         conn.close()
         del conn
-    except:
+    except Exception:
         HAVE_LOCAL_DB_ACCESS = False
 
     @classmethod
@@ -4276,7 +4361,7 @@ class _Control:
                 if isinstance(doc, str):
                     doc = doc.encode("utf-8")
                 root = etree.fromstring(doc)
-        except:
+        except Exception:
             error = cls.wrap_error("Unable to parse document")
             if show_warnings:
                 return None, error
@@ -4286,7 +4371,7 @@ class _Control:
             try:
                 with open(filename, "rb") as fp:
                     blob = fp.read()
-            except:
+            except Exception:
                 error = cls.wrap_error("unable to read BLOB file")
                 if show_warnings:
                     return None, error
@@ -4353,7 +4438,6 @@ class _Control:
             return doc.cdr_id
 
 
-
 # ======================================================================
 # Legacy functions, classes, and module-level values
 # The stuff below here was cleaned up a little bit, but is essentially
@@ -4418,9 +4502,10 @@ def getpw(name):
                 n, p = line.strip().split(":", 1)
                 if n == name:
                     return p
-    except:
+    except Exception:
         pass
     return None
+
 
 def toUnicode(value, default=""):
     """
@@ -4445,9 +4530,10 @@ def toUnicode(value, default=""):
     for encoding in ("ascii", "utf-8", "iso-8859-1"):
         try:
             return value.decode(encoding)
-        except:
+        except Exception:
             pass
     raise Exception(f"unknown encoding for {value!r}")
+
 
 def get_text(node, default=None):
     """
@@ -4470,21 +4556,24 @@ def get_text(node, default=None):
         return default
     return "".join(node.itertext("*"))
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Normalize a document id to form 'CDRnnnnnnnnnn'.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def normalize(id):
-    if id is None: return None
-    if isinstance(id, type(9)):
+    if id is None:
+        return None
+    if isinstance(id, int):
         idNum = id
     else:
         digits = re.sub(r"[^\d]", "", id)
-        idNum  = int(digits)
+        idNum = int(digits)
     return "CDR%010d" % idNum
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Extended normalization of ids
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def exNormalize(id):
     """
     An extended form of normalize.
@@ -4512,19 +4601,19 @@ def exNormalize(id):
     if isinstance(id, type(9)):
         # Passed a number
         idNum = id
-        frag  = None
+        frag = None
 
     else:
         # Parse the string
-        pat = re.compile (
+        pat = re.compile(
             r"(^\s*?([Cc][Dd][Rr]0*)?)(?P<num>(\d+))\s*(\#(?P<frag>(.*)))?$")
-        result = pat.search (id)
+        result = pat.search(id)
 
         if not result:
             raise Exception("Invalid CDR ID string: " + id)
 
-        idNum = int (result.group ('num'))
-        frag  = result.group ('frag')
+        idNum = int(result.group('num'))
+        frag = result.group('frag')
 
     # Sanity check on number
     if idNum < 1 or idNum > 9999999999:
@@ -4573,7 +4662,7 @@ Group = Session.Group
 Action = Session.Action
 try:
     WORK_DRIVE = _Control.TIER.drive
-except:
+except Exception:
     WORK_DRIVE = None
 TMP = f"{WORK_DRIVE}:/tmp" if WORK_DRIVE else "/tmp"
 
@@ -4658,7 +4747,7 @@ FILTERS = {
 }
 
 
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 # Use this class (or a derived class) when raising an exception in
 # all new Python code in the CDR, unless there is good justification
 # for using another approach.  Avoid raising string objects, which
@@ -4675,7 +4764,7 @@ FILTERS = {
 #             to catch standard Exception objects. Export the
 #             name as part of the cdr module so we don't break
 #             existing code more than we have to.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 Exception = Exception
 """
 _baseException = Exception
@@ -4689,10 +4778,11 @@ class Exception(_baseException):
 del _baseException
 """
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Validate date/time strings using strptime.
 # Wraps the exception handling.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def strptime(str, format):
     """
     Wrap datetime.strptime() in a function that performs the exception
@@ -4712,10 +4802,11 @@ def strptime(str, format):
         tm = None
     return tm
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Validate from/to date/time strings using strptime.
 # Wraps the exception handling.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def valFromToDates(format, fromDate, toDate, minFrom=None, maxTo=None):
     """
     Turns out there are many places where we have from and to dates or
@@ -4747,7 +4838,8 @@ def valFromToDates(format, fromDate, toDate, minFrom=None, maxTo=None):
 
     return True
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Information about an error returned by the CDR server API.  Provides
 # access to the new attributes attached to some Err elements.  As of
 # this writing, only the CDR commands involving validation assign
@@ -4759,18 +4851,20 @@ def valFromToDates(format, fromDate, toDate, minFrom=None, maxTo=None):
 #    etype    - type of error ('validation' or 'other') (default 'other')
 #    elevel   - 'error' | 'warning' | 'info' | 'fatal' (default 'fatal')
 #    eref     - position of validation error in document (if appropriate)
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 class Error:
     def __init__(self, node):
         self.message = get_text(node)
-        self.etype   = node.get('etype', 'other')
-        self.elevel  = node.get('elevel', 'fatal')
-        self.eref    = node.get('eref')
+        self.etype = node.get('etype', 'other')
+        self.elevel = node.get('elevel', 'fatal')
+        self.eref = node.get('eref')
+
     def getMessage(self, asUtf8=False):
         if asUtf8:
             return self.message.encode('utf-8')
         return self.message
     __pattern = None
+
     @classmethod
     def getPattern(cls):
         """
@@ -4787,7 +4881,8 @@ class Error:
                                        re.DOTALL)
         return cls.__pattern
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Extract a single error element from XML response.
 #
 # Pass:
@@ -4800,13 +4895,14 @@ class Error:
 # Return:        An Error object or a string (as determined by the
 #                value of the asObject parameter) for the first
 #                Err element found, if any; otherwise, None
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def checkErr(resp, asObject=False):
     opts = dict(errorsExpected=False, asSequence=True, asObjects=asObject)
     errors = getErrors(resp, **opts)
     return errors and errors[0] or None
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Extract error elements from XML.
 #
 # Pass:
@@ -4848,7 +4944,7 @@ def checkErr(resp, asObject=False):
 #                    behavior of the function)
 #                    2019-09-01: the default is now False (so by
 #                                default we return Unicode strings)
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def getErrors(xmlFragment, **opts):
 
     # Pull out the options.
@@ -4917,17 +5013,19 @@ def getErrors(xmlFragment, **opts):
             errors = ""
         return errors.encode("utf-8") if as_utf8 else errors
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Find out if the user for a session is a member of the specified group.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def member_of_group(session, group):
     try:
         user = getUser(session, Session(session).user_name)
         return group in user.groups
-    except:
+    except Exception:
         return False
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Select the email address for the user.
 # Pass:
 #   mySession  - session for user doing the lookup
@@ -4935,7 +5033,7 @@ def member_of_group(session, group):
 # Returns:
 #   Email address
 #   Or single error string.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def getEmail(session):
     query = cdrdb.Query("usr u", "u.email")
     query.join("session s", "s.usr = u.id")
@@ -4945,14 +5043,15 @@ def getEmail(session):
     try:
         row = query.execute().fetchone()
     except Exception as e:
-        return "Error selecting email for session %r: %s".format(session, e)
+        return f"Error selecting email for session {session!r}: {e}"
     if not row:
         return "Session not found or unauthorized"
     return row.email
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Search the query term table for values
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def getQueryTermValueForId(path, docId, conn=None):
     """
     Search for values pertaining to a particular path and id, or just
@@ -4978,12 +5077,13 @@ def getQueryTermValueForId(path, docId, conn=None):
         rows = query.execute().fetchall()
     return [row[0] for row in rows]
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Extract the text content of a DOM element.
 # For nodes parsed by the ancient dom.minidom package; we don't use
 # that package any more for new code, but there's still code out there
 # which does. At least we don't have to import the old package here.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def getTextContent(node, recurse=False, separator=''):
     """
     Get text content for a node, possibly including sub nodes.
@@ -5007,9 +5107,10 @@ def getTextContent(node, recurse=False, separator=''):
             text = text + getTextContent(child, recurse, separator)
     return text
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Validate new and old docs
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def valPair(session, docType, oldDoc, newDoc, **opts):
     """
     Validate the old and new versions of a document.
@@ -5046,9 +5147,10 @@ def valPair(session, docType, oldDoc, newDoc, **opts):
     # Else return empty list
     return []
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # De-duplicate and list a sequence of error messages
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def deDupErrs(errXml):
     """
     Parse an error XML string returned by valDoc, de-duplicate the
@@ -5086,9 +5188,10 @@ def deDupErrs(errXml):
 
     return result
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Return all all_docs info for a CDR document specified by ID
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def getAllDocsRow(docId, conn=None):
     """
     Retrieve most info from the all_docs table for a document ID.
@@ -5142,9 +5245,10 @@ def getAllDocsRow(docId, conn=None):
         first_pub=row.first_pub
     )
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Gets the list of currently known CDR document formats.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def getDocFormats(conn=None):
     """
     Gets document format names, in alpha order.
@@ -5168,9 +5272,10 @@ def getDocFormats(conn=None):
         cursor.close()
     return [row.name for row in rows]
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Get a list of enumerated values for a CDR schema simpleType.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def getSchemaEnumVals(schemaTitle, typeName, **opts):
     """
     Read in a schema from the database.  Parse it.  Extract the enumerated
@@ -5201,7 +5306,7 @@ def getSchemaEnumVals(schemaTitle, typeName, **opts):
 
     # Search for enumerations of the simple type
     # Note what we have to do with namespaces - won't work without that
-    path  = "//xsd:simpleType[@name='%s']//xsd:enumeration" % typeName
+    path = "//xsd:simpleType[@name='%s']//xsd:enumeration" % typeName
     nodes = root.xpath(path, namespaces=dict(xsd=Schema.NS))
     if not nodes:
         message = "type %r not found in %r" % (typeName, schemaTitle)
@@ -5215,9 +5320,10 @@ def getSchemaEnumVals(schemaTitle, typeName, **opts):
         return sorted(valList)
     return valList
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Construct a string containing the description of the last exception.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def exceptionInfo():
     (eType, eValue) = sys.exc_info()[:2]
     if eType:
@@ -5228,9 +5334,10 @@ def exceptionInfo():
         eMsg = str(eValue) or "unable to find exception information"
     return eMsg
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Gets the email addresses for members of a group.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def getEmailList(groupName):
     query = cdrdb.Query("usr u", "u.email")
     query.join("grp_usr gu", "gu.usr = u.id")
@@ -5461,18 +5568,19 @@ class EmailMessage:
         return str(self.smtp_message)
 
 
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 # Object for results of an external command.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 class CommandResult:
     def __init__(self, code, output, error=None):
-        self.code   = code
+        self.code = code
         self.output = output
-        self.error  = error
+        self.error = error
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Run an external command.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def run_command(command, **opts):
     """
     Run a shell command
@@ -5516,13 +5624,14 @@ def run_command(command, **opts):
         spopts["shell"] = True
     try:
         return subprocess.run(command, **spopts)
-    except:
+    except Exception:
         LOGGER.exception("failure running command %s", command)
         raise
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Create a temporary working area.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def makeTempDir(basename="tmp", chdir=True):
     """
     Create a temporary directory.
@@ -5550,34 +5659,40 @@ def makeTempDir(basename="tmp", chdir=True):
     abspath = os.path.abspath(where)
     try:
         os.mkdir(abspath)
-    except:
+    except Exception:
         raise Exception("makeTempDir", "Cannot create directory %s" % abspath)
     if chdir:
         try:
             os.chdir(abspath)
-        except:
+        except Exception:
             raise Exception("makeTempDir", "Cannot chdir to %s" % abspath)
     return abspath
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Used by normalizeDoc; treats string as writable file object.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 class StringSink:
-    def __init__(self, s = ""):
+
+    def __init__(self, s=""):
         self.__pieces = s and [s] or []
+
     def __repr__(self):
         return "".join(self.__pieces)
+
     def write(self, s):
         self.__pieces.append(s)
+
     def __getattr__(self, name):
         if name == 's':
             return "".join(self.__pieces)
         raise AttributeError()
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Remove all lines from a multi-line string (e.g., an XML doc)
 # that are empty or contain nothing but whitespace.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def stripBlankLines(s):
     # Make a sequence
     inSeq = s.replace("\r", "").split("\n")
@@ -5589,17 +5704,19 @@ def stripBlankLines(s):
             outSeq.append(line)
 
     # Return them as a string with newlines at each line end
-    return "\n".join(outSeq);
+    return "\n".join(outSeq)
+
 
 class Normalizer:
     ELEMENT_ONLY = {}
 
     def __init__(self):
         self.session = Session("guest")
+
     def transform(self, xml):
         try:
             root = etree.fromstring(xml)
-        except:
+        except Exception:
             if isinstance(xml, str):
                 root = etree.fromstring(xml.encode("utf-8"))
             else:
@@ -5618,32 +5735,37 @@ class Normalizer:
                     self.scrub(node)
         xml = etree.tostring(root, pretty_print=True, encoding="unicode")
         return etree.canonicalize(xml)
+
     def scrub(self, node):
         node.text = None
         for child in node.findall("*"):
             child.tail = None
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Takes a utf-8 string for an XML document and creates a utf-8 string
 # suitable for comparing two versions of XML documents by normalizing
 # non-essential differences away.  Used by compareDocs() (below).
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def normalizeDoc(utf8DocString):
     return etree.tostring(etree.fromstring(utf8DocString))
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Compares two XML documents by normalizing each.  Returns non-zero
 # if documents are different; otherwise zero.  Expects each document
 # to be passed as utf8-encoded documents.
 # 2017-12-13: Python 3 dropped the cmp() function; this is what Guido
 #             recommends as it's replacement.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def compareXmlDocs(utf8DocString1, utf8DocString2):
-    if utf8DocString1 is utf8DocString2: return 0
+    if utf8DocString1 is utf8DocString2:
+        return 0
     a, b = normalizeDoc(utf8DocString1), normalizeDoc(utf8DocString2)
     return (a > b) - (a < b)
 
-#----------------------------------------------------------------------
+
+# --------------------------------------------------------------------
 # Compare two XML documents by normalizing each.
 # Returns the output of a textual differencer as a sequence of lines.
 # See Python difflib.Differ.compare() for diff format.
@@ -5654,7 +5776,7 @@ def compareXmlDocs(utf8DocString1, utf8DocString2):
 #   Returns:
 #     Difference, with or without context, as utf-8 string.
 #     Context, if present, is pretty-printed with indentation.
-#----------------------------------------------------------------------
+# --------------------------------------------------------------------
 def diffXmlDocs(utf8DocString1, utf8DocString2, **opts):
 
     import difflib
@@ -5669,14 +5791,14 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, **opts):
 
     # Compare
     diffObj = difflib.Differ()
-    diffSeq = diffObj.compare(xml1.splitlines(1),xml2.splitlines(1))
+    diffSeq = diffObj.compare(xml1.splitlines(1), xml2.splitlines(1))
 
     # If caller only wants changed lines, drop all lines with leading space
     if opts.get("chgOnly", True):
         chgSeq = []
         for line in diffSeq:
             if line[0] != ' ':
-                chgSeq.append (line)
+                chgSeq.append(line)
         # Return them as a (possibly empty) string
         diffText = "".join(chgSeq)
 
@@ -5689,6 +5811,7 @@ def diffXmlDocs(utf8DocString1, utf8DocString2, **opts):
         diffText = diffText.encode('utf-8')
 
     return diffText
+
 
 def getVersionedBlobChangeDate(credentials, doc_id, version, **opts):
     """
@@ -5711,7 +5834,7 @@ def getVersionedBlobChangeDate(credentials, doc_id, version, **opts):
     row = query.execute(cursor).fetchone()
     if row:
         blob_id = row[0]
-        join_conditions  ="u.doc_id = v.id", "u.doc_version = v.num"
+        join_conditions = "u.doc_id = v.id", "u.doc_version = v.num"
         query = cdrdb.Query("doc_version v", "v.num", "v.dt")
         query.join("version_blob_usage u", *join_conditions)
         query.where(query.Condition("u.blob_id", blob_id))
@@ -5733,6 +5856,7 @@ def getVersionedBlobChangeDate(credentials, doc_id, version, **opts):
         last_version, last_date = prev_version, prev_date
     return last_date
 
+
 def emailSubject(text='No Subject'):
     """
     Standardize the email subject format
@@ -5746,8 +5870,10 @@ def emailSubject(text='No Subject'):
 
     return "[%s] %s" % (_Control.TIER.name, text)
 
+
 _lockedFiles = {}
 """ Static dictionary of locked files"""
+
 
 def createLockFile(fname):
     """
@@ -5812,6 +5938,7 @@ def createLockFile(fname):
 
     return True
 
+
 def removeLockFile(fname):
     """
     Remove a file created by createLockFile.
@@ -5828,6 +5955,7 @@ def removeLockFile(fname):
     # If we got here, this ought to work, propagate exception if it fails
     os.remove(fname)
 
+
 def removeAllLockFiles():
     """
     Remove any outstanding lockfiles for this process.
@@ -5837,6 +5965,7 @@ def removeAllLockFiles():
     """
     for fname in list(_lockedFiles.keys()):
         removeLockFile(fname)
+
 
 def calculateDateByOffset(offset, referenceDate=None):
     """
@@ -5874,6 +6003,7 @@ def calculateDateByOffset(offset, referenceDate=None):
         raise Exception("invalid type for referenceDate")
     return referenceDate + datetime.timedelta(offset)
 
+
 def getBoardNames(boardType='all', display='full', tier=None):
     """
     Get a list of all the PDQ board names
@@ -5904,7 +6034,7 @@ def getBoardNames(boardType='all', display='full', tier=None):
     query = cdrdb.Query("query_term n", "n.doc_id", "n.value")
     query.join("query_term t", "t.doc_id = n.doc_id")
     query.join("document d", "d.id = n.doc_id")
-    if boardType.lower() == 'editorial' or boardType.lower()== 'advisory':
+    if boardType.lower() == 'editorial' or boardType.lower() == 'advisory':
         type_string = "PDQ %s Board" % boardType.capitalize()
         query.where(query.Condition("t.value", type_string))
     else:
@@ -5930,6 +6060,7 @@ def getBoardNames(boardType='all', display='full', tier=None):
         pairs = [tuple(row) for row in rows]
     return dict(pairs)
 
+
 def getSummaryLanguages():
     """
     Return a list of all languages that are used for Summaries.
@@ -5947,6 +6078,7 @@ def getSummaryLanguages():
 
     return 'English', 'Spanish'
 
+
 def getSummaryAudiences():
     """
     Return a list of all Audience values that are used for Summaries.
@@ -5955,6 +6087,7 @@ def getSummaryAudiences():
     """
 
     return 'Health professionals', 'Patients'
+
 
 def extract_board_name(doc_title):
     """
@@ -5973,6 +6106,7 @@ def extract_board_name(doc_title):
     if board_name.startswith("Cancer Complementary"):
         board_name = board_name.replace("Cancer ", "").strip()
     return board_name
+
 
 def get_image(doc_id, **opts):
     """
@@ -6035,6 +6169,7 @@ def get_image(doc_id, **opts):
     if opts.get("return_stream"):
         return fp
     return bytes(fp.getvalue())
+
 
 def prepare_pubmed_article_for_import(node):
     """

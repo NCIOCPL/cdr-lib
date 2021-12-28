@@ -1,7 +1,6 @@
 """Base class for drug and glossary (and possibly other?) dictionary loaders.
 """
 
-from argparse import ArgumentParser
 import datetime
 from json import dumps, load, loads
 from re import compile
@@ -125,7 +124,7 @@ class DictionaryAPILoader:
                             ))
             actions.append(dict(add=dict(index=self.index, alias=self.alias)))
             self.es.indices.update_aliases(body=dict(actions=actions))
-        except Exception as e:
+        except Exception:
             self.logger.exception("failure redirecting %s", self.alias)
             raise
 
@@ -135,7 +134,7 @@ class DictionaryAPILoader:
 
         try:
             return self.ALIAS
-        except:
+        except Exception:
             raise Exception("derived class must provide alias name")
 
     @property
@@ -229,10 +228,10 @@ class DictionaryAPILoader:
             except FileNotFoundError:
                 try:
                     self._indexdef = loads(self.INDEXDEF)
-                except:
+                except Exception:
                     name = self.INDEXDEF
-                    self.logger.exception("Loading schema from string")
-                    raise Exception("can't load index schema")
+                    self.logger.exception(f"Loading schema {name} from string")
+                    raise Exception("can't load index schema %s", name)
             except Exception:
                 self.logger.exception("Loading schema from %s", self.INDEXDEF)
                 raise Exception(f"can't load schema from {self.INDEXDEF}")
@@ -336,7 +335,7 @@ class DictionaryAPILoader:
 
         try:
             return self.TYPE
-        except:
+        except Exception:
             raise Exception("derived class must define type() method or TYPE")
 
     @property
@@ -401,7 +400,7 @@ class DictionaryAPILoader:
                 xml = query.execute(self.__loader.cursor).fetchone().xml
                 try:
                     root = etree.fromstring(xml)
-                except:
+                except Exception:
                     root = etree.fromstring(xml.encode("utf-8"))
                 tier = f"'{self.loader.tier.name}'"
                 result = self.loader.transform(root, tier=tier)
@@ -409,7 +408,6 @@ class DictionaryAPILoader:
                 for node in result.getroot().findall("node"):
                     self._nodes.append(self.Node(node))
             return self._nodes
-
 
         class Node:
             """Information for a record to be sent to ElasticSearch.

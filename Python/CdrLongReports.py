@@ -1,4 +1,4 @@
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # CDR Reports too long to be run directly from CGI.
 #
 # BZIssue::1264 - Different filter set for OrgProtocolReview report
@@ -19,7 +19,7 @@
 # Extensive reorganization and cleanup January 2017
 # JIRA::OCECDR-4284 - Fix Glossary Term and Variant Search report
 # JIRA::OCECDR-4547 - Add section title for summaries
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 
 # Standard library modules
 import argparse
@@ -38,6 +38,7 @@ import cdr
 import cdrbatch
 import cdrcgi
 from cdrapi import db
+
 
 class BatchReport:
     """
@@ -86,8 +87,8 @@ class BatchReport:
     SUMMARY_AUDIENCE = "/Summary/SummaryMetaData/SummaryAudience"
     SUMMARY_BOARD = "/Summary/SummaryMetaData/PDQBoard/Board/@cdr:ref"
     SUMMARY_METADATA = "/Summary/SummaryMetaData"
-    GTC_LANGUAGES = { "English": "en", "Spanish": "es" }
-    DEFINITIONS = { "en": "TermDefinition", "es": "TranslatedTermDefinition" }
+    GTC_LANGUAGES = {"English": "en", "Spanish": "es"}
+    DEFINITIONS = {"en": "TermDefinition", "es": "TranslatedTermDefinition"}
     GTC = "GlossaryTermConcept"
     GTC_RELATED_REF = "/%s/RelatedInformation/RelatedExternalRef" % GTC
     GTC_USE_WITH = "%s/@UseWith" % GTC_RELATED_REF
@@ -306,22 +307,22 @@ class BatchReport:
         """
 
         return {
-            "*": { "font-family": "Arial, sans-serif" },
-            ".right": { "text-align": "right" },
-            ".left": { "text-align": "left" },
-            ".center": { "text-align": "center" },
-            ".red": { "color": "red" },
-            ".strong": { "font-weight": "bold" },
-            ".error": { "color": "darkred" },
+            "*": {"font-family": "Arial, sans-serif"},
+            ".right": {"text-align": "right"},
+            ".left": {"text-align": "left"},
+            ".center": {"text-align": "center"},
+            ".red": {"color": "red"},
+            ".strong": {"font-weight": "bold"},
+            ".error": {"color": "darkred"},
             "p.processing": {
                 "color": "green",
                 "font-style": "italic",
                 "font-size": "9pt"
             },
-            "h1, h2": { "text-align": "center", "font-family": "serif" },
-            "h1": { "font-size": "16pt" },
-            "h2": { "font-size": "13pt" },
-            "table": { "border-collapse": "collapse" },
+            "h1, h2": {"text-align": "center", "font-family": "serif"},
+            "h1": {"font-size": "16pt"},
+            "h2": {"font-size": "13pt"},
+            "table": {"border-collapse": "collapse"},
             "th, td": {
                 "font-family": "Arial",
                 "border": "1px solid grey",
@@ -356,12 +357,12 @@ class BatchReport:
 
         try:
             return int(self.job.getParm(name))
-        except:
+        except Exception:
             return 0
 
     def get_boards(self):
         """
-        Pull the PDQ board IDs from the parameter set as a sequence of integers.
+        Pull PDQ board IDs from the parameter set as a sequence of integers.
         """
 
         boards = self.job.getParm("boards")
@@ -479,7 +480,7 @@ class BatchReport:
         parser.add_argument("--debug", "-d", action="store_true",
                             help="write additional logging information")
         parser.add_argument("--verbose", "-v", action="store_true",
-                            help="write information to the console for testing")
+                            help="write details to the console for testing")
         parser.add_argument("--filename", default=default_filename,
                             help="where to save test report")
         return parser
@@ -491,8 +492,6 @@ class BatchReport:
         a report from the command line and save the results.
         """
 
-        from cdrbatch import CdrBatch
-
         import logging
         logger = logging.getLogger(cls.NAME)
         logger.info("Starting %s report", cls.NAME)
@@ -500,7 +499,7 @@ class BatchReport:
         cls.announce_test(args)
         filename = args.pop("filename")
         args = list(args.items())
-        job = CdrBatch(jobName=cls.NAME, command=cls.CMD, args=args)
+        job = cdrbatch.CdrBatch(jobName=cls.NAME, command=cls.CMD, args=args)
         if format == "html":
             report = cls(job).create_html_report()
             open(filename, "wb").write(report.encode("utf-8"))
@@ -519,6 +518,7 @@ class BatchReport:
             for name in sorted(args):
                 sys.stderr.write("%25s: %s\n" % (name, args[name]))
             sys.stderr.write("\n")
+
 
 class URLChecker(BatchReport):
     """
@@ -691,7 +691,7 @@ class URLChecker(BatchReport):
                     if code != 200:
                         try:
                             reason = str(self.response.reason, "utf-8")
-                        except:
+                        except Exception:
                             reason = str(self.response.reason)
                         self.problem = "%d: %s" % (code, reason)
                 except IOError as e:
@@ -704,7 +704,7 @@ class URLChecker(BatchReport):
                     else:
                         self.problem = "IOError: %s" % e
                     report.logger.error("%s, %s", url, self.problem)
-                except socket.error as socketError:
+                except socket.error:
                     self.problem = "Host not responding"
                     self.remember_dead_host(host, self.problem)
                     report.logger.error("%s not responding", host)
@@ -748,7 +748,7 @@ class URLChecker(BatchReport):
         parser.add_argument("--connect-timeout", type=int, default=5,
                             help="wait this long for the socket connection")
         parser.add_argument("--read-timeout", type=int, default=30,
-                            help="wait READ_TIMEOUT seconds of idle web server")
+                            help="wait READ_TIMEOUT seconds for web server")
         parser.add_argument("--check-certs", action="store_true",
                             help="report invalid SSL certificates as errors")
         parser.add_argument("--audience", default="Patient",
@@ -766,6 +766,7 @@ class URLChecker(BatchReport):
             parser.add_argument("--show-all", action="store_true",
                                 help="also display matching titles")
         cls.run_test(parser, "html")
+
 
 class BrokenExternalLinks(URLChecker):
     """
@@ -897,7 +898,7 @@ class BrokenExternalLinks(URLChecker):
         """
 
         selectors = BatchReport.selectors(self)
-        selectors["table.url-check"] = { "width": "100%" }
+        selectors["table.url-check"] = {"width": "100%"}
         selectors["table.url-check th"] = {
             "background-color": "silver",
             "text-align": "left"
@@ -982,6 +983,7 @@ class BrokenExternalLinks(URLChecker):
                 row.append(B.TD(self.section_title, B.CLASS("left")))
             return row
 
+
 class PageTitleMismatches(URLChecker):
     """
     Class for comparing stored ExternalRef/@SourceTitle values
@@ -1041,7 +1043,6 @@ class PageTitleMismatches(URLChecker):
         """
 
         fields = "d.id", "u.value", "d.title", "t.value"
-        wildcard = self.doc_id and "%" or ("/%s/%%" % self.doc_type)
         query = db.Query("query_term t", *fields).unique()
         query.join("query_term u", "u.doc_id = t.doc_id",
                    "u.node_loc = t.node_loc")
@@ -1083,11 +1084,11 @@ class PageTitleMismatches(URLChecker):
         """
 
         selectors = BatchReport.selectors(self)
-        selectors["td.ok"] = { "color": "cyan" }
-        selectors["td.mismatch"] = { "color": "red" }
-        selectors["td.error"] = { "color": "darkred" }
-        selectors["table.stats"] = { "width": "150px", "margin": "25px auto" }
-        selectors["table.titles th"] = { "white-space": "nowrap" }
+        selectors["td.ok"] = {"color": "cyan"}
+        selectors["td.mismatch"] = {"color": "red"}
+        selectors["td.error"] = {"color": "darkred"}
+        selectors["table.stats"] = {"width": "150px", "margin": "25px auto"}
+        selectors["table.titles th"] = {"white-space": "nowrap"}
         return selectors
 
     def stats_table(self):
@@ -1179,10 +1180,10 @@ class PageTitleMismatches(URLChecker):
             if not self.problem:
                 try:
                     root = self.HTML.fromstring(self.response.text)
-                except:
+                except Exception:
                     try:
                         root = self.HTML.fromstring(self.response.content)
-                    except:
+                    except Exception:
                         self.problem = "unable to parse page HTML"
             if self.response:
                 self.response.close()
@@ -1198,7 +1199,7 @@ class PageTitleMismatches(URLChecker):
         value stored in the CDR document for the link's page.
         """
 
-        stats = { "errors": 0, "mismatched": 0, "matched": 0 }
+        stats = {"errors": 0, "mismatched": 0, "matched": 0}
 
         def __init__(self, report, doc_id, url, doc_title, stored_title):
             """
@@ -1275,7 +1276,7 @@ class GlossaryTermSearch(BatchReport):
 
         BatchReport.__init__(self, job, self.NAME)
         doc_id = job.getParm("id")
-        self.types  = job.getParm("types") or self.TYPES
+        self.types = job.getParm("types") or self.TYPES
         if isinstance(self.types, str):
             self.types = self.types.split()
         digits = re.sub(r"[^\d]", "", doc_id)
@@ -1334,7 +1335,7 @@ class GlossaryTermSearch(BatchReport):
             doc_id, doc_xml, doc_title = row
             try:
                 root = etree.fromstring(doc_xml)
-            except:
+            except Exception:
                 root = etree.fromstring(doc_xml.encode("utf-8"))
             for node in root.findall("SummarySection"):
                 text = " ".join(node.itertext("*")).strip()
@@ -1422,6 +1423,7 @@ class GlossaryTermSearch(BatchReport):
             query.where(query.Condition("m.doc_id", id))
             query.where("u.name LIKE '%GlossaryTerm Phrases'")
             rows = query.execute(cursor).fetchall()
+
             class Variant:
                 def __init__(self, value, usage):
                     self.name = value
@@ -1462,10 +1464,11 @@ class GlossaryTermSearch(BatchReport):
     class MatchingPhrase:
         "Remembers where a glossary term phrase was found."
         def __init__(self, phrase, title, id, section):
-            self.phrase  = phrase
-            self.title   = title
-            self.doc_id  = id
+            self.phrase = phrase
+            self.title = title
+            self.doc_id = id
             self.section = section
+
         def tr(self):
             return GlossaryTermSearch.B.TR(
                 GlossaryTermSearch.B.TD(self.phrase),
@@ -1473,6 +1476,7 @@ class GlossaryTermSearch(BatchReport):
                 GlossaryTermSearch.B.TD(str(self.doc_id)),
                 GlossaryTermSearch.B.TD(self.section)
             )
+
         def __lt__(self, other):
             return (self.title, self.phrase) < (other.title, other.phrase)
 
@@ -1480,6 +1484,7 @@ class GlossaryTermSearch(BatchReport):
         "Node in the tree of known glossary terms and their variant phrases."
         def __init__(self):
             self.doc_id, self.node_map, self.seen = None, {}, False
+
         def clear_flags(self):
             self.seen = False
             for node in list(self.node_map.values()):
@@ -1502,18 +1507,17 @@ class GlossaryTermSearch(BatchReport):
                         current_map = current_node.node_map
                 if current_node:
                     current_node.doc_id = phrase.id
+
         def find_phrases(self, text):
             "Returns sequence of strings for matching phrases."
             phrases = []
             words = GlossaryTermSearch.get_words(text)
             words_left = len(words)
-            current_map  = self.node_map
+            current_map = self.node_map
             current_word = 0
             while words_left > 0:
                 nodes = []
                 current_map = self.node_map
-                startPos = words[current_word].match.start()
-                endPos = startPos
 
                 # Find the longest chain of matching words from this point.
                 while len(nodes) < words_left:
@@ -1559,7 +1563,7 @@ class GlossaryTermSearch(BatchReport):
         Perform a test run from the command line.
         """
 
-        lung_cancer = 445043 # lung cancer
+        lung_cancer = 445043
         parser = cls.arg_parser()
         parser.add_argument("--limit", type=int, default=100,
                             help="maximum number of documents to process for "
@@ -1570,6 +1574,7 @@ class GlossaryTermSearch(BatchReport):
         parser.add_argument("--language", choices=cls.LANGUAGES,
                             default="English")
         cls.run_test(parser)
+
 
 class PronunciationRecordingsReport(BatchReport):
     """
@@ -1582,13 +1587,13 @@ class PronunciationRecordingsReport(BatchReport):
     def __init__(self, job):
         BatchReport.__init__(self, job, self.NAME)
         self.logger.info("Starting %s job", self.NAME)
-        self.job      = job
-        self.begin    = job.getParm('start')
-        self.end      = job.getParm('end')
+        self.job = job
+        self.begin = job.getParm('start')
+        self.end = job.getParm('end')
         self.language = job.getParm('language')
-        self.verbose  = job.getParm('verbose') == "True"
-        self.limit    = int(self.job.getParm("limit") or 0)
-        self.format   = "excel"
+        self.verbose = job.getParm('verbose') == "True"
+        self.limit = int(self.job.getParm("limit") or 0)
+        self.format = "excel"
 
     def add_sheets(self):
         """
@@ -1640,7 +1645,7 @@ class PronunciationRecordingsReport(BatchReport):
         assert(len(widths) == len(headers))
         for i, width in enumerate(widths, start=1):
             self.excel.set_width(i, width)
-        lang = { "en": "English", "es": "Spanish" }.get(self.language, "ALL")
+        lang = {"en": "English", "es": "Spanish"}.get(self.language, "ALL")
         title = f"Audio Pronunciation Recordings Tracking Report - {lang}"
         if self.throttle:
             title += " [TRUNCATED FOR TESTING]"
@@ -1655,7 +1660,6 @@ class PronunciationRecordingsReport(BatchReport):
         row = 4
         for doc in sorted(docs):
             row = doc.add_row(self.excel, row)
-
 
     class MediaDoc:
         """
@@ -1706,7 +1710,7 @@ class PronunciationRecordingsReport(BatchReport):
             self.first_pub, xml = query.execute(cursor).fetchone()
             try:
                 root = etree.fromstring(xml)
-            except:
+            except Exception:
                 root = etree.fromstring(xml.encode("utf-8"))
             for node in root.findall('DateLastModified'):
                 self.last_mod = node.text
@@ -1771,13 +1775,13 @@ class PronunciationRecordingsReport(BatchReport):
         Perform a test run from the command line.
         """
 
-        from cdrbatch import CdrBatch
         parser = cls.arg_parser(".xlsx")
         parser.add_argument("--start", default="2015-01-01")
         parser.add_argument("--end", default=str(datetime.date.today()))
         parser.add_argument("--language", choices=cls.LANGS, default="ALL")
         parser.add_argument("--limit", type=int, default=10)
         cls.run_test(parser, format="excel")
+
 
 class Control:
     """
@@ -1816,7 +1820,6 @@ class Control:
             try:
                 cls.get_job_class(job.getJobName())(job).run()
             except Exception as e:
-                message = "Failure executing job %s: %s" % (job_id, e)
                 logger.exception("failure executing job %s", job_id)
                 job.fail("Caught exception: %s" % e)
         else:
@@ -1894,6 +1897,7 @@ class Control:
             if hasattr(job_class, "test_harness"):
                 testable.append(job_class)
         return testable
+
 
 if __name__ == "__main__":
     """

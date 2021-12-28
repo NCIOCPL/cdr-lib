@@ -1,14 +1,13 @@
-#----------------------------------------------------------------------
-# Interface to the NCI Thesaurus (or EVS - Enterprise Vocabulary System)
-#
-# BZIssue::4656
-# BZIssue::5004
-# BZIssue::5073
-# JIRA::OCECDR-4153 - strip unwanted OtherName and Definition blocks
-# JIRA::OCECDR-4226 - complete rewrite to use new EVS API
-# JIRA::OCECDR-4338 - make module adaptable to volatile API
-# JIRA::OCECDR-5038 - rewrite for yet another EVS API (our sixth!)
-#----------------------------------------------------------------------
+"""Interface to the NCI Thesaurus (or EVS - Enterprise Vocabulary System)
+
+BZIssue::4656
+BZIssue::5004
+BZIssue::5073
+JIRA::OCECDR-4153 - strip unwanted OtherName and Definition blocks
+JIRA::OCECDR-4226 - complete rewrite to use new EVS API
+JIRA::OCECDR-4338 - make module adaptable to volatile API
+JIRA::OCECDR-5038 - rewrite for yet another EVS API (our sixth!)
+"""
 
 import datetime
 import json
@@ -46,7 +45,6 @@ class Concept:
     NAME_PROPS = "CAS_Registry", "NSC_CODE", "IND_Code"
     DEFINITION_TYPES = "DEFINITION", "ALT_DEFINITION"
     PUNCTUATION = re.compile(f"[{re.escape(string.punctuation)}]")
-
 
     def __init__(self, **opts):
         """
@@ -300,7 +298,6 @@ class Concept:
             cls.logger.error(problem)
         raise Exception(problem)
 
-
     class OtherName:
         """
         One of the names by which this concept is known.
@@ -318,20 +315,20 @@ class Concept:
 
         SKIP = {"PreferredName", "ReviewStatus", "Comment", "OtherName"}
         TERM_TYPE_MAP = {
-            "PT"               : "Synonym", # "Preferred term",
-            "AB"               : "Abbreviation",
-            "AQ"               : "Obsolete name",
-            "BR"               : "US brand name",
-            "CN"               : "Code name",
-            "FB"               : "Foreign brand name",
-            "SN"               : "Chemical structure name",
-            "SY"               : "Synonym",
-            "INDCode"          : "IND code",
-            "NscCode"          : "NSC code",
+            "PT": "Synonym",
+            "AB": "Abbreviation",
+            "AQ": "Obsolete name",
+            "BR": "US brand name",
+            "CN": "Code name",
+            "FB": "Foreign brand name",
+            "SN": "Chemical structure name",
+            "SY": "Synonym",
+            "INDCode": "IND code",
+            "NscCode": "NSC code",
             "CAS_Registry_Name": "CAS Registry name",
-            "IND_Code"         : "IND code",
-            "NSC_Code"         : "NSC code",
-            "CAS_Registry"     : "CAS Registry name"
+            "IND_Code": "IND code",
+            "NSC_Code": "NSC code",
+            "CAS_Registry": "CAS Registry name",
         }
 
         def __init__(self, name, group, source=None):
@@ -371,7 +368,6 @@ class Concept:
                 child.text = concept_code
             etree.SubElement(node, "ReviewStatus").text = status
             return node
-
 
     class Definition:
         """
@@ -426,7 +422,6 @@ class Concept:
             text = re.sub(r"^NCI\|", "", self.text.strip())
             return re.sub(r"\s*\(NCI[^)]*\)", "", text)
 
-
     class URL:
         """
         Address for retrieving the JSON for an EVS concept.
@@ -476,7 +471,6 @@ class Concept:
             """
 
             return self.TEMPLATE.format(self=self)
-
 
     @classmethod
     def test(cls):
@@ -628,7 +622,7 @@ class Concept:
         """
 
         assert args.cdr_id, "cdr-id required for print-changes action"
-        term_doc = TermDoc(cls(code=args.concept_id), cdr_id = args.cdr_id)
+        term_doc = TermDoc(cls(code=args.concept_id), cdr_id=args.cdr_id)
         for change in term_doc.changes:
             if "definition" not in change.lower():
                 print(change)
@@ -655,7 +649,6 @@ class Concept:
         for name in glob.glob("%s/*.json" % args.directory):
             try:
                 concept = cls(path=name)
-                counts = {}
                 for p in concept.properties:
                     properties[p.name] = properties.get(p.name, 0) + 1
                 print(name, concept.code, concept.preferred_name)
@@ -689,7 +682,7 @@ class TermDoc:
     """
 
     CDRNS = "cips.nci.nih.gov/cdr"
-    NSMAP = { "cdr" : CDRNS }
+    NSMAP = {"cdr": CDRNS}
     OTHER_NAMES = "synonyms", "ind_codes", "nsc_codes", "cas_codes"
 
     def __init__(self, concept, session="guest", cdr_id=None, **opts):
@@ -741,8 +734,8 @@ class TermDoc:
                     Concept.logger.info("repDoc() result: %r", result)
                     cdr_id, errors = result
                     if not cdr_id:
-                        Concept.fail("failure versioning %s: %s",
-                                     self.cdr_id, errors)
+                        message = f"failure versioning {self.cdr_id}: {errors}"
+                        Concept.fail(message)
                 response = self.changes or None
             else:
                 result = cdr.addDoc(self.session, **opts)
@@ -774,7 +767,7 @@ class TermDoc:
             self.cdr_id, self.doc_id, frag_id = cdr.exNormalize(cdr_id)
             if cdr.lastVersions(self.session, self.cdr_id)[1] != -1:
                 self.published = True
-        except:
+        except Exception:
             Concept.fail("invalid CDR ID %r" % cdr_id)
         self.concept.logger.info("updating %s", self.cdr_id)
         try:
@@ -863,7 +856,7 @@ class TermDoc:
             for n in getattr(self.concept, attr_name):
                 if n.include:
                     key = Concept.normalize(n.name)
-                    if key not in nodes: # vals.used:
+                    if key not in nodes:
                         status = "Reviewed"
                         original = vals.original.get(key)
                         if original is None:
@@ -991,7 +984,6 @@ class TermDoc:
         row = query.execute().fetchone()
         return row and row[0] or None
 
-
     class Values:
         """
         Set of OtherName or Definition element in a CDR Term document.
@@ -1056,7 +1048,6 @@ class TermDoc:
                 if count:
                     what = "definition" + (count > 1 and "s" or "")
                     changes.add("%s %d %s" % (verb, count, what))
-
 
         class Value:
             """

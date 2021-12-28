@@ -9,6 +9,7 @@ import re
 import sys
 import threading
 import time
+import unicodedata
 from urllib.parse import quote as url_quote
 from urllib.parse import unquote as url_unquote
 import dateutil.parser
@@ -36,7 +37,7 @@ class Doc(object):
       first_pub_knowable - False for really old legacy documents
       frag_ids - set of unique IDs for candidate link target in this doc
       hard_error_count - number of real errors (not warnings or info messages)
-      highest_fragment_id - highest cdr:id attribute value in the form _\d+
+      highest_fragment_id - highest cdr:id attribute value in the form _\\d+
       id - primary key in the `all_docs` database table for the document
       last_publishable_version - integer for most recent pub version
       last_saved - when the document was most recently saved
@@ -114,7 +115,6 @@ class Doc(object):
     # Error messages for exceptions raised when a version can't be found
     NOT_VERSIONED = "document not versioned"
     NO_PUBLISHABLE_VERSIONS = "no publishable version found"
-    #memory_log = open("c:/tmp/memory.log", "a")
 
     def __init__(self, session, **opts):
         """
@@ -226,6 +226,7 @@ class Doc(object):
         query = Query("version_blob_usage u", "MIN(v.dt) AS dt")
         query.join("doc_version v", "v.id = u.doc_id", "v.num = u.doc_version")
         query.where(query.Condition("doc_id", self.id))
+        query.where(query.Condition("u.blob_id", blob_id))
         rows = query.execute(self.cursor).fetchall()
         if rows:
             return rows[0].dt
@@ -272,6 +273,7 @@ class Doc(object):
             # the audit trail on June 22, 2002.
             if self.id > 374:
                 raise Exception("No audit trail for document creation")
+
             class Action:
                 def __init__(self, when, user):
                     self.when = when
@@ -314,7 +316,7 @@ class Doc(object):
             try:
                 result = self.filter("name:Fast Denormalization Filter")
                 self._denormalized_xml = str(result.result_tree)
-            except:
+            except Exception:
                 self._denormalized_xml = self.xml
         return self._denormalized_xml
 
@@ -540,7 +542,7 @@ class Doc(object):
         if not hasattr(self, "_id"):
             try:
                 self._id = self.extract_id(self.__opts.get("id"))
-            except:
+            except Exception:
                 self._id = None
         return self._id
 
@@ -725,7 +727,6 @@ class Doc(object):
 
         return self.__opts.get("level") or self.DEFAULT_REVISION_LEVEL
 
-
     @property
     def root(self):
         """
@@ -735,7 +736,7 @@ class Doc(object):
         if not hasattr(self, "_root") or self._root is None:
             try:
                 self._root = etree.fromstring(self.xml.encode("utf-8"))
-            except:
+            except Exception:
                 self.session.logger.exception("can't parse %r", self.xml)
                 self._root = None
         return self._root
@@ -820,7 +821,7 @@ class Doc(object):
             else:
                 try:
                     version = version.lower()
-                except:
+                except Exception:
                     raise Exception(f"invalid version {version!r}")
 
                 # Current is an alias for non-versioned copy.
@@ -1054,7 +1055,7 @@ class Doc(object):
         self.__check_in(audit=True, **opts)
         try:
             self.session.conn.commit()
-        except:
+        except Exception:
             # Might not be anything to commit.
             pass
 
@@ -1148,13 +1149,13 @@ class Doc(object):
                 self.session.conn.commit()
             else:
                 raise Exception(f"{self.cdr_id} has incoming links")
-        except:
+        except Exception:
             try:
                 self.session.logger.exception("Deletion failed")
                 self.cursor.execute("SELECT @@TRANCOUNT AS tc")
                 if self.cursor.fetchall()[0].tc:
                     self.cursor.execute("ROLLBACK TRANSACTION")
-            except:
+            except Exception:
                 pass
             raise
 
@@ -1226,7 +1227,7 @@ class Doc(object):
             if opts.get("output", True):
                 return self.FilterResult(doc, messages=messages)
             return messages
-        except:
+        except Exception:
             self.session.logger.exception("filter() failure")
             raise
         finally:
@@ -1285,9 +1286,11 @@ class Doc(object):
 
         if not self.session.can_do("GET TREE"):
             raise Exception("GET TREE action not authorized for this user")
+
         class Tree:
             def __init__(self):
                 self.relationships, self.names = list(), dict()
+
             class Relationship:
                 def __init__(self, parent, child):
                     self.parent, self.child = parent, child
@@ -1412,8 +1415,7 @@ class Doc(object):
                 child = etree.SubElement(doc_control, tag)
                 try:
                     child.text = str(value)
-                except:
-                    #print(repr((tag, value)))
+                except Exception:
                     raise
                 if not filtering:
                     child.set("readonly", "yes")
@@ -1427,7 +1429,7 @@ class Doc(object):
                 wrapper = etree.SubElement(doc_control, "Create")
                 etree.SubElement(wrapper, "Date").text = created
                 etree.SubElement(wrapper, "User").text = creator
-                if modification: # set above
+                if modification:  # set above
                     wrapper = etree.SubElement(doc_control, "Modify")
                     etree.SubElement(wrapper, "Date").text = modified
                     etree.SubElement(wrapper, "User").text = modifier
@@ -1568,13 +1570,13 @@ class Doc(object):
                 doc = Doc(self.session, id=doc.id, version=last_pub_ver)
                 doc.update_query_terms(tables=["query_term_pub"])
             self.session.conn.commit()
-        except Exception as e:
+        except Exception:
             try:
                 self.session.logger.exception("Reindex failed")
                 self.cursor.execute("SELECT @@TRANCOUNT AS tc")
                 if self.cursor.fetchall()[0].tc:
                     self.cursor.execute("ROLLBACK TRANSACTION")
-            except:
+            except Exception:
                 pass
             raise
 
@@ -1617,13 +1619,13 @@ class Doc(object):
             self.session.conn.commit()
             self.cursor.close()
             self._cursor = self.session.conn.commit()
-        except:
+        except Exception:
             try:
                 self.session.logger.exception("Doc.save() failure")
                 self.cursor.execute("SELECT @@TRANCOUNT AS tc")
                 if self.cursor.fetchall()[0].tc:
                     self.cursor.execute("ROLLBACK TRANSACTION")
-            except:
+            except Exception:
                 pass
             raise
 
@@ -1643,7 +1645,7 @@ class Doc(object):
         """
 
         resolved = self.resolved
-        if  resolved is not None:
+        if resolved is not None:
             self.__store_links(self.__collect_links(resolved))
             self.session.conn.commit()
 
@@ -1682,13 +1684,13 @@ class Doc(object):
                 self.session.conn.commit()
                 self._active_status = status
                 self.session.logger.debug("New status committed")
-            except:
+            except Exception:
                 try:
                     self.session.logger.exception("Doc.set_status() failure")
                     self.cursor.execute("SELECT @@TRANCOUNT AS tc")
                     if self.cursor.fetchall()[0].tc:
                         self.cursor.execute("ROLLBACK TRANSACTION")
-                except:
+                except Exception:
                     pass
                 raise
             if need_to_reindex:
@@ -1811,19 +1813,19 @@ class Doc(object):
         try:
             self.__validate(**opts)
 
-            # Find out if there are changes to the database; if so, commit them.
+            # If there are changes to the database; commit them.
             self.cursor.execute("SELECT @@TRANCOUNT AS tc")
             if self.cursor.fetchall()[0].tc:
                 self.session.conn.commit()
             elapsed = (datetime.datetime.now() - start).total_seconds()
             self.session.logger.info("validated doc in %f seconds", elapsed)
-        except:
+        except Exception:
             try:
                 self.session.logger.exception("Validation failed")
                 self.cursor.execute("SELECT @@TRANCOUNT AS tc")
                 if self.cursor.fetchall()[0].tc:
                     self.cursor.execute("ROLLBACK TRANSACTION")
-            except:
+            except Exception:
                 pass
             raise
 
@@ -1855,7 +1857,7 @@ class Doc(object):
         transform = etree.XSLT(etree.fromstring(filter_xml, parser))
         try:
             doc = transform(doc, **parms)
-        except:
+        except Exception:
             for entry in transform.error_log:
                 message = "message from line %s, col %s: %s"
                 args = entry.line, entry.column, entry.message
@@ -2163,7 +2165,7 @@ class Doc(object):
 
         # Detect contradictory instructions about link table processing
         val_types = opts.get("val_types") or []
-        if opts.get("set_links") == False and "links" in val_types:
+        if opts.get("set_links") is False and "links" in val_types:
             raise Exception("Cannot validate links without setting them")
 
         # Make sure full validation performed if creating a publishable verion.
@@ -2345,7 +2347,7 @@ class Doc(object):
         try:
             opts = dict(doc=self.resolved)
             return str(self.filter(rows[0].title_filter, **opts).result_tree)
-        except:
+        except Exception:
             self.session.logger.exception("__create_title() failure")
             return None
 
@@ -2709,7 +2711,7 @@ class Doc(object):
         else:
             try:
                 when = dateutil.parser.parse(before)
-            except:
+            except Exception:
                 message = f"unrecognized date/time format: {before!r}"
                 raise Exception(message)
 
@@ -2856,10 +2858,10 @@ class Doc(object):
                         )
                         self.add_error(message, **error_opts)
                         opts["publishable"] = False
-            if opts.get("set_links") != False and "links" not in val_types:
+            if opts.get("set_links") is not False and "links" not in val_types:
                 if self.id:
                     resolved = self.resolved
-                    if  resolved is not None:
+                    if resolved is not None:
                         self.__store_links(self.__collect_links(resolved))
                         self.session.logger.debug("__store_links() finished")
 
@@ -2907,7 +2909,6 @@ class Doc(object):
 
         self.session.logger.debug("__save() finished")
 
-
     def __set_status(self, status, **opts):
         """
         Do the database writes for setting the document status
@@ -2921,7 +2922,6 @@ class Doc(object):
         """
 
         action = "Block" if status == self.INACTIVE else "Unblock"
-        comment = opts.get("comment", f"{action}ing document")
         args = "set_status()", "MODIFY DOCUMENT"
         when = self.__audit_action(*args, comment=opts.get("comment"))
         self.__audit_added_action(f"{action.upper()} DOCUMENT", when)
@@ -2998,7 +2998,7 @@ class Doc(object):
             insert = "INSERT INTO ready_for_review (doc_id) VALUES (?)"
             try:
                 self.cursor.execute(insert, (self.id,))
-            except:
+            except Exception:
                 pass
 
     def __store_blob(self):
@@ -3521,7 +3521,7 @@ class Doc(object):
         try:
             cursor.execute(delete, (label_id,))
             session.conn.commit()
-        except:
+        except Exception:
             cursor.execute("ROLLBACK TRANSACTION")
             session.logger.exception("delete_label() failure")
             raise Exception(f"Failure deleting label {label!r}")
@@ -3581,7 +3581,7 @@ class Doc(object):
         query.where(query.Condition("id", schema_id))
         try:
             return query.execute(cursor).fetchall()[0].xml
-        except:
+        except Exception:
             raise Exception(f"schema {name!r} not found")
 
     @staticmethod
@@ -3633,6 +3633,7 @@ class Doc(object):
         """
 
         session.log("Doc.delete_failed_mailers()")
+
         class CleanupReport:
             def __init__(self): self.deleted, self.errors = [], []
         reason = "Deleting tracking document for failed mailer job"
@@ -3678,7 +3679,7 @@ class Doc(object):
             filter_xml = doc.get_filter(filter_id).xml
             parser = cls.Parser()
             transform = etree.XSLT(etree.fromstring(filter_xml, parser))
-        except:
+        except Exception:
             session.logger.exception("etree.XSLT() failure")
             raise
         finally:
@@ -3738,11 +3739,9 @@ class Doc(object):
             ns = cls.NS
         return f"{{{ns}}}{local}"
 
-
     # ------------------------------------------------------------------
     # NESTED CLASSES START HERE.
     # ------------------------------------------------------------------
-
 
     class Action:
         """
@@ -3763,7 +3762,6 @@ class Doc(object):
 
             self.when = row.dt.replace(microsecond=0)
             self.user = Doc.User(row.id, row.name, row.fullname)
-
 
     class Assertion:
         """
@@ -3802,7 +3800,6 @@ class Doc(object):
 
         def protect(self, match):
             return re.sub(r"\s+", "+", match.group(1).replace("+", "@@PLUS@@"))
-
 
     class Error:
         """
@@ -3853,7 +3850,6 @@ class Doc(object):
             args = self.location or "", self.type, self.level, self.message
             return "{} [{} {}] {}".format(*args).strip()
 
-
     class FilterResult:
         """
         Results of passing an XML document through one or more XSL/T filters
@@ -3871,7 +3867,6 @@ class Doc(object):
             self.result_tree = result_tree
             self.error_log = opts.get("error_log")
             self.messages = opts.get("messages")
-
 
     class LineMap:
         """
@@ -3913,7 +3908,6 @@ class Doc(object):
 
             line = self.lines.get(error.line)
             return line and line.get_error_location(error) or None
-
 
         class Line:
             """
@@ -3978,7 +3972,6 @@ class Doc(object):
                 location = self.tags.get(tag)
                 return location or self.first
 
-
     class Lock:
         """
         Who has the document checked out, beginning when
@@ -4008,7 +4001,6 @@ class Doc(object):
             args = self.locker.name, self.locker.fullname, self.locked
             return "Document checked out to {} ({}) {}".format(*args)
 
-
     class Parser(etree.XMLParser):
         """
         Create a custom parser for filtering which can resolve our URIs
@@ -4023,7 +4015,6 @@ class Doc(object):
             self.resolvers.add(Resolver("cdrutil"))
             self.resolvers.add(Resolver("cdr"))
             self.resolvers.add(Resolver("cdrx"))
-
 
     class Rule:
         """
@@ -4061,7 +4052,6 @@ class Doc(object):
             for assertion in self.assertions:
                 template.append(assertion.make_test())
             return template
-
 
     class RuleSet:
         """
@@ -4116,7 +4106,6 @@ class Doc(object):
 
             return etree.fromstring(Doc.VALIDATION_TEMPLATE)
 
-
     class SchemaResolver(etree.Resolver):
         """
         Glue for fetching nested schema documents
@@ -4150,7 +4139,6 @@ class Doc(object):
 
             xml = Doc.get_schema_xml(url, self.__cdr_cursor)
             return self.resolve_string(xml, context)
-
 
     class User:
         """
@@ -4325,7 +4313,7 @@ class Resolver(etree.Resolver):
                     version, spec = None, spec
                 try:
                     doc = Doc(self.session, id=doc_id, version=version)
-                except:
+                except Exception:
                     message = f"Doc({parms}) failure"
                     self.doc.session.logger.exception(message)
                     if scheme == "cdrx":
@@ -4335,7 +4323,7 @@ class Resolver(etree.Resolver):
             spec = None
             try:
                 doc = Doc(self.session, id=parms)
-            except:
+            except Exception:
                 message = f"Doc({parms}) failure"
                 self.doc.session.logger.exception(message)
                 if scheme == "cdrx":
@@ -4360,7 +4348,7 @@ class Resolver(etree.Resolver):
         # Wrap up the document XML and return it.
         try:
             return self.resolve_string(doc.xml, context)
-        except:
+        except Exception:
             msg = "resolve_string() [context=%r, scheme=%r]"
             self.doc.session.logger.exception(msg, context, scheme)
             if scheme == "cdrx":
@@ -4588,7 +4576,7 @@ class Resolver(etree.Resolver):
                 else:
                     try:
                         col.text = str(v)
-                    except:
+                    except Exception:
                         col.text = v.decode("utf-8")
             r += 1
         return self.__package_result(result, context)
@@ -4735,11 +4723,13 @@ class Resolver(etree.Resolver):
             arg = "".join(arg)
         try:
             return url_quote(arg.replace("+", "@@PLUS@@"))
-        except:
+        except Exception:
             raise
+
 
 # Register our custom extension function for XSL/T filters to use.
 etree.FunctionNamespace(Doc.NS).update({"escape-uri": Resolver.escape_uri})
+
 
 class Term:
     """
@@ -4774,7 +4764,7 @@ class Term:
                 if doc.get_text(node) in ("Header term", "Obsolete term"):
                     self.include = False
                     break
-            for node in root.findall("TermRelationship/ParentTerm/TermId"):
+            for node in doc.root.findall("TermRelationship/ParentTerm/TermId"):
                 self.get_parent(node, depth)
             if self.name and not depth:
                 self.serialize()
@@ -4853,9 +4843,9 @@ class Term:
 
         try:
             doc_id = Doc.extract_id(node.get(Link.CDR_REF))
-        except:
+        except Exception:
             error = f"No cdr:ref for parent of Term {self.cdr_id}"
-            raise Exception(failure)
+            raise Exception(error)
         if doc_id not in self.parents:
             parent = Term.get_term(self.session, doc_id, depth + 1)
             if parent:
@@ -4920,7 +4910,7 @@ class Filter:
         """
 
         self.doc_id = doc_id
-        self.xml = xml #.encode("utf-8") if isinstance(xml, str) else xml
+        self.xml = xml
         self.now = time.time()
 
 
@@ -5380,7 +5370,7 @@ class Doctype:
 
         if not self.schema:
             return set()
-        schemas = set() # prevent infinite recursion
+        schemas = set()  # Prevent infinite recursion.
         elements = dict()
         types = dict()
         self.__parse_schema(self.schema, elements, types, schemas)
@@ -5424,7 +5414,7 @@ class Doctype:
             }
             if fields["comment"]:
                 fields["comment"] = fields["comment"].strip()
-        except:
+        except Exception:
             self.session.logger.exception("can't set fields")
             raise
         self.session.logger.debug("fields=%s", fields)
@@ -5691,8 +5681,8 @@ class DTD:
     """
 
     # Unicode categories used for recognizing NMTOKEN strings.
-    NAME_START_CATEGORIES = { "Ll", "Lu", "Lo", "Lt", "Nl" }
-    OTHER_NAME_CATEGORIES = { "Mc", "Me", "Mn", "Lm", "Nd" }
+    NAME_START_CATEGORIES = {"Ll", "Lu", "Lo", "Lt", "Nl"}
+    OTHER_NAME_CATEGORIES = {"Mc", "Me", "Mn", "Lm", "Nd"}
     NAME_CHAR_CATEGORIES = NAME_START_CATEGORIES | OTHER_NAME_CATEGORIES
 
     # Names of element types
@@ -5769,7 +5759,6 @@ class DTD:
         assert t not in self.types, f"duplicate type {t.name}"
         self.types[t.name] = t
 
-
     class CountedNode:
         """
         Base class for `Element` and `ChoiceOrSequence` classes
@@ -5800,7 +5789,6 @@ class DTD:
                 self.count_char = self.max_occurs == 1 and "?" or "*"
             else:
                 self.count_char = self.max_occurs > 1 and "+" or ""
-
 
     class Element(CountedNode):
         """
@@ -5922,7 +5910,6 @@ class DTD:
             if serialize:
                 return f"{self.name}{self.count_char}"
 
-
     class Type:
         """
         Base class for element and attribute types
@@ -6021,7 +6008,6 @@ class DTD:
                     return name
             return "CDATA"
 
-
     class SimpleType(Type):
         """
         Schema type for attributes or plain elements
@@ -6070,7 +6056,6 @@ class DTD:
             base = self.dtd.types.get(self.base)
             assert base, f"{self.name}: base type {self.base} not found"
             return base.dtd_type()
-
 
     class ComplexType(Type):
         """
@@ -6202,7 +6187,6 @@ class DTD:
                 attributes = " ".join(attributes)
                 return f"<!ATTLIST {element.name} {attributes}>"
 
-
     class ChoiceOrSequence(CountedNode):
         """
         Base class for `Choice` and `Sequence` classes
@@ -6210,6 +6194,9 @@ class DTD:
         Attributes:
           nodes - sequence of content allowed for elements of this type
         """
+
+        # Override in derived classes.
+        separator = ""
 
         def __init__(self, dtd, node):
             """
@@ -6259,7 +6246,6 @@ class DTD:
                     string = f"({string})"
                 return f"{string}{self.count_char}"
 
-
     class Choice(ChoiceOrSequence):
         """
         Set of elements of which one is allowed or required
@@ -6280,7 +6266,6 @@ class DTD:
             DTD.ChoiceOrSequence.__init__(self, dtd, node)
             dtd.session.logger.debug("Choice with %d nodes", len(self.nodes))
 
-
     class Sequence(ChoiceOrSequence):
         """
         Ordered sequence of allowed/required elements
@@ -6300,7 +6285,6 @@ class DTD:
 
             DTD.ChoiceOrSequence.__init__(self, dtd, node)
             dtd.session.logger.debug("Sequence with %d nodes", len(self.nodes))
-
 
     class Group:
         """
@@ -6365,7 +6349,6 @@ class DTD:
                 return self.dtd.groups[self.ref].get_node(elements, serialize)
             else:
                 return self.node.get_node(elements, serialize)
-
 
     class Attribute:
         """
@@ -6827,13 +6810,13 @@ class LinkType:
         try:
             self.__save()
             self.session.conn.commit()
-        except:
+        except Exception:
             try:
                 self.session.logger.exception("LinkType.save() failure")
                 self.cursor.execute("SELECT @@TRANCOUNT AS tc")
                 if self.cursor.fetchall()[0].tc:
                     self.cursor.execute("ROLLBACK TRANSACTION")
-            except:
+            except Exception:
                 pass
             raise
 
@@ -6856,13 +6839,13 @@ class LinkType:
         try:
             self.__delete()
             self.session.conn.commit()
-        except:
+        except Exception:
             try:
                 self.session.logger.exception("LinkType.delete() failure")
                 self.cursor.execute("SELECT @@TRANCOUNT AS tc")
                 if self.cursor.fetchall()[0].tc:
                     self.cursor.execute("ROLLBACK TRANSACTION")
-            except:
+            except Exception:
                 pass
             raise
 
@@ -6946,7 +6929,7 @@ class LinkType:
             insert = f"INSERT INTO link_target ({names}) VALUES (?, ?)"
             try:
                 self.cursor.execute(insert, values)
-            except:
+            except Exception:
                 self.session.logger.exception("targets=%s", self.targets)
                 raise
 
@@ -6990,7 +6973,7 @@ class LinkType:
         """
 
         if id not in cls.TYPES:
-            cls.TYPES[id] = cls(session, id)
+            cls.TYPES[id] = cls(session, id=id)
         return cls.TYPES[id]
 
     @classmethod
@@ -7041,6 +7024,7 @@ class LinkType:
         cursor = session.conn.cursor()
         query = Query("link_prop_type", "name", "comment")
         rows = query.execute(cursor).fetchall()
+
         class PropertyType:
             def __init__(self, row):
                 self.name = row.name
@@ -7279,12 +7263,10 @@ class LinkType:
 
             return self.assertions.conditions
 
-
         class Testable:
             """
             Base class for assertions which can be tested
             """
-
 
         class Assertions(Testable):
             """
@@ -7430,7 +7412,6 @@ class LinkType:
 
                 # Return the results, but don't cache them.
                 return ands
-
 
         class Assertion(Testable):
             """
@@ -7922,7 +7903,7 @@ class FilterSet:
             raise Exception("Can't delete set which is itself a set member")
         try:
             return self.__delete()
-        except:
+        except Exception:
             self.session.logger.exception("Validation failed")
             self.cursor.execute("SELECT @@TRANCOUNT AS tc")
             if self.cursor.fetchall()[0].tc:
@@ -7964,7 +7945,7 @@ class FilterSet:
             raise Exception(f"User not authorized to {what} filter sets.")
         try:
             return self.__save()
-        except:
+        except Exception:
             self.session.logger.exception("Validation failed")
             self.cursor.execute("SELECT @@TRANCOUNT AS tc")
             if self.cursor.fetchall()[0].tc:
@@ -7992,7 +7973,7 @@ class FilterSet:
             notes=self.notes
         )
         names = sorted(fields)
-        values = [] #fields[name] for name in names]
+        values = []  # fields[name] for name in names]
         # BUG IN ADODBAPI WHEN TRYING TO INSERT NULL INTO NTEXT WITH NONE
 
         # Update the existing row if this is not a new filter set.
@@ -8111,7 +8092,7 @@ class GlossaryTermName:
     """
 
     # Regular expressions uses to normalize the phrases for matching.
-    UNWANTED = re.compile("""['".,?!:;()[\]{}<>\u201C\u201D\u00A1\u00BF]+""")
+    UNWANTED = re.compile("""['".,?!:;()[\\]{}<>\u201C\u201D\u00A1\u00BF]+""")
     TOKEN_SEP = re.compile(r"[\n\r\t -]+")
 
     def __init__(self, id, name):
