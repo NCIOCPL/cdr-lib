@@ -6513,7 +6513,6 @@ class LinkType:
 
     # Caching of the link types.
     TYPES = dict()
-    TYPE_IDS = dict()
     LOCK = threading.Lock()
 
     # Codes for limitations on the link target's version.
