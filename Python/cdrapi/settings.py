@@ -23,7 +23,8 @@ class Tier:
 
     Class values:
       Pattern strings for the paths to files where the values are stored.
-      LOG_FORMAT - pattern for entries in our log files
+      LOG_FORMAT - default pattern for entries in our log files
+      SESSION_LOG_FORMAT - custom format for session log files
 
     Attribute:
       name - string containing the name of the tier represented by the values
@@ -54,6 +55,7 @@ class Tier:
 
     # Custom logging format.
     LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
+    SESSION_LOG_FORMAT = "%(asctime)s [%(levelname)s-%(thread)04d] %(message)s"
 
     def __init__(self, tier=None):
         """
@@ -239,10 +241,14 @@ class Tier:
         logger.propagate = True if opts.get("propagate") else False
         if not logger.handlers or opts.get("multiplex"):
             if name == "session":
-                formatter = self.SessionLogFormatter()
+                fmt = self.SESSION_LOG_FORMAT
+                timefmt = "%H:%M:%S"
             else:
-                format = opts.get("format") or self.LOG_FORMAT
-                formatter = self.Formatter(format)
+                fmt = opts.get("format") or self.LOG_FORMAT
+                timefmt = "%Y-%m-%d %H:%M:%S"
+            formatter = logging.Formatter(fmt=fmt)
+            formatter.default_time_format = timefmt
+            formatter.default_msec_format = "%s.%03d"
             if "path" not in opts or opts.get("path"):
                 path = opts.get("path")
                 if not path:
@@ -445,35 +451,6 @@ class Tier:
             if os.path.exists(f"{letter}:/etc/{cls.APPHOSTS}"):
                 return letter
         raise Exception("CDR host file not found")
-
-    class Formatter(logging.Formatter):
-        """
-        Make our own logging formatter to get the time stamps right.
-        """
-
-        DATEFORMAT = "%Y-%m-%d %H:%M:%S.%f"
-
-        converter = datetime.datetime.fromtimestamp
-
-        def formatTime(self, record, datefmt=None):
-            ct = self.converter(record.created)
-            return ct.strftime(datefmt or self.DATEFORMAT)
-
-    class SessionLogFormatter(logging.Formatter):
-        """
-        The session log rolls over daily, so we don't need the date.
-        """
-
-        DATEFORMAT = "%H:%M:%S.%f"
-        FORMAT = "%(asctime)s [%(levelname)s-%(thread)04d] %(message)s"
-        converter = datetime.datetime.fromtimestamp
-
-        def __init__(self):
-            logging.Formatter.__init__(self, self.FORMAT)
-
-        def formatTime(self, record, datefmt=None):
-            ct = self.converter(record.created)
-            return ct.strftime(datefmt or self.DATEFORMAT)[:-3]
 
     class SessionDBLogHandler(logging.Handler):
         """

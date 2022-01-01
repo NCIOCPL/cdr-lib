@@ -4138,20 +4138,6 @@ class Logging:
         error=logging.ERROR
     )
 
-    class Formatter(logging.Formatter):
-        """Make our own logging formatter to get the time stamps right."""
-
-        converter = datetime.datetime.fromtimestamp
-
-        def formatTime(self, record, datefmt=None):
-            ct = self.converter(record.created)
-            if datefmt:
-                s = ct.strftime(datefmt)
-            else:
-                t = ct.strftime("%Y-%m-%d %H:%M:%S")
-                s = "%s.%03d" % (t, record.msecs)
-            return s
-
     @classmethod
     def get_logger(cls, name, **opts):
         """
@@ -4173,7 +4159,9 @@ class Logging:
         if not logger.handlers or opts.get("multiplex"):
             path = opts.get("path", "%s/%s.log" % (DEFAULT_LOGDIR, name))
             handler = logging.FileHandler(path, encoding="utf-8")
-            formatter = cls.Formatter(opts.get("format", cls.FORMAT))
+            formatter = logging.Formatter(opts.get("format", cls.FORMAT))
+            formatter.default_time_format = "%Y-%m-%d %H:%M:%S"
+            formatter.default_msec_format = "%s.%03d"
             handler.setFormatter(formatter)
             logger.addHandler(handler)
             if opts.get("console"):
