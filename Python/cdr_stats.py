@@ -96,6 +96,7 @@ class Section:
     NEW_ONLY = False
     HEADERS = []
     cursor = db.connect(user="CdrGuest").cursor()
+    control = docs = TITLE = None  # Set by derived classes
 
     def show_counts(self):
         """

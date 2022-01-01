@@ -6,7 +6,6 @@ from json import dumps, load, loads
 from re import compile
 from string import ascii_lowercase
 from sys import stderr
-from unicodedata import normalize, combining
 from elasticsearch5 import Elasticsearch
 from lxml import etree
 from cdr import Logging, getControlValue
@@ -14,6 +13,8 @@ from cdrapi import db
 from cdrapi.docs import Doc
 from cdrapi.settings import Tier
 from cdrapi.users import Session
+# pylint: disable=no-name-in-module
+from unicodedata import normalize, combining
 
 
 class DictionaryAPILoader:
@@ -64,6 +65,7 @@ class DictionaryAPILoader:
             # self.es.indices.flush(index=self.index)
 
             # Optimize the index.
+            # pylint: disable=unexpected-keyword-arg
             opts = dict(max_num_segments=1, index=self.index)
             self.es.indices.forcemerge(**opts)
             self.logger.info("New index optimized")
@@ -87,6 +89,7 @@ class DictionaryAPILoader:
         stamp = date.strftime("%Y%m%d")
         cutoff = f"{self.alias}-{stamp}"
         self.logger.info("Cleanup cutoff: %s", cutoff)
+        # pylint: disable=unexpected-keyword-arg
         indices = self.es.cat.indices(format="json")
         candidates = []
         for index in indices:
@@ -133,7 +136,8 @@ class DictionaryAPILoader:
         """Canonical name for the dictionary's index."""
 
         try:
-            return self.ALIAS
+            # Linting tool doesn't understand about derived class overrides.
+            return self.ALIAS  # pylint: disable=no-member
         except Exception:
             raise Exception("derived class must provide alias name")
 
@@ -334,7 +338,8 @@ class DictionaryAPILoader:
         """String for the type of dictionary ("drug" or "glossary")."""
 
         try:
-            return self.TYPE
+            # Linting tool doesn't understand about derived class overrides.
+            return self.TYPE  # pylint: disable=no-member
         except Exception:
             raise Exception("derived class must define type() method or TYPE")
 

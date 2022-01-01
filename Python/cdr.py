@@ -946,6 +946,9 @@ class dtinfo:
             them to appear in the block.  The same name can appear more
             than once if that is allowed in the schema.
         """
+
+        # The pylint tool doesn't understand how `setattr()` works.
+        # pylint: disable=no-member
         if not self.dtd:
             raise Exception("document type %s has no DTD" % self.type)
         parent = parent or self.name
@@ -957,9 +960,16 @@ class dtinfo:
                 if c and c != "CdrDocCtl"]
 
     def __repr__(self):
+        """Formatted representation of the document type's information.
+
+        The temporary value is needed only to work around a bug in pylint.
+        https://github.com/PyCQA/pylint/issues/5625
+        """
+
+        # pylint: disable=no-member
         if self.error:
             return self.error
-        return f"""\
+        temp = f"""\
 [CDR Document Type]
             Name: {self.type or ""}
           Format: {self.format or ""}
@@ -975,6 +985,7 @@ class dtinfo:
          Comment:
 {self.comment or ""}
 """
+        return temp
 
 
 def getDoctype(credentials, name, **opts):
@@ -1207,8 +1218,9 @@ def getVVList(credentials, doctype, element, **opts):
     doctype = getDoctype(credentials, doctype, **opts)
 
     # Find the value list for the specified element.
+    # The pylint tool doesn't understand how `setattr` works.
     values = None
-    for name, vals in doctype.vvLists:
+    for name, vals in doctype.vvLists:  # pylint: disable=no-member
         if name == element:
             values = vals
             break

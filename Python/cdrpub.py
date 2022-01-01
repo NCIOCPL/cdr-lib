@@ -862,6 +862,9 @@ class Control:
             filters[key] = Doc.load_single_filter(session, title)
 
         # Defer the Spanish content to a second pass.
+        # The pylint tool doesn't understand how list expansion works.
+        # Cf. bug https://github.com/PyCQA/pylint/issues/2820
+        # pylint: disable=no-value-for-parameter
         spanish = set()
         pushed = []
         table = opts.get("table", "pub_proc_cg")

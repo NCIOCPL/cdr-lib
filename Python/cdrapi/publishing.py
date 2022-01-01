@@ -12,6 +12,7 @@ from cdrapi.docs import Doc
 
 # TODO: Get Acquia to fix their broken certificates.
 from urllib3.exceptions import InsecureRequestWarning
+# pylint: disable-next=no-member
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
 
