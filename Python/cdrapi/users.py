@@ -183,7 +183,7 @@ class Session:
         """
 
         if not self.active:
-            self.logger.warning("session {} expired".format(self.name))
+            self.logger.warning("session %s expired", self.name)
             raise Exception("session expired")
         if doctype:
             self.log("Session.can_do({}, {})".format(action, doctype))
@@ -252,13 +252,13 @@ class Session:
         permissions = self.get_permissions()
         for action, doctype in pairs:
             if action == "*":
-                for a in permissions:
+                for key, val in permissions.items():
                     if doctype == "*":
-                        result[a] = set(permissions[a])
-                    elif doctype in permissions[a]:
-                        if a not in result:
-                            result[a] = set()
-                        result[a].add(doctype)
+                        result[key] = set(val)
+                    elif doctype in val:
+                        if key not in result:
+                            result[key] = set()
+                        result[key].add(doctype)
             elif action:
                 if doctype == "*":
                     result[action] = set(permissions[action])
@@ -1224,8 +1224,7 @@ class Session:
                 if not password:
                     if not self.id:
                         raise Exception("Missing password")
-                    else:
-                        password = None
+                    password = None
             else:
                 password = ""
             if isinstance(password, str):
