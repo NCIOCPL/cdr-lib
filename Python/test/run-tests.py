@@ -128,6 +128,7 @@ if FULL:
                 if name in actions:
                     self.delete_action(name, **opts)
             action = cdr.Action("dada", "Y", "gimte")
+            # pylint: disable-next=assignment-from-none; duh!
             result = cdr.putAction(self.session, None, action, **opts)
             self.assertIsNone(result)
 
@@ -137,6 +138,7 @@ if FULL:
             action.name = "gimte"
             action.comment = "dada"
             action.doctype_specific = "N"
+            # pylint: disable-next=assignment-from-none
             result = cdr.putAction(self.session, "dada", action, **opts)
             self.assertIsNone(result)
             action = cdr.getAction(self.session, "ADD DOCUMENT", **opts)
@@ -221,6 +223,7 @@ if FULL:
             self.logger.debug("actions are %s", group.actions)
             group.name = self.NEWNAME
             group.users = self.NEWUSERS
+            # pylint: disable-next=assignment-from-none
             result = cdr.putGroup(self.session, self.NAME, group, **opts)
             self.assertIsNone(result)
             group = cdr.getGroup(self.session, self.NEWNAME, **opts)
@@ -276,6 +279,7 @@ if FULL:
             info = cdr.dtinfo(**opts)
             response = cdr.addDoctype(self.session, info, tier=self.TIER)
             self.assertEqual(response.active, "Y")
+            # pylint: disable-next=no-member
             self.assertEqual(response.format, "xml")
             self.assertEqual(response.comment, comment)
 
@@ -298,11 +302,14 @@ if FULL:
         def test_20_get_doctype_(self):
             self.__fix_xxtest_schema()
             doctype = cdr.getDoctype(self.session, "xxtest", tier=self.TIER)
+            # pylint: disable-next=no-member
             self.assertIn("Generated from xxtest", doctype.dtd)
             doctype = cdr.getDoctype(self.session, "Summary", tier=self.TIER)
+            # pylint: disable=no-member
             self.assertIn("AvailableAsModule", doctype.dtd)
             self.assertEqual(doctype.format, "xml")
             self.assertEqual(doctype.versioning, "Y")
+            # pylint: enable=no-member
             self.assertEqual(doctype.active, "Y")
             opts = dict(tier=self.TIER)
             vv_list = cdr.getVVList(self.session, "dada", "gimte", **opts)
@@ -311,6 +318,7 @@ if FULL:
 
         def test_21_del_doctype_(self):
             try:
+                # pylint: disable-next=assignment-from-none
                 result = cdr.delDoctype(self.session, "dada", tier=self.TIER)
                 self.assertIsNone(result)
                 types = cdr.getDoctypes(self.session, tier=self.TIER)
@@ -459,6 +467,7 @@ if FULL:
 
         def test_32_create_label(self):
             opts = dict(comment=self.COMMENT, tier=self.TIER)
+            # pylint: disable-next=assignment-from-none
             result = cdr.create_label(self.session, self.LABEL, **opts)
             self.assertIsNone(result)
             query = db.Query("version_label", "comment")
@@ -472,6 +481,7 @@ if FULL:
             opts = dict(doc=doc, ver="Y", check_in="Y", tier=self.TIER)
             self.__class__.doc_id = doc_id = cdr.addDoc(self.session, **opts)
             args = self.session, doc_id, 1, self.LABEL
+            # pylint: disable-next=assignment-from-none
             result = cdr.label_doc(*args, tier=self.TIER)
             self.assertIsNone(result)
             version = "label {}".format(self.LABEL)
@@ -483,6 +493,7 @@ if FULL:
 
         def test_34_unlabel_doc_(self):
             args = self.session, self.__class__.doc_id, self.LABEL
+            # pylint: disable-next=assignment-from-none
             result = cdr.unlabel_doc(*args, tier=self.TIER)
             self.assertIsNone(result)
             version = "label {}".format(self.LABEL)
@@ -498,6 +509,7 @@ if FULL:
 
         def test_35_delete_label(self):
             opts = dict(tier=self.TIER)
+            # pylint: disable-next=assignment-from-none
             result = cdr.delete_label(self.session, self.LABEL, **opts)
             self.assertIsNone(result)
             query = db.Query("version_label", "comment")
@@ -516,6 +528,7 @@ if FULL:
             status = cdr.getDocStatus(self.session, doc_id, tier=self.TIER)
             self.assertEqual(status, "A")
             opts = dict(comment="testing setDocStatus()", tier=self.TIER)
+            # pylint: disable-next=assignment-from-none
             result = cdr.setDocStatus(self.session, doc_id, "I", **opts)
             self.assertIsNone(result)
             status = cdr.getDocStatus(self.session, doc_id, tier=self.TIER)
@@ -767,6 +780,7 @@ if FULL:
 
         def test_49_del_flt_set_(self):
             name = self.set_name
+            # pylint: disable-next=assignment-from-none
             result = cdr.delFilterSet(self.session, name, tier=self.TIER)
             self.assertIsNone(result)
             filter_sets = cdr.getFilterSets(self.session, tier=self.TIER)
@@ -816,6 +830,7 @@ if FULL:
             linktype = cdr.LinkType(self.NAME, **opts)
             opts = dict(tier=self.TIER)
             action = "addlink"
+            # pylint: disable-next=assignment-from-none
             rc = cdr.putLinkType(self.session, None, linktype, action, **opts)
             self.assertIsNone(rc)
             cursor = db.connect(tier=self.TIER).cursor()
@@ -840,8 +855,10 @@ if FULL:
             linktype = cdr.getLinkType(self.session, self.NAME, tier=self.TIER)
             self.assertEqual(linktype.name, self.NAME)
             self.assertEqual(linktype.linkChkType, "P")
+            # pylint: disable=no-member
             self.assertEqual(linktype.linkTargets, ["Term"])
             self.assertEqual(linktype.linkSources, [("xxtest", "a")])
+            # pylint: enable=no-member
             self.assertEqual(linktype.linkProps, [self.PROP])
             self.assertEqual(linktype.comment, self.COMMENT)
 
@@ -851,14 +868,17 @@ if FULL:
             lt = cdr.getLinkType(self.session, self.NAME, **opts)
             lt.name = self.NEW_NAME
             lt.comment = self.NEW_COMMENT
+            # pylint: disable-next=assignment-from-none
             rc = cdr.putLinkType(self.session, self.NAME, lt, action, **opts)
             self.assertIsNone(rc)
             lt = cdr.getLinkType(self.session, self.NEW_NAME, **opts)
             self.assertEqual(lt.name, self.NEW_NAME)
             self.assertEqual(lt.comment, self.NEW_COMMENT)
             self.assertEqual(lt.linkChkType, "P")
+            # pylint: disable=no-member
             self.assertEqual(lt.linkTargets, ["Term"])
             self.assertEqual(lt.linkSources, [("xxtest", "a")])
+            # pylint: enable=no-member
             self.assertEqual(lt.linkProps, [self.PROP])
             lt.linkProps = [("BogusPropType", self.PROP_VALUE, "should fail")]
             expression = "^Property type '.*' not supported$"
@@ -875,6 +895,7 @@ if FULL:
             types = cdr.getLinkTypes(self.session, tier=self.TIER)
             for name in (self.NAME, self.NEW_NAME):
                 if name in types:
+                    # pylint: disable-next=assignment-from-none
                     rc = cdr.delLinkType(self.session, self.NEW_NAME, **opts)
                     self.assertIsNone(rc)
             types = cdr.getLinkTypes(self.session, tier=self.TIER)
@@ -962,6 +983,7 @@ if FULL:
             opts = dict(tier=self.TIER)
             path = self.PATH
             rule = self.RULE
+            # pylint: disable-next=assignment-from-none
             response = cdr.addQueryTermDef(self.session, path, rule, **opts)
             self.assertIsNone(response)
             expression = "Duplicate query term definition"
@@ -983,6 +1005,7 @@ if FULL:
             opts = dict(tier=self.TIER)
             rule = self.RULE
             path = self.PATH
+            # pylint: disable-next=assignment-from-none
             response = cdr.delQueryTermDef(self.session, path, None, **opts)
             self.assertIsNone(response)
             try:
@@ -1000,6 +1023,7 @@ if FULL:
             query.where("path LIKE '/Term%'")
             cursor = db.connect(tier=self.TIER).cursor()
             doc_id = query.execute(cursor).fetchone().doc_id
+            # pylint: disable-next=assignment-from-none
             result = cdr.reindex(self.session, doc_id, tier=self.TIER)
             self.assertIsNone(result)
 
@@ -1041,6 +1065,7 @@ if FULL:
 
         def test_66_add_user____(self):
             user = cdr.User(self.NAME, **self.OPTS)
+            # pylint: disable-next=assignment-from-none
             result = cdr.putUser(self.session, None, user, tier=self.TIER)
             self.assertIsNone(result)
 
@@ -1048,6 +1073,7 @@ if FULL:
             opts = dict(self.OPTS)
             opts["comment"] = self.NEW_COMMENT
             user = cdr.User(self.NEW_NAME, **opts)
+            # pylint: disable-next=assignment-from-none
             result = cdr.putUser(self.session, self.NAME, user, tier=self.TIER)
             self.assertIsNone(result)
 
@@ -1066,6 +1092,7 @@ if FULL:
             self.assertFalse(self.NAME in users)
 
         def test_70_del_user____(self):
+            # pylint: disable-next=assignment-from-none
             result = cdr.delUser(self.session, self.NEW_NAME, tier=self.TIER)
             self.assertIsNone(result)
             users = cdr.getUsers(self.session, tier=self.TIER)
@@ -1126,10 +1153,12 @@ if FULL:
         def test_74_set_control_(self):
             opts = dict(group="test", name="n", value="v", comment="c")
             opts["tier"] = self.TIER
+            # pylint: disable-next=assignment-from-none
             result = cdr.updateCtl(self.session, "Create", **opts)
             self.assertIsNone(result)
             value = cdr.getControlValue("test", "n", tier=self.TIER)
             self.assertEqual("v", value)
+            # pylint: disable-next=assignment-from-none
             result = cdr.updateCtl(self.session, "Inactivate", **opts)
             self.assertIsNone(result)
             value = cdr.getControlValue("test", "n", tier=self.TIER)

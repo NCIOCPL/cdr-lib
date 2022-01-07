@@ -5962,6 +5962,10 @@ class DTD:
             if values:
                 self.dtd.values[element.name] = values
             definitions = [self.define_element(element)]
+
+            # The `pylint` tool is a little dumb here, unaware that the
+            # derived classes will be returning values other than `None`.
+            # pylint: disable-next=assignment-from-none
             attributes = self.define_attributes(element)
             if attributes:
                 definitions.append(attributes)
@@ -6509,7 +6513,6 @@ class LinkType:
 
     # Caching of the link types.
     TYPES = dict()
-    TYPE_IDS = dict()
     LOCK = threading.Lock()
 
     # Codes for limitations on the link target's version.

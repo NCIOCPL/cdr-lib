@@ -456,6 +456,7 @@ class BatchReport:
         Generate the default filename base (without extension) for testing.
         """
 
+        # pylint: disable=no-member
         return "%s-%s" % (cls.NAME.replace(" ", "_"), cls.STAMP)
 
     @classmethod
@@ -465,11 +466,13 @@ class BatchReport:
         """
 
         default_filename = cls.test_filename_base() + suffix
+        # pylint: disable=no-member
         parser = argparse.ArgumentParser(
             usage='CdrLongReports.py "%s" [options]' % cls.NAME,
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
             description="Performs a %s test report." % cls.NAME
         )
+        # pylint: enable=no-member
         parser.add_argument("--full-run", action="store_false",
                             dest="throttle",
                             help="don't throttle the amount of time "
@@ -490,28 +493,40 @@ class BatchReport:
         """
         Called from test_harness for an individual report type to run
         a report from the command line and save the results.
+
+        Suppress false positives from pylint, which doesn't understand
+        that only instances of the derived classes are created, and the
+        derived classes are suppliers of some of the arguments passed
+        to the base class constructor.
         """
 
         import logging
+        # pylint: disable=no-member
         logger = logging.getLogger(cls.NAME)
         logger.info("Starting %s report", cls.NAME)
+        # pylint: enable=no-member
         args = vars(arg_parser.parse_args())
         cls.announce_test(args)
         filename = args.pop("filename")
         args = list(args.items())
+        # pylint: disable-next=no-member
         job = cdrbatch.CdrBatch(jobName=cls.NAME, command=cls.CMD, args=args)
         if format == "html":
+            # pylint: disable-next=no-value-for-parameter
             report = cls(job).create_html_report()
             open(filename, "wb").write(report.encode("utf-8"))
         else:
+            # pylint: disable-next=no-value-for-parameter
             cls(job).create_excel_report().save(filename)
         sys.stderr.write("\nsaved %s\n\n" % filename)
         logger.info("Saved %s", filename)
+        # pylint: disable-next=no-member
         logger.info("Completed %s report", cls.NAME)
 
     @classmethod
     def announce_test(cls, args):
         sys.stderr.write("\n%s\n\n" % ("-" * 78))
+        # pylint: disable-next=no-member
         sys.stderr.write("Running %s test report\n\n" % cls.NAME)
         if args:
             sys.stderr.write("Run-time options:\n")
@@ -565,8 +580,10 @@ class URLChecker(BatchReport):
         self.message = ("Checked %d urls for %d of %d links in %s seconds." %
                         (len(self.pages), self.links_tested,
                          len(self.links), elapsed))
+        # pylint: disable=no-member
         headers = [self.B.TH(header) for header in self.COLUMN_HEADERS]
         table_class = self.B.CLASS(self.TABLE_CLASS)
+        # pylint: enable=no-member
         return self.B.TABLE(table_class, self.B.TR(*headers), *rows)
 
     def get_report_rows(self):
@@ -581,7 +598,7 @@ class URLChecker(BatchReport):
             "allow_redirects": not self.show_redirects
         }
         try:
-            self.links = self.find_links()
+            self.links = self.find_links()  # pylint: disable=no-member
         except Exception as e:
             self.logger.exception("fetching external links for report")
             self.job.fail("Fetching external links for report: %s" % e)
@@ -640,6 +657,7 @@ class URLChecker(BatchReport):
         Prevent security warning output from garbling HTML report pages.
         """
 
+        # pylint: disable=import-error, no-member
         from requests.packages.urllib3.exceptions import InsecureRequestWarning
         requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
@@ -704,7 +722,7 @@ class URLChecker(BatchReport):
                     else:
                         self.problem = "IOError: %s" % e
                     report.logger.error("%s, %s", url, self.problem)
-                except socket.error:
+                except socket.error:  # pylint: disable=no-member
                     self.problem = "Host not responding"
                     self.remember_dead_host(host, self.problem)
                     report.logger.error("%s not responding", host)

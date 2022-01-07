@@ -519,6 +519,7 @@ class Session:
         letters = string.ascii_uppercase + string.digits
         suffix = "".join([random.choice(letters) for i in range(12)])
         name = "{:08X}-{:06X}-{:03d}-{}".format(secs, msecs, uid, suffix)
+        # pylint: disable-next=no-member
         ip_address = socket.gethostbyname(socket.gethostname()) or None
         cols = "name, usr, comment, initiated, last_act, ip_address"
         vals = "?, ?, ?, GETDATE(), GETDATE(), ?"
@@ -1366,12 +1367,14 @@ class Session:
         Attribute:
           conn - database connection
           cursor - database cursor
+          tier - information about the environment
         """
 
         LOG_FORMAT = "%(asctime)s [%(levelname)s-%(thread)04d] %(message)s"
 
         def __init__(self, **kw):
             self.__dict__.update(kw)
+            # pylint: disable-next=no-member
             self.conn = db.connect(tier=self.tier.name)
             self.cursor = self.conn.cursor()
 
