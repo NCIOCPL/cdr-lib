@@ -39,6 +39,8 @@ import cgitb
 import collections
 import datetime
 from email.utils import parseaddr as parse_email_address
+from functools import cached_property
+import json
 import os
 import re
 import sys
@@ -65,8 +67,6 @@ cgitb.enable(display=cdr.isDevHost(), logdir=cdr.DEFAULT_LOGDIR)
 
 
 # Global values
-VERSION = "202112271351"
-CDRCSS = "/stylesheets/cdr.css?v=%s" % VERSION
 DATETIMELEN = len("YYYY-MM-DD HH:MM:SS")
 TAMPERING = "CGI parameter tampering detected"
 USERNAME = "UserName"
@@ -1635,6 +1635,9 @@ class HTMLPage(FormFieldFactory):
     have been done, by building an object tree, using the html.builder
     support in the lxml package.
 
+    Be sure to keep the JQUERY... class values. They're not used here,
+    but other scripts use them.
+
     Sample usage:
 
         buttons = HTMLPage.button("Submit"), HTMLPage.button("Reports")
@@ -1646,14 +1649,38 @@ class HTMLPage(FormFieldFactory):
         page.send()
     """
 
-    VERSION = "201909071039"
+    VERSION = "202101071440"
     CDR_CSS = f"../../stylesheets/cdr.css?v={VERSION}"
     APIS = "https://ajax.googleapis.com/ajax/libs"
-    JQUERY = f"{APIS}/jquery/3.5.1/jquery.min.js"
+    JQUERY = f"{APIS}/jquery/3.6.0/jquery.min.js"
     JQUERY_UI = f"{APIS}/jqueryui/1.12.1/jquery-ui.min.js"
     JQUERY_CSS = f"{APIS}/jqueryui/1.12.1/themes/smoothness/jquery-ui.css"
-    STYLESHEETS = JQUERY_CSS, CDR_CSS
-    SCRIPTS = JQUERY, JQUERY_UI
+    CSS_LINKS = (
+        dict(
+            href=CDR_CSS,
+            rel="stylesheet",
+        ),
+        dict(
+            href=(
+                "https://code.jquery.com/ui/1.13.0-rc.3/themes"
+                "/smoothness/jquery-ui.css"
+            ),
+            rel="stylesheet",
+        ),
+    )
+    SCRIPT_LINKS = (
+        dict(
+            src="https://code.jquery.com/jquery-3.6.0.min.js",
+            integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=",
+            crossorigin="anonymous",
+        ),
+        dict(
+            src="https://code.jquery.com/ui/1.13.0/jquery-ui.min.js",
+            integrity="sha256-hlKLmzaRlE8SCJC1Kw8zoUbU8BxA+8kR3gseuKfMjxA=",
+            crossorigin="anonymous",
+            defer=None,
+        ),
+    )
     PRIMARY_FORM_ID = "primary-form"
     STRING_OPTS = dict(pretty_print=True, doctype="<!DOCTYPE html>")
     CALENDAR_SCRIPT = "\n".join([
@@ -1866,6 +1893,11 @@ class HTMLPage(FormFieldFactory):
         """The buttons to appear on the right side of the main banner."""
         return self.__opts.get("buttons")
 
+    @cached_property
+    def cursor(self):
+        """Read-only database cursor."""
+        return db.connect(user="CdrGuest").cursor()
+
     @property
     def form(self):
         """The body's <form> element.
@@ -1890,10 +1922,18 @@ class HTMLPage(FormFieldFactory):
                 self.B.TITLE(self.head_title),
                 self.B.LINK(href="/favicon.ico", rel="icon")
             )
-            for sheet in self.stylesheets:
-                self._head.append(self.B.LINK(href=sheet, rel="stylesheet"))
-            for script in self.scripts:
-                self._head.append(self.B.SCRIPT(src=script))
+            for attrs in self.stylesheets:
+                element = self.B.LINK()
+                for key, value in attrs.items():
+                    element.set(key, value)
+                if "rel" not in attrs:
+                    element.set("rel", "stylesheet")
+                self._head.append(element)
+            for attrs in self.scripts:
+                element = self.B.SCRIPT()
+                for key, value in attrs.items():
+                    element.set(key, value)
+                self._head.append(element)
         return self._head
 
     @property
@@ -1953,14 +1993,35 @@ class HTMLPage(FormFieldFactory):
             self._news = cdr.getControlGroup("news")
         return self._news
 
-    @property
+    @cached_property
     def scripts(self):
-        """Client-side scripts to be loaded for the page."""
-        if not hasattr(self, "_scripts"):
-            self._scripts = self.__opts.get("scripts")
-            if self._scripts is None:
-                self._scripts = self.SCRIPTS
-        return self._scripts
+        """Client-side scripts to be loaded for the page.
+
+        To suppress the default scripts, pass an empty list to the constructor
+        for the named 'scripts' argument.
+        """
+
+        scripts = self.__opts.get("scripts")
+        if isinstance(scripts, (list, tuple)):
+            script_attrs = []
+            for script in scripts:
+                if isinstance(script, str):
+                    script_attrs.append(dict("src", script))
+                elif isinstance(script, dict):
+                    script_attrs.append(script)
+                else:
+                    self.logger.warning("bogus script %r", script)
+            return script_attrs
+        if scripts is not None:
+            self.logger.warning("bogus scripts %r", scripts)
+        query = db.Query("ctl", "val")
+        query.where("grp = 'cdn'")
+        query.where("name = 'cgi-js'")
+        query.where("inactivated IS NULL")
+        row = query.execute(self.cursor).fetchone()
+        if row:
+            return json.loads(row.val)
+        return self.SCRIPT_LINKS
 
     @property
     def session(self):
@@ -1971,14 +2032,31 @@ class HTMLPage(FormFieldFactory):
                 self._session = Session(self._session)
         return self._session
 
-    @property
+    @cached_property
     def stylesheets(self):
         """CSS rules to be loaded for the page."""
-        if not hasattr(self, "_stylesheets"):
-            self._stylesheets = self.__opts.get("stylesheets")
-            if self._stylesheets is None:
-                self._stylesheets = self.STYLESHEETS
-        return self._stylesheets
+
+        stylesheets = self.__opts.get("stylesheets")
+        if isinstance(stylesheets, (list, tuple)):
+            sheets = []
+            for sheet in stylesheets:
+                if isinstance(sheet, str):
+                    sheets.append(dict(href=sheet, rel="stylesheet"))
+                elif isinstance(sheet, dict):
+                    sheets.append(sheet)
+                else:
+                    self.logger.warning("bogus stylesheet %r", sheet)
+            return sheets
+        if stylesheets is not None:
+            self.logger.warning("bogus stylesheets %r", stylesheets)
+        query = db.Query("ctl", "val")
+        query.where("grp = 'cdn'")
+        query.where("name = 'cgi-css'")
+        query.where("inactivated IS NULL")
+        row = query.execute(self.cursor).fetchone()
+        if row:
+            return json.loads(row.val)
+        return self.CSS_LINKS
 
     @property
     def subtitle(self):
