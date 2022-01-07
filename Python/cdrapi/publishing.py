@@ -7,11 +7,11 @@ import json
 import time
 import dateutil.parser
 import requests
+from urllib3.exceptions import InsecureRequestWarning
 from cdrapi.db import Query
 from cdrapi.docs import Doc
 
 # TODO: Get Acquia to fix their broken certificates.
-from urllib3.exceptions import InsecureRequestWarning
 # pylint: disable-next=no-member
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
@@ -987,7 +987,7 @@ class DrupalClient:
         self.logger.info("Marking %d documents published", len(documents))
         self.logger.debug("URL for publish(): %s", url)
         offset = 0
-        lookup = dict([(doc[1:], doc[0]) for doc in documents])
+        lookup = {(doc[1:], doc[0]) for doc in documents}
         errors = dict()
         while offset < len(documents):
             end = offset + self.batch_size
@@ -1045,7 +1045,7 @@ class DrupalClient:
             response = requests.delete(url, auth=self.auth, verify=False)
             if response.ok:
                 break
-            elif response.status_code == 404:
+            if response.status_code == 404:
                 self.logger.warning("CDR%d already gone", cdr_id)
                 return
             tries -= 1
@@ -1103,12 +1103,11 @@ class DrupalClient:
             if cdr_id > 0 and len(parsed) > 1:
                 raise Exception("Ambiguous CDR ID {}".format(cdr_id))
             return int(parsed[0][0])
-        elif response.status_code == 404:
+        if response.status_code == 404:
             return None
-        else:
-            code = response.status_code
-            reason = response.reason
-            raise Exception(f"lookup returned code {code}: {reason}")
+        code = response.status_code
+        reason = response.reason
+        raise Exception(f"lookup returned code {code}: {reason}")
 
     def prune_revisions(self, nodes):
         """
@@ -1134,7 +1133,7 @@ class DrupalClient:
                     for nid, vids in json.loads(response.text):
                         self.logger.info(message, vids, nid)
                     break
-                elif tries:
+                if tries:
                     message = "prune_revisions(): %s (trying again)"
                     self.logger.warning(message, response.reason)
                     time.sleep(1)

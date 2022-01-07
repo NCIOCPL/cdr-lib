@@ -18,7 +18,7 @@ import requests
 from cdrapi.db import Query
 
 
-class Doc(object):
+class Doc:
     """
     Information about an XML document in the CDR repository
 
@@ -201,7 +201,8 @@ class Doc(object):
         return self._blob
 
     @blob.setter
-    def blob(self, value): self._blob = value
+    def blob(self, value):
+        self._blob = value
 
     @property
     def blob_date(self):
@@ -485,7 +486,7 @@ class Doc(object):
         if not self.id:
             return False
         if hasattr(self, "_blob_id"):
-            return True if self._blob_id else False
+            return bool(self._blob_id)
         table = "version_blob_usage" if self.version else "doc_blob_usage"
         query = Query(table, "blob_id")
         query.where(query.Condition("doc_id", self.id))
@@ -493,7 +494,7 @@ class Doc(object):
             query.where(query.Condition("doc_version", self.version))
         rows = query.execute(self.cursor).fetchall()
         self._blob_id = rows[0].blob_id if rows else None
-        return True if self._blob_id else False
+        return bool(self._blob_id)
 
     @property
     def has_unversioned_changes(self):
@@ -707,7 +708,7 @@ class Doc(object):
         query = Query("ready_for_review", "doc_id")
         query.where(query.Condition("doc_id", self.id))
         rows = query.execute(self.cursor).fetchall()
-        return True if rows else False
+        return bool(rows)
 
     @property
     def resolved(self):
@@ -848,7 +849,7 @@ class Doc(object):
                     if len(tokens) != 2:
                         error = "missing token for version specifier"
                         raise Exception(error)
-                    prefix, label = tokens
+                    _prefix, label = tokens
                     self._version = self.__get_labeled_version(label)
 
                 # We've run out of valid options.
@@ -973,7 +974,7 @@ class Doc(object):
         )
         names = sorted(fields)
         args = ", ".join(names), ", ".join(["?"] * len(names))
-        values = tuple([fields[name] for name in names])
+        values = tuple(fields[name] for name in names)
         insert = "INSERT INTO external_map ({}) VALUES ({})".format(*args)
         self.cursor.execute(insert, values)
         self.session.conn.commit()
@@ -1022,8 +1023,7 @@ class Doc(object):
           `_XSLTResultTree` object
         """
 
-        for name in parms:
-            value = parms[name]
+        for name, value in parms.items():
             if isinstance(value, bytes):
                 value = value.decode("utf-8")
             if isinstance(value, str):
@@ -1289,7 +1289,7 @@ class Doc(object):
 
         class Tree:
             def __init__(self):
-                self.relationships, self.names = list(), dict()
+                self.relationships, self.names = [], {}
 
             class Relationship:
                 def __init__(self, parent, child):
@@ -1413,10 +1413,7 @@ class Doc(object):
         for tag, value in control_info:
             if value:
                 child = etree.SubElement(doc_control, tag)
-                try:
-                    child.text = str(value)
-                except Exception:
-                    raise
+                child.text = str(value)
                 if not filtering:
                     child.set("readonly", "yes")
                 if tag == "DocVersion":
@@ -1848,8 +1845,7 @@ class Doc(object):
           `Doc.FilterResult` object
         """
 
-        for name in parms:
-            value = parms[name]
+        for name, value in parms.items():
             if isinstance(value, bytes):
                 value = value.decode("utf-8")
             if isinstance(value, str):
@@ -1858,6 +1854,7 @@ class Doc(object):
         try:
             doc = transform(doc, **parms)
         except Exception:
+            # pylint: disable-next=not-an-iterable
             for entry in transform.error_log:
                 message = "message from line %s, col %s: %s"
                 args = entry.line, entry.column, entry.message
@@ -2689,6 +2686,7 @@ class Doc(object):
         rows = query.execute(self.cursor).fetchall()
         assert rows, f"no schema for document type {self.doctype.name}"
         parser = etree.XMLParser()
+        # pylint: disable-next=no-member
         parser.resolvers.add(self.SchemaResolver(self.cursor))
         xml = self.get_schema_xml(rows[0].title, self.cursor)
         return etree.fromstring(xml.encode("utf-8"), parser)
@@ -3407,6 +3405,7 @@ class Doc(object):
                 location = None
                 if self.eids is not None:
                     line_map = self.LineMap(self.eids)
+                # pylint: disable-next=not-an-iterable
                 for error in schema.error_log:
                     if self.eids is not None:
                         location = line_map.get_error_location(error)
@@ -3415,8 +3414,7 @@ class Doc(object):
             # If there are any custom rules, apply them, too.
             sets_dictionary = dict()
             self.__extract_rule_sets(schema_doc, sets_dictionary)
-            for name in sets_dictionary:
-                rule_sets = sets_dictionary[name]
+            for name, rule_sets in sets_dictionary.items():
                 if not name:
                     name = "anonymous"
                 for rule_set in rule_sets:
@@ -3635,7 +3633,9 @@ class Doc(object):
         session.log("Doc.delete_failed_mailers()")
 
         class CleanupReport:
-            def __init__(self): self.deleted, self.errors = [], []
+            def __init__(self):
+                self.deleted = []
+                self.errors = []
         reason = "Deleting tracking document for failed mailer job"
         report = CleanupReport()
         cursor = session.conn.cursor()
@@ -4012,6 +4012,7 @@ class Doc(object):
             """
 
             etree.XMLParser.__init__(self)
+            # pylint: disable=no-member
             self.resolvers.add(Resolver("cdrutil"))
             self.resolvers.add(Resolver("cdr"))
             self.resolvers.add(Resolver("cdrx"))
@@ -4122,14 +4123,14 @@ class Doc(object):
             etree.Resolver.__init__(self)
             self.__cdr_cursor = cursor
 
-        def resolve(self, url, id, context):
+        def resolve(self, url, _id, context):
             """
             Fetch the serialized XML for a nested schema document
 
             Pass:
               url - string for title of the schema document (e.g.,
                     "CdrCommonSchema.xml")
-              id - unused positional argument
+              _id - unused positional argument
               context - opaque information, passed through to the
                         `resolve_string` method of the base class
 
@@ -4209,7 +4210,7 @@ class Resolver(etree.Resolver):
     # Thread-specific storage.
     local = Local()
 
-    def resolve(self, url, pubid, context):
+    def resolve(self, url, _pubid, context):
         """
         Handle a callback from an XSL/T filter
 
@@ -4233,7 +4234,7 @@ class Resolver(etree.Resolver):
 
         Pass:
           url - string for the callback request
-          pubid - ignored
+          _pubid - ignored
           context - opaque information, passed through to the method of the
                     base class used to package the return value
 
@@ -4261,7 +4262,7 @@ class Resolver(etree.Resolver):
         parms = parms.strip("/")
         if scheme in ("cdr", "cdrx"):
             return self.__get_doc(scheme, parms, context)
-        elif scheme == "cdrutil":
+        if scheme == "cdrutil":
             return self.__run_function(parms, context)
         raise Exception(f"unsupported url {self.url!r}")
 
@@ -4310,7 +4311,7 @@ class Resolver(etree.Resolver):
                 elif spec.isdigit() or spec in ("last", "lastp"):
                     version, spec = spec, None
                 else:
-                    version, spec = None, spec
+                    version = None
                 try:
                     doc = Doc(self.session, id=doc_id, version=version)
                 except Exception:
@@ -4336,13 +4337,13 @@ class Resolver(etree.Resolver):
             return self.__package_result(element, context)
 
         # Return the document's title if requested.
-        elif spec == "DocTitle":
+        if spec == "DocTitle":
             element = etree.Element("CdrDocTitle")
             element.text = doc.title
             return self.__package_result(element, context)
 
         # Guard against unsupported requests.
-        elif spec:
+        if spec:
             raise Exception(message)
 
         # Wrap up the document XML and return it.
@@ -4389,12 +4390,12 @@ class Resolver(etree.Resolver):
         error = f"unsupported function {function!r} in {self.url!r}"
         raise Exception(error)
 
-    def _date(self, args, context):
+    def _date(self, _args, context):
         """
         Get the current date/time
 
         Pass:
-          args - ignored for this function
+          _args - ignored for this function
           context - opaque information echoed back to the caller
 
         Return:
@@ -4444,12 +4445,12 @@ class Resolver(etree.Resolver):
             etree.SubElement(result, "id").text = i
         return self.__package_result(result, context)
 
-    def _docid(self, args, context):
+    def _docid(self, _args, context):
         """
         Get the normalized CDR ID for the current document
 
         Pass:
-          args - ignored for this function
+          _args - ignored for this function
           context - opaque information echoed back to the caller
 
         Return:
@@ -4480,7 +4481,7 @@ class Resolver(etree.Resolver):
         """
 
         doc_id = Doc.extract_id(args.split("/")[0])
-        upcode = False if "/" in args else True
+        upcode = "/" not in args
         term = Term.get_term(self.session, doc_id)
         if term is None:
             term_xml = "<empty/>"
@@ -4581,11 +4582,11 @@ class Resolver(etree.Resolver):
             r += 1
         return self.__package_result(result, context)
 
-    def _tier(self, args, context):
+    def _tier(self, _args, context):
         """Identify the current CDR tier.
 
         Pass:
-          args - ignored for this function
+          _args - ignored for this function
           context - opaque information echoed back to the caller
 
         Return:
@@ -4703,7 +4704,7 @@ class Resolver(etree.Resolver):
         return cls.ID_KEY_STRIP.sub("", id.upper())
 
     @staticmethod
-    def escape_uri(context, arg=""):
+    def escape_uri(_context, arg=""):
         """
         Prepare a URI string so that it makes it through the lxml gauntlet
 
@@ -4712,7 +4713,7 @@ class Resolver(etree.Resolver):
         filter processing to fail.
 
         Pass:
-          context - ignored
+          _context - ignored
           arg - string or sequence of strings to be escaped
 
         Return:
@@ -4721,10 +4722,7 @@ class Resolver(etree.Resolver):
 
         if isinstance(arg, (list, tuple)):
             arg = "".join(arg)
-        try:
-            return url_quote(arg.replace("+", "@@PLUS@@"))
-        except Exception:
-            raise
+        return url_quote(arg.replace("+", "@@PLUS@@"))
 
 
 # Register our custom extension function for XSL/T filters to use.
@@ -5375,8 +5373,8 @@ class Doctype:
         types = dict()
         self.__parse_schema(self.schema, elements, types, schemas)
         names = set()
-        for name in elements:
-            if types.get(elements[name]):
+        for name, value in elements.items():
+            if types.get(value):
                 names.add(name)
         return names
 
@@ -5421,7 +5419,7 @@ class Doctype:
         if not self.id:
             fields["created"] = now
             names = sorted(fields)
-            values = tuple([fields[name] for name in names])
+            values = tuple(fields[name] for name in names)
             pattern = "INSERT INTO doc_type ({}) VALUES ({})"
             placeholders = ["?"] * len(names)
             sql = pattern.format(", ".join(names), ", ".join(placeholders))
@@ -5482,6 +5480,7 @@ class Doctype:
                     if isinstance(value, datetime.datetime):
                         value = value.replace(microsecond=0)
                     values.append(value)
+                # pylint: disable=unbalanced-tuple-unpacking
                 self._created, self._schema_date = values
 
     def __parse_schema(self, title, elements, types, schemas):
@@ -5984,7 +5983,7 @@ class DTD:
 
             return f"<!ELEMENT {element.name} (#PCDATA)>"
 
-        def define_attributes(self, element):
+        def define_attributes(self, _element):
             """
             Default type has no attributes
             Pass:
@@ -6146,13 +6145,13 @@ class DTD:
 
             if self.model == DTD.TEXT_ONLY:
                 return f"<!ELEMENT {element.name} (#PCDATA)>"
-            elif self.model == DTD.EMPTY:
+            if self.model == DTD.EMPTY:
                 return f"<!ELEMENT {element.name} EMPTY>"
-            elif self.model == DTD.MIXED:
+            if self.model == DTD.MIXED:
                 self.content.get_node(element.children)
                 children = "|".join([c.name for c in element.children])
                 return f"<!ELEMENT {element.name} (#PCDATA|{children})*>"
-            elif self.model == DTD.ELEMENT_ONLY:
+            if self.model == DTD.ELEMENT_ONLY:
                 content = self.content.get_node(element.children, True)
                 assert content, "Elements required for elementOnly content"
                 if not self.dtd.defined:
@@ -6351,8 +6350,7 @@ class DTD:
 
             if self.ref:
                 return self.dtd.groups[self.ref].get_node(elements, serialize)
-            else:
-                return self.node.get_node(elements, serialize)
+            return self.node.get_node(elements, serialize)
 
     class Attribute:
         """
@@ -7186,7 +7184,7 @@ class LinkType:
                         previous = top[-1]
                         if isinstance(previous, cls.Testable):
                             raise Exception("missing Boolean connector")
-                        elif previous == "NOT":
+                        if previous == "NOT":
                             negative = True
                             top.pop()
                     value = None if token == "*" else token.strip('"')
@@ -7205,7 +7203,7 @@ class LinkType:
                         previous = top[-1]
                         if isinstance(previous, cls.Testable):
                             raise Exception("missing Boolean connector")
-                        elif previous == "NOT":
+                        if previous == "NOT":
                             negative = True
                             top.pop()
                     top.append(cls.Assertions(nodes, negative))
@@ -7661,7 +7659,7 @@ class Link:
         placeholders = ["?"] * len(names)
         args = ", ".join(names), ", ".join(placeholders)
         insert = "INSERT INTO link_net ({}) VALUES ({})".format(*args)
-        cursor.execute(insert, tuple([fields[name] for name in names]))
+        cursor.execute(insert, tuple(fields[name] for name in names))
 
     def add_error(self, message):
         """
@@ -7898,8 +7896,7 @@ class FilterSet:
         if not self.id:
             if self.name:
                 raise Exception(f"Can't find filter set {self.name}")
-            else:
-                raise Exception("No filter set identified for deletion")
+            raise Exception("No filter set identified for deletion")
         query = Query("filter_set_member", "COUNT(*) AS n")
         query.where(query.Condition("subset", self.id))
         if query.execute(self.cursor).fetchall()[0].n > 0:

@@ -126,13 +126,13 @@ class Tier:
             return self._hosts
         hosts = {}
         prefix = "CBIIT:" + self.name
-        with open(f"{self.etc}/{self.APPHOSTS}") as fp:
+        with open(f"{self.etc}/{self.APPHOSTS}", encoding="utf-8") as fp:
             for line in fp:
                 line = line.strip()
                 if line.startswith(prefix):
                     fields = line.split(":", 4)
                     if len(fields) == 5:
-                        hosting, tier, role, local, domain = fields
+                        role, local, domain = fields[2:]
                         hosts[role.upper()] = ".".join((local, domain))
         self._hosts = hosts
         return hosts
@@ -159,18 +159,18 @@ class Tier:
         if hasattr(self, "_passwords"):
             return self._passwords
         passwords = {}
-        with open(f"{self.etc}/{self.PASSWORDS}") as fp:
+        with open(f"{self.etc}/{self.PASSWORDS}", encoding="utf-8") as fp:
             for line in fp:
                 name, password = line.strip().split(":", 1)
                 passwords[name.lower()] = password
         prefix = "CBIIT:" + self.name
-        with open(f"{self.etc}/{self.DBPW}") as fp:
+        with open(f"{self.etc}/{self.DBPW}", encoding="utf-8") as fp:
             for line in fp:
                 line = line.strip()
                 if line.startswith(prefix):
                     fields = line.split(":", 4)
                     if len(fields) == 5:
-                        hosting, tier, database, user, password = fields
+                        database, user, password = fields[2:]
                         passwords[(database.lower(), user.lower())] = password
         self._passwords = passwords
         return passwords
@@ -188,13 +188,13 @@ class Tier:
             return self._ports
         ports = {}
         prefix = self.name + ":"
-        with open(f"{self.etc}/{self.PORTS}") as fp:
+        with open(f"{self.etc}/{self.PORTS}", encoding="utf-8") as fp:
             for line in fp:
                 line = line.strip()
                 if line.startswith(prefix):
                     fields = line.split(":", 2)
                     if len(fields) == 3:
-                        tier, database, port = fields
+                        database, port = fields[1:]
                         ports[database.lower()] = int(port)
         self._ports = ports
         return ports
@@ -238,7 +238,7 @@ class Tier:
         logger = logging.getLogger(name)
         env_level = os.environ.get("CDR_LOGGING_LEVEL")
         logger.setLevel((env_level or opts.get("level") or "INFO").upper())
-        logger.propagate = True if opts.get("propagate") else False
+        logger.propagate = bool(opts.get("propagate"))
         if not logger.handlers or opts.get("multiplex"):
             if name == "session":
                 fmt = self.SESSION_LOG_FORMAT
@@ -320,7 +320,7 @@ class Tier:
         if name:
             return name.upper()
         try:
-            with open(f"{self.etc}/{self.TIER}") as fp:
+            with open(f"{self.etc}/{self.TIER}", encoding="utf-8") as fp:
                 return fp.read().strip()
         except Exception:
             return "DEV"
@@ -488,7 +488,7 @@ class Tier:
                 now = datetime.datetime.now()
                 name = now.strftime("logger-%Y%m%d%H%M%S.err")
                 errpath = f"{self.basedir}/Log/{name}"
-                with open(errpath, "a") as fp:
+                with open(errpath, "a", encoding="utf-8") as fp:
                     fp.write("Failure formatting message: {}\n".format(e))
                 return
             tries = 5
@@ -507,7 +507,7 @@ class Tier:
                         now = datetime.datetime.now()
                         name = now.strftime("dblogger-%Y%m%d%H%M%S.err")
                         errpath = f"{self.basedir}/Log/{name}"
-                        with open(errpath, "a") as fp:
+                        with open(errpath, "a", encoding="utf-8") as fp:
                             fp.write(f"DB logging failure: {e}\n")
                         return
 
@@ -612,9 +612,9 @@ class Tier:
                 path = path.replace("/", "\\")
                 command = f'icacls "{path}" /grant Everyone:(M)'
                 try:
-                    stream = subprocess.Popen(command, **opts)
-                    output, error = stream.communicate()
-                    code = stream.returncode
+                    with subprocess.Popen(command, **opts) as stream:
+                        output, error = stream.communicate()
+                        code = stream.returncode
                     if code:
                         name = now.strftime("logger-%Y%m%d%H%M%S.err")
                         errpath = f"d:/cdr/Log/{name}"
