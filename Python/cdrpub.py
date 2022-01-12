@@ -1009,33 +1009,31 @@ class Control:
             else:
                 section_title = Doc.get_text(h2, "").strip()
                 node.remove(h2)
-            # XXX TODO: remove "False and " from the next line when the CMS
-            #           is ready (that is, when the JavaScript currently
-            #           implementing this logic has been removed from the CMS.
-            if False and intro_text_index != i and node.get("id") != cls.ABOUT_THIS:
-                headers = list(node.iter("h3", "h4"))
-                if headers and "kpBox" not in headers[0].get("id", ""):
-                    links = B.UL()
-                    nested_links = None
-                    for header in headers:
-                        link = deepcopy(header)
-                        link.set("href", "#" + link.get("id"))
-                        del link.attrib["id"]
-                        link.tag = "a"
-                        if header.tag == "h3":
-                            nested_links = None
-                            links.append(B.LI(link))
-                        else:
-                            if nested_links is None:
-                                nested_links = B.UL(B.LI(link))
-                                links.append(nested_links)
+            if intro_text_index != i and node.get("id") != cls.ABOUT_THIS:
+                if not svpc:
+                    headers = list(node.iter("h3", "h4"))
+                    if headers and "kpBox" not in headers[0].get("id", ""):
+                        links = B.UL()
+                        nested_links = None
+                        for header in headers:
+                            link = deepcopy(header)
+                            link.set("href", "#" + link.get("id"))
+                            del link.attrib["id"]
+                            link.tag = "a"
+                            if header.tag == "h3":
+                                nested_links = None
+                                links.append(B.LI(link))
                             else:
-                                nested_links.append(B.LI(link))
-                    h6 = B.H6(cls.IN_THIS_SECTION[langcode])
-                    nav = B.E("nav", h6, links)
-                    nav.set("class", "in-this-section")
-                    nav.set("role", "navigation")
-                    node.insert(0, nav)
+                                if nested_links is None:
+                                    nested_links = B.UL(B.LI(link))
+                                    links.append(nested_links)
+                                else:
+                                    nested_links.append(B.LI(link))
+                        h6 = B.H6(cls.IN_THIS_SECTION[langcode])
+                        nav = B.E("nav", h6, links)
+                        nav.set("class", "in-this-section")
+                        nav.set("role", "navigation")
+                        node.insert(0, nav)
             body = html.tostring(node).decode("utf-8")
             body = body.replace(target, replacement)
             if intro_text_index == i:
