@@ -9,311 +9,602 @@ JIRA::OCECDR-4338 - make module adaptable to volatile API
 JIRA::OCECDR-5038 - rewrite for yet another EVS API (our sixth!)
 """
 
-import datetime
-import json
-import re
-import string
-import sys
-import lxml.etree as etree
-import requests
-import cdr
+from datetime import date, datetime
+from difflib import SequenceMatcher
+from functools import cached_property
+from json import load, dump
+from re import compile
+from time import sleep
+from uuid import uuid1
+from lxml import etree
+from requests import get
 from cdrapi import db
+from cdrapi.docs import Doc
+from ModifyDocs import Job
 
 
-class Concept:
-    """
-    Thesaurus concept retrieved from NCI's Enterprise Vocabulary System (EVS).
+class EVS:
+    """Wrapper for the EVS API."""
 
-    Class values:
-        logger - for recording processing information and failures
-        NAME_PROPS - types for synonym properties
+    BASE_URL = "https://api-evsrest.nci.nih.gov/api/v1/concept/ncit"
+    BATCH_SIZE = 100
+    CTRP_AGENT_TERMINOLOGY = "C116978"
+    NCI_DRUG_DICTIONARY_TERMINOLOGY = "C176424"
+    SUBSET_PARENTS = CTRP_AGENT_TERMINOLOGY, NCI_DRUG_DICTIONARY_TERMINOLOGY
+    MAX_REQUESTS_ALLOWED_PER_SECOND = 3
+    SLEEP = 1 / MAX_REQUESTS_ALLOWED_PER_SECOND
+    DRUG_AGENT = 256166
+    DRUG_AGENT_CATEGORY = 256164
+    DRUG_AGENT_COMBINATION = 256171
+    SEMANTIC_TYPES = DRUG_AGENT, DRUG_AGENT_CATEGORY, DRUG_AGENT_COMBINATION
 
-    Instance values:
-        code - unique identifier for the concept record in the EVS
-        preferred_name - canonical name for the term in the EVS
-        synonyms - FULL_SYN properties extracted from the concept JSON
-        cas_codes, nsc_codes, ind_codes - specialized other names
-        definitions - list of definitions for the concept, identified by source
-        properties - all of the properties found in the JSON (for debugging)
-
-    Methods:
-        add() - create a new CDR Term document for the concept
-        update() - refresh the concept's existing CDR Term document
-    """
-
-    logger = cdr.Logging.get_logger("nci_thesaurus", level="info")
-    NAME_PROPS = "CAS_Registry", "NSC_CODE", "IND_Code"
-    DEFINITION_TYPES = "DEFINITION", "ALT_DEFINITION"
-    PUNCTUATION = re.compile(f"[{re.escape(string.punctuation)}]")
-
-    def __init__(self, **opts):
-        """
-        Fetch, parse, and validate the properties for a thesaurus concept.
-
-        The parts of the structure we're interested in are (* means zero
-        or more occurrences):
-
-          code
-          name
-          synonyms*
-            name
-            group
-            source
-          definitions*
-            definition
-            type
-            source
-          properties*
-            type
-            value
-
-        Pass exactly one of the following options:
-            code - thesaurus concept ID (fetch the concept using the API)
-            path - location of concept JSON stored in a file
-            values - dictionary of nested, keyed values for the concept
-        """
-
-        self.__opts = opts
-
-    @property
-    def cas_codes(self):
-        """Codes for the Chemical Abstract Service."""
-
-        if not hasattr(self, "_cas_codes"):
-            self._cas_codes = []
-            for code in self.properties.get("CAS_Registry", []):
-                self._cas_codes.append(self.OtherName(code, "CAS_Registry"))
-        return self._cas_codes
-
-    @property
-    def code(self):
-        """Unique identifier for the concept record in the EVS."""
-
-        if not hasattr(self, "_code"):
-            self._code = self.values.get("code", "").strip()
-        return self._code
-
-    @property
-    def definitions(self):
-        """Primary or alternate definitions for the concept."""
-
-        if not hasattr(self, "_definitions"):
-            self._definitions = []
-            for values in self.values.get("definitions", []):
-                if values.get("type") in self.DEFINITION_TYPES:
-                    definition = self.Definition(values)
-                    if definition.text:
-                        self._definitions.append(definition)
-        return self._definitions
-
-    @property
-    def ind_codes(self):
-        """FDA Investigational New Drug codes."""
-
-        if not hasattr(self, "_ind_codes"):
-            self._ind_codes = []
-            for code in self.properties.get("IND_Code", []):
-                self._ind_codes.append(self.OtherName(code, "IND_Code"))
-        return self._ind_codes
-
-    @property
-    def nsc_codes(self):
-        """Cancer Chemotherapy National Service Center codes."""
-
-        if not hasattr(self, "_nsc_codes"):
-            self._nsc_codes = []
-            for code in self.properties.get("NSC_Code", []):
-                self._nsc_codes.append(self.OtherName(code, "NSC_Code"))
-        return self._nsc_codes
-
-    @property
-    def preferred_name(self):
-        """The preferred name for the concept in the EVS."""
-
-        if not hasattr(self, "_preferred_name"):
-            self._preferred_name = self.values.get("name", "").strip()
-        return self._preferred_name
-
-    @property
-    def properties(self):
-        """Dictionary of named properties."""
-
-        if not hasattr(self, "_properties"):
-            self._properties = {}
-            for property in self.values.get("properties", []):
-                name = property.get("type")
-                if name:
-                    value = property.get("value", "").strip()
-                    if value:
-                        if name not in self._properties:
-                            self._properties[name] = []
-                        self._properties[name].append(value)
-        return self._properties
-
-    @property
-    def synonyms(self):
-        """Other names for the concept."""
-
-        if not hasattr(self, "_synonyms"):
-            self._synonyms = []
-            for synonym in self.values.get("synonyms", []):
-                if synonym.get("type") == "FULL_SYN":
-                    name = synonym.get("name", "").strip()
-                    if name:
-                        group = synonym.get("termGroup", "").strip()
-                        source = synonym.get("source", "").strip()
-                        args = name, group, source
-                        self._synonyms.append(self.OtherName(*args))
-        return self._synonyms
-
-    @property
-    def values(self):
-        """EVS values pulled from API or file if we don't already have them."""
-
-        if not hasattr(self, "_values"):
-            values = self.__opts.get("values")
-            code = self.__opts.get("code")
-            path = self.__opts.get("path")
-            error = "code or path or values must be provided"
-            assert code or path or values, error
-            error = "only one option can be passed"
-            assert not(code and path and values), error
-            if values:
-                self._values = values
-                self.logger.info("Concept values passed directly.")
-            elif path:
-                self.logger.info("Loading concept from %r", path)
-                self._values = self.load(path)
-            else:
-                self._values = self.fetch(code)[0]
-        return self._values
-
-    def add(self, session):
-        """
-        Add a new CDR Term document for the concept.
+    def fetch(self, code, /, **opts):
+        """Retrieve the values for a single EVS concept record.
 
         Pass:
-            session - ID for a session with permission to create Term docs
+          code - string for the concept's unique code
+          include - indicator of how much data to return
+            comma-separated list of any of the following values: minimal,
+            summary, full, associations, children, definitions, disjointWith,
+            inverseAssociations, inverseRoles, maps, parents, properties,
+            roles, synonyms; default is "full"
 
         Return:
-            string describing successful document create (an exception
-            is thrown on failure)
+          reference to `Concept` object
+
+        Raise:
+          `Exception` on failure, including failure to find the concept
         """
 
-        return TermDoc(self, session).save()
+        include = opts.get("include", "full")
+        url = f"{self.BASE_URL}/{code}?include={include}"
+        response = get(url)
+        if response.status_code != 200:
+            message = f"{url}: {response.status_code}, ({response.reason})"
+            raise Exception(message)
+        return Concept(response.json())
 
-    def update(self, session, cdr_id, **opts):
-        """
-        Refresh other names and definitions in the CDR Term document.
+    def fetchmany(self, codes, /, **opts):
+        """Load drug concept documents from tne NCI EVS.
 
-        Positional arguments:
-            session - ID for a session with permission to create Term docs
-            cdr_id - unique identifier for the CDR Term document
-
-        Keyword options:
-            skip_other_names - if True, leave the OtherName blocks alone
-            skip_definitions - if True, leave the Definition blocks alone
+        Pass:
+            codes - concept codes for the records to be fetched
+            include - see documentation above for `fetch()`
+            batch_size - optional override of the number to fetch at once
 
         Return:
-            sequence of strings describing changes made (empty if no changes
-            were found, in which case no new document version is created)
+            dictionary of `Concept` objects indexed by concept code
         """
 
-        return TermDoc(self, session, cdr_id, **opts).save()
+        include = opts.get("include") or "full"
+        batch_size = opts.get("batch_size") or self.BATCH_SIZE
+        concepts = {}
+        offset = 0
+        base = f"{self.BASE_URL}?include={include}&list="
+        while offset < len(codes):
+            subset = codes[offset:offset+batch_size]
+            offset += batch_size
+            api = base + ",".join(subset)
+            response = get(api)
+            for values in response.json():
+                concept = Concept(values)
+                concepts[concept.code] = concept
+            if offset < len(codes):
+                sleep(self.SLEEP)
+        return concepts
+
+    def load_from_cache(self, path, logger, /):
+        """Load drug concept documents from values cached in the file system.
+
+        Pass:
+            path - where the concept values have been cached
+            logger - used to record what we do
+
+        Return:
+            dictionary of `Concept` objects indexed by concept code
+        """
+
+        with open(path, encoding="utf-8") as fp:
+            concepts = load(fp)
+        logger.info("loaded concepts from %s", path)
+        return self.__map_concepts(concepts)
+
+    def load_drug_concepts(self, path, logger, /):
+        """Load drug concept documents from the Enterprise Vocabulary System.
+
+        Pass:
+            path - where to cache the loaded concept values
+            logger - used to record what we do
+
+        Return:
+            dictionary of `Concept` objects indexed by concept code
+        """
+
+        start = datetime.now()
+        parms = dict(
+            fromRecord=0,
+            include="full",
+            pageSize=self.BATCH_SIZE,
+            subset=",".join(self.SUBSET_PARENTS),
+        )
+        done = False
+        concepts = []
+        api = f"{self.BASE_URL}/search"
+        while not done:
+
+            # Don't give up right away when an error is encountered.
+            tries = 5
+            while tries > 0:
+                try:
+                    response = get(api, params=parms)
+                    if not response.ok:
+                        raise Exception(response.reason)
+                    values = response.json()
+                    if not values.get("total"):
+                        done = True
+                        break
+                    concepts += values.get("concepts")
+                    parms["fromRecord"] += self.BATCH_SIZE
+                    sleep(self.SLEEP)
+                    break
+                except Exception:
+                    tries -= 1
+                    if tries < 1:
+                        self.bail("EVS not available")
+                    logger.exception("failure fetching concepts")
+                    sleep(self.SLEEP)
+        args = len(concepts), datetime.now() - start
+        logger.info("fetched %d concepts in %s", *args)
+        with open(path, "w", encoding="utf-8") as fp:
+            dump(concepts, fp, indent=2)
+        return self.__map_concepts(concepts)
+
+    @property
+    def cache_path(self):
+        """Unique path to cached concepts (different value for each access)."""
+        return f"d:/tmp/evs-{uuid1()}.json"
+
+    @cached_property
+    def cursor(self):
+        """Cursor for database queries."""
+        return db.connect().cursor()
+
+    @cached_property
+    def drug_doc_ids(self):
+        """Set of IDs for active drug index term CDR documents."""
+
+        query = db.Query("query_term s", "s.doc_id").unique()
+        query.join("query_term t", "t.doc_id = s.doc_id")
+        query.join("active_doc a", "a.id = s.doc_id")
+        query.where("s.path = '/Term/SemanticType/@cdr:ref'")
+        query.where(query.Condition("s.int_val", self.SEMANTIC_TYPES, "IN"))
+        query.where("t.value = 'Index term'")
+        return {row.doc_id for row in query.execute(self.cursor).fetchall()}
+
+    @cached_property
+    def linked_concepts(self):
+        """Map of concept codes to active CDR active drug index terms."""
+
+        query = db.Query("query_term", "doc_id", "value").unique()
+        query.where("path = '/Term/NCIThesaurusConcept'")
+        docs_for_codes = {}
+        for doc_id, code in query.execute(self.cursor).fetchall():
+            if doc_id in self.drug_doc_ids:
+                code = code.strip().upper()
+                if code not in docs_for_codes:
+                    docs_for_codes[code] = []
+                docs_for_codes[code].append(doc_id)
+        return docs_for_codes
+
+    @staticmethod
+    def show_changes(B, old, new, /):
+        """Highlight deltas in the EVS definition versus the CDR definition.
+
+        If there are any insertions or replacements, we show those in red.
+        Otherwise, we just show the deletions with strikethrough.
+
+        Pass:
+            B - HTML builder from the lxml package
+            old - definition currently in the CDR document
+            new - definition found in the EVS concept record
+
+        Return:
+            HTML div object
+        """
+
+        sm = SequenceMatcher(None, old, new)
+        pieces = []
+        new_segments_shown = False
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag in ("replace", "insert"):
+                segment = new[j1:j2]
+                pieces.append(B.SPAN(segment, B.CLASS("insertion")))
+                new_segments_shown = True
+            elif tag == "equal":
+                segment = new[j1:j2]
+                pieces.append(B.SPAN(segment))
+        if not new_segments_shown:
+            sm = SequenceMatcher(None, old, new)
+            pieces = []
+            for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                if tag in ("replace", "delete"):
+                    segment = old[i1:i2]
+                    pieces.append(B.SPAN(segment, B.CLASS("deletion")))
+                elif tag == "equal":
+                    segment = new[j1:j2]
+                    pieces.append(B.SPAN(segment))
+        return B.DIV(*pieces)
+
+    @staticmethod
+    def show_updates(control, page, refreshes, creates=None):
+        """Perform and show requested drug term refresh/create actions.
+
+        Pass:
+            page - object on which results are displayed
+            refreshes - list of values in the form code-cdrid
+            creates - list of concept codes for creating new Term docs
+                      (None for the RefreshDrugTermsFromEVS.py script)
+        """
+
+        # Fetch the concepts we've been asked to use, to get fresh values.
+        refresh_pairs = [value.split("-") for value in refreshes]
+        codes = [row[0] for row in refresh_pairs]
+        if creates is not None:
+            codes += creates
+            set_codes = True
+        else:
+            set_codes = False
+        concepts = control.evs.fetchmany(codes)
+
+        # Start the table for displaying the refreshes performed.
+        if refreshes:
+            body = page.B.TBODY()
+            table = page.B.TABLE(
+                page.B.CAPTION("Actions" if creates is None else "Updates"),
+                page.B.THEAD(
+                    page.B.TH("CDR ID"),
+                    page.B.TH("Code"),
+                    page.B.TH("Name"),
+                    page.B.TH("Notes"),
+                ),
+                body
+            )
+
+            # Make sure we will be able to check out the CDR documents.
+            docs = {}
+            for code, doc_id in refresh_pairs:
+                doc_id = int(doc_id)
+                if code not in concepts:
+                    docs[doc_id] = code
+                else:
+                    docs[doc_id] = concepts[code]
+                    try:
+                        doc = Doc(control.session, id=doc_id)
+                        doc.check_out()
+                    except Exception:
+                        concepts[code].unavailable = True
+
+            # Invoke the global change harness to perform the updates.
+            control.successes = set()
+            control.failures = {}
+            Updater(control, docs, set_codes).run()
+
+            # Populate the table reporting the results.
+            for doc_id in sorted(docs):
+                concept = docs[doc_id]
+                if isinstance(concept, str):
+                    # This would be a very rare and odd edge case, in which
+                    # the concept was removed from the EVS between the time
+                    # the form was displayed and the time the refresh request
+                    # was submitted.
+                    values = doc_id, concept, "", "Concept not found"
+                else:
+                    if doc_id in control.failures:
+                        note = control.failures[doc_id]
+                    elif concept.unavailable:
+                        note = "Term document checked out to another user."
+                    elif doc_id not in control.successes:
+                        note = "CDR document unavailable for update"
+                    else:
+                        note = "Refreshed from and associated with EVS concept"
+                    values = doc_id, concept.code, concept.name, note
+                row = page.B.TR()
+                for value in values:
+                    row.append(page.B.TD(str(value)))
+                body.append(row)
+            page.form.append(table)
+
+        # Add any new CDR Term documents requested.
+        if creates:
+            body = page.B.TBODY()
+            table = page.B.TABLE(
+                page.B.CAPTION("New CDR Drug Term Documents"),
+                page.B.THEAD(
+                    page.B.TH("Code"),
+                    page.B.TH("Name"),
+                    page.B.TH("CDR ID"),
+                    page.B.TH("Notes"),
+                ),
+                body
+            )
+            for code in creates:
+                if code not in concepts:
+                    # See note on comparable condition in the previous table.
+                    values = code, "", "", "Concept not found"
+                else:
+                    try:
+                        concept = concepts[code]
+                        xml = concept.xml
+                        doc = Doc(control.session, doctype="Term", xml=xml)
+                        opts = dict(
+                            version=True,
+                            publishable=False,
+                            val_types=("schema", "links"),
+                            unlock=True,
+                        )
+                        doc.save(**opts)
+                        values = code, concept.name, doc.cdr_id, "Created"
+                    except Exception as e:
+                        control.logger.exception(f"Saving doc for {code}")
+                        values = code, concept.name, "", str(e)
+                row = page.B.TR()
+                for value in values:
+                    row.append(page.B.TD(value))
+                body.append(row)
+            page.form.append(table)
+
+    @staticmethod
+    def __map_concepts(concepts):
+        """Load dictionary of `Concept` objects from sequence of value sets.
+
+        Pass:
+            concepts - sequence of value dictionaries
+
+        Return:
+            dictionary of `Concept` objects indexed by concept code
+        """
+
+        concept_map = {}
+        for values in concepts:
+            concept = Concept(values)
+            concept_map[concept.code] = concept
+        return concept_map
+
+
+class Normalizer:
+    """Base class for `Concept` and `Term` classes."""
+
+    WHITESPACE = compile(r"\s+")
+    NON_BREAKING_SPACE = chr(160)
+    THIN_SPACE = chr(8201)
+    ZERO_WIDTH_SPACE = chr(8203)
+    FUNKY_WHITESPACE = NON_BREAKING_SPACE, THIN_SPACE, ZERO_WIDTH_SPACE
 
     @classmethod
-    def fetch(cls, code):
-        """
-        Retrieve and unpack the JSON for a thesaurus concept.
+    def normalize(cls, text):
+        """Prepare a string value for comparison.
 
-        Pass:
-            code - unique concept identifier in the NCI thesaurus
-
-        Return:
-            dictionary of values for the concept
-        """
-
-        url = cls.URL(code)
-        cls.logger.info(url)
-        cls.logger.info("Fetching concept %r from %r", code, url)
-        response = requests.get(url)
-        if response.status_code != 200:
-            message = f"{response.status_code}, ({response.reason})"
-            raise Exception(message)
-        return json.loads(response.content)
-
-    @staticmethod
-    def load(path):
-        """
-        Read and unpack the JSON for a thesaurus concept stored in a file.
-
-        Pass:
-            path - location of file containing JSON for the concept
-
-        Return:
-            dictionary of values for the concept
-        """
-
-        with open(path, "rb") as fp:
-            return json.load(fp)
-
-    @staticmethod
-    def normalize(text, **opts):
-        """
-        Prepare a string value for comparison.
-
-        The users have decided to eliminate duplicates of OtherName blocks
-        for which the term name value differs only in spacing or case. They
-        subsequently decided to apply the same approach to definitions.
-        See https://tracker.nci.nih.gov/browse/OCECDR-4153.
+        The most recent decision is to go with a less aggressive approach
+        to normalization, leaving punctuation in place. So now a normalized
+        string will have case differences squashed and space normalized.
+        The space normalization has already been applied before the string
+        reaches this method, so all we have to do is lowercase the string.
 
         Pass:
             text - original value
-            strip_punctuation - if True also remove punctuation
 
         Return:
-            lowercase version of string with spacing normalized
+            lowercase version of the caller's string
         """
 
-        step1 = text.strip().lower()
-        step2 = re.sub(r"\s+", " ", step1, re.U)
-        step3 = re.sub(r"[^\w ]", "", step2, re.U)
-        if opts.get("strip_punctuation"):
-            return Concept.PUNCTUATION.sub("", step3, re.U)
-        return step3
+        return text.lower()
 
     @classmethod
-    def fail(cls, problem, exception=False):
-        """
-        Log the problem and raise an exception.
+    def normalize_space(cls, text):
+        """Fold Unicode space characters into ASCII space and call strip().
 
         Pass:
-            problem - string describing the nature of the failure
-            exception - whether we should log the stack track of an exception
+            text - original string
+
+        Return:
+            original string with whitespace normalized
         """
 
-        if exception:
-            cls.logger.exception(problem)
-        else:
-            cls.logger.error(problem)
-        raise Exception(problem)
+        for c in cls.FUNKY_WHITESPACE:
+            text = text.replace(c, " ")
+        return cls.WHITESPACE.sub(" ", text).strip()
+
+    @cached_property
+    def normalized_definitions(self):
+        """Sequence of normalized definition strings."""
+
+        # pylint: disable=no-member
+        return {self.normalize(d) for d in self.definitions}
+
+    @cached_property
+    def normalized_name(self):
+        """Normalized version of the preferred name."""
+        return self.normalize(self.name)  # pylint: disable=no-member
+
+    @cached_property
+    def normalized_other_names(self):
+        """Dictionary of other names indexed by normalized key."""
+
+        normalized_other_names = {}
+        for other_name in self.other_names:  # pylint: disable=no-member
+            key = self.normalize(other_name.name)
+            if key != self.normalized_name:
+                if key not in normalized_other_names:
+                    normalized_other_names[key] = other_name
+        return normalized_other_names
+
+
+class Concept(Normalizer):
+    """Parsed concept record from the EVS."""
+
+    NAME_PROPS = "CAS_Registry", "NSC_CODE", "IND_Code"
+    DEFINITION_TYPES = "DEFINITION", "ALT_DEFINITION"
+    SUFFIX = compile(r"\s*\(NCI\d\d\)$")
+
+    def __init__(self, values):
+        """Remember the caller's values.
+
+        We also initialize a flag indicating whether the matching CDR document
+        is checked out to another user.
+
+        Pass:
+            values - nested values extracted from the serialized JSON string
+        """
+
+        self.__values = values
+        self.unavailable = False
+
+    def __lt__(self, other):
+        """Support sorting by the normalized name of the concept.
+
+        Pass:
+            other - concept being compared with this one
+
+        Return:
+            `True` if this concept should be sorted before the other one
+        """
+
+        return self.key < other.key
+
+    @cached_property
+    def code(self):
+        """Concept code for this EVS record."""
+        return self.__values.get("code", "").strip().upper()
+
+    @cached_property
+    def definitions(self):
+        """Primary or alternate definitions for the concept."""
+
+        definitions = []
+        for values in self.__values.get("definitions", []):
+            if values.get("type") in self.DEFINITION_TYPES:
+                if values.get("source") == "NCI":
+                    definition = values.get("definition", "").strip()
+                    if definition:
+                        definition = self.SUFFIX.sub("", definition)
+                        definition = definition.removeprefix("NCI|")
+                        definition = self.normalize_space(definition)
+                        definitions.append(definition)
+        return definitions
+
+    @cached_property
+    def key(self):
+        """Tuple of the concept's normalized name string and code."""
+        return self.normalized_name, self.code
+
+    @cached_property
+    def name(self):
+        """Preferred name string for the concept."""
+        return self.normalize_space(self.__values.get("name", ""))
+
+    @cached_property
+    def other_names(self):
+        """Sequence of `Concept.OtherName` objects."""
+
+        other_names = []
+        for synonym in self.__values.get("synonyms", []):
+            if synonym.get("type") == "FULL_SYN":
+                name = synonym.get("name", "").strip()
+                if name:
+                    source = synonym.get("source", "").strip()
+                    if source == "NCI":
+                        name = self.normalize_space(name)
+                        if self.normalize(name) != self.normalized_name:
+                            group = synonym.get("termGroup", "").strip()
+                            other_name = self.OtherName(name, group, "NCI")
+                            other_names.append(other_name)
+        for prop_name in self.NAME_PROPS:
+            for code in self.properties.get(prop_name, []):
+                code = self.normalize_space(code.strip())
+                if code and self.normalize(code) != self.normalized_name:
+                    other_names.append(self.OtherName(code, prop_name))
+        return other_names
+
+    @cached_property
+    def properties(self):
+        """Dictionary of named properties."""
+
+        properties = {}
+        for prop in self.__values.get("properties", []):
+            name = prop.get("type")
+            if name:
+                value = prop.get("value", "").strip()
+                if value:
+                    if name not in properties:
+                        properties[name] = []
+                    properties[name].append(value)
+        return properties
+
+    @cached_property
+    def xml(self):
+        """CDR new document xml created using this EVS concept's values."""
+
+        root = etree.Element("Term", nsmap=Doc.NSMAP)
+        node = etree.SubElement(root, "PreferredName")
+        node.text = self.name
+        names = set([self.normalized_name])
+        for key in sorted(self.normalized_other_names):
+            if key not in names:
+                names.add(key)
+                other_name = self.normalized_other_names[key]
+                root.append(other_name.convert(self.code))
+        for definition in self.definitions:
+            root.append(Updater.make_definition_node(definition))
+        term_type = etree.SubElement(root, "TermType")
+        etree.SubElement(term_type, "TermTypeName").text = "Index term"
+        etree.SubElement(root, "TermStatus").text = "Reviewed-retain"
+        code = etree.SubElement(root, "NCIThesaurusConcept", Public="Yes")
+        code.text = self.code
+        opts = dict(pretty_print=True, encoding="Unicode")
+        return etree.tostring(root, **opts)
+
+    def differs_from(self, doc):
+        """Are the normalized names and definitions different?
+
+        Pass:
+          doc - reference to `Term` document object being compared
+
+        Return:
+          `True` if differences are found which justify a refresh
+        """
+
+        if self.normalized_name != doc.normalized_name:
+            return True
+        if self.normalized_definitions != doc.normalized_definitions:
+            return True
+        return self.other_names_differ(doc)
+
+    def other_names_differ(self, doc):
+        """Are the normalized other names different?
+
+        If the existing document has an "other" name which the EVS
+        concept doesn't have, and that "other" name is approved,
+        we're going to keep it anyway, so we ignore that discrepancy.
+
+        Pass:
+          doc - reference to `Term` document object being compared
+
+        Return:
+          `True` if differences are found which justify a refresh
+        """
+
+        for key in self.normalized_other_names:
+            if key not in doc.normalized_other_names:
+                return True
+        for key, name in doc.normalized_other_names.items():
+            if not name.approved and key not in self.normalized_other_names:
+                return True
+        return False
 
     class OtherName:
-        """
-        One of the names by which this concept is known.
+        """Synonym or code found in an EVS concept record."""
 
-        Class values:
-            SKIP - elements to go past when inserting new OtherName nodes
-            TERM_TYPE_MAP - lookup for CDR equivalent of EVS name type
-
-        Instance values:
-            name - the term name for the concept
-            group - the name type used in the EVS'
-            source - the authority for recognizing this name
-            include - whether this name should be added to the CDR document
-        """
-
-        SKIP = {"PreferredName", "ReviewStatus", "Comment", "OtherName"}
+        SKIP = {"PreferredName", "ReviewStatus"}
         TERM_TYPE_MAP = {
             "PT": "Synonym",
             "AB": "Abbreviation",
@@ -328,7 +619,7 @@ class Concept:
             "CAS_Registry_Name": "CAS Registry name",
             "IND_Code": "IND code",
             "NSC_Code": "NSC code",
-            "CAS_Registry": "CAS Registry name",
+            "CAS_Registry": "CAS Registry name"
         }
 
         def __init__(self, name, group, source=None):
@@ -346,13 +637,28 @@ class Concept:
             self.source = source
             self.include = source == "NCI" if source else True
 
-        def convert(self, concept_code, status="Unreviewed"):
+        def __lt__(self, other):
+            """Support sorting the concept's names.
+
+            Pass:
+                other - reference to other name being compared with this one
+
+            Return:
+                `True` if this name should sort before the other one
+            """
+
+            return self.name < other.name
+
+        def convert(self, concept_code, status="Reviewed"):
             """
             Create an OtherName block for the CDR Term document.
 
             Pass:
                 concept_code - added as the source ID for a primary term
                 status - whether CIAT needs to review the name
+
+            Return:
+                reference to lxml `_Element` object
             """
 
             term_type = self.TERM_TYPE_MAP.get(self.group, "????" + self.group)
@@ -369,712 +675,200 @@ class Concept:
             etree.SubElement(node, "ReviewStatus").text = status
             return node
 
-    class Definition:
-        """
-        One of the definitions for this concept.
 
-        Class values:
-            TYPE - DefinitionType value for all definitions we import
-            NCIT - DefinitionSourceName value for those definitions
-            SKIP - elements to go past when inserting new Definition blocks
+class Term(Normalizer):
+    """Parsed CDR drug term document."""
 
-        Instance values:
-            text - the definition value (contains no markup)
-            source - the creator of this definition
-        """
-
-        TYPE = "Health professional"
-        NCIT = "NCI Thesaurus"
-        SKIP = {"PreferredName", "ReviewStatus", "OtherName"}
-
-        def __init__(self, values):
-            """
-            Extract the values we'll need for generating a Dictionary block.
-
-            Pass:
-                values - dictionary of values in the EVS for the definition
-            """
-
-            self.text = values.get("definition", "").strip()
-            self.source = values.get("source", "").strip()
-
-        def convert(self, status="Unreviewed"):
-            """
-            Create Dictionary block for the CDR Term document.
-
-            Pass:
-                status - whether CIAT needs to review the name
-            """
-
-            node = etree.Element("Definition")
-            etree.SubElement(node, "DefinitionText").text = self.fix_text()
-            etree.SubElement(node, "DefinitionType").text = self.TYPE
-            source = etree.SubElement(node, "DefinitionSource")
-            etree.SubElement(source, "DefinitionSourceName").text = self.NCIT
-            etree.SubElement(node, "ReviewStatus").text = status
-            return node
-
-        def fix_text(self):
-            """
-            Strip out some cruft which NCI injects into its definition strings.
-            """
-
-            text = re.sub(r"^NCI\|", "", self.text.strip())
-            return re.sub(r"\s*\(NCI[^)]*\)", "", text)
-
-    class URL:
-        """
-        Address for retrieving the JSON for an EVS concept.
-
-        Class values:
-            SCHEME - they have recently switched to https (as mandated)
-            HOST - DNS name for the service
-            PATH - location of requested resource
-            PARMS - placeholders for request values
-            TEMPLATE - the assembled pattern for constructing a URL,
-                       with a placeholder for the unique identifier
-                       of a specific EVS concept record
-        """
-
-        GROUP = cdr.getControlGroup("thesaurus")
-        SCHEME = GROUP.get("scheme", "https")
-        HOST = GROUP.get("host", "api-evsrest.nci.nih.gov")
-        DFLT_PATH = "api/v1/concept/ncit"
-        PATH = GROUP.get("path", DFLT_PATH)
-        DFLT_PARMS = "include={self.include}&list={self.codes}"
-        PARMS = GROUP.get("parms", DFLT_PARMS)
-        TEMPLATE = f"{SCHEME}://{HOST}/{PATH}?{PARMS}"
-
-        def __init__(self, codes, include="full"):
-            """
-            Remember what we need for contructing a URL for fetching concepts.
-
-            Pass:
-                codes - comma-separated list of concept codes
-                include - indicator of how much data to return; comma-
-                          separated list of any of the following values:
-                          minimal, summary, full, associations, children,
-                          definitions, disjointWith, inverseAssociations,
-                          inverseRoles, maps, parents, properties, roles,
-                          synonyms (default is full)
-            """
-
-            self.codes = codes
-            self.include = include
-
-        def __str__(self):
-            """
-            Plug in the parameters for the URL.
-
-            Return:
-                string containing the URL for retrieving the concept record(s)
-            """
-
-            return self.TEMPLATE.format(self=self)
-
-    @classmethod
-    def test(cls):
-        """
-        Run a requested command-line test of the module's functionality.
-
-        For usage, invoke the module as follows:
-            python nci_thesaurus.py --help
-        """
-
-        import argparse
-        actions = (
-            "save-json",
-            "save-xml",
-            "print-json",
-            "print-xml",
-            "print-changes",
-            "find-changed-terms",
-            "count-properties"
-        )
-        formatter_class = argparse.ArgumentDefaultsHelpFormatter
-        parser = argparse.ArgumentParser(formatter_class=formatter_class)
-        parser.add_argument("--concept-id", default="C55555")
-        parser.add_argument("--cdr-id")
-        parser.add_argument("--action", choices=actions, default=actions[0])
-        parser.add_argument("--limit", type=int)
-        parser.add_argument("--indent", type=int, default=2)
-        parser.add_argument("--directory", default=".")
-        parser.add_argument("--filename")
-        args = parser.parse_args()
-        getattr(cls, args.action.replace("-", "_"))(args)
-
-    @classmethod
-    def find_changed_terms(cls, args):
-        """
-        Find all of the CDR Term documents which need to be refreshed.
-
-        Writes the concept code and CDR ID to the standard output
-        on a single line, separated by the tab character. Writes
-        errors to the standard error file (most of these will be
-        caused by a mismatch in the concept's preferred name string).
-        Can take as much as a couple of hours, unless the --limit
-        option is used.
+    def __init__(self, cdr_id, root):
+        """Remember the caller's values.
 
         Pass:
-            args - dictionary of command line arguments (this test
-                   uses only the --limit option)
+            cdr_id - unique ID integer for the CDR Term document
+            root - top-level node of the parsed XML document
         """
 
-        start = datetime.datetime.now()
-        query = db.Query("query_term", "doc_id", "value")
-        query.where("path = '/Term/NCIThesaurusConcept'")
-        query.where("value LIKE 'C%'")
-        query.where("value NOT LIKE 'CDR%'")
-        if args.limit:
-            query.limit(args.limit)
-        for cdr_id, concept_id in query.execute().fetchall():
-            try:
-                concept = cls(code=concept_id)
-                term_doc = TermDoc(concept, cdr_id=cdr_id)
-                if term_doc.changes:
-                    print("%s\tCDR%s" % (concept_id, cdr_id))
-            except Exception as e:
-                error = "comparing CDR%d to %r" % (cdr_id, concept_id)
-                Concept.logger.exception(error)
-                sys.stderr.write("%s: %s\n" % (error, e))
-        elapsed = (datetime.datetime.now() - start).total_seconds()
-        sys.stderr.write("elapsed time: %s seconds\n" % elapsed)
+        self.cdr_id = cdr_id
+        self.root = root
 
-    @classmethod
-    def print_json(cls, args):
-        """
-        Unit test to write the formatted JSON for a concept to the
-        standard output.
+    @cached_property
+    def definitions(self):
+        """Sequence of definition strings found in the CDR document."""
+
+        definitions = []
+        for node in self.root.findall("Definition/DefinitionText"):
+            definition = Doc.get_text(node, "").strip()
+            if definition:
+                definitions.append(self.normalize_space(definition))
+        return definitions
+
+    @cached_property
+    def name(self):
+        """Preferred name for the CDR drug term document."""
+
+        name = Doc.get_text(self.root.find("PreferredName"))
+        return self.normalize_space(name)
+
+    @cached_property
+    def other_names(self):
+        """Synonyms for the drug term."""
+
+        other_names = set()
+        for node in self.root.findall("OtherName"):
+            other_name = self.OtherName(node)
+            if other_name.name:
+                other_names.add(other_name)
+        return other_names
+
+    class OtherName:
+        """Capture the name string and review status of an OtherName node."""
+
+        def __init__(self, node):
+            self.__node = node
+
+        def __lt__(self, other):
+            """Support case-insensitive sorting."""
+            return self.normalized_name < other.normalized_name
+
+        @cached_property
+        def approved(self):
+            """`True` if the name has been approved in review."""
+            child = self.__node.find("ReviewStatus")
+            return Doc.get_text(child, "") == "Reviewed"
+
+        @cached_property
+        def name(self):
+            """Name string with space normalized."""
+
+            child = self.__node.find("OtherTermName")
+            return Normalizer.normalize_space(Doc.get_text(child, ""))
+
+        @cached_property
+        def normalized_name(self):
+            """Name string normalized for sorting."""
+            return self.name.lower()
+
+
+class Updater(Job):
+    """Global change job used to update CDR term documents from the EVS."""
+
+    LOGNAME = "updates-from-evs"
+    COMMENT = f"Term document refreshed from EVS {date.today()}"
+    NCIT = "NCI Thesaurus"
+    TYPE = "Health professional"
+
+    def __init__(self, control, docs, set_codes, /):
+        """Capture the caller's values.
 
         Pass:
-            args - dictionary of command line arguments (this test
-                   uses the --concept-id and --indent options)
+            control - used to record successes and failures
+            docs - dictionary of `EVSConcept` objects indexded by CDR ID
+            set_codes - `True` if the concept codes needs to be set
         """
 
-        print(json.dumps(cls.fetch(args.concept_id), indent=args.indent))
+        self.__control = control
+        self.__docs = docs
+        self.__set_codes = set_codes
+        opts = dict(session=control.session, mode="live", console=False)
+        Job.__init__(self, **opts)
 
-    @classmethod
-    def save_json(cls, args):
-        """
-        Unit test to write the formatted JSON for a concept to a disk file.
+    def select(self):
+        """Return sequence of CDR ID integers for documents to transform."""
+        return sorted([id for id in self.__docs if self.__docs[id]])
+
+    def transform(self, doc):
+        """Refresh the CDR document with values from the EVS concept.
 
         Pass:
-            args - dictionary of command line arguments (this test
-                   uses the --concept-id and --indent options)
-        """
-
-        name = "%s.json" % args.concept_id
-        with open(name, "w") as fp:
-            json.dump(cls.fetch(args.concept_id), fp, indent=args.indent)
-        print("saved", name)
-
-    @classmethod
-    def print_xml(cls, args):
-        """
-        Unit test to write the converted (or updated) CDR Term document
-        to standard output.
-
-        If the --cdr-id option is specified, an in-memory update of the
-        document is performed. Otherwise a new Term document is generated
-        in memory and printed (but not saved to the repository).
-
-        Pass:
-            args - dictionary of command line arguments (this test
-                   uses the --concept-id and (optionally) --cdr-id options)
-        """
-
-        opts = dict(cdr_id=args.cdr_id, ignore_repository=True)
-        term_doc = TermDoc(cls(code=args.concept_id), **opts)
-        print(term_doc.doc.xml)
-
-    @classmethod
-    def save_xml(cls, args):
-        """
-        Unit test to write the converted (or updated) CDR Term document
-        to a disk file.
-
-        If the --cdr-id option is specified, an in-memory update of the
-        document is performed. Otherwise a new Term document is generated
-        in memory and saved to disk (but not saved to the repository).
-
-        Pass:
-            args - dictionary of command line arguments (this test
-                   uses the --concept-id and (optionally) --cdr-id options)
-        """
-
-        name = "%s.xml" % args.concept_id
-        opts = dict(cdr_id=args.cdr_id, ignore_repository=True)
-        term_doc = TermDoc(cls(code=args.concept_id), **opts)
-        with open(name, "wb") as fp:
-            fp.write(term_doc.doc.xml)
-        print("saved", name)
-
-    @classmethod
-    def print_changes(cls, args):
-        """
-        Unit test to update an existing CDR Term document in memory
-        using the current EVS concept record and describe the changes
-        performed (if any).
-
-        Pass:
-            args - dictionary of command line arguments (this test
-                   uses the --concept-id and --cdr-id options)
-        """
-
-        assert args.cdr_id, "cdr-id required for print-changes action"
-        term_doc = TermDoc(cls(code=args.concept_id), cdr_id=args.cdr_id)
-        for change in term_doc.changes:
-            if "definition" not in change.lower():
-                print(change)
-        for change in term_doc.changes:
-            if "definition" in change.lower():
-                print(change)
-        if not term_doc.changes:
-            print("Term document unchanged")
-
-    @classmethod
-    def count_properties(cls, args):
-        """
-        Unit test which parses all of the .json files in the specified
-        directory and prints the counts of each type of property found
-        to the standard output.
-
-        Pass:
-            args - dictionary of command line arguments (this test
-                   uses only the --directory option)
-        """
-
-        import glob
-        properties = {}
-        for name in glob.glob("%s/*.json" % args.directory):
-            try:
-                concept = cls(path=name)
-                for p in concept.properties:
-                    properties[p.name] = properties.get(p.name, 0) + 1
-                print(name, concept.code, concept.preferred_name)
-            except Exception as e:
-                sys.stderr.write("%s : %s\n" % (name, e))
-        for name in sorted(properties):
-            print("%7d %s" % (properties[name], name))
-
-
-class TermDoc:
-    """
-    CDR Term document, created or updated from the corresponding EVS concept.
-
-    Class values:
-        CDRNS - namespace for some of the attributes in CDR XML documents
-        NSMAP - namespace map used for building new CDR Term document
-        OTHER_NAMES - property names for term names/aliases
-
-    Instance values:
-        concept - object for the source EVS concept
-        session - CDR session used for retrieving/saving the document
-        skip_other_names - if True, do not update the OtherNames elements
-                           (ignored for newly created Term documents)
-        skip_definitions - if True, do not update the Definition elements
-                           (ignored for newly created Term documents)
-        published - if true, at least publishable version of the document
-                    already exists
-        cdr_id - the unique ID of the CDR Term document to be updated;
-                 None when creating a new Term document
-        doc - cdr.Doc object to be saved
-    """
-
-    CDRNS = "cips.nci.nih.gov/cdr"
-    NSMAP = {"cdr": CDRNS}
-    OTHER_NAMES = "synonyms", "ind_codes", "nsc_codes", "cas_codes"
-
-    def __init__(self, concept, session="guest", cdr_id=None, **opts):
-        """
-        Create or update the cdr.Doc object for this Term document.
-
-        Pass:
-            concept - EVS concept information to be used in the Term document
-            session - CDR session used for retrieving/saving the document
-            cdr_id - Term document to be updated, or None if new document
-            ignore_repository - Don't check to see if the CDR doc exists
-        """
-
-        self.concept = concept
-        self.session = session
-        self.skip_other_names = opts.get("skip_other_names", False)
-        self.skip_definitions = opts.get("skip_definitions", False)
-        self.ignore_repository = opts.get("ignore_repository", False)
-        self.published = False
-        self.cdr_id = None
-        self.doc = cdr_id and self.load(cdr_id) or self.create()
-
-    def save(self):
-        """
-        Create a version of the CDR Term document in the repository.
+            doc - reference to `cdr.Doc` object
 
         Return:
-            String describing successful creation of a new Term document
-            (including the CDR ID for the new document); or sequence
-            of strings describing changes made to an existing Term
-            document.
-
-        Raises an exception on failure.
+            serialized XML for the modified document
         """
 
-        verb = self.doc.id and "Updating" or "Importing"
-        opts = {
-            "doc": str(self.doc),
-            "comment": "%s Term document from NCI Thesaurus" % verb,
-            "val": "Y",
-            "ver": "Y",
-            "verPublishable": self.published and "Y" or "N",
-            "showWarnings": True
-        }
+        # Find the concept whose values we will apply to the CDR document.
+        int_id = Doc.extract_id(doc.id)
+        concept = self.__docs[int_id]
+
+        # Catch any failures.
         try:
-            if self.doc.id:
-                if self.changes:
-                    result = cdr.repDoc(self.session, **opts)
-                    Concept.logger.info("repDoc() result: %r", result)
-                    cdr_id, errors = result
-                    if not cdr_id:
-                        message = f"failure versioning {self.cdr_id}: {errors}"
-                        Concept.fail(message)
-                response = self.changes or None
-            else:
-                result = cdr.addDoc(self.session, **opts)
-                Concept.logger.info("addDoc() result: %r", result)
-                self.cdr_id, errors = result
-                if not self.cdr_id:
-                    Concept.fail("failure adding new document: %s" % errors)
-                response = "Added %s as %s" % (self.concept.code, self.cdr_id)
-        except Exception:
-            if self.cdr_id:
-                cdr.unlock(self.session, self.cdr_id)
-            raise
-        cdr.unlock(self.session, self.cdr_id)
-        return response
 
-    def load(self, cdr_id):
-        """
-        Check out the CDR Term document, parse it, and update it with
-        the current concept information.
+            # Make sure the document has the correct preferred name, statuses.
+            root = etree.fromstring(doc.xml)
+            root.find("PreferredName").text = concept.name
+            node = root.find("TermStatus")
+            if node is not None:
+                node.text = "Reviewed-retain"
+            node = root.find("ReviewStatus")
+            if node is not None:
+                node.text = "Reviewed"
 
-        Pass:
-            cdr_id - unique identified of the existing CDR Term document
+            # Don't duplicate the preferred name in the OtherName blocks.
+            names = set([concept.normalized_name])
 
-        Return:
-            cdr.Doc object with updated terms and/or definitions
-        """
-
-        try:
-            self.cdr_id, self.doc_id, frag_id = cdr.exNormalize(cdr_id)
-            if cdr.lastVersions(self.session, self.cdr_id)[1] != -1:
-                self.published = True
-        except Exception:
-            Concept.fail("invalid CDR ID %r" % cdr_id)
-        self.concept.logger.info("updating %s", self.cdr_id)
-        try:
-            doc = cdr.getDoc(self.session, self.cdr_id, "Y", getObject=True)
-        except Exception as e:
-            Concept.fail("failure retrieving %s: %s" % (self.cdr_id, e))
-        try:
-            self.root = self.parse(doc.xml)
-            doc.xml = self.update()
-            return doc
-        except Exception:
-            cdr.unlock(self.session, self.cdr_id)
-            raise
-
-    def parse(self, xml):
-        """
-        Create the ElementTree node for the CDR Term document.
-
-        This method function verifies that the Term document matches
-        the concept, and throws an exception otherwise.
-
-        Pass:
-            xml - serialized XML for the CDR Term document
-
-        Return:
-            parsed ElementTree node for the document
-        """
-
-        cdr_id = self.cdr_id
-        root = etree.fromstring(xml)
-        node = root.find("NCIThesaurusConcept")
-        if node is None or node.text is None:
-            Concept.fail("%s has no concept code" % cdr_id)
-        code = node.text
-        if code.strip().upper() != self.concept.code.strip().upper():
-            why = "%s is for %r, not %r" % (cdr_id, code, self.concept.code)
-            Concept.fail(why)
-        node = root.find("PreferredName")
-        if node is None or node.text is None:
-            Concept.fail("%s has no preferred name" % cdr_id)
-        cdr_name, ncit_name = node.text, self.concept.preferred_name
-        if Concept.normalize(cdr_name) != Concept.normalize(ncit_name):
-            why = "%s is for %r, not %r" % (cdr_id, cdr_name, ncit_name)
-            Concept.fail(why)
-        return root
-
-    def update(self):
-        """
-        Modify the OtherName and Definition blocks for the Term document.
-
-        Honor the options to avoid modifying one or the other of these
-        sets of blocks.
-
-        Return:
-            serialized XML for the (possibly) updated Term document
-        """
-
-        self.changes = set()
-        if not self.skip_other_names:
-            self.update_names()
-        if not self.skip_definitions:
-            self.update_definitions()
-        if self.changes:
-            for node in self.root.findall("TermStatus"):
-                node.text = "Unreviewed"
-        return etree.tostring(self.root, pretty_print=True)
-
-    def update_names(self):
-        """
-        Replace the existing OtherName elements with a fresh set.
-
-        A sequence of changes is recorded in self.changes.
-        The position for the inserts is determined by walking past
-        all of the elements which precede the OtherName elements.
-        Then the sequence of OtherName nodes to be inserted is
-        reversed, so we can perform all of the insertions using
-        the same position.
-        """
-
-        vals = self.Values(self.root, "OtherName/OtherTermName")
-        if vals.dups:
-            what = "OtherName block" + (vals.dups > 1 and "s" or "")
-            self.changes.add("%d duplicate %s removed" % (vals.dups, what))
-        nodes = {}
-        for attr_name in self.OTHER_NAMES:
-            for n in getattr(self.concept, attr_name):
-                if n.include:
-                    key = Concept.normalize(n.name)
-                    if key not in nodes:
-                        status = "Reviewed"
-                        original = vals.original.get(key)
-                        if original is None:
-                            status = "Unreviewed"
-                            self.changes.add("added name %r" % n.name)
-                        elif original != n.name:
-                            status = "Unreviewed"
-                            change = "replaced %r with %r" % (original, n.name)
-                            self.changes.add(change)
-                        nodes[key] = n.convert(self.concept.code, status)
-                        vals.used.add(key)
-        etree.strip_elements(self.root, "OtherName")
-        position = self.find_position(Concept.OtherName.SKIP)
-        for key in reversed(list(nodes)):
-            self.root.insert(position, nodes[key])
-        for key in (set(vals.original) - vals.used):
-            self.changes.add("dropped name %r" % vals.original[key])
-
-    def update_definitions(self):
-        """
-        Replace the existing Definition elements with a fresh set.
-
-        A sequence of changes is recorded in self.changes.
-        The position for the inserts is determined by walking past
-        all of the elements which precede the Definition elements.
-        Then the sequence of Definition nodes to be inserted is
-        reversed, so we can perform all of the insertions using
-        the same position.
-        """
-
-        vals = self.Values(self.root, "Definition/DefinitionText")
-        if vals.dups:
-            what = "definition" + (vals.dups > 1 and "s" or "")
-            self.changes.add("%d duplicate %s eliminated" % (vals.dups, what))
-        nodes = []
-        for d in self.concept.definitions:
-            if d.source == 'NCI':
-                key = Concept.normalize(d.text)
-                if key not in vals.used:
-                    status = "Reviewed"
-                    original = vals.original.get(key)
-                    if original is None:
-                        status = "Unreviewed"
-                    elif original != d.text:
-                        status = "Unreviewed"
-                        vals.updated += 1
-                    nodes.append(d.convert(status))
-                    vals.used.add(key)
-        etree.strip_elements(self.root, "Definition")
-        position = self.find_position(Concept.Definition.SKIP)
-        for node in reversed(nodes):
-            self.root.insert(position, node)
-        vals.record_definition_changes(self.changes)
-
-    def create(self):
-        """
-        Create a new CDR Term document for the concept.
-
-        Return:
-            cdr.Doc object for a new CDR Term document
-        """
-
-        code = self.concept.code
-        cdr_id = self.lookup(code)
-        if not self.ignore_repository:
-            if cdr_id:
-                Concept.fail("%s already imported as CDR%d" % (code, cdr_id))
-        root = etree.Element("Term", nsmap=self.NSMAP)
-        node = etree.SubElement(root, "PreferredName")
-        node.text = self.concept.preferred_name
-        nodes = {}
-        for name in self.OTHER_NAMES:
-            for other_name in getattr(self.concept, name):
-                if other_name.include:
-                    key = Concept.normalize(other_name.name)
-                    if key not in nodes:
-                        nodes[key] = other_name.convert(self.concept.code)
-        for key in sorted(nodes):
-            root.append(nodes[key])
-        done = set()
-        for definition in self.concept.definitions:
-            if definition.source == "NCI":
-                key = Concept.normalize(definition.text)
-                if key not in done:
-                    root.append(definition.convert())
-                    done.add(key)
-        term_type = etree.SubElement(root, "TermType")
-        etree.SubElement(term_type, "TermTypeName").text = "Index term"
-        etree.SubElement(root, "TermStatus").text = "Unreviewed"
-        code = etree.SubElement(root, "NCIThesaurusConcept", Public="Yes")
-        code.text = self.concept.code
-        return cdr.Doc(etree.tostring(root, pretty_print=True), doctype="Term")
-
-    def find_position(self, skip):
-        """
-        Find the position where new nodes should be inserted.
-
-        Pass:
-            skip - set of element names which precede the nodes being
-                   inserted
-        """
-
-        position = 0
-        for node in self.root:
-            if node.tag not in skip:
-                return position
-            position += 1
-        return position
-
-    @staticmethod
-    def lookup(code):
-        """
-        Find the CDR ID for the Term document for an EVS concept.
-
-        Pass:
-            code - string for unique identifier of EVS concept record
-
-        Return:
-            integer CDR document ID for the Term document; None if not found
-        """
-
-        query = db.Query("query_term", "doc_id").unique()
-        query.where("path = '/Term/NCIThesaurusConcept'")
-        query.where(query.Condition("value", code))
-        row = query.execute().fetchone()
-        return row and row[0] or None
-
-    class Values:
-        """
-        Set of OtherName or Definition element in a CDR Term document.
-
-        Instance values:
-            dups - integer count of duplicates found
-            updated - integer count of modified elements
-            original - map of normalized values to original values
-            used - set of normalized values for elements queued for
-                   re-insertion into the element
-        """
-
-        def __init__(self, root, path):
-            """
-            Gather the unique OtherName or Definition string values,
-            indexed by the normalized values for those values.
-            """
-
-            self.dups = self.updated = 0
-            self.original = {}
-            self.used = set()
-            for node in root.findall(path):
-                value = self.Value(node)
-                if value.normalized in self.original:
-                    self.dups += 1
+            # Start with a clean slate.
+            etree.strip_elements(root, "Definition")
+            if self.__set_codes:
+                etree.strip_elements(root, "NCIThesaurusConcept")
+            for node in root.findall("OtherName"):
+                other_name = Term.OtherName(node)
+                if other_name.approved:
+                    names.add(Normalizer.normalize(other_name.name))
                 else:
-                    self.original[value.normalized] = value.text
+                    root.remove(node)
 
-        def record_definition_changes(self, changes):
-            """
-            Update the sequence of change descriptions to reflect
-            what happened to the Term document's definitions.
+            # Find where our new elements will be inserted.
+            term_type_node = root.find("TermType")
+            if term_type_node is None:
+                raise Exception("Term document has no TermType element")
 
-            Unlike the OtherName changes, for which we show the
-            actual original and new name strings, we only show
-            counts of replaced, added, and dropped definitions,
-            because the definition strings will be too lengthy
-            in most cases to show to the user or put in the logs.
-            If the actual values need to be examined, the CDR
-            version history table has everything we need.
+            # Insert the nodes for other names and definitions.
+            for key in sorted(concept.normalized_other_names):
+                if key not in names:
+                    names.add(key)
+                    other_name = concept.normalized_other_names[key]
+                    node = other_name.convert(concept.code)
+                    term_type_node.addprevious(node)
+            for definition in concept.definitions:
+                node = self.make_definition_node(definition)
+                term_type_node.addprevious(node)
 
-            Pass:
-                changes - sequence of strings describing modifications
-                          to the CDR Term documents
-            """
+            # Add the concept code if necessary.
+            if self.__set_codes:
+                position = 0
+                for node in root:
+                    if node.tag in ("Comment", "DateLastModified", "PdqKey"):
+                        break
+                    position += 1
+                code_node = etree.Element("NCIThesaurusConcept", Public="Yes")
+                code_node.text = concept.code
+                root.insert(position, code_node)
 
-            self.added = len(self.used - set(self.original))
-            self.dropped = len(set(self.original) - self.used)
-            if self.added == self.dropped:
-                self.replaced = self.added
-                self.added = self.dropped = 0
-            elif self.added > self.dropped:
-                self.replaced = self.dropped
-                self.added -= self.replaced
-                self.dropped = 0
-            else:
-                self.replaced = self.added
-                self.dropped -= self.replaced
-                self.added = 0
-            for verb in ("added", "dropped", "updated", "replaced"):
-                count = getattr(self, verb)
-                if count:
-                    what = "definition" + (count > 1 and "s" or "")
-                    changes.add("%s %d %s" % (verb, count, what))
+            # Record the transformation and return the results.
+            self.__control.successes.add(int_id)
+            return etree.tostring(root)
 
-        class Value:
-            """
-            Original and normalized versions of an OtherName or
-            Definition element.
+        except Exception as e:
 
-            Instance values:
-                text - string value actually stored in the element
-                normalized - transformed version of the value used
-                             for identifying what the users regard
-                             as duplicates
-            """
+            # Record the failure.
+            self.logger.exception("CDR%s", int_id)
+            self.__control.failures[int_id] = str(e)
+            raise
 
-            def __init__(self, node):
-                """
-                Assemble the string for the node's value, create
-                a normalized version of the string, and save both.
-                """
+    @classmethod
+    def make_definition_node(cls, text):
+        """Create the block for the definition being added.
 
-                self.text = "".join(node.itertext())
-                self.normalized = Concept.normalize(self.text)
+        Pass:
+            text - the string for the definition
 
+        Return:
+            `_Element` created using the lxml package
+        """
 
-if __name__ == "__main__":
-    """
-    Normally this file is imported as a module, but it can be run
-    from the command line for unit testing.
-    """
-
-    Concept.test()
+        node = etree.Element("Definition")
+        etree.SubElement(node, "DefinitionText").text = text
+        etree.SubElement(node, "DefinitionType").text = cls.TYPE
+        source = etree.SubElement(node, "DefinitionSource")
+        etree.SubElement(source, "DefinitionSourceName").text = cls.NCIT
+        etree.SubElement(node, "ReviewStatus").text = "Reviewed"
+        return node
