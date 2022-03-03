@@ -4387,8 +4387,7 @@ class Resolver(etree.Resolver):
         handler = getattr(self, method_name)
         if handler is not None:
             return handler(args, context)
-        error = f"unsupported function {function!r} in {self.url!r}"
-        raise Exception(error)
+        raise Exception(f"unsupported function {function!r} in {self.url!r}")
 
     def _date(self, _args, context):
         """
@@ -4623,7 +4622,7 @@ class Resolver(etree.Resolver):
         """
         Look up a value in the external_map table
 
-        Creates a row in the table with a NULL documnet ID if the value
+        Creates a row in the table with a NULL document ID if the value
         isn't found.
 
         Probably won't implement this, as it is only invoked by the
@@ -4722,6 +4721,9 @@ class Resolver(etree.Resolver):
 
         if isinstance(arg, (list, tuple)):
             arg = "".join(arg)
+        if ":" in arg:
+            scheme, tail = arg.split(":", 1)
+            return scheme + ":" + url_quote(tail.replace("+", "@@PLUS@@"))
         return url_quote(arg.replace("+", "@@PLUS@@"))
 
 
