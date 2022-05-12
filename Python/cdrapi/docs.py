@@ -6875,10 +6875,13 @@ class LinkType:
         Called (indirectly) by `LinkType.delete()`.
         """
 
-        for table in ("link_xml", "link_target", "link_properties"):
+        tables = "link_net", "link_xml", "link_target", "link_properties"
+        for table in (tables):
             column = "link_id"
             if table == "link_target":
                 column = "source_link_type"
+            elif table == "link_net":
+                column = "link_type"
             delete = f"DELETE FROM {table} WHERE {column} = ?"
             self.cursor.execute(delete, (self.id,))
 
