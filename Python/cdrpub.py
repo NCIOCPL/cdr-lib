@@ -868,21 +868,20 @@ class Control:
         spanish = set()
         pushed = []
         table = opts.get("table", "pub_proc_cg")
-        query = db.Query("query_term_pub", "value")
+        query = db.Query("query_term_pub", "doc_id", "value")
         query.where("path = '/Summary/SummaryMetaData/SummaryLanguage'")
-        query.where(query.Condition("doc_id", 0))
-        query = str(query)
+        summary_language = {}
+        for doc_id, language in query.execute(session.cursor).fetchall():
+            summary_language[doc_id] = language.lower().strip()
         for doc_id in sorted(send):
+            if summary_language.get(doc_id, "english") != "english":
+                spanish.add(doc_id)
+                continue
             doctype = send[doc_id]
             xsl = filters[doctype]
             root = cls.fetch_exported_doc(session, doc_id, table)
             args = session, doc_id, xsl, root
             if doctype == "Summary":
-                session.cursor.execute(query, (doc_id,))
-                language = session.cursor.fetchone().value
-                if language.lower() != "english":
-                    spanish.add(doc_id)
-                    continue
                 values = cls.assemble_values_for_cis(*args)
             else:
                 values = cls.assemble_values_for_dis(*args)
@@ -904,9 +903,13 @@ class Control:
             nid = client.push(values)
             pushed.append((doc_id, nid, "es"))
 
-        # Drop the documents being removed.
+        # Drop the documents being removed, non-English before English.
         for doc_id in remove:
-            client.remove(doc_id)
+            if summary_language.get(doc_id, "english") != "english":
+                client.remove(doc_id)
+        for doc_id in remove:
+            if summary_language.get(doc_id, "english") == "english":
+                client.remove(doc_id)
 
         # Switch pushed docs from draft to published.
         errors = client.publish(pushed)
