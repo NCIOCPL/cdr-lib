@@ -26,6 +26,7 @@ import shutil
 import threading
 import time
 from lxml import etree, html
+from lxml.html import builder as B
 from PIL import Image
 import cdr
 from cdrapi import db
@@ -33,7 +34,8 @@ from cdrapi.docs import Doc
 from cdrapi.publishing import Job, DrupalClient
 from cdrapi.settings import Tier
 from cdrapi.users import Session
-
+from urllib.parse import urlparse
+from copy import deepcopy
 
 class Control:
     """
@@ -63,6 +65,11 @@ class Control:
     )
     SHORT_TITLE_MAX = 100
     DESCRIPTION_MAX = 600
+    ABOUT_THIS = "_section_AboutThis_1"
+    IN_THIS_SECTION = dict(
+        en="In This Section",
+        es="En esta secci\xf3n",
+    )
 
     def __init__(self, job_id, **opts):
         """
@@ -587,7 +594,7 @@ class Control:
         push_all = self.job.parms.get("PushAllDocs") == "Yes"
         self.logger.info("Queuing changed documents for push")
         for row in rows:
-            if row.id in self.processed:
+            if row.id in self.processed or row.id in self.partners_only:
                 continue
             self.processed.add(row.id)
             directory = export_job.directory
@@ -634,7 +641,7 @@ class Control:
         query.where("c.id IS NULL")
         rows = query.execute(self.cursor).fetchall()
         for row in rows:
-            if row.id in self.processed:
+            if row.id in self.processed or row.id in self.partners_only:
                 continue
             self.processed.add(row.id)
             directory = export_job.directory
@@ -676,6 +683,10 @@ class Control:
         types = [row.doc_type for row in query.execute(self.cursor).fetchall()]
         if not types:
             return
+        condition = "a.active_status <> 'A'"
+        if self.partners_only:
+            partners_only_ids = ", ".join(str(id) for id in self.partners_only)
+            condition = f"({condition} OR c.id in ({partners_only_ids}))"
         types = ", ".join([str(t) for t in types])
         export_id = str(export_job.job_id)
         cols = "v.id", "v.num", export_id, push_id, "t.name"
@@ -685,8 +696,8 @@ class Control:
         query.join("pub_proc_cg c", "c.id = v.id", "c.pub_proc = d.pub_proc")
         query.join("doc_type t", "t.id = v.doc_type")
         query.outer("pub_proc_cg_work w", "w.id = c.id")
+        query.where(condition)
         query.where("w.id IS NULL")
-        query.where("a.active_status <> 'A'")
         query.where("v.doc_type IN ({})".format(types))
         cols = "id", "num", "vendor_job", "cg_job", "doc_type"
         args = self.PUSH_STAGE, ", ".join(cols), query
@@ -936,45 +947,113 @@ class Control:
         node = meta.find("SummaryURL")
         if node is None:
             raise Exception("CDR{:d} has no SummaryURL".format(doc_id))
-        url = node.get("xref").replace("https://www.cancer.gov", "")
+        langs = dict(English="en", Spanish="es")
+        langcode = langs[Doc.get_text(meta.find("SummaryLanguage"))]
+        try:
+            url = urlparse(node.get("xref")).path
+        except:
+            raise Exception(f"CDR{doc_id:d}: bad or missing summary URL")
+        if not url:
+            raise Exception(f"CDR{doc_id:d}: missing summary URL")
         if url.startswith("/espanol"):
             url = url[len("/espanol"):]
-        short_title = None
+        short_title = translation_of = None
         for node in root.findall("AltTitle"):
             if node.get("TitleType") == "Short":
                 short_title = Doc.get_text(node)
-        translation_of = None
         node = root.find("TranslationOf")
         if node is not None:
             translation_of = Doc.extract_id(node.get("ref"))
+        svpc = suppress_otp = 0
+        if root.get("SVPC") == "Yes":
+            svpc = 1
+        if root.get("SuppressOnThisPageSection") == "Yes":
+            suppress_otp = 1
+        partner_merge_set = root.get("PartnerMergeSet") == "Yes"
 
         # Pull out the summary sections into sequence of separate dictionaries.
+        intro_text_index = None
+        for i, node in enumerate(root.findall("SummarySection")):
+            types = []
+            for child in node.findall("SectMetaData/SectionType"):
+                types.append(Doc.get_text(child, ""))
+            if "Introductory Text" in types and not partner_merge_set:
+                if intro_text_index is not None:
+                    error = "CDR{} has multiple introductory text sections"
+                    raise Exception(error.format(doc_id))
+                intro_text_index = i
+            else:
+                title = Doc.get_text(node.find("Title"), "").strip()
+                if not title and not partner_merge_set and not svpc:
+                    if types:
+                        types = ", ".join(types)
+                        types = f"of type(s) {types}"
+                    else:
+                        types = "with no section types specified"
+                    error = "CDR{} missing title for section {} {}"
+                    args = doc_id, i + 1, types
+                    raise Exception(error.format(*args))
         target = "@@MEDIA-TIER@@"
         tier = session.tier.name.lower()
         replacement = f"-{tier}" if tier != "prod" else ""
         transformed = xsl(root)
         cls.consolidate_citation_references(transformed)
-        xpath = "body/div/article/div[@class='pdq-sections']"
+        xpath = 'body/div/article/div[@class="pdq-sections"]'
         sections = []
+        intro_text = None
+        i = 0
         for node in transformed.xpath(xpath):
             h2 = node.find("h2")
             if h2 is None:
-                raise Exception("CDR{:d} missing section title".format(doc_id))
-            section_title = Doc.get_text(h2)
-            node.remove(h2)
-            section_id = node.get("id")
-            if section_id.startswith("_section"):
-                section_id = section_id[len("_section"):]
+                section_title = ""
+            else:
+                section_title = Doc.get_text(h2, "").strip()
+                node.remove(h2)
+            if intro_text_index != i and node.get("id") != cls.ABOUT_THIS:
+                if not svpc:
+                    headers = list(node.iter("h3", "h4"))
+                    if headers and "kpBox" not in headers[0].get("id", ""):
+                        links = B.UL()
+                        outer_link = nested_links = None
+                        for header in headers:
+                            link = deepcopy(header)
+                            link.set("href", "#" + link.get("id"))
+                            del link.attrib["id"]
+                            link.tag = "a"
+                            if header.tag == "h3":
+                                outer_link = link
+                                nested_links = None
+                                links.append(B.LI(link))
+                            else:
+                                if nested_links is None:
+                                    nested_links = B.UL(B.LI(link))
+                                    if outer_link is not None:
+                                        outer_link.append(nested_links)
+                                    else:
+                                        links.append(nested_links)
+                                else:
+                                    nested_links.append(B.LI(link))
+                        h6 = B.H6(cls.IN_THIS_SECTION[langcode])
+                        nav = B.E("nav", h6, links)
+                        nav.set("class", "in-this-section")
+                        nav.set("role", "navigation")
+                        node.insert(0, nav)
             body = html.tostring(node).decode("utf-8")
             body = body.replace(target, replacement)
-            sections.append(dict(
-                title=section_title,
-                id=section_id,
-                html=body
-            ))
+            if intro_text_index == i:
+                intro_text = body
+            else:
+                section_id = node.get("id")
+                if section_id.startswith("_section"):
+                    section_id = section_id[len("_section"):]
+                sections.append(dict(
+                    title=section_title,
+                    id=section_id,
+                    html=body
+                ))
+            i += 1
 
         # Pull everything together.
-        langs = dict(English="en", Spanish="es")
         audience = Doc.get_text(meta.find("SummaryAudience"))
         description = Doc.get_text(meta.find("SummaryDescription"))
         if len(description) > cls.DESCRIPTION_MAX:
@@ -993,10 +1072,13 @@ class Control:
             description=description,
             summary_type=Doc.get_text(meta.find("SummaryType")),
             audience=audience.replace(" prof", " Prof"),
-            language=langs[Doc.get_text(meta.find("SummaryLanguage"))],
+            language=langcode,
             posted_date=Doc.get_text(root.find("DateFirstPublished")),
             updated_date=Doc.get_text(root.find("DateLastModified")),
             type="pdq_cancer_information_summary",
+            suppress_otp=suppress_otp,
+            svpc=svpc,
+            intro_text=intro_text,
         )
 
     @classmethod
@@ -1444,6 +1526,20 @@ class Control:
         """
 
         return self.__opts.get("output-dir") or self.job.output_dir
+
+    @property
+    def partners_only(self):
+        """
+        Set of document IDs for documents we don't send to cancer.gov.
+        """
+
+        if not hasattr(self, "_partners_only"):
+            query = db.Query("query_term_pub", "doc_id")
+            query.where("path = '/Summary/@PartnerMergeSet'")
+            query.where("value = 'Yes'")
+            rows = query.execute(self.cursor).fetchall()
+            self._partners_only = {row.doc_id for row in rows}
+        return self._partners_only
 
     @property
     def session(self):

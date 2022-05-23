@@ -18,6 +18,12 @@ class Report:
     was requested (see documentation for the individual report methods
     below).
 
+    To create a new report, choose a title for the report, and then
+    implement a method in this class with a name constructed by lowercasing
+    the title, replacing spaces with underscores, and prepending the
+    method name with an underscore. So, for example, the "Genetics Syndromes"
+    report is implemented in the `_genetics_syndromes()` method.
+
     Properties:
       session - reference object representing the current login
       cursor - database cursor from freshly created database connection

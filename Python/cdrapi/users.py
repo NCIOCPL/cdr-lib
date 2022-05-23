@@ -162,7 +162,6 @@ class Session:
         if not rows:
             raise Exception("Can't duplicate invalid or expired session")
         row = rows[0]
-        name = row.name
         comment = "Session duplicated from id={}".format(self.name)
         opts = dict(comment=comment, tier=self.tier.name)
         return self.__create_session(self.conn, row.id, **opts)
