@@ -6,7 +6,7 @@ from json import dumps, load, loads
 from re import compile
 from string import ascii_lowercase
 from sys import stderr
-from elasticsearch5 import Elasticsearch
+from elasticsearch7 import Elasticsearch
 from lxml import etree
 from cdr import Logging, getControlValue
 from cdrapi import db
@@ -59,10 +59,6 @@ class DictionaryAPILoader:
                 break
 
         if not self.testing:
-
-            # If we don't do this, search won't find anything.
-            # XXX IS THIS STILL TRUE?
-            # self.es.indices.flush(index=self.index)
 
             # Optimize the index.
             # pylint: disable=unexpected-keyword-arg
@@ -178,6 +174,9 @@ class DictionaryAPILoader:
 
         if not hasattr(self, "_es"):
             opts = dict(host=self.host, port=self.port, timeout=300)
+            auth = self.opts.get("auth")
+            if auth:
+                opts["http_auth"] = auth.split(",")
             self._es = Elasticsearch([opts])
         return self._es
 
@@ -216,7 +215,11 @@ class DictionaryAPILoader:
     def indexdef(self):
         """Schema for our index.
 
-        INDEXDEF can be a filename or a string
+        INDEXDEF can be the name of a control value or a JSON serialization
+        of the index mappings. If the former, the serialization will be
+        fetched from the ctl table of the CDR database, which will have
+        been populated for this row in the table from "dictionary--{name}.json"
+        in the Database/Loader directory of the `cdr-server` git repository.
         """
 
         if not hasattr(self, "_indexdef"):
@@ -370,7 +373,6 @@ class DictionaryAPILoader:
             for node in self.nodes:
                 opts = dict(
                     index=self.loader.index,
-                    doc_type=node.doc_type,
                     body=node.values,
                 )
                 if node.id:
