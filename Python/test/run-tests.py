@@ -588,13 +588,13 @@ if FULL:
             cdr.delDoc(self.session, doc_id, tier=self.TIER)
 
         def test_38_english_map_(self):
-            name = u"stage II cutaneous T-cell lymphoma"
-            phrase = u"STAGE IIA CUTANEOUS T CELL LYMPHOMA"
+            name = u"immunological adjuvant"
+            phrase = u"IMMUNOLOGIC ADJUVANT"
             names = cdr.get_glossary_map(self.session, "en", tier=self.TIER)
             self.assertTrue(isinstance(names, list))
             index = dict([(n.id, n) for n in names])
-            self.assertEqual(index[43966].name, name)
-            self.assertTrue(phrase in index[43966].phrases)
+            self.assertEqual(index[43987].name, name)
+            self.assertTrue(phrase in index[43987].phrases)
             total = len(names)
             opts = dict(tier=self.TIER, dictionary="Genetics")
             names = cdr.get_glossary_map(self.session, "en", **opts)
