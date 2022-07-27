@@ -1,15 +1,18 @@
-#----------------------------------------------------------------------
+# ---------------------------------------------------------------------
 #
 # Module for republishing a set of documents, regardless of whether
 # what we would send to Cancer.gov is identical with what we sent
 # for the last push job.
 #
-#----------------------------------------------------------------------
-import cdr, cdrcgi, time
+# ---------------------------------------------------------------------
+import cdr
+import cdrcgi
+import time
 from cdrapi import db
 
 # Extra output to standard error file.
 DEBUG = False
+
 
 class CdrRepublisher:
 
@@ -63,9 +66,10 @@ class CdrRepublisher:
         """
 
         def __init__(self, docId, docVersion, isNew):
-            self.docId      = docId
+            self.docId = docId
             self.docVersion = docVersion
-            self.isNew      = isNew
+            self.isNew = isNew
+
         def __str__(self):
             return "CDR%010d/%d" % (self.docId, self.docVersion)
 
@@ -91,16 +95,15 @@ class CdrRepublisher:
         """
 
         self.__credentials = credentials
-        self.__tier        = opts.get("host")
-        self.__conn        = db.connect()
-        self.__cursor      = self.__conn.cursor()
-        self.__onCG        = self.__getDocsOnCG()
-        self.__logger      = cdr.Logging.get_logger("publish")
+        self.__tier = opts.get("host")
+        self.__conn = db.connect()
+        self.__cursor = self.__conn.cursor()
+        self.__onCG = self.__getDocsOnCG()
+        self.__logger = cdr.Logging.get_logger("publish")
 
     def republish(self, addNewLinkedDocuments,
-                  docList = None, jobList = None, docType = None,
-                  docTypeAll = False, failedOnly = True, email = ''):
-
+                  docList=None, jobList=None, docType=None,
+                  docTypeAll=False, failedOnly=True, email=''):
 
         """
             Requests that a set of documents be sent to Cancer.gov,
@@ -311,7 +314,8 @@ class CdrRepublisher:
             parms = []
             opts = dict(parms=parms, docList=docs, email=email)
             opts["tier"] = self.__tier
-            resp = cdr.publish(self.__credentials, pubSystem, pubSubset, **opts)
+            args = self.__credentials, pubSystem, pubSubset
+            resp = cdr.publish(*args, **opts)
 
             # Make sure the job creation succeeded.
             jobId, errors = resp
@@ -330,34 +334,34 @@ class CdrRepublisher:
         except Exception as e:
             try:
                 self.__logger.exception("republish failure")
-            except:
+            except Exception:
                 pass
             if email:
                 try:
-                    sender  = "cdr@%s" % cdrcgi.WEBSERVER
+                    sender = "cdr@%s" % cdrcgi.WEBSERVER
                     subject = "Republication failure on %s" % self.__tier
-                    body    = "Failure republishing CDR documents:\n%s\n" % e
+                    body = "Failure republishing CDR documents:\n%s\n" % e
                     opts = dict(subject=subject, body=body)
                     message = cdr.EmailMessage(sender, [email], **opts)
                     message.send()
                     message = "republish(): sent failure notification to %s"
                     self.__logger.info(message, email)
-                except:
+                except Exception:
                     pass
             try:
                 self.__cleanupPubProcCgTable()
                 self.__logger.info("republish(): pub_proc_cg table cleaned up")
-            except:
+            except Exception:
                 pass
             raise
 
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     # Find the most recent publishing version for the specified
     # document and ask Cancer.gov if they already have it.  If
     # there is a publishable version, and we don't already have
     # the document in the pile to be published, insert a Doc object
     # into the dictionary representing that set.
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     def __addDocumentToSet(self, docId):
         if docId not in self.__docs:
             docVersion = self.__findLatestPubVersion(docId)
@@ -366,10 +370,10 @@ class CdrRepublisher:
                 doc = CdrRepublisher.Doc(docId, docVersion, isNew)
                 self.__docs[docId] = doc
 
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     # Look in the doc_version table to find the most recent valid
     # publishable version for the specified document.
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     def __findLatestPubVersion(self, docId):
         self.__cursor.execute("""\
             SELECT MAX(num)
@@ -380,14 +384,14 @@ class CdrRepublisher:
         rows = self.__cursor.fetchall()
         return rows and rows[0][0] or None
 
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     # Find documents which should be included with the set to be
     # published because one or more documents already in that set
     # link to them.  Patterned after a similar function in cdrpub.py,
     # but in this case, we only need to pick up documents which
     # aren't already on Cancer.gov.  This method is significantly
     # faster than the one in cdrpub.py.
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     def __addNewLinkedDocuments(self):
 
         # Debugging instrumentation.
@@ -485,21 +489,21 @@ class CdrRepublisher:
                                "elapsed: %.3f seconds",
                                len(self.__docs), time.time() - start)
 
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     # Find out whether the specified document is already on Cancer.gov.
     # In this context (according to Olga Rosenbaum, in a meeting held
     # 2007-05-01), this means present both on the "Live" site and on
     # the "Preview" stage.
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     def __isOnCG(self, docId):
         return docId in self.__onCG
 
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     # Collect the documents which are already on Cancer.gov.
     # XXX Assumes we set job status to something other than 'Success'
     # for a push job until we verify that all of the documents arrived
     # safely at their destination.
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     def __getDocsOnCG(self):
 
         # Debugging instrumentation.
@@ -548,13 +552,13 @@ class CdrRepublisher:
                                time.time() - start)
         return onCG
 
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     # Update all of the rows in the pub_proc_cg table for documents
     # being published by this job, setting force_push to 'Y' (which
     # avoids the optimization suppressing resending of the same version
     # of the same document twice in a row), and setting cg_new to
     # reflect whether Cancer.gov already has the document.
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     def __adjustPubProcCgTable(self):
         for docId in self.__docs:
             doc = self.__docs[docId]
@@ -565,10 +569,10 @@ class CdrRepublisher:
                  WHERE id = ?""", (doc.isNew and 'Y' or 'N', docId))
             self.__conn.commit()
 
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     # Undo the adjustments we made earlier to the pub_proc_cg table.
     # Invoked in the case of failure.
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     def __cleanupPubProcCgTable(self):
         try:
             self.__cursor.execute("""\
@@ -576,12 +580,13 @@ class CdrRepublisher:
                    SET force_push = 'N',
                        cg_new = 'N'""")
             self.__conn.commit()
-        except:
+        except Exception:
             pass
 
-#----------------------------------------------------------------------
+
+# ---------------------------------------------------------------------
 # Test driver.
-#----------------------------------------------------------------------
+# ---------------------------------------------------------------------
 if __name__ == "__main__":
     import sys
     DEBUG = True
@@ -598,14 +603,14 @@ where arg is one of:
    all
 """ % sys.argv[0])
         sys.exit(1)
-    uid     = sys.argv[1]
-    pwd     = sys.argv[2]
-    docs    = []
-    jobs    = []
-    all     = False
-    add     = False
+    uid = sys.argv[1]
+    pwd = sys.argv[2]
+    docs = []
+    jobs = []
+    all = False
+    add = False
     docType = None
-    email   = ''
+    email = ''
     for arg in sys.argv[3:]:
         if arg.startswith('doc='):
             docs.append(int(arg[4:]))
@@ -627,13 +632,13 @@ where arg is one of:
     session = cdr.login(uid, pwd)
     try:
         republisher = CdrRepublisher(session)
-        jobId = republisher.republish(addNewLinkedDocuments = add,
-                                      docList = docs,
-                                      jobList = jobs,
-                                      docType = docType,
-                                      docTypeAll = all,
-                                      email = email)
+        jobId = republisher.republish(addNewLinkedDocuments=add,
+                                      docList=docs,
+                                      jobList=jobs,
+                                      docType=docType,
+                                      docTypeAll=all,
+                                      email=email)
         cdr.logout(session)
-    except Exception as e:
+    except Exception:
         cdr.logout(session)
         raise

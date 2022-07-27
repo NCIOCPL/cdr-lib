@@ -1,10 +1,11 @@
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # Assembles information about data preserved on the CDR DEV tier.
 # JIRA::OCECDR-3733
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 import datetime
 import glob
 import os
+
 
 class Data:
     """
@@ -78,7 +79,7 @@ class Data:
             for name in old.tables:
                 try:
                     self.tables[name] = Table(name, source)
-                except Exception as e:
+                except Exception:
                     pass
             for name in old.docs:
                 self.docs[name] = DocType(name, source)
@@ -150,6 +151,7 @@ class Data:
                 row["element"],
                 self.tables["link_type"].map[row["link_id"]])
 
+
 class Table:
     """
     Holds data for a CDR table.
@@ -179,7 +181,7 @@ class Table:
         else:
             source.execute(f"SELECT * FROM {name}")
             self.cols = tuple([col[0] for col in source.description])
-            #self.values = [tuple(row) for row in source.fetchall()]
+            # self.values = [tuple(row) for row in source.fetchall()]
             self.values = []
             for row in source.fetchall():
                 values = []
@@ -198,6 +200,7 @@ class Table:
         if name == "query_term_def":
             paths = [row["path"] for row in self.rows]
             self.names = dict(list(zip(paths, self.rows)))
+
     def _row_dict(self, row):
         """
         Creates a dictionary for a single row, mapping column names to values
@@ -214,6 +217,7 @@ class Table:
         if self.name == "filter_set" and d["notes"] == "None":
             d["notes"] = ""
         return d
+
 
 class DocType:
     """

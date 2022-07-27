@@ -30,10 +30,11 @@ import time
 
 MARKUP = dict(String="b", Emphasis="i", Superscript="super", Subscript="sub")
 
-#----------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Regular expression pattern to recognize non-ASCII characters.
-#----------------------------------------------------------------------
+# ---------------------------------------------------------------------
 _nonAsciiPattern = re.compile("([\u0080-\uFFFD])")
+
 
 def fix(text):
 
@@ -48,11 +49,13 @@ def fix(text):
     text = _nonAsciiPattern.sub(_replace, text)
     return text
 
+
 def _replace(match):
 
     "Function passed to regular expression sub() method."
 
     return _rtfForUnicodeChar(match.group(1))
+
 
 def _rtfForUnicodeChar(ch):
 
@@ -60,6 +63,7 @@ def _rtfForUnicodeChar(ch):
 
     code = ord(ch)
     return "{\\uc1\\u%d?}" % code
+
 
 class Font:
 
@@ -80,7 +84,7 @@ class Font:
     generated for the registered fonts.
     """
 
-    def __init__(self, id, name, family = "nil", alt = None):
+    def __init__(self, id, name, family="nil", alt=None):
 
         """
         Creates a new RTF Font object.  Pass in a unique
@@ -91,10 +95,10 @@ class Font:
         not found.
         """
 
-        self.__id     = id
-        self.__name   = name
+        self.__id = id
+        self.__name = name
         self.__family = family
-        self.__alt    = alt
+        self.__alt = alt
 
     def getId(self):
 
@@ -130,6 +134,7 @@ class Font:
             rtf += "{\\*\\falt %s}" % self.__alt
         return rtf + ";}"
 
+
 class List:
 
     """
@@ -143,11 +148,11 @@ class List:
     Document.addList() method to create these lists.
 
     To insert the list into the document, create a block with
-    the RTF command \lsN, where N is the ID of the registered
+    the RTF command \\lsN, where N is the ID of the registered
     list type.  I find it helpful to also add a left indent
-    command (e.g., \li580); otherwise the list looks like it's
+    command (e.g., \\li580); otherwise the list looks like it's
     jammed too far to the left of the page.  Inside the block
-    follow each list item with a \par command.  For example
+    follow each list item with a \\par command.  For example
     (backslashes doubled for pydoc):
 
         listId = doc.addList(List.ARABIC)
@@ -160,17 +165,17 @@ class List:
     See also MiscellaneousDoc.addList()
     """
 
-    BULLETED  = 1   # listid for un-numbered lists
-    ARABIC    = 0   # number type for numbered lists
-    ROMAN_UC  = 1   # (I., II., III., IV., etc.)
-    ROMAN_LC  = 2   # (i., ii., etc.)
-    LETTER_UC = 3   # (A., B., C., etc.)
-    LETTER_LC = 4   # (a., b., c., etc.)
-    ORDINAL   = 5   # (1st, 2nd, 3rd, etc.)
-    CARDINAL  = 6   # (One, Two, Three)
-    ORD_TEXT  = 7   # (First, Second, Third)
-    NONE      = 23  # number type for bulleted lists
-    __nextId  = 0   # class variable for generating list IDs
+    BULLETED = 1   # listid for un-numbered lists
+    ARABIC = 0     # number type for numbered lists
+    ROMAN_UC = 1   # (I., II., III., IV., etc.)
+    ROMAN_LC = 2   # (i., ii., etc.)
+    LETTER_UC = 3  # (A., B., C., etc.)
+    LETTER_LC = 4  # (a., b., c., etc.)
+    ORDINAL = 5    # (1st, 2nd, 3rd, etc.)
+    CARDINAL = 6   # (One, Two, Three)
+    ORD_TEXT = 7   # (First, Second, Third)
+    NONE = 23      # number type for bulleted lists
+    __nextId = 0   # class variable for generating list IDs
 
     def __init__(self, numberType):
 
@@ -186,13 +191,13 @@ class List:
                    in the document.
         """
 
-        self.id                 = List.__getNextId()
-        self.__numberType       = numberType
+        self.id = List.__getNextId()
+        self.__numberType = numberType
         if self.__numberType != List.NONE:
-            self.__levelText    = "\\'02\\'00."
+            self.__levelText = "\\'02\\'00."
             self.__levelNumbers = "\\'01"
         else:
-            self.__levelText    = "\\'01\\u8226 *"
+            self.__levelText = "\\'01\\u8226 *"
             self.__levelNumbers = ""
 
     def __getNextId(listClass):
@@ -204,13 +209,20 @@ class List:
 
         "Generates the RTF code to register the list type."
 
+        args = (
+            self.id,
+            self.id,
+            self.__numberType,
+            self.__levelText,
+            self.__levelNumbers,
+        )
         return """\
 {\\list\\listtemplateid%d\\listid%d\\listsimple1
 {\\listlevel\\levelnfc%d\\leveljc2\\levelstartat1\\levelfollow1
 {\\leveltext %s;}
 {\\levelnumbers %s;}}}
-""" % (self.id, self.id, self.__numberType,
-       self.__levelText, self.__levelNumbers)
+""" % args
+
 
 class Document:
 
@@ -257,49 +269,49 @@ class Document:
 
     """
 
-    #------------------------------------------------------------------
+    # -----------------------------------------------------------------
     # Class constants.
-    #------------------------------------------------------------------
-    SERIF     = 0
+    # -----------------------------------------------------------------
+    SERIF = 0
     SANSSERIF = 1
-    FIXED     = 2
-    VERDANA   = 3
-    BLACK     = 1
-    WHITE     = 2
+    FIXED = 2
+    VERDANA = 3
+    BLACK = 1
+    WHITE = 2
 
     def __init__(self,
-                 title   = None,
-                 author  = None,
-                 company = None,
-                 subject = None):
+                 title=None,
+                 author=None,
+                 company=None,
+                 subject=None):
 
         """
         Creates a new RTF document object.  All arguments are optional.
         """
 
-        self.title       = title
-        self.author      = author
-        self.company     = company
-        self.subject     = subject
-        self.rtfVersion  = 1                 # major version of RTF spec
-        self.charset     = "ansi"
+        self.title = title
+        self.author = author
+        self.company = company
+        self.subject = subject
+        self.rtfVersion = 1              # major version of RTF spec
+        self.charset = "ansi"
         self.defaultFont = self.SERIF
-        self.generator   = "RTF Writer"
+        self.generator = "RTF Writer"
         self.extraHeader = ""
-        self.defaultLang = 1033              # U.S. English
-        self.colors      = [(),              # application's default color
-                            (0, 0, 0),       # black
-                            (255, 255, 255)] # white
-        self.fonts       = [Font(self.SERIF,     "Times New Roman", "roman"),
-                            Font(self.SANSSERIF, "Arial",           "swiss"),
-                            Font(self.FIXED,     "Courier New",     "modern"),
-                            Font(self.VERDANA,   "Verdana",         "swiss")]
-        self.lists       = [List(List.NONE)]
-        self.margL       = 1440              # 1-inch left margin
-        self.margR       = 1440              # 1-inch right margin
-        self.margT       = 1440              # 1-inch top margin
-        self.margB       = 1440              # 1-inch bottom margin
-        self.fSize       = 22                # 11-point default font size
+        self.defaultLang = 1033          # U.S. English
+        self.colors = [(),               # application's default color
+                       (0, 0, 0),        # black
+                       (255, 255, 255)]  # white
+        self.fonts = [Font(self.SERIF, "Times New Roman", "roman"),
+                      Font(self.SANSSERIF, "Arial", "swiss"),
+                      Font(self.FIXED, "Courier New", "modern"),
+                      Font(self.VERDANA, "Verdana", "swiss")]
+        self.lists = [List(List.NONE)]
+        self.margL = 1440                # 1-inch left margin
+        self.margR = 1440                # 1-inch right margin
+        self.margT = 1440                # 1-inch top margin
+        self.margB = 1440                # 1-inch bottom margin
+        self.fSize = 22                  # 11-point default font size
         self.__bodyParts = []
 
     def write(self, file):
@@ -352,7 +364,7 @@ class Document:
 
         self.__bodyParts.append(fix(text) + "\\par\\par\n")
 
-    def addFont(self, name, family = "nil", alt = None):
+    def addFont(self, name, family="nil", alt=None):
 
         """
         Registers a new font for use in the document.  Returns the
@@ -374,7 +386,7 @@ class Document:
         """
         Registers a new list type.  Pass in the style of numbering to
         be used (currently only List.ARABIC is supported).  The ID
-        of the new list is returned to be used in the \lsN command
+        of the new list is returned to be used in the \\lsN command
         in the document for the actual list, where N is the ID returned
         by this method.
         2008-03-17: added support for most other list types.
@@ -397,9 +409,9 @@ class Document:
                 "\\deflang%d\n"              # Default language
                 % (self.rtfVersion, self.charset, self.defaultFont,
                    self.defaultLang) +
-                self.__getFontTable()  +
+                self.__getFontTable() +
                 self.__getColorTable() +
-                self.__getListTables()  +
+                self.__getListTables() +
                 self.__getGenerator())
 
     def __getFontTable(self):
@@ -499,6 +511,7 @@ class Document:
                                                                 now[4],
                                                                 now[5])
 
+
 class FormLetter(Document):
 
     """
@@ -565,14 +578,14 @@ class FormLetter(Document):
     """
 
     def __init__(self,
-                 title      = "[CDR Form Letter]",
-                 subject    = None,
-                 template   = None,
-                 pngName    = "dhhslogo.png",
-                 author     = "cdr",
-                 company    = "CIPS",
-                 binImage   = False,
-                 invitePara = ""):
+                 title="[CDR Form Letter]",
+                 subject=None,
+                 template=None,
+                 pngName="dhhslogo.png",
+                 author="cdr",
+                 company="CIPS",
+                 binImage=False,
+                 invitePara=""):
 
         """
         Creates a new instance of the derived FormLetter class.  The
@@ -591,13 +604,13 @@ class FormLetter(Document):
         """
 
         Document.__init__(self, title, author, company, subject)
-        self.generator       = "CDR RTF Writer"
-        self.pngName         = pngName       # location of bitmap file for logo
-        self.margL           = 1080          # 3/4-inch left margin
-        self.margR           = 720           # 1/2-inch right margin
-        self.margT           = 1080          # 5/8-inch top margin
-        self.margB           = 1260          # 7/8-inch bottom margin
-        self.fSize           = 21            # 10.5-point default font size
+        self.generator = "CDR RTF Writer"
+        self.pngName = pngName       # location of bitmap file for logo
+        self.margL = 1080            # 3/4-inch left margin
+        self.margR = 720             # 1/2-inch right margin
+        self.margT = 1080            # 5/8-inch top margin
+        self.margB = 1260            # 7/8-inch bottom margin
+        self.fSize = 21              # 10.5-point default font size
         self.baskervilleFont = self.addFont("Baskerville Old Face",
                                             "roman",
                                             "Times New Roman")
@@ -612,7 +625,7 @@ class FormLetter(Document):
                 replacement = "@@MISCDOC:%s@@" % invitePara
                 body = body.replace("@@INVITATION@@", replacement)
             pattern = re.compile("@@MISCDOC:(.*?)@@")
-            body    = pattern.sub(lambda p: self.__loadMiscDoc(p), body)
+            body = pattern.sub(lambda p: self.__loadMiscDoc(p), body)
             self.addRawContent(body)
 
     def __writeImageBytes(self, image):
@@ -641,11 +654,11 @@ class FormLetter(Document):
         with open(self.pngName, "rb") as fp:
             logo = fp.read()
         dhhs = "DEPARTMENT OF HEALTH & HUMAN SERVICES"
-        phs  = "\\tab Public Health Service\\par"
-        nih  = "\\tab National Institutes of Health\\par"
-        nci  = "\\tab National Cancer Institute\\par"
+        phs = "\\tab Public Health Service\\par"
+        nih = "\\tab National Institutes of Health\\par"
+        nci = "\\tab National Cancer Institute\\par"
         line = "{\\sa5\\sl-1\\slmult0\\brdrb\\brdrs\\brdrw10\\brsp20\\par}"
-        tab  = 6000                          # tab stop at ~4"
+        tab = 6000                          # tab stop at ~4"
         self.addRawContent("{\\absw1152\n"   # create ~2cm-wide frame
                            "\\*\\shppict"    # insert a picture shape
                            "{\\pict"         # the picture object
@@ -653,7 +666,7 @@ class FormLetter(Document):
                            "\\picscalex25"   # reduce to 1/4 size ...
                            "\\picscaley25"   # ... in both dimensions
                            "%s}\\par}\n"     # the image data
-                           % self.__writeImageBytes(logo)) #, binImage))
+                           % self.__writeImageBytes(logo))  # , binImage))
         self.addRawContent("{\\pard"         # clear out paragraph settings
                            "\\pvpg\\phpg"    # page-relative positioning
                            "\\posx2300"      # left edge of logo text
@@ -692,6 +705,7 @@ class FormLetter(Document):
         miscDoc = MiscellaneousDoc(self, match.group(1))
         return miscDoc.getRtf()
 
+
 class MiscellaneousDoc:
 
     MARKUP = dict(
@@ -720,9 +734,9 @@ class MiscellaneousDoc:
         path = "/MiscellaneousDocument/MiscellaneousDocumentTitle"
         query = f"{path}/value eq {name}"
         try:
-            resp  = cdr.search("guest", query)
+            resp = cdr.search("guest", query)
         except Exception as e:
-            raise Exception("failure loading misc doc {name!r}: {e}")
+            raise Exception(f"failure loading misc doc {name!r}: {e}")
         if not resp:
             raise Exception(f"Miscellaneous document {name!r} not found")
         self.docId = resp[0].docId
@@ -797,11 +811,12 @@ class MiscellaneousDoc:
             self.pieces.append("\\par\n")
         self.pieces.append("}}\n\\par\n")
 
-#----------------------------------------------------------------------
+
+# ---------------------------------------------------------------------
 # Test driver.  Doesn't do anything useful.
-#----------------------------------------------------------------------
+# ---------------------------------------------------------------------
 if __name__ == '__main__':
-    doc = Document(title = 'Dear John', subject = 'Goodbye')
+    doc = Document(title='Dear John', subject='Goodbye')
     doc.addPara('Dear John,')
     doc.addPara('I must bid you adieu ....')
     doc.addPara('Sincerely, Abigail')

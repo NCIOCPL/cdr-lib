@@ -7,12 +7,14 @@ import sys
 from lxml import etree
 from cdrapi import db
 
+
 class WrongMethod(Exception):
     """
     Custom exception class
 
     Allows handlers catch problems with HTTP method specification.
     """
+
 
 class Request:
     """
@@ -39,21 +41,21 @@ class Request:
           logger      - optional object for logging the service's activity
         """
 
-        self.message  = None
-        self.doc      = None
-        self.type     = None
+        self.message = None
+        self.doc = None
+        self.type = None
         self.logLevel = 0
-        self.logger   = logger
+        self.logger = logger
         if standalone:
             self.message = sys.stdin.read()
-            self.client  = 'Standalone'
-            debugLevel    = "0"
+            self.client = 'Standalone'
+            debugLevel = "0"
         else:
-            defaultLevel  = self.defaultLevel()
+            defaultLevel = self.defaultLevel()
             requestMethod = os.getenv("REQUEST_METHOD")
-            self.client   = os.getenv("REMOTE_ADDR")
-            remoteHost    = os.getenv("REMOTE_HOST")
-            debugLevel    = os.getenv("HTTP_X_DEBUG_LEVEL") or defaultLevel
+            self.client = os.getenv("REMOTE_ADDR")
+            remoteHost = os.getenv("REMOTE_HOST")
+            debugLevel = os.getenv("HTTP_X_DEBUG_LEVEL") or defaultLevel
             if debugLevel > "1" and logger is not None:
                 logger.setLevel("DEBUG")
                 logger.info("debugging level set to %s", debugLevel)
@@ -81,7 +83,7 @@ Access-Control-Allow-Methods: POST, GET, OPTIONS
                 raise Exception("Content length not specified")
             try:
                 contentLength = int(lenString)
-            except:
+            except Exception:
                 raise Exception(f"Invalid content length: {lenString}")
             if contentLength < 1:
                 raise Exception(f"Invalid content length: {lenString}")
@@ -97,7 +99,7 @@ Access-Control-Allow-Methods: POST, GET, OPTIONS
             self.message = b"".join(blocks)
             try:
                 self.message_text = str(self.message, "utf-8")
-            except:
+            except Exception:
                 self.message_text = None
             if logger and self.message_text:
                 logger.debug("WebService message: %s", self.message_text)
@@ -110,7 +112,7 @@ Access-Control-Allow-Methods: POST, GET, OPTIONS
             raise Exception(f"Failure parsing request: {e}")
         try:
             self.logLevel = int(debugLevel)
-        except:
+        except Exception:
             self.logLevel = 1
 
     def defaultLevel(self):

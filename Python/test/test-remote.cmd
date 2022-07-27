@@ -6,5 +6,5 @@ set TESTPATH=%~dp0
 set PYTHONPATH=%TESTPATH%\..
 set TESTSCRIPT=%TESTPATH%\run-tests.py
 set TEST_MODE=remote
-python %TESTSCRIPT% %*
+python -X dev %TESTSCRIPT% %*
 endlocal

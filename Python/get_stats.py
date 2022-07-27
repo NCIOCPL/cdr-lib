@@ -9,15 +9,18 @@
 # ------------------------------------------------------------------
 # Created:              Volker Englisch  - 2006-03-20
 # ******************************************************************
-import sys, os, ftplib, time, shutil, datetime
+import datetime
+import os
+import shutil
+import sys
 
 # Setting the variables
 # ---------------------
-tmpDir  = '/tmp'
-PDQLOG  = '/home/cdroperator/prod/log/pdq'
+tmpDir = '/tmp'
+PDQLOG = '/home/cdroperator/prod/log/pdq'
 FTPBASE = '/u/ftp/cdr'
 # FTPBASE = '/home/cdroperator/test'
-FTPDIR  = '%s/pub/pdq/full' % FTPBASE
+FTPDIR = '%s/pub/pdq/full' % FTPBASE
 ftpFile = '%s/getchanges.ftp' % tmpDir
 # pubDir  = '/u/ftp/pub/pdq/full'
 
@@ -30,19 +33,22 @@ year, week, weekday = last_week.isocalendar()
 WEEK = "%04d%02d" % (year, week)
 WEEKHDR = "Week %02d, %04d" % (week, year)
 
-rchanges= '%s.changes'     % WEEK
-lchanges= '%s_changes.txt' % WEEK
+rchanges = '%s.changes' % WEEK
+lchanges = '%s_changes.txt' % WEEK
+
 
 class CommandResult:
     def __init__(self, code, output):
-        self.code   = code
+        self.code = code
         self.output = output
+
 
 def runCommand(command):
     commandStream = os.popen('%s 2>&1' % command)
     output = commandStream.read()
     code = commandStream.close()
     return CommandResult(code, output)
+
 
 # Creating the ftp files to perform the download
 # ----------------------------------------------
@@ -54,7 +60,7 @@ print("FtpFile: %s" % ftpFile)
 
 try:
     shutil.copy2('%s/%s' % (FTPDIR, ftpFile), '%s/%s' % (PDQLOG, ftpFile))
-except:
+except Exception:
     print('***Error in get_stats')
     print('***   stats-file not found: %s' % ftpFile)
     print('***   Run fixISOweek in /u/ftp/cdr to recover')
@@ -79,7 +85,7 @@ for line in lines:
     change[mysplit[1]] = mysplit[2]
     stat[mysplit[0]] = change
     if i % 3 == 0:
-       change = {}
+        change = {}
 
 
 # Write the data to the log directory
@@ -94,10 +100,13 @@ sf.write('---------------------  -------  --------  -------\n')
 docType = sorted(stat.keys())
 
 for docs in docType:
-   sf.write('%20s:  %7s  %8s  %7s\n' % (docs.replace('.' + WEEK, ''),
-                                 stat[docs]['added'],
-                                 stat[docs]['modified'],
-                                 stat[docs]['removed']))
+    args = (
+        docs.replace('.' + WEEK, ''),
+        stat[docs]['added'],
+        stat[docs]['modified'],
+        stat[docs]['removed'],
+    )
+    sf.write('%20s:  %7s  %8s  %7s\n' % args)
 sf.write('\n')
 sf.close()
 print('Done.')

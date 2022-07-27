@@ -16,7 +16,6 @@ import base64
 import csv
 import datetime
 import glob
-import hashlib
 import io
 import json
 import os
@@ -623,7 +622,7 @@ class Control:
                 self.logger.info("Queueing changed doc CDR%d for push", row.id)
                 try:
                     self.cursor.execute(insert, values)
-                except:
+                except Exception:
                     self.logger.exception("First insert failed; trying again")
                     time.sleep(self.FAILURE_SLEEP)
                     self.cursor.execute(insert, values)
@@ -662,7 +661,7 @@ class Control:
             self.logger.info("Queueing new doc CDR%d for push", row.id)
             try:
                 self.cursor.execute(insert, values)
-            except:
+            except Exception:
                 self.logger.exception("First insert failed; trying again")
                 time.sleep(self.FAILURE_SLEEP)
                 self.cursor.execute(insert, values)
@@ -708,7 +707,7 @@ class Control:
             count = self.cursor.rowcount
             if count:
                 self.logger.info("Queued %d dropped documents", count)
-        except:
+        except Exception:
             self.logger.exception("First insert failed; trying again")
             time.sleep(self.FAILURE_SLEEP)
             self.cursor.execute(insert)
@@ -867,31 +866,33 @@ class Control:
         start = datetime.datetime.now()
 
         # Compile the XSL/T filters we'll need.
-        filters= dict()
+        filters = dict()
         for name in ("Cancer", "Drug"):
             title = "{} Information Summary for Drupal CMS".format(name)
             key = "DrugInformationSummary" if name == "Drug" else "Summary"
             filters[key] = Doc.load_single_filter(session, title)
 
         # Defer the Spanish content to a second pass.
+        # The pylint tool doesn't understand how list expansion works.
+        # Cf. bug https://github.com/PyCQA/pylint/issues/2820
+        # pylint: disable=no-value-for-parameter
         spanish = set()
         pushed = []
         table = opts.get("table", "pub_proc_cg")
-        query = db.Query("query_term_pub", "value")
+        query = db.Query("query_term_pub", "doc_id", "value")
         query.where("path = '/Summary/SummaryMetaData/SummaryLanguage'")
-        query.where(query.Condition("doc_id", 0))
-        query = str(query)
+        summary_language = {}
+        for doc_id, language in query.execute(session.cursor).fetchall():
+            summary_language[doc_id] = language.lower().strip()
         for doc_id in sorted(send):
+            if summary_language.get(doc_id, "english") != "english":
+                spanish.add(doc_id)
+                continue
             doctype = send[doc_id]
             xsl = filters[doctype]
             root = cls.fetch_exported_doc(session, doc_id, table)
             args = session, doc_id, xsl, root
             if doctype == "Summary":
-                session.cursor.execute(query, (doc_id,))
-                language = session.cursor.fetchone().value
-                if language.lower() != "english":
-                    spanish.add(doc_id)
-                    continue
                 values = cls.assemble_values_for_cis(*args)
             else:
                 values = cls.assemble_values_for_dis(*args)
@@ -913,9 +914,13 @@ class Control:
             nid = client.push(values)
             pushed.append((doc_id, nid, "es"))
 
-        # Drop the documents being removed.
+        # Drop the documents being removed, non-English before English.
         for doc_id in remove:
-            client.remove(doc_id)
+            if summary_language.get(doc_id, "english") != "english":
+                client.remove(doc_id)
+        for doc_id in remove:
+            if summary_language.get(doc_id, "english") == "english":
+                client.remove(doc_id)
 
         # Switch pushed docs from draft to published.
         errors = client.publish(pushed)
@@ -1109,7 +1114,7 @@ class Control:
                         try:
                             audio_id = int(Doc.extract_id(ref))
                             break
-                        except Exception as e:
+                        except Exception:
                             args = doc_id, ref
                             msg = "CDR{}: invalid audio ID {!r}".format(*args)
                             raise Exception(msg)
@@ -1457,7 +1462,6 @@ class Control:
         else:
             self.logger.info("Job %d: set status to %s", self.job.id, status)
 
-
     # ------------------------------------------------------------------
     # PROPERTIES START HERE.
     # ------------------------------------------------------------------
@@ -1611,11 +1615,9 @@ class Control:
         dtd.validate(doc)
         return dtd.error_log.filter_from_errors()
 
-
     # ------------------------------------------------------------------
     # NESTED CLASSES START HERE.
     # ------------------------------------------------------------------
-
 
     class Thread(threading.Thread):
         """
@@ -1721,7 +1723,6 @@ class Control:
                 self.control.logger.warning("thread %05d: %s", *args)
             return stream.returncode == 0
 
-
     class ExportJob:
         """
         Export job whose needs to be pushed.
@@ -1785,7 +1786,6 @@ class Control:
             row = query.execute(cursor).fetchone()
             return row.job_id if row else None
 
-
     class Media:
         """Common functionality for publishing audio/video/image documents."""
 
@@ -1806,7 +1806,7 @@ class Control:
             "-oIdentitiesOnly=yes",
         )
         SSH = " ".join(SSH)
-        FLAGS = "nrave" # for dry run
+        FLAGS = "nrave"  # for dry run
         FLAGS = "rave"
         SSH_HOST = Tier().hosts["AKAMAI"]
         RSYNC = (
@@ -2030,7 +2030,6 @@ class Control:
             except Exception as e:
                 raise Exception(f"Unable to rename {cls.LOCK}: {e}")
 
-
         class File:
             """Wrapper for the path and bytes of a media file."""
             def __init__(self, path, bytes):
@@ -2060,6 +2059,7 @@ def main():
     if args.output:
         opts["output-dir"] = args.output
     Control(args.job_id, **opts).publish()
+
 
 if __name__ == "__main__":
     """

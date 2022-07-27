@@ -108,7 +108,7 @@ class Search:
             if self._limit:
                 try:
                     self._limit = int(self._limit)
-                except:
+                except Exception:
                     raise Exception("limit must be integer")
         return self._limit
 
@@ -227,7 +227,6 @@ class Search:
         rows = self.query.execute(self.cursor).fetchall()
         return [Doc(self.session, id=row.id) for row in rows]
 
-
     class Test:
         """
         Assertion to be tested while looking for matching documents
@@ -259,7 +258,7 @@ class Search:
 
             try:
                 path, operator, value = assertion.split(None, 2)
-            except:
+            except Exception:
                 raise ValueError(f"invalid test assertion {assertion!r}")
             assert path and value, "query test must have path and value"
             if path.startswith("/"):

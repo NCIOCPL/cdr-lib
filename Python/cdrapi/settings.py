@@ -16,13 +16,15 @@ import subprocess
 import threading
 import time
 
+
 class Tier:
     """
     Collection of tier-specific CDR values
 
     Class values:
       Pattern strings for the paths to files where the values are stored.
-      LOG_FORMAT - pattern for entries in our log files
+      LOG_FORMAT - default pattern for entries in our log files
+      SESSION_LOG_FORMAT - custom format for session log files
 
     Attribute:
       name - string containing the name of the tier represented by the values
@@ -53,6 +55,7 @@ class Tier:
 
     # Custom logging format.
     LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
+    SESSION_LOG_FORMAT = "%(asctime)s [%(levelname)s-%(thread)04d] %(message)s"
 
     def __init__(self, tier=None):
         """
@@ -123,13 +126,13 @@ class Tier:
             return self._hosts
         hosts = {}
         prefix = "CBIIT:" + self.name
-        with open(f"{self.etc}/{self.APPHOSTS}") as fp:
+        with open(f"{self.etc}/{self.APPHOSTS}", encoding="utf-8") as fp:
             for line in fp:
                 line = line.strip()
                 if line.startswith(prefix):
                     fields = line.split(":", 4)
                     if len(fields) == 5:
-                        hosting, tier, role, local, domain = fields
+                        role, local, domain = fields[2:]
                         hosts[role.upper()] = ".".join((local, domain))
         self._hosts = hosts
         return hosts
@@ -156,18 +159,18 @@ class Tier:
         if hasattr(self, "_passwords"):
             return self._passwords
         passwords = {}
-        with open(f"{self.etc}/{self.PASSWORDS}") as fp:
+        with open(f"{self.etc}/{self.PASSWORDS}", encoding="utf-8") as fp:
             for line in fp:
                 name, password = line.strip().split(":", 1)
                 passwords[name.lower()] = password
         prefix = "CBIIT:" + self.name
-        with open(f"{self.etc}/{self.DBPW}") as fp:
+        with open(f"{self.etc}/{self.DBPW}", encoding="utf-8") as fp:
             for line in fp:
                 line = line.strip()
                 if line.startswith(prefix):
                     fields = line.split(":", 4)
                     if len(fields) == 5:
-                        hosting, tier, database, user, password = fields
+                        database, user, password = fields[2:]
                         passwords[(database.lower(), user.lower())] = password
         self._passwords = passwords
         return passwords
@@ -185,13 +188,13 @@ class Tier:
             return self._ports
         ports = {}
         prefix = self.name + ":"
-        with open(f"{self.etc}/{self.PORTS}") as fp:
+        with open(f"{self.etc}/{self.PORTS}", encoding="utf-8") as fp:
             for line in fp:
                 line = line.strip()
                 if line.startswith(prefix):
                     fields = line.split(":", 2)
                     if len(fields) == 3:
-                        tier, database, port = fields
+                        database, port = fields[1:]
                         ports[database.lower()] = int(port)
         self._ports = ports
         return ports
@@ -235,13 +238,17 @@ class Tier:
         logger = logging.getLogger(name)
         env_level = os.environ.get("CDR_LOGGING_LEVEL")
         logger.setLevel((env_level or opts.get("level") or "INFO").upper())
-        logger.propagate = True if opts.get("propagate") else False
+        logger.propagate = bool(opts.get("propagate"))
         if not logger.handlers or opts.get("multiplex"):
             if name == "session":
-                formatter = self.SessionLogFormatter()
+                fmt = self.SESSION_LOG_FORMAT
+                timefmt = "%H:%M:%S"
             else:
-                format = opts.get("format") or self.LOG_FORMAT
-                formatter = self.Formatter(format)
+                fmt = opts.get("format") or self.LOG_FORMAT
+                timefmt = "%Y-%m-%d %H:%M:%S"
+            formatter = logging.Formatter(fmt=fmt)
+            formatter.default_time_format = timefmt
+            formatter.default_msec_format = "%s.%03d"
             if "path" not in opts or opts.get("path"):
                 path = opts.get("path")
                 if not path:
@@ -313,9 +320,9 @@ class Tier:
         if name:
             return name.upper()
         try:
-            with open(f"{self.etc}/{self.TIER}") as fp:
+            with open(f"{self.etc}/{self.TIER}", encoding="utf-8") as fp:
                 return fp.read().strip()
-        except:
+        except Exception:
             return "DEV"
 
     @staticmethod
@@ -378,7 +385,7 @@ class Tier:
         try:
             session.cursor.execute(insert, values)
             session.conn.commit()
-        except:
+        except Exception:
             session.logger.exception("settings.set_control() failure")
             session.cursor.execute("SELECT @@TRANCOUNT AS tc")
             if session.cursor.fetchone().tc:
@@ -445,37 +452,6 @@ class Tier:
                 return letter
         raise Exception("CDR host file not found")
 
-
-    class Formatter(logging.Formatter):
-        """
-        Make our own logging formatter to get the time stamps right.
-        """
-
-        DATEFORMAT = "%Y-%m-%d %H:%M:%S.%f"
-
-        converter = datetime.datetime.fromtimestamp
-        def formatTime(self, record, datefmt=None):
-            ct = self.converter(record.created)
-            return ct.strftime(datefmt or self.DATEFORMAT)
-
-
-    class SessionLogFormatter(logging.Formatter):
-        """
-        The session log rolls over daily, so we don't need the date.
-        """
-
-        DATEFORMAT = "%H:%M:%S.%f"
-        FORMAT = "%(asctime)s [%(levelname)s-%(thread)04d] %(message)s"
-        converter = datetime.datetime.fromtimestamp
-
-        def __init__(self):
-            logging.Formatter.__init__(self, self.FORMAT)
-
-        def formatTime(self, record, datefmt=None):
-            ct = self.converter(record.created)
-            return ct.strftime(datefmt or self.DATEFORMAT)[:-3]
-
-
     class SessionDBLogHandler(logging.Handler):
         """
         Log Session activity to the database
@@ -505,48 +481,35 @@ class Tier:
             return self.local.cursor
 
         def emit(self, record):
-            #print("emit()")
             thread_id = threading.current_thread().ident
             try:
                 values = thread_id, self.FORMATTER.format(record)
             except Exception as e:
-                try:
-                    now = datetime.datetime.now()
-                    name = now.strftime("logger-%Y%m%d%H%M%S.err")
-                    errpath = f"{self.basedir}/Log/{name}"
-                    with open(errpath, "a") as fp:
-                        fp.write("Failure formatting message: {}\n".format(e))
-                except:
-                    raise
-                    return
+                now = datetime.datetime.now()
+                name = now.strftime("logger-%Y%m%d%H%M%S.err")
+                errpath = f"{self.basedir}/Log/{name}"
+                with open(errpath, "a", encoding="utf-8") as fp:
+                    fp.write("Failure formatting message: {}\n".format(e))
                 return
             tries = 5
             sleep = .1
-            #print("trying ...")
             while tries > 0:
                 try:
                     self.cursor.execute(self.INSERT, values)
                     self.conn.commit()
-                    #print("committed")
                     return
                 except Exception as e:
                     tries -= 1
                     if tries > 0:
-                        #print("sleeping {} seconds".format(sleep))
                         time.sleep(sleep)
                         sleep += .1
                     else:
-                        try:
-                            now = datetime.datetime.now()
-                            name = now.strftime("dblogger-%Y%m%d%H%M%S.err")
-                            errpath = f"{self.basedir}/Log/{name}"
-                            with open(errpath, "a") as fp:
-                                fp.write(f"DB logging failure: {e}\n")
-                        except:
-                            raise
-                            return
+                        now = datetime.datetime.now()
+                        name = now.strftime("dblogger-%Y%m%d%H%M%S.err")
+                        errpath = f"{self.basedir}/Log/{name}"
+                        with open(errpath, "a", encoding="utf-8") as fp:
+                            fp.write(f"DB logging failure: {e}\n")
                         return
-
 
     class ReleasingLogHandler(logging.FileHandler):
         """
@@ -576,7 +539,6 @@ class Tier:
                 except Exception as e:
                     tries -= 1
                     if tries > 0:
-                        #print("sleeping {} seconds".format(sleep))
                         time.sleep(sleep)
                         sleep += .1
                     else:
@@ -584,7 +546,7 @@ class Tier:
                             message = None
                             try:
                                 message = self.format(record)
-                            except:
+                            except Exception:
                                 pass
                             now = datetime.datetime.now()
                             stamp = now.strftime("%Y%m%d%H%M%S")
@@ -592,7 +554,7 @@ class Tier:
                             name = f"{name}-logger-{stamp}.err"
                             try:
                                 basedir = Tier().basedir
-                            except:
+                            except Exception:
                                 basedir = "d:/cdr"
                             path = f"{basedir}/Log/{name}"
                             with open(path, "a", encoding="utf-8") as fp:
@@ -600,11 +562,10 @@ class Tier:
                                 if message:
                                     try:
                                         fp.write("{!r}\n".format(message))
-                                    except:
+                                    except Exception:
                                         pass
-                        except:
+                        except Exception:
                             pass
-
 
     class RollingLogHandler(ReleasingLogHandler):
         """
@@ -651,9 +612,9 @@ class Tier:
                 path = path.replace("/", "\\")
                 command = f'icacls "{path}" /grant Everyone:(M)'
                 try:
-                    stream = subprocess.Popen(command, **opts)
-                    output, error = stream.communicate()
-                    code = stream.returncode
+                    with subprocess.Popen(command, **opts) as stream:
+                        output, error = stream.communicate()
+                        code = stream.returncode
                     if code:
                         name = now.strftime("logger-%Y%m%d%H%M%S.err")
                         errpath = f"d:/cdr/Log/{name}"
@@ -672,7 +633,7 @@ class Tier:
                             fp.write(f"command: {command!r}\n")
                             fp.write(f"{e}\n")
                             traceback.print_exc(None, fp)
-                    except:
+                    except Exception:
                         pass
 
             # Proceed with writing to the log file.

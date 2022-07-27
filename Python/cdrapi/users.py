@@ -3,9 +3,7 @@ Control for who can use the CDR and what they can do
 """
 
 import binascii
-import datetime
 import hashlib
-import logging
 import random
 import re
 import socket
@@ -71,7 +69,7 @@ class Session:
             if self.cursor.fetchall()[0][0] > 0:
                 self.cursor.execute(self.UPDATE)
                 self.conn.commit()
-        except:
+        except Exception:
             if not Session.CLEAR_FAILURE_LOGGED:
                 self.logger.exception("Unable to clear stale sessions")
                 Session.CLEAR_FAILURE_LOGGED = True
@@ -90,7 +88,7 @@ class Session:
         try:
             self.cursor.execute(update, (self.id,))
             self.conn.commit()
-        except:
+        except Exception:
             self.logger.exception("Unable to set last_act")
             raise
 
@@ -185,7 +183,7 @@ class Session:
         """
 
         if not self.active:
-            self.logger.warning("session {} expired".format(self.name))
+            self.logger.warning("session %s expired", self.name)
             raise Exception("session expired")
         if doctype:
             self.log("Session.can_do({}, {})".format(action, doctype))
@@ -254,13 +252,13 @@ class Session:
         permissions = self.get_permissions()
         for action, doctype in pairs:
             if action == "*":
-                for a in permissions:
+                for key, val in permissions.items():
                     if doctype == "*":
-                        result[a] = set(permissions[a])
-                    elif doctype in permissions[a]:
-                        if a not in result:
-                            result[a] = set()
-                        result[a].add(doctype)
+                        result[key] = set(val)
+                    elif doctype in val:
+                        if key not in result:
+                            result[key] = set()
+                        result[key].add(doctype)
             elif action:
                 if doctype == "*":
                     result[action] = set(permissions[action])
@@ -521,6 +519,7 @@ class Session:
         letters = string.ascii_uppercase + string.digits
         suffix = "".join([random.choice(letters) for i in range(12)])
         name = "{:08X}-{:06X}-{:03d}-{}".format(secs, msecs, uid, suffix)
+        # pylint: disable-next=no-member
         ip_address = socket.gethostbyname(socket.gethostname()) or None
         cols = "name, usr, comment, initiated, last_act, ip_address"
         vals = "?, ?, ?, GETDATE(), GETDATE(), ?"
@@ -655,7 +654,6 @@ class Session:
             cursor.execute(delete)
             session.conn.commit()
 
-
     class Group:
         """
         Named CDR group representing zero or more CDR accounts
@@ -782,7 +780,8 @@ class Session:
                 if "users" in self.__opts:
                     self._users = self.__opts["users"]
                 elif self.id:
-                    query = db.Query("usr u", "u.name").unique().order("u.name")
+                    query = db.Query("usr u", "u.name").unique()
+                    query.order("u.name")
                     query.join("grp_usr g", "g.usr = u.id")
                     query.where(query.Condition("g.grp", self.id))
                     self._users = [u.name for u in query.execute(self.cursor)]
@@ -966,7 +965,6 @@ class Session:
                     insert = "INSERT INTO grp_action(grp, action, doc_type)"
                     insert += " VALUES(?, ?, ?)"
                     cursor.execute(insert, (self.id, action_id, doctype_id))
-
 
     class User:
         """
@@ -1226,8 +1224,7 @@ class Session:
                 if not password:
                     if not self.id:
                         raise Exception("Missing password")
-                    else:
-                        password = None
+                    password = None
             else:
                 password = ""
             if isinstance(password, str):
@@ -1241,7 +1238,7 @@ class Session:
             try:
                 self.__save(password)
                 self.session.conn.commit()
-            except:
+            except Exception:
                 self.session.logger.exception("User.save() failure")
                 self.session.cursor.execute("SELECT @@TRANCOUNT AS tc")
                 if self.session.cursor.fetchall()[0].tc:
@@ -1328,7 +1325,6 @@ class Session:
             self.session.cursor.execute(delete, (self.id,))
             self.session.conn.commit()
 
-
     class Cache:
         """
         Optimization for retrieval of filters, filter sets, and terms
@@ -1363,7 +1359,6 @@ class Session:
             with self.filter_set_lock:
                 self.filter_sets = {}
 
-
     class Local(threading.local):
         """
         Thread-specific storage for session
@@ -1371,15 +1366,16 @@ class Session:
         Attribute:
           conn - database connection
           cursor - database cursor
+          tier - information about the environment
         """
 
         LOG_FORMAT = "%(asctime)s [%(levelname)s-%(thread)04d] %(message)s"
 
         def __init__(self, **kw):
             self.__dict__.update(kw)
+            # pylint: disable-next=no-member
             self.conn = db.connect(tier=self.tier.name)
             self.cursor = self.conn.cursor()
-
 
     class LoggingDBConnection(threading.local):
         def __init__(self, tier=None):

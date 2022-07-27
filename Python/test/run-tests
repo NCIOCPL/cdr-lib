@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+TESTPATH=$(dirname "$(readlink -f "$0")")
+echo testing locally
+TEST_MODE=local  python -X dev ${TESTPATH}/run-tests.py "$@"
+echo testing remote
+TEST_MODE=remote python -X dev ${TESTPATH}/run-tests.py "$@"

@@ -1,4 +1,4 @@
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 #
 # Password lookup for CDR MySQL accounts.  This information is
 # separated out so that CBIIT can patch in different upper-tier
@@ -11,24 +11,25 @@
 # for the SQL Server accounts across tiers.  So this lookup is
 # now for both MySQL and SQL Server passwords.
 #
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 
 # Don't populate this until we need it.
 passwords = {}
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Look up the password for a specific environment, tier, database,
 # and account.  If the caller does not specify an account, assume
 # the account name is the same as the database.  Lookups are case
 # insensitive.  Password information is loaded and parsed from the
 # file /etc/cdrdbpw, but only once, and that's deferred until we
 # know we need it.
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def password(env, tier, db, account=None, drive_prefix=""):
     if not passwords:
         try:
             fp = open(drive_prefix + "/etc/cdrdbpw")
-        except:
+        except Exception:
             raise Exception("Unable to load database passwords")
         for line in fp:
             line = line.strip()

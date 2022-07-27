@@ -7,7 +7,6 @@ for this report.
 
 # Standard library modules
 import datetime
-import logging
 
 
 # Local modules
@@ -97,6 +96,7 @@ class Section:
     NEW_ONLY = False
     HEADERS = []
     cursor = db.connect(user="CdrGuest").cursor()
+    control = docs = TITLE = None  # Set by derived classes
 
     def show_counts(self):
         """
@@ -257,8 +257,8 @@ class Summary(Section):
 
     HEADERS = ("Language", "Audience")
     ABBR = "summary"
-    AUDIENCES = { "Health professionals": "HP", "Patients": "Pat." }
-    LANGUAGES = { "English": "EN", "Spanish": "ES" }
+    AUDIENCES = {"Health professionals": "HP", "Patients": "Pat."}
+    LANGUAGES = {"English": "EN", "Spanish": "ES"}
 
     def __init__(self, control):
         """
@@ -357,8 +357,8 @@ class Summary(Section):
 
         # Loop through the document objects to roll up the counts.
         counts = {
-            "HP": { "EN": 0, "ES": 0 },
-            "Pat.": { "EN": 0, "ES": 0 }
+            "HP": {"EN": 0, "ES": 0},
+            "Pat.": {"EN": 0, "ES": 0}
         }
         for doc in docs:
             audience = self.AUDIENCES.get(doc.audience)
@@ -658,7 +658,7 @@ class Glossary(Section):
 
         # Find out when the definition was modified (if ever).
         query.outer("query_term_pub m", "m.doc_id = g.doc_id",
-                   "LEFT(m.node_loc, 4) = LEFT(g.node_loc, 4)",
+                    "LEFT(m.node_loc, 4) = LEFT(g.node_loc, 4)",
                     "m.path = '%s/DateLastModified'" % d_path)
 
         # Optionally get the StatusDate element for the definition.
@@ -1628,14 +1628,14 @@ class Control:
             recips = cdr.getEmailList("Test Publishing Notification")
         else:
             recips = cdr.getEmailList('ICRDB Statistics Notification')
-        subject = "[%s] %s" %(self.TIER.name, self.title)
+        subject = "[%s] %s" % (self.TIER.name, self.title)
         self.logger.info("sending %s", subject)
         self.logger.info("recips: %s", ", ".join(recips))
         opts = dict(subject=subject, subtype="html", body=report)
         try:
             message = cdr.EmailMessage(self.SENDER, recips, **opts)
             message.send()
-        except:
+        except Exception:
             self.logger.exception("Failure sending report")
 
     def save_report(self, report):
@@ -1797,16 +1797,14 @@ class Control:
         return ";".join(s)
 
 
-
 def main():
     """
     Make it possible to run this task from the command line.
     """
 
     import argparse
-    fc = argparse.ArgumentDefaultsHelpFormatter
     title = Control.TITLE
-    parser = argparse.ArgumentParser(description=title) #, formatter_class=fc)
+    parser = argparse.ArgumentParser(description=title)
     parser.add_argument("--mode", choices=("test", "live"), required=True,
                         help="controls who gets the report")
     parser.add_argument("--recips", nargs="*", metavar="EMAIL-ADDRESS",
