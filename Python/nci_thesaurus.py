@@ -515,7 +515,7 @@ class Concept(Normalizer):
                     if source == "NCI":
                         name = self.normalize_space(name)
                         if self.normalize(name) != self.normalized_name:
-                            group = synonym.get("termGroup", "").strip()
+                            group = synonym.get("termType", "").strip()
                             other_name = self.OtherName(name, group, "NCI")
                             other_names.append(other_name)
         for prop_name in self.NAME_PROPS:
