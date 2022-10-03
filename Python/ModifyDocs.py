@@ -8,10 +8,13 @@ stored in the repository's database.
 
 from copy import deepcopy
 from datetime import datetime
+from difflib import ndiff
+from functools import cached_property
 from getpass import getpass
 from os import makedirs
 from random import random
-
+from re import compile
+from lxml import etree
 import cdr
 from cdrapi import db
 
@@ -144,6 +147,11 @@ class Job:
         if not hasattr(self, "_max_errors"):
             self._max_errors = self.__opts.get("max_errors", 0)
         return self._max_errors
+
+    @cached_property
+    def normalizer(self):
+        """Object which prepares an XML document for comparison."""
+        return self.Normalizer()
 
     @property
     def output_directory(self):
@@ -305,6 +313,13 @@ class Job:
                 message = "Stopping after processing %d documents"
                 self.logger.info(message, counts["processed"])
                 break
+        if self.testing:
+            directory = self.output_directory.replace("/", "\\")
+            command = f"{cdr.FIX_PERMISSIONS} {directory}"
+            process = cdr.run_command(command, merge_output=True)
+            if process.returncode:
+                raise Exception(f"{command}: {process.stdout}")
+            self.logger.info("Permissions for test output adjusted")
         details = []
         if types:
             details = ["Specific versions saved:"]
@@ -323,6 +338,23 @@ Run completed.
 {details}""".format(details="\n".join(details), time=elapsed, **counts))
         if not self.__opts.get("session"):
             cdr.logout(self.session, tier=self.tier)
+
+    def diff(self, old, new):
+        """Produce diff report for two versions of a document.
+
+        Pass:
+            old - byte serialization for the original version of the document
+            new - ditto for the possibly changed version of the document
+
+        Return:
+            possibly empty string containing the report of deltas
+        """
+
+        old = self.normalizer.normalize(etree.fromstring(old))
+        new = self.normalizer.normalize(etree.fromstring(new))
+        diff = ndiff(old, new)
+        lines = [line for line in diff if not line.startswith(" ")]
+        return "".join(lines)
 
     def save_pair(self, doc_id, before, after, pair_type, errors=None):
         """
@@ -349,8 +381,8 @@ Run completed.
                 fp.write(before)
             with open(new_path, "wb") as fp:
                 fp.write(after)
-            diff = cdr.diffXmlDocs(before, after) or b"-- No differences --"
-            with open(diff_path, "wb") as fp:
+            diff = self.diff(before, after) or "-- No differences --\n"
+            with open(diff_path, "w", encoding="utf-8") as fp:
                 fp.write(diff)
             if errors:
                 with open(errors_path, "wb") as fp:
@@ -757,3 +789,63 @@ Run completed.
                 fp.write("with open({!r}, 'w') as fp:\n".format(log))
                 fp.write("    fp.write(repr(response))\n")
                 fp.write("print 'response in {}'\n".format(log))
+
+
+    class Normalizer:
+        """Object which prepares an XML document for comparison."""
+
+        WHITESPACE = compile(r"\s+")
+
+        def normalize(self, root):
+            """Lay out the document whitespace in a predicatable way.
+
+            Pass:
+                root - parsed root of the XML document being normalized
+
+            Return:
+                sequence of strings representing serialization of the document
+            """
+
+            lines = []
+            self.__render_element(root, lines)
+            return [f"{line}\n" for line in lines]
+
+        def __render_element(self, element, lines, indent=0):
+            tag = element.tag
+            spaces = " " * indent
+            children = element.findall("*")
+            text = self.__fix(element.text)
+            tail = self.__fix(element.tail)
+            if not children:
+                line = f"{spaces}<{tag}"
+                for item in sorted(element.items()):
+                    line += self.__render_attribute(*item)
+                if text:
+                    line += f">{text}</{tag}>"
+                else:
+                    line += "/>"
+                lines.append(line)
+            else:
+                line = f"{spaces}<{tag}"
+                for item in sorted(element.items()):
+                    line += self.__render_attribute(*item)
+                lines.append(f"{line}>")
+                if text:
+                    lines.append(f"{spaces} {text}")
+                for child in children:
+                    self.__render_element(child, lines, indent+1)
+                lines.append(f"{spaces}</{tag}>")
+            if tail:
+                lines.append(f"{spaces}{tail}")
+
+        @classmethod
+        def __fix(cls, text):
+            if not text:
+                return ""
+            return cls.WHITESPACE.sub(" ", text).strip()
+
+        @classmethod
+        def __render_attribute(cls, name, value):
+            name = name.replace("{cips.nci.nih.gov/cdr}", "cdr:")
+            value = value.replace('"', "&quot;")
+            return f' {name}="{value}"'
