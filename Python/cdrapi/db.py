@@ -16,6 +16,7 @@ def connect(**opts):
 
     Optional keyword arguments:
       user - string for database account name (default Query.CDRSQLACCOUNT)
+      server - string in the form hostname,port
       tier - tier name string (e.g., 'PROD') or Tier object
       database - initial db for the connection (default Query.DB)
       timeout - time to wait before giving up (default Query.DEFAULT_TIMEOUT)
@@ -35,10 +36,11 @@ def connect(**opts):
     password = tier.password(user, Query.DB)
     if not password:
         raise Exception("user {!r} unknown on {!r}".format(user, tier.name))
+    server = opts.get("server") or f"{tier.sql_server},{tier.port(Query.DB)}"
     if platform.system().lower() == "windows":
         parms = dict(
             Driver="{ODBC Driver 17 for SQL Server}",
-            Server="{},{}".format(tier.sql_server, tier.port(Query.DB)),
+            Server=server,
             Database=opts.get("database", Query.DB),
             Uid=user,
             Pwd=password,
