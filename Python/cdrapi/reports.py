@@ -543,66 +543,35 @@ class Report:
             body.append(result.result_tree.getroot())
         return body
 
-    def _translated_media_doc(self):
+    def _translated_document(self):
         """
-        Find corresponding translation of English media document.
+        Find corresponding translation of an English CDR document.
 
         Parameters:
-          EnglishMediaDoc - required CDR ID for the document for which
-                            we want to find the Spanish translation
+          EnglishDocId - required CDR ID for the document for which
+                         we want to find the Spanish translation
 
         Return:
           XML document node with the following structure:
             ReportBody
               ReportName
-              TranslatedMediaDoc
+              TranslatedDocId
         """
 
-        english_id = self.__opts.get("EnglishMediaDoc")
+        english_id = self.__opts.get("EnglishDocId")
         if not english_id:
-            raise Exception("Missing required 'EnglishMediaDoc' parameter")
+            raise Exception("Missing required 'EnglishDocId' parameter")
         doc = Doc(self.session, id=english_id)
         query = Query("query_term", "doc_id")
-        query.where("path = '/Media/TranslationOf/@cdr:ref'")
+        query.where(f"path = '/{doc.doctype}/TranslationOf/@cdr:ref'")
         query.where(query.Condition("int_val", doc.id))
         row = query.execute(self.cursor).fetchone()
         if not row:
-            message = "No translated media found for {}".format(english_id)
+            message = f"No translated document found for {english_id}"
             raise Exception(message)
         body = self.__start_body()
         spanish_id = Doc.normalize_id(row.doc_id)
-        etree.SubElement(body, "TranslatedMediaDoc").text = spanish_id
-        return body
-
-    def _translated_summary(self):
-        """
-        Find corresponding translation of English summary
-
-        Parameters:
-          EnglishSummary - required CDR ID for the document for which
-                           we want to find the Spanish translation
-
-        Return:
-          XML document node with the following structure:
-            ReportBody
-              ReportName
-              TranslatedSummary
-        """
-
-        english_id = self.__opts.get("EnglishSummary")
-        if not english_id:
-            raise Exception("Missing required 'EnglishSummary' parameter")
-        doc = Doc(self.session, id=english_id)
-        query = Query("query_term", "doc_id")
-        query.where("path = '/Summary/TranslationOf/@cdr:ref'")
-        query.where(query.Condition("int_val", doc.id))
-        row = query.execute(self.cursor).fetchone()
-        if not row:
-            message = "No translated summary found for {}".format(english_id)
-            raise Exception(message)
-        body = self.__start_body()
-        spanish_id = Doc.normalize_id(row.doc_id)
-        etree.SubElement(body, "TranslatedSummary").text = spanish_id
+        etree.SubElement(body, "TranslatedDocId").text = spanish_id
         return body
 
     def _values_for_path(self):
