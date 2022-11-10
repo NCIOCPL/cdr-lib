@@ -260,7 +260,7 @@ class EVS:
         if refreshes:
             body = page.B.TBODY()
             table = page.B.TABLE(
-                page.B.CAPTION("Actions" if creates is None else "Updates"),
+                page.B.CAPTION("Updates" if creates is None else "Actions"),
                 page.B.THEAD(
                     page.B.TH("CDR ID"),
                     page.B.TH("Code"),
