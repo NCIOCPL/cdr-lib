@@ -432,8 +432,13 @@ class Session:
             session = match.group(2)
         fields = "log_saved, cdr_user, session_id, log_data"
         values = user, session, log_data
-        insert = "INSERT INTO dll_trace_log ({}) VALUES (GETDATE(), ?, ?, ?)"
-        self.cursor.execute(insert.format(fields), values)
+        table = "client_trace_log"
+        insert = "INSERT INTO {} ({}) VALUES (GETDATE(), ?, ?, ?)"
+        try:
+            self.cursor.execute(insert.format(table, fields), values)
+        except Exception:
+            table = "dll_trace_log"
+            self.cursor.execute(insert.format(table, fields), values)
         self.conn.commit()
         self.cursor.execute("SELECT @@IDENTITY AS id")
         return int(self.cursor.fetchall()[0].id)
