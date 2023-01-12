@@ -10,6 +10,7 @@ from copy import deepcopy
 from datetime import datetime
 from difflib import ndiff
 from functools import cached_property
+from pathlib import Path
 from getpass import getpass
 from os import makedirs
 from random import random
@@ -313,7 +314,7 @@ class Job:
                 message = "Stopping after processing %d documents"
                 self.logger.info(message, counts["processed"])
                 break
-        if self.testing:
+        if self.testing and Path(cdr.FIX_PERMISSIONS).exists():
             directory = self.output_directory.replace("/", "\\")
             command = f"{cdr.FIX_PERMISSIONS} {directory}"
             process = cdr.run_command(command, merge_output=True)
