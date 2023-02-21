@@ -613,8 +613,7 @@ Run completed.
                         logger.warning(val_warning, "new cwd", self.cdr_id)
             if errors_to_log:
                 for error in errors_to_log:
-                    logger.warning("%s: %r",
-                                   self.cdr_id, error.encode("utf-8"))
+                    logger.warning("%s: %r", self.cdr_id, error)
 
         def save(self, label, doc_str, ver, pub, val):
             """
