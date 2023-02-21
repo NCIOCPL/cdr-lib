@@ -34,8 +34,6 @@ This module has the following sections:
 """
 
 # Packages from the standard library.
-import cgi
-import cgitb
 import collections
 import datetime
 from email.utils import parseaddr as parse_email_address
@@ -52,6 +50,7 @@ import urllib.request
 # Third-party libraries/packages.
 import lxml.html
 import lxml.html.builder
+import multipart
 import openpyxl
 import openpyxl.workbook.views
 
@@ -60,10 +59,6 @@ import cdr
 from cdrapi import db
 from cdrapi.settings import Tier
 from cdrapi.users import Session
-
-
-# Turn on debugging for CGI scripts.
-cgitb.enable(display=cdr.isDevHost(), logdir=cdr.DEFAULT_LOGDIR)
 
 
 # Global values
@@ -91,6 +86,160 @@ DAY_ONE = cdr.URDATE
 # ----------------------------------------------------------------------#
 #                         NEW CLASSES -- USE THESE                      #
 # ----------------------------------------------------------------------#
+
+class FieldStorage:
+    """Replacement for deprecated cgi.FieldStorage class."""
+
+    ENCODED = "application/x-www-form-urlencoded", "application/x-url-encoded"
+
+    def __init__(self, logger=None):
+        """Parse the field values we get from the browser via the web server.
+
+        Optional keyword argument:
+            logger - pass this in to perform debug logging for the values
+        """
+
+        # Get some values from the environment.
+        self.logger = logger
+        if logger:
+            logger.debug("Constructing FieldStorage object")
+        method = os.environ.get("REQUEST_METHOD", "GET").upper()
+        content_type = os.environ.get("CONTENT_TYPE", self.ENCODED[0])
+        content_type, options = multipart.parse_options_header(content_type)
+        charset = options.get("charset", "utf-8")
+        self.__fields = {}
+        query_string = os.environ.get("QUERY_STRING")
+        qs_opts = dict(encoding=charset, keep_blank_values=True)
+
+        # Capture values passed as parameters appended to the URL.
+        if query_string:
+            if logger:
+                logger.debug("query_string: %s", query_string)
+            for key, value in urllib.parse.parse_qsl(query_string, **qs_opts):
+                if logger:
+                    logger.debug("adding %s from query_string", key)
+                self.__add(self.SimpleValue(key, value))
+
+        # Read values POSTed by the client.
+        if method not in ("GET", "HEAD"):
+            content_length = int(os.environ.get("CONTENT_LENGTH", "-1"))
+            if logger:
+                logger.debug("content_length: %s", content_length)
+                logger.debug("content_type: %s", content_type)
+            if content_type == "multipart/form-data":
+                boundary = options.get("boundary")
+                if logger:
+                    logger.debug("boundary: %s", boundary)
+                if not boundary:
+                    message = "No boundary for multipart/form-data"
+                    raise multipart.MultipartError(message)
+                args = sys.stdin.buffer, boundary, content_length
+                kwargs = dict(charset=charset)
+                for part in multipart.MultipartParser(*args, **kwargs):
+                    if logger:
+                        logger.debug("adding %s from multipart", part.name)
+                    self.__add(self.StreamedValue(part))
+                    #self.__fields[item.name].append(item)
+            elif content_type in self.ENCODED and content_length > 0:
+                data = sys.stdin.buffer.read(content_length).decode(charset)
+                if logger:
+                    logger.debug("parsing %s", data)
+                opts = dict(encoding=charset, keep_blank_values=True)
+                for key, value in urllib.parse.parse_qsl(data, **qs_opts):
+                    #self.__fields[key].append(self.SimpleValue(key, value))
+                    self.__add(self.SimpleValue(key, value))
+
+    def __add(self, item):
+        if item.name not in self.__fields:
+            self.__fields[item.name] = []
+        self.__fields[item.name].append(item)
+
+    def getfirst(self, key, default=None):
+        """Return the first value received."""
+
+        items = self.__fields.get(key, [])
+        return items[0].value if values else default
+
+    def getlist(self, key):
+        """Return list of received values."""
+        return [item.value for item in self.__fields.get(key, [])]
+
+    def getvalue(self, key, default=None):
+        """Return single value, list of values, or None."""
+
+        items = self.__fields.get(key, [])
+        if not items:
+            return default
+        if len(items) == 1:
+            return items[0].value
+        return [item.value for item in items]
+
+    def keys(self):
+        """Dictionary-style keys() method."""
+        return self.__fields.keys()
+
+    def __bool__(self):
+        """True if we found any fields else false."""
+        return bool(self.__fields)
+
+    def __contains__(self, key):
+        """Dictionary-style __contains__() method."""
+        return key in self.__fields
+
+    def __getitem__(self, key):
+        """Dictionary-style indexing, returning the value objects."""
+
+        if key not in self.__fields:
+            raise KeyError(key)
+        items = self.__fields[key]
+        return items[0] if len(items) == 1 else items
+
+    def __iter__(self):
+        return iter(self.keys())
+
+    def __len__(self):
+        """Dictionary-style len(x) support."""
+        return len(self.keys())
+
+
+    class SimpleValue:
+        """Basic name+value pairings."""
+
+        def __init__(self, name, value):
+            """Store the name and value and create stubs for the rest."""
+
+            self.name = name
+            self.value = value
+            self.filename = self.file = None
+
+
+    class StreamedValue():
+        """Items which might be a posted file or other streamed value."""
+
+        def __init__(self, part):
+            """Store the object extracted by the Multipart parser."""
+            self.__part = part
+
+        @cached_property
+        def name(self):
+            """The string for the name of the value."""
+            return self.__part.name
+
+        @cached_property
+        def value(self):
+            """String (or bytes if from a file) for the value."""
+            return self.__part.raw if self.filename else self.__part.value
+
+        @cached_property
+        def filename(self):
+            """String for the name (not the whole path) for an posted file."""
+            return self.__part.filename
+
+        @cached_property
+        def file(self):
+            """File handle from which the binary file content can be read."""
+            return self.__part.file
+
 
 class Controller:
     """Base class for top-level controller for a CGI script.
@@ -671,7 +820,7 @@ function {function_name}(value) {{
     def fields(self):
         """CGI fields for the web form."""
         if not hasattr(self, "_fields"):
-            self._fields = cgi.FieldStorage()
+            self._fields = FieldStorage()
         return self._fields
 
     @property
@@ -3000,7 +3149,7 @@ class AdvancedSearch(FormFieldFactory):
     def fields(self):
         """Named values from the CGI form."""
         if not hasattr(self, "_fields"):
-            self._fields = cgi.FieldStorage()
+            self._fields = FieldStorage()
         return self._fields
 
     def run(self):
