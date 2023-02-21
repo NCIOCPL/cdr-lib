@@ -3823,7 +3823,7 @@ class Doc:
               level - how serious is the problem (default 'error')
             """
 
-            self.message = re.sub(r"\s+", " ", message.strip())
+            self.message = message #re.sub(r"\s+", " ", message.strip())
             self.location = location
             self.type = opts.get("type") or Doc.VALIDATION
             self.level = opts.get("level") or Doc.LEVEL_ERROR
