@@ -62,7 +62,8 @@ class Control:
         gif="image/gif",
         mp3="audio/mpeg"
     )
-    SHORT_TITLE_MAX = 100
+    BROWSER_TITLE_MAX = 100
+    CTHP_CARD_TITLE_MAX = 100
     DESCRIPTION_MAX = 600
     ABOUT_THIS = "_section_AboutThis_1"
     IN_THIS_SECTION = dict(
@@ -161,6 +162,7 @@ class Control:
                 self.update_status(self.FAILURE, message)
             else:
                 self.update_status(self.SUCCESS, message)
+
             self.notify(message, with_link=True)
 
             # Record documents published for the first time
@@ -962,10 +964,14 @@ class Control:
             raise Exception(f"CDR{doc_id:d}: missing summary URL")
         if url.startswith("/espanol"):
             url = url[len("/espanol"):]
-        short_title = translation_of = None
+        browser_title = cthp_card_title = translation_of = None
         for node in root.findall("AltTitle"):
-            if node.get("TitleType") == "Short":
-                short_title = Doc.get_text(node)
+            if node.get("TitleType") == "Browser":
+                browser_title = Doc.get_text(node)
+            elif node.get("TitleType") == "CancerTypeHomePage":
+                cthp_card_title = Doc.get_text(node)
+        if not cthp_card_title:
+            cthp_card_title = browser_title
         node = root.find("TranslationOf")
         if node is not None:
             translation_of = Doc.extract_id(node.get("ref"))
@@ -1064,13 +1070,17 @@ class Control:
         if len(description) > cls.DESCRIPTION_MAX:
             session.logger.warning("Truncating description %r", description)
             description = description[:cls.DESCRIPTION_MAX]
-        if len(short_title) > cls.SHORT_TITLE_MAX:
-            session.logger.warning("Truncating short title %r", short_title)
-            short_title = short_title[:cls.SHORT_TITLE_MAX]
+        if len(browser_title) > cls.BROWSER_TITLE_MAX:
+            session.logger.warning("Truncating browser title %r", browser_title)
+            browser_title = browser_title[:cls.BROWSER_TITLE_MAX]
+        if len(cthp_card_title) > cls.CTHP_CARD_TITLE_MAX:
+            session.logger.warning("Truncating cthp title %r", cthp_card_title)
+            cthp_card_title = cthp_card_title[:cls.CTHP_CARD_TITLE_MAX]
         return dict(
             cdr_id=doc_id,
             url=url,
-            short_title=short_title,
+            browser_title=browser_title,
+            cthp_card_title=cthp_card_title,
             translation_of=translation_of,
             sections=sections,
             title=Doc.get_text(root.find("SummaryTitle")),
