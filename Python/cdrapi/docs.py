@@ -1722,7 +1722,7 @@ class Doc:
 
         Optional keyword argument:
           tables - set of strings identifying which index table(s) to
-                   update (`query_term` and/or `query_term_def`); default
+                   update (`query_term` and/or `query_term_pub`); default
                    is both tables
         """
 
@@ -1735,7 +1735,7 @@ class Doc:
             return
 
         # Find out which table(s) we're updating.
-        tables = opts.get("tables", ["query_term", "query_term_def"])
+        tables = opts.get("tables", ["query_term", "query_term_pub"])
         if not tables:
             return
 
