@@ -5380,7 +5380,8 @@ class EmailAttachment:
         self.filepath = filepath
         if self.maintype == "text":
             from email.mime.text import MIMEText
-            self.mime_object = MIMEText(self.bytes, _subtype=self.subtype)
+            text = self.bytes.decode("utf-8")
+            self.mime_object = MIMEText(text, _subtype=self.subtype)
         elif self.maintype == "audio":
             from email.mime.audio import MIMEAudio
             self.mime_object = MIMEAudio(self.bytes, _subtype=self.subtype)

@@ -1722,7 +1722,7 @@ class Doc:
 
         Optional keyword argument:
           tables - set of strings identifying which index table(s) to
-                   update (`query_term` and/or `query_term_def`); default
+                   update (`query_term` and/or `query_term_pub`); default
                    is both tables
         """
 
@@ -1735,7 +1735,7 @@ class Doc:
             return
 
         # Find out which table(s) we're updating.
-        tables = opts.get("tables", ["query_term", "query_term_def"])
+        tables = opts.get("tables", ["query_term", "query_term_pub"])
         if not tables:
             return
 
@@ -3823,7 +3823,7 @@ class Doc:
               level - how serious is the problem (default 'error')
             """
 
-            self.message = re.sub(r"\s+", " ", message.strip())
+            self.message = message #re.sub(r"\s+", " ", message.strip())
             self.location = location
             self.type = opts.get("type") or Doc.VALIDATION
             self.level = opts.get("level") or Doc.LEVEL_ERROR

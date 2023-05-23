@@ -161,6 +161,12 @@ class Control:
                 self.update_status(self.FAILURE, message)
             else:
                 self.update_status(self.SUCCESS, message)
+
+            # If documents were removed include this info in the push message
+            removed = self.count_removed_docs()
+            if removed and verb == "Pushed":
+                message += f"\nRemoved {removed} documents"
+
             self.notify(message, with_link=True)
 
             # Record documents published for the first time
@@ -1370,6 +1376,22 @@ class Control:
         conn.commit()
         conn.close()
         return pushed
+
+
+    def count_removed_docs(self):
+        """
+        Count the number of documents removed for this job
+
+        Return:
+            integer for number of documents removed
+        """
+
+        # A removed document is one without the XML included
+        query = db.Query("pub_proc_cg_work", "COUNT(*) AS removed")
+        query.where("xml IS NULL")
+        removed = query.execute(self.cursor).fetchone().removed
+        return removed
+
 
     def normalize(self, xml):
         """

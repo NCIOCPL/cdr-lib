@@ -744,7 +744,8 @@ class URLChecker(BatchReport):
             being thrown. If we take that exception to mean that the
             web server for www.cancer.gov is off line, we'll make the
             wrong assumption about all subsequent URLs for that host.
-            See https://github.com/kennethreitz/requests/issues/3880.
+            See https://github.com/psf/requests/issues/3880 and
+            https://github.com/python/cpython/issues/73853.
             XXX 2017-02-19 ============================================
             """
 

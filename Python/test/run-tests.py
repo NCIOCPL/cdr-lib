@@ -34,6 +34,37 @@ class Tests(unittest.TestCase):
         self.logger = cdr.Logging.get_logger("unit-tests")
         Tests.session = Session.create_session(self.USERNAME, **opts).name
         Tests.TEST_DIR = os.path.dirname(os.path.realpath(__file__))
+        doctype = cdr.getDoctype(Tests.session, "xxtest", tier=self.TIER)
+        if doctype.active != "Y":
+            doctype.active = "Y"
+            cdr.modDoctype(Tests.session, doctype, tier=self.TIER)
+        name = "Regression Testers"
+        group = cdr.getGroup(Tests.session, name, tier=self.TIER)
+        changed = False
+        if "xxtest" not in group.actions["ADD DOCUMENT"]:
+            group.actions["ADD DOCUMENT"].append("xxtest")
+            changed = True
+        if "xxtest" not in group.actions["DELETE DOCUMENT"]:
+            group.actions["DELETE DOCUMENT"].append("xxtest")
+            changed = True
+        if "xxtest" not in group.actions["FILTER DOCUMENT"]:
+            group.actions["FILTER DOCUMENT"].append("xxtest")
+            changed = True
+        if "xxtest" not in group.actions["MODIFY DOCUMENT"]:
+            group.actions["MODIFY DOCUMENT"].append("xxtest")
+            changed = True
+        if "xxtest" not in group.actions["VALIDATE DOCUMENT"]:
+            group.actions["VALIDATE DOCUMENT"].append("xxtest")
+            changed = True
+        if "PUBLISH DOCUMENT" not in group.actions:
+            group.actions["PUBLISH DOCUMENT"] = ["xxtest"]
+            changed = True
+        elif "xxtest" not in group.actions["PUBLISH DOCUMENT"]:
+            group.actions["PUBLISH DOCUMENT"].append("xxtest")
+            changed = True
+        if changed:
+            cdr.putGroup(Tests.session, name, group, tier=self.TIER)
+
 
     def tearDown(self):
         try:

@@ -260,7 +260,7 @@ class EVS:
         if refreshes:
             body = page.B.TBODY()
             table = page.B.TABLE(
-                page.B.CAPTION("Actions" if creates is None else "Updates"),
+                page.B.CAPTION("Updates" if creates is None else "Actions"),
                 page.B.THEAD(
                     page.B.TH("CDR ID"),
                     page.B.TH("Code"),
@@ -316,6 +316,7 @@ class EVS:
 
         # Add any new CDR Term documents requested.
         if creates:
+            comment = f"Term document imported from EVS {date.today()}"
             body = page.B.TBODY()
             table = page.B.TABLE(
                 page.B.CAPTION("New CDR Drug Term Documents"),
@@ -341,6 +342,8 @@ class EVS:
                             publishable=False,
                             val_types=("schema", "links"),
                             unlock=True,
+                            comment=comment,
+                            reason=comment,
                         )
                         doc.save(**opts)
                         values = code, concept.name, doc.cdr_id, "Created"

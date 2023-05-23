@@ -411,7 +411,7 @@ class Session:
         self.cursor.execute(insert.format(fields), (description, self.id))
         self.conn.commit()
 
-    def save_client_trace_log(self, log_data):
+    def save_client_trace_log(self, log_data, **opts):
         """
         Allows the CDR client software to post a copy of the local log
 
@@ -422,18 +422,25 @@ class Session:
         Pass:
           log_data - required string containing contents of log file
                      populated by the CDR client loader program
+          user - optional name of user
+          session - optional name of the session being logged
         """
 
         self.log("Session.save_client_trace_log()")
-        user = session = None
-        match = re.search(r"logon\(([^,]+), ([^)]+)\)", log_data)
-        if match:
-            user = match.group(1)
-            session = match.group(2)
+        user = opts.get("user")
+        session = opts.get("session")
+        if user and session:
+            table = "client_trace_log"
+        else:
+            table = "dll_trace_log"
+            match = re.search(r"logon\(([^,]+), ([^)]+)\)", log_data)
+            if match:
+                user = match.group(1)
+                session = match.group(2)
         fields = "log_saved, cdr_user, session_id, log_data"
         values = user, session, log_data
-        insert = "INSERT INTO dll_trace_log ({}) VALUES (GETDATE(), ?, ?, ?)"
-        self.cursor.execute(insert.format(fields), values)
+        insert = "INSERT INTO {} ({}) VALUES (GETDATE(), ?, ?, ?)"
+        self.cursor.execute(insert.format(table, fields), values)
         self.conn.commit()
         self.cursor.execute("SELECT @@IDENTITY AS id")
         return int(self.cursor.fetchall()[0].id)
