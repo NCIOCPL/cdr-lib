@@ -987,7 +987,7 @@ class DrupalClient:
         self.logger.info("Marking %d documents published", len(documents))
         self.logger.debug("URL for publish(): %s", url)
         offset = 0
-        lookup = {(doc[1:], doc[0]) for doc in documents}
+        lookup = dict((doc[1:], doc[0]) for doc in documents)
         errors = dict()
         while offset < len(documents):
             end = offset + self.batch_size
