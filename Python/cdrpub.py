@@ -1824,7 +1824,6 @@ class Control:
             f"{cdr.WORK_DRIVE}:\\cygwin\\bin\\ssh",
             f"-i {cdr.WORK_DRIVE}:/etc/akamai-pdq-{{}}",
             "-oHostKeyAlgorithms=+ssh-dss",
-            "-oStrictHostKeyChecking=no",
             "-oIdentitiesOnly=yes",
         )
         SSH = " ".join(SSH)
