@@ -1799,14 +1799,19 @@ class HTMLPage(FormFieldFactory):
     """
 
     VERSION = "202101071440"
+    USWDS = "https://cdnjs.cloudflare.com/ajax/libs/uswds/3.6.0"
     CDR_CSS = f"../../stylesheets/cdr.css?v={VERSION}"
     APIS = "https://ajax.googleapis.com/ajax/libs"
     JQUERY = f"{APIS}/jquery/3.6.0/jquery.min.js"
     JQUERY_UI = f"{APIS}/jqueryui/1.12.1/jquery-ui.min.js"
     JQUERY_CSS = f"{APIS}/jqueryui/1.12.1/themes/smoothness/jquery-ui.css"
     CSS_LINKS = (
+        #dict(
+        #    href=CDR_CSS,
+        #    rel="stylesheet",
+        #),
         dict(
-            href=CDR_CSS,
+            href=f"{USWDS}/css/uswds.min.css",
             rel="stylesheet",
         ),
         dict(
@@ -1843,6 +1848,8 @@ class HTMLPage(FormFieldFactory):
         "        dayNamesMin: [ 'S', 'M', 'T', 'W', 'T', 'F', 'S' ]",
         "    });",
         "});"])
+    OFFICIAL_WEBSITE = "An official website of the United States government"
+    HOW_YOU_KNOW = "Here's how you know"
 
     def __init__(self, title, **kwargs):
         """Capture the initial settings for the page.
@@ -1918,6 +1925,7 @@ class HTMLPage(FormFieldFactory):
                     else:
                         p.set("class", "info news")
                     header.addnext(p)
+        self.body.append(self.B.SCRIPT(src=f"{self.USWDS}/js/uswds.min.js"))
         sendPage(self.tostring())
 
     def add_css(self, css):
@@ -1974,6 +1982,114 @@ class HTMLPage(FormFieldFactory):
                 self._action = ""
         return self._action
 
+    @cached_property
+    def banner(self):
+        """USWDS standard banner."""
+
+        img = self.B.IMG(src="/images/us_flag_small.png", alt="")
+        img.set("class", "usa-banner__header-flag")
+        img.set("aria-hidden", "true")
+        flag = self.B.DIV(img, self.B.CLASS("grid-col-auto"))
+        action = self.B.P(self.HOW_YOU_KNOW)
+        action.set("class", "usa-banner__header-action")
+        hidden = self.B.DIV(
+            self.B.P(
+                self.OFFICIAL_WEBSITE,
+                self.B.CLASS("usa-banner__header-text")
+            ),
+            self.B.P(
+                self.HOW_YOU_KNOW,
+                self.B.CLASS("usa-banner__header-action")
+            ),
+            self.B.CLASS("grid-col-fill tablet:grid-col-auto")
+        )
+        hidden.set("aria-hidden", "true")
+        span = self.B.SPAN(self.HOW_YOU_KNOW)
+        span.set("class", "usa-banner__button-text")
+        button = self.B.BUTTON(span, type="button")
+        button.set("class", "usa-accordion__button usa-banner__button")
+        button.set("aria-expanded", "false")
+        button.set("aria-controls", "gov-banner-default")
+        header = self.B.E(
+            "header",
+            self.B.DIV(
+                self.B.DIV(flag, hidden, button)
+                self.B.CLASS("usa-banner__inner")
+            ),
+            self.B.CLASS("usa-banner__header")
+        )
+        img = self.B.IMG(src="/images/icon-dot-gov.svg", role="img", alt="")
+        img.set("class", "usa-banner__guidance table:grid-col-6")
+        img.set("aria-hidden", "true")
+        dot_gov = self.B.DIV(
+            img,
+            self.B.DIV(
+                self.B.P(
+                    self.B.STRONG("Official websites use .gov"),
+                    self.B.BR(),
+                    "A ",
+                    self.B.STRONG(".gov"),
+                    " website belongs to an official government organization ",
+                    "in the United States."
+                ),
+                self.B.CLASS("usa-media-block__body")
+            ),
+            self.B.CLASS("usa-banner__guidance tablet:grid-col-6")
+        )
+        desc = "Locked padlock icon"
+        path_data = (
+            "M26 0c10.493 0 19 8.507 19 19v9h3a4 4 0 0 1 4 4v28a4 4 0 0 1-4 "
+            "4H4a4 4 0 0 1-4-4V32a4 4 0 0 1 4-4h3v-9C7 8.507 15.507 0 26 0zm0 "
+            "8c-5.979 0-10.843 4.77-10.996 10.712L15 19v9h22v-9c0-6.075-4.925-"
+            "11-11-11z"
+        )
+        path = self.B.E("path", file="#000000", d=path_data)
+        path.set("fill-rule", "evenodd")
+        svg = self.B.E(
+            "svg",
+            self.B.TITLE("Lock", id="banner-lock-title"),
+            self.B.E("desc", desc, id="banner-lock-description"),
+            path,
+            xmlns="http://www.w3.org/2000/svg",
+            width="52",
+            height="64",
+            viewBox="0 0 52 64",
+            role="img",
+            focusable="false"
+        )
+        svg.set("class", "usa-banner__lock-image")
+        svg.set("aria-labelledby", "banner-lock-description")
+        lock = self.B.DIV(
+            img,
+            self.B.DIV(
+                self.B.P(
+                    self.B.STRONG("Secure .gov websites use HTTPS"),
+                    self.B.BR(),
+                    "A ",
+                    self.B.STRONG("lock"),
+                    " ( ",
+                    self.B.SPAN(svg, self.B.CLASS("icon-lock")),
+                    " ) or ",
+                    self.B.STRONG("https://"),
+                    " means you've safely connected to the .gov website. ",
+                    "Share sensitive information only on official secure ",
+                    "websites."
+                )
+                self.B.CLASS("usa-media-block__body")
+            ),
+            self.B.CLASS("usa-banner__guidance tablet:grid-col-6")
+        )
+        content = self.B.DIV(
+            self.B.DIV(dot_gov, lock, self.B.CLASS("grid-row grid-gap-lg")),
+            self.B.CLASS("usa-banner__content usa-accordion__content")
+        )
+        content.set("id", "gov-banner-default")
+        accordion = self.B.DIV(header, content, self.B.CLASS("usa-accordion"))
+        banner = self.B.E("section", accordion, self.B.CLASS("usa-banner"))
+        official_website = self.OFFICIAL_WEBSITE[3:].capitalize()
+        banner.set("aria-label", official_website)
+        return banner
+
     @property
     def banner_title(self):
         """The title to be displayed in the main banner for the page."""
@@ -1983,7 +2099,7 @@ class HTMLPage(FormFieldFactory):
                 self._banner_title = self.title
         return self._banner_title
 
-    @property
+    @cached_property
     def body(self):
         """The body content element for the page.
 
@@ -1994,27 +2110,31 @@ class HTMLPage(FormFieldFactory):
         or both.
         """
 
-        if not hasattr(self, "_body"):
-            self._body = self.B.BODY(id=self.body_id)
-            if self.body_classes:
-                self._body.set("class", " ".join(self.body_classes))
-            banner = self.B.H1(self.banner_title)
-            header = self.B.E("header", banner)
-            if self.subtitle:
-                header.append(self.B.H2(self.subtitle))
-            if self.buttons:
-                buttons = self.B.SPAN(*self.buttons)
-                buttons.set("id", "header-buttons")
-                banner.append(buttons)
-                form = self.B.FORM(action=self.action, method=self.method)
-                if self.session:
-                    form.append(self.hidden_field(SESSION, self.session))
-                form.set("id", self.PRIMARY_FORM_ID)
-                self._body.append(form)
-                form.append(header)
-            else:
-                self._body.append(header)
-        return self._body
+        body = self.B.BODY(id=self.body_id)
+        if self.body_classes:
+            body.set("class", " ".join(self.body_classes))
+        skipnav = self.B.A("Skip to main content", href="#main-content")
+        skipnav.set("class", "usa-skipnav")
+        body.append(skipnav)
+        body.append(self.banner)
+        body.append(self.B.DIV(self.B.CLASS("usa-overlay")))
+        banner = self.B.H1(self.banner_title)
+        header = self.B.E("header", banner)
+        if self.subtitle:
+            header.append(self.B.H2(self.subtitle))
+        if self.buttons:
+            buttons = self.B.SPAN(*self.buttons)
+            buttons.set("id", "header-buttons")
+            banner.append(buttons)
+            form = self.B.FORM(action=self.action, method=self.method)
+            if self.session:
+                form.append(self.hidden_field(SESSION, self.session))
+            form.set("id", self.PRIMARY_FORM_ID)
+            body.append(form)
+            form.append(header)
+        else:
+            body.append(header)
+        return body
 
     @property
     def body_id(self):
@@ -2062,32 +2182,117 @@ class HTMLPage(FormFieldFactory):
 
         return self.body.find("form")
 
-    @property
+    @cached_property
     def head(self):
         """Assemble the head block for the HTML page."""
-        if not hasattr(self, "_head"):
-            self._head = self.B.HEAD(
-                self.B.META(charset="utf-8"),
-                self.B.TITLE(self.head_title),
-                self.B.LINK(href="/favicon.ico", rel="icon")
-            )
-            for attrs in self.stylesheets:
-                element = self.B.LINK()
-                for key, value in attrs.items():
-                    element.set(key, value)
+
+        http_equiv = self.B.META(content="IE=edge")
+        http_equiv.set("http-equiv", "X-UA-Compatible")
+        script = self.B.SCRIPT()
+        head = self.B.HEAD(
+            self.B.META(charset="utf-8"),
+            http_equiv,
+            self.B.META(name="description", content="CDR Administration Tools"),
+            self.B.META(name="author", content="Bob Kline and Volker Englisch"),
+            self.B.TITLE(self.head_title),
+            self.B.LINK(href="/favicon.ico", rel="icon")
+            self.B.SCRIPT(src=f"{self.USWDS}/js/uswds-init.min.js"),
+        )
+        for attrs in self.stylesheets:
+            element = self.B.LINK()
+            for key, value in attrs.items():
+                element.set(key, value)
                 if "rel" not in attrs:
                     element.set("rel", "stylesheet")
-                self._head.append(element)
-            for attrs in self.scripts:
-                element = self.B.SCRIPT()
-                for key, value in attrs.items():
-                    element.set(key, value)
-                self._head.append(element)
-        return self._head
+                    head.append(element)
+        for attrs in self.scripts:
+            element = self.B.SCRIPT()
+            for key, value in attrs.items():
+                element.set(key, value)
+            head.append(element)
+        return head
 
     @property
     def header(self):
         """The <header> element at the top of the body."""
+
+        menu = self.B.UL(self.B.CLASS("usa-nav__primary usa-accordion"))
+        for label in ("Board Managers", "CIAT/OCC", "Developers"):
+            item = self.B.LI(
+                self.B.A(
+                    self.B.SPAN(label),
+                    self.B.CLASS("usa-nav-link"),
+                    href="#"
+                ),
+                self.B.CLASS("usa-nav__primary-item")
+            )
+            menu.append(item)
+        onclick = "javascript:window.open('799769.xml', '_blank').focus();"
+        search = self.B.E(
+            "section",
+            self.B.FORM(
+                self.B.LABEL(
+                    "Search",
+                    self.B.FOR("search-field"),
+                    self.B.CLASS("usa-sr-only")
+                ),
+                self.B.INPUT(
+                    self.B.CLASS("usa-input"),
+                    id="search-field",
+                    type="search",
+                    name="search",
+                    placeholder="CDR ID"
+                ),
+                self.B.BUTTON(
+                    self.B.IMG(
+                        self.B.CLASS("usa-search__submit-icon"),
+                        src="images/search--white.svg",
+                        alt="Search"
+                    ),
+                    self.B.CLASS("usa-button"),
+                    type="submit",
+                    onclick=onclick
+                ),
+                self.B.CLASS("usa-search usa-search--small"),
+                role="search"
+            )
+        )
+        search.set("aria-label", "Search component")
+        nav = self.B.E(
+            "nav",
+            self.B.BUTTON(
+                self.B.IMG(src="/images/close.svg", role="img", alt="Close")
+                self.B.CLASS("usa-nav__close"),
+                type="button"
+            )
+            menu,
+            search,
+            self.B.CLASS("usa-nav")
+        )
+        nav.set("aria-label", "Primary navigation")
+        home = "/Admin.py"
+        title = "CDR Administration"
+        return self.B.E(
+            "header",
+            self.B.DIV(
+                self.B.DIV(
+                    self.B.DIV(
+                        self.B.EM(self.B.A(title, title="Home", href=home)),
+                        self.B.BUTTON(
+                            "Menu",
+                            self.B.CLASS("usa-menu-btn")
+                            type="button"
+                        )
+                        self.B.CLASS("usa-logo"),
+                        id="header-logo"
+                    ),
+                    self.B.CLASS("usa-navbar")
+                ),
+                nav,
+                self.B.CLASS("usa-nav-container")
+            )
+            self.B.CLASS("usa-header usa-header--basic")
+        )
         header = self.body.find("form/header")
         if header is not None:
             return header
