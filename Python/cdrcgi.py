@@ -1627,6 +1627,10 @@ class FormFieldFactory:
 
         # Add the classes for the widget element.
         classes = cls.__classes(kwargs.get("classes"))
+        if field_type == "textarea" and "usa-textarea" not in classes:
+            classes.add("usa-textarea")
+        elif field_type in ("text", "password") and "usa-input" not in classes:
+            classes.add("usa-text")
         if classes:
             field.set("class", " ".join(classes))
 
@@ -1693,6 +1697,7 @@ class FormFieldFactory:
             classes.add("labeled-field")
             widget_id = kwargs.get("widget_id") or name
             label = cls.B.LABEL(label, cls.B.FOR(widget_id))
+            label.set("class", "usa-label")
             if kwargs.get("tooltip"):
                 label.set("title", kwargs["tooltip"])
             wrapper.append(label)
@@ -2013,7 +2018,9 @@ class HTMLPage(FormFieldFactory):
         header = self.B.E(
             "header",
             self.B.DIV(
-                self.B.DIV(flag, hidden, button)
+                flag,
+                hidden,
+                button,
                 self.B.CLASS("usa-banner__inner")
             ),
             self.B.CLASS("usa-banner__header")
@@ -2074,7 +2081,7 @@ class HTMLPage(FormFieldFactory):
                     " means you've safely connected to the .gov website. ",
                     "Share sensitive information only on official secure ",
                     "websites."
-                )
+                ),
                 self.B.CLASS("usa-media-block__body")
             ),
             self.B.CLASS("usa-banner__guidance tablet:grid-col-6")
@@ -2118,6 +2125,10 @@ class HTMLPage(FormFieldFactory):
         body.append(skipnav)
         body.append(self.banner)
         body.append(self.B.DIV(self.B.CLASS("usa-overlay")))
+        body.append(self.header)
+        body.append(self.main)
+        body.append(self.footer)
+        return body
         banner = self.B.H1(self.banner_title)
         header = self.B.E("header", banner)
         if self.subtitle:
@@ -2167,7 +2178,49 @@ class HTMLPage(FormFieldFactory):
         """Read-only database cursor."""
         return db.connect(user="CdrGuest").cursor()
 
-    @property
+    @cached_property
+    def footer(self):
+        """Links at the bottom of the page."""
+
+        li_classes = " ".join([
+            "mobile-lg:grid-col-6",
+            "desktop:grid-col-auto",
+            "usa-footer__primary-content",
+        ])
+        link_class = "usa-footer__primary-link"
+        link_values = (
+            ("Help", "javascript:void(0);", False),
+            ("NCI Web Site", "https://www.cancer.gov", True),
+            ("CMS", "https://www-cms.cancer.gov", True),
+        )
+        links = self.B.UL(self.B.CLASS("grid-row grid-gap"))
+        for label, href, new_tab in link_values:
+            link = self.B.A(label, self.B.CLASS(link_class), href=href)
+            if new_tab:
+                link.set("target", "_blank")
+            links.append(self.B.LI(link, self.B.CLASS(li_classes)))
+        nav = self.B.E(
+            "nav",
+            links,
+            self.B.CLASS("usa-footer__nav")
+        )
+        nav.set("aria-label", "footer navigation")
+        return self.B.E(
+            "footer",
+            self.B.DIV(
+                self.B.DIV(
+                    self.B.DIV(
+                        nav,
+                        self.B.CLASS("mobile-lg:grid-col-12")
+                    ),
+                    self.B.CLASS("usa-footer__primary-container grid-row")
+                ),
+                self.B.CLASS("usa-footer__primary-section")
+            ),
+            self.B.CLASS("usa-footer usa-footer--slim")
+        )
+
+    @cached_property
     def form(self):
         """The body's <form> element.
 
@@ -2180,6 +2233,7 @@ class HTMLPage(FormFieldFactory):
         added forms.
         """
 
+        return self.B.FORM(self.B.CLASS("usa-form"))
         return self.body.find("form")
 
     @cached_property
@@ -2195,8 +2249,8 @@ class HTMLPage(FormFieldFactory):
             self.B.META(name="description", content="CDR Administration Tools"),
             self.B.META(name="author", content="Bob Kline and Volker Englisch"),
             self.B.TITLE(self.head_title),
-            self.B.LINK(href="/favicon.ico", rel="icon")
-            self.B.SCRIPT(src=f"{self.USWDS}/js/uswds-init.min.js"),
+            self.B.LINK(href="/favicon.ico", rel="icon"),
+            self.B.SCRIPT(src=f"{self.USWDS}/js/uswds-init.min.js")
         )
         for attrs in self.stylesheets:
             element = self.B.LINK()
@@ -2204,7 +2258,7 @@ class HTMLPage(FormFieldFactory):
                 element.set(key, value)
                 if "rel" not in attrs:
                     element.set("rel", "stylesheet")
-                    head.append(element)
+            head.append(element)
         for attrs in self.scripts:
             element = self.B.SCRIPT()
             for key, value in attrs.items():
@@ -2246,7 +2300,7 @@ class HTMLPage(FormFieldFactory):
                 self.B.BUTTON(
                     self.B.IMG(
                         self.B.CLASS("usa-search__submit-icon"),
-                        src="images/search--white.svg",
+                        src="/images/search--white.svg",
                         alt="Search"
                     ),
                     self.B.CLASS("usa-button"),
@@ -2261,10 +2315,10 @@ class HTMLPage(FormFieldFactory):
         nav = self.B.E(
             "nav",
             self.B.BUTTON(
-                self.B.IMG(src="/images/close.svg", role="img", alt="Close")
+                self.B.IMG(src="/images/close.svg", role="img", alt="Close"),
                 self.B.CLASS("usa-nav__close"),
                 type="button"
-            )
+            ),
             menu,
             search,
             self.B.CLASS("usa-nav")
@@ -2280,9 +2334,9 @@ class HTMLPage(FormFieldFactory):
                         self.B.EM(self.B.A(title, title="Home", href=home)),
                         self.B.BUTTON(
                             "Menu",
-                            self.B.CLASS("usa-menu-btn")
+                            self.B.CLASS("usa-menu-btn"),
                             type="button"
-                        )
+                        ),
                         self.B.CLASS("usa-logo"),
                         id="header-logo"
                     ),
@@ -2290,7 +2344,7 @@ class HTMLPage(FormFieldFactory):
                 ),
                 nav,
                 self.B.CLASS("usa-nav-container")
-            )
+            ),
             self.B.CLASS("usa-header usa-header--basic")
         )
         header = self.body.find("form/header")
@@ -2334,6 +2388,16 @@ class HTMLPage(FormFieldFactory):
         """
 
         return self.__title or ""
+
+    @cached_property
+    def main(self):
+        """This is where page content gets added."""
+
+        return self.B.E(
+            "main",
+            self.B.DIV(self.form, self.B.CLASS("grid-container")),
+            self.B.CLASS("usa-section")
+        )
 
     @property
     def method(self):
@@ -2390,6 +2454,7 @@ class HTMLPage(FormFieldFactory):
     def stylesheets(self):
         """CSS rules to be loaded for the page."""
 
+        return self.CSS_LINKS
         stylesheets = self.__opts.get("stylesheets")
         if isinstance(stylesheets, (list, tuple)):
             sheets = []
@@ -2403,6 +2468,7 @@ class HTMLPage(FormFieldFactory):
             return sheets
         if stylesheets is not None:
             self.logger.warning("bogus stylesheets %r", stylesheets)
+        return self.CSS_LINKS
         query = db.Query("ctl", "val")
         query.where("grp = 'cdn'")
         query.where("name = 'cgi-css'")
