@@ -312,7 +312,7 @@ class EVS:
                 for value in values:
                     row.append(page.B.TD(str(value)))
                 body.append(row)
-            page.form.append(table)
+            page.wrapper.append(table)
 
         # Add any new CDR Term documents requested.
         if creates:
@@ -354,7 +354,7 @@ class EVS:
                 for value in values:
                     row.append(page.B.TD(value))
                 body.append(row)
-            page.form.append(table)
+            page.wrapper.append(table)
 
     @staticmethod
     def __map_concepts(concepts):

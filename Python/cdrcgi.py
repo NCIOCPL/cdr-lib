@@ -27,7 +27,7 @@ This module has the following sections:
         Keep these older class as long as we still have scripts
         which haven't been converted to their successors
 
-    Miscellaneous global function
+    Miscellaneous global functions
 
         Most of these should be gradually retired, in favor of
         the core CDR API functionality.
@@ -40,7 +40,9 @@ from email.utils import parseaddr as parse_email_address
 from functools import cached_property
 import json
 import os
+import pathlib
 import re
+import string
 import sys
 import time
 import urllib.error
@@ -283,6 +285,9 @@ class Controller:
     SUMMARY_SELECTION_METHODS = "id", "title", "board"
     EMAIL_PATTERN = re.compile(r"[^@]+@[^@\.]+\.[^@]+$")
     KEEP_COMPLETE_TITLES = False
+    OBSOLETE_BUTTONS = ADMINMENU, DEVMENU, LOG_OUT, REPORTS_MENU
+    SAME_WINDOW = "jQuery('#primary-form').attr('target', '_self');"
+    NONBREAKING_HYPHEN = "\u2011"
 
     def __init__(self, **opts):
         """Set up a skeletal controller."""
@@ -303,7 +308,7 @@ class Controller:
                 elif self.request == self.DEVMENU:
                     self.redirect("DevSA.py")
                 elif self.request == self.LOG_OUT:
-                    logout(self.session.name)
+                    logout(str(self.session))
                 elif self.request and self.request == self.SUBMIT:
                     self.show_report()
                 else:
@@ -314,9 +319,30 @@ class Controller:
             self.logger.exception("Controller.run() failure")
             bail(e)
 
+    @property
+    def same_window(self):
+        """Override for commands which should stay in the same window"""
+        return []
+
+    @cached_property
+    def alerts(self):
+        """Override to add alerts which should be shown on the page."""
+        return []
+
     def show_form(self):
         """Populate an HTML page with a form and fields and send it."""
+
         self.populate_form(self.form_page)
+        for label in self.buttons:
+            if label not in self.OBSOLETE_BUTTONS:
+                button = self.form_page.button(label)
+                if label in self.same_window:
+                    button.set("onclick", self.SAME_WINDOW)
+                self.form_page.form.append(button)
+        for alert in self.alerts:
+            message = alert["message"]
+            del alert["message"]
+            self.form_page.add_alert(message, **alert)
         self.form_page.send()
 
     def show_report(self):
@@ -332,10 +358,33 @@ class Controller:
         would be if you have a non-tabular report to be sent.
         """
 
-        elapsed = self.report.page.html.get_element_by_id("elapsed", None)
-        if elapsed is not None:
-            elapsed.text = str(self.elapsed)
+        if self.format == "html":
+            if self.report_css:
+                self.report.page.add_css(self.report_css)
+            elapsed = self.report.page.html.get_element_by_id("elapsed", None)
+            if elapsed is not None:
+                elapsed.text = str(self.elapsed)
+            for alert in self.alerts:
+                message = alert["message"]
+                del alert["message"]
+                self.report.page.add_alert(message, **alert)
+            if self.wide_css:
+                sibling = self.report.page.form.getparent()
+                for table in self.report.page.form.findall("table"):
+                    sibling.addnext(table)
+                    sibling = table
+                self.report.page.add_css(self.wide_css)
         self.report.send(self.format)
+
+    @property
+    def report_css(self):
+        """Override to provide additional styling to a reports page."""
+        return None
+
+    @property
+    def wide_css(self):
+        """Override to allow tables in a report more width."""
+        return None
 
     def populate_form(self, page):
         """Stub, to be overridden by real controllers."""
@@ -499,13 +548,13 @@ class Controller:
             if kwopts.get("language", True):
                 self.add_language_fieldset(page)
             fieldset = page.fieldset("Summary Document ID")
-            fieldset.set("class", "by-id-block")
+            fieldset.set("class", "by-id-block usa-fieldset")
             label = kwopts.get("id-label", "CDR ID")
             opts = dict(label=label, tooltip=kwopts.get("id-tip"))
             fieldset.append(page.text_field("cdr-id", **opts))
             page.form.append(fieldset)
             fieldset = page.fieldset("Summary Title")
-            fieldset.set("class", "by-title-block")
+            fieldset.set("class", "by-title-block usa-fieldset")
             tooltip = "Use wildcard (%) as appropriate."
             fieldset.append(page.text_field("title", tooltip=tooltip))
             page.form.append(fieldset)
@@ -519,7 +568,7 @@ class Controller:
         """
 
         fieldset = page.fieldset("Board")
-        fieldset.set("class", "by-board-block")
+        fieldset.set("class", "by-board-block usa-fieldset")
         fieldset.set("id", "board-set")
         opts = dict(label="All Boards", value="all", checked=True)
         fieldset.append(page.checkbox("board", **opts))
@@ -536,7 +585,7 @@ class Controller:
         """
 
         fieldset = page.fieldset("Audience")
-        fieldset.set("class", "by-board-block")
+        fieldset.set("class", "by-board-block usa-fieldset")
         fieldset.set("id", "audience-block")
         default = self.default_audience
         if self.INCLUDE_ANY_AUDIENCE_CHECKBOX:
@@ -559,7 +608,7 @@ class Controller:
         """
 
         fieldset = page.fieldset("Language")
-        fieldset.set("class", "by-board-block")
+        fieldset.set("class", "by-board-block usa-fieldset")
         fieldset.set("id", "language-block")
         checked = True
         if self.INCLUDE_ANY_LANGUAGE_CHECKBOX:
@@ -636,6 +685,7 @@ jQuery("input[value='Submit']").click(function(e) {{
             params - dictionary of other named parameters
         """
 
+        where = where.split("?")[0]
         params[SESSION] = session
         params = urllib.parse.urlencode(params)
         print(f"Location:https://{WEBSERVER}{BASE}/{where}?{params}\n")
@@ -646,10 +696,13 @@ jQuery("input[value='Submit']").click(function(e) {{
         """Send a string back to the web server using UTF-8 encoding.
 
         Pass:
-            page - Unicode string for the page
+            page - Unicode string for the page or DOM object
             text_type - typically "html" but sometimes "xml"
         """
 
+        if not isinstance(page, str):
+            opts = dict(HTMLPage.STRING_OPTS, encoding="unicode")
+            page = lxml.html.tostring(page, **opts)
         string = f"Content-type: text/{text_type};charset=utf-8\n\n{page}"
         sys.stdout.buffer.write(string.encode("utf-8"))
         sys.exit(0)
@@ -657,6 +710,10 @@ jQuery("input[value='Submit']").click(function(e) {{
     @staticmethod
     def parse_date(iso_date):
         """Convert a date string to a `datetime.date` object.
+
+        Changed requirements: might not be an ISO date any more, because
+        for some strange reasone, the USWDS project uses a non-standard
+        format.
 
         Pass:
             iso_date - optional string for the date
@@ -667,7 +724,10 @@ jQuery("input[value='Submit']").click(function(e) {{
 
         if iso_date is None or not iso_date.strip():
             return None
-        year, month, date = iso_date.strip().split("-")
+        if "/" in iso_date:
+            month, date, year = iso_date.strip().split("/")
+        else:
+            year, month, date = iso_date.strip().split("-")
         return datetime.date(int(year), int(month), int(date))
 
     @classmethod
@@ -732,29 +792,16 @@ function {function_name}(value) {{
         """Title displayed boldly at the top of the page."""
         return self.__opts.get("banner") or self.title
 
-    @property
+    @cached_property
     def buttons(self):
-        """Sequence of names for request buttons to be provided
+        """Sequence of names for request buttons to be provided."""
 
-        By default, SUBMIT, SUBMENU, ADMINMENU and LOG_OUT will be used.
-        Any of these can be suppressed by setting the class value to None
-        in the derived class. Alternatively, the "buttons" keyword arg
-        can be passed with a list of button names. Downstream these
-        names will be converted to HTML input elements with the name
-        attribute set to "Submit". Pass an empty list to the constructor
-        for the "buttons" keyword argument to have no buttons displayed
-        (None won't have the same effect).
-        """
-
-        if not hasattr(self, "_buttons"):
-            buttons = self.SUBMIT, self.SUBMENU, self.ADMINMENU, self.LOG_OUT
-            self._buttons = self.__opts.get("buttons")
-            if self._buttons is None:
-                self._buttons = []
-                for button in buttons:
-                    if button:
-                        self._buttons.append(button)
-        return self._buttons
+        buttons = self.__opts.get("buttons")
+        if buttons is None:
+            if self.SUBMIT:
+                return [self.SUBMIT]
+            return []
+        return buttons
 
     @property
     def conn(self):
@@ -823,58 +870,55 @@ function {function_name}(value) {{
             self._fields = FieldStorage()
         return self._fields
 
-    @property
+    @cached_property
     def footer(self):
         """Override to alter or suppress the default report footer."""
 
-        if not hasattr(self, "_footer"):
-            user = self.session.User(self.session, id=self.session.user_id)
-            name = user.fullname or user.name
-            today = datetime.date.today()
-            generated = f"Report generated {today} by {name}"
-            elapsed = HTMLPage.B.SPAN(str(self.elapsed), id="elapsed")
-            args = generated, HTMLPage.B.BR(), "Elapsed: ", elapsed
-            self._footer = HTMLPage.B.E("footer", HTMLPage.B.P(*args))
-        return self._footer
+        user = self.session.User(self.session, id=self.session.user_id)
+        name = user.fullname or user.name
+        today = datetime.date.today()
+        generated = f"Report generated {today} by {name}"
+        elapsed = HTMLPage.B.SPAN(str(self.elapsed), id="elapsed")
+        args = generated, HTMLPage.B.BR(), "Elapsed: ", elapsed
+        footer = HTMLPage.B.P(*args)
+        footer.set("class", "report-footer")
+        return footer
 
-    @property
+    @cached_property
     def form_page(self):
-        """Create a form page.
+        """Create a form page."""
 
-        Cache the page so we don't end up populating one page and
-        sending another one.
-        """
-        if not hasattr(self, "_form_page"):
-            opts = {
-                "action": self.script,
-                "buttons": [HTMLPage.button(b) for b in self.buttons],
-                "subtitle": self.subtitle,
-                "session": self.session,
-                "method": self.method,
-            }
-            self._form_page = HTMLPage(self.title, **opts)
-        return self._form_page
+        opts = {
+            "control": self,
+            "action": self.script,
+            "buttons": [HTMLPage.button(b) for b in self.buttons],
+            "subtitle": self.subtitle,
+            "session": self.session,
+            "method": self.method,
+            "suppress_sidenav": self.suppress_sidenav,
+        }
+        return self.HTMLPage(self.title, **opts)
 
-    @property
+    @cached_property
     def format(self):
         """Either "html" (the default) or "excel"."""
-        if not hasattr(self, "_format"):
-            self._format = self.fields.getvalue("format")
-            if not self._format:
-                self._format = self.__opts.get("format") or self.FORMATS[0]
-            if self._format not in self.FORMATS:
-                self.bail("invalid report format")
-        return self._format
 
-    @property
+        format = self.fields.getvalue("format")
+        if not format:
+            format = self.__opts.get("format") or self.FORMATS[0]
+        if format not in self.FORMATS:
+            self.bail("invalid report format")
+        return format
+
+    @cached_property
     def logger(self):
         """Object for recording what we do."""
-        if not hasattr(self, "_logger"):
-            self._logger = self.__opts.get("logger")
-            if self._logger is None:
-                opts = dict(level=self.loglevel)
-                self._logger = cdr.Logging.get_logger(self.LOGNAME, **opts)
-        return self._logger
+
+        logger = self.__opts.get("logger")
+        if logger is not None:
+            return logger
+        opts = dict(level=self.loglevel)
+        return cdr.Logging.get_logger(self.LOGNAME, **opts)
 
     @property
     def loglevel(self):
@@ -909,7 +953,9 @@ function {function_name}(value) {{
                 "page_opts": {
                     "buttons": buttons,
                     "session": self.session,
-                    "action": buttons and self.script or None,
+                    # "action": buttons and self.script or None,
+                    "action": self.script or None,
+                    "control": self,
                 }
             }
             self._report = Reporter(self.title, tables, **opts)
@@ -962,6 +1008,8 @@ function {function_name}(value) {{
             session = self.__opts.get("session")
             if not session:
                 session = self.fields.getvalue(SESSION) or "guest"
+            if isinstance(session, (list, tuple)):
+                session = session[0]
             if isinstance(session, bytes):
                 session = str(session, "ascii")
             if isinstance(session, str):
@@ -969,7 +1017,7 @@ function {function_name}(value) {{
             else:
                 self._session = session
             if not isinstance(self._session, Session):
-                raise Exception("Not a session object")
+                raise Exception(f"{self._session}: Not a session object")
         return self._session
 
     @property
@@ -1055,6 +1103,11 @@ jQuery(function() {
         return self._summary_titles
 
     @property
+    def suppress_sidenav(self):
+        """Override to implement more nuanced logic."""
+        return False
+
+    @property
     def timestamp(self):
         """String used to distinguish multiple instances of named items."""
         return self.started.strftime("%Y%m%d%H%M%S")
@@ -1064,7 +1117,7 @@ jQuery(function() {
         """When did we start processing?"""
         return self.__started
 
-    @property
+    @cached_property
     def subtitle(self):
         """String to be displayed under the main banner, if supplied."""
         return self.__opts.get("subtitle") or self.SUBTITLE
@@ -1088,13 +1141,48 @@ jQuery(function() {
             No return. Exits here.
         """
 
-        subtitle = "An error has occurred"
-        opts = dict(banner=banner, subtitle=subtitle, scripts=[])
-        page = HTMLPage("CDR Error", **opts)
-        page.body.append(page.B.P(str(message), page.B.CLASS("error")))
-        if extra:
-            for arg in extra:
-                page.body.append(page.B.P(str(arg), page.B.CLASS("error")))
+
+        class ErrorPage(HTMLPage):
+            def __init__(self, message, banner, extra):
+                HTMLPage.__init__(self, "CDR Error") #, **opts)
+                self.message = message
+                self.extra = [extra] if isinstance(extra, str) else extra
+            @cached_property
+            def main(self):
+                alert_body = self.B.DIV(
+                    self.B.H3(
+                        str(self.message),
+                        self.B.CLASS("usa-alert__heading")
+                    )
+                )
+                if self.extra:
+                    if len(self.extra) == 1:
+                        p = self.B.P(str(self.extra[0]))
+                        p.set("class", "usa-alert__text")
+                        alert_body.append(p)
+                    else:
+                        extra = self.B.UL()
+                        for arg in self.extra:
+                            extra.append(self.B.LI(str(arg)))
+                        alert_body.append(extra)
+                alert_body.set("class", "usa-alert__body")
+                return self.B.E(
+                    "main",
+                    self.B.DIV(
+                        self.B.E(
+                            "section",
+                            self.B.DIV(
+                                alert_body,
+                                self.B.CLASS("usa-alert usa-alert--error")
+                            )
+                            #self.B.CLASS("usa-site-alert usa-site-alert--error")
+                        ),
+                        self.B.CLASS("grid-container")
+                    ),
+                    self.B.CLASS("usa-section")
+                )
+
+        page = ErrorPage(message, banner, extra)
         if logfile:
             if logfile.lower().endswith(".log"):
                 logfile = logfile[:-4]
@@ -1142,6 +1230,7 @@ class FormFieldFactory:
     """
 
     EN_DASH = "\u2013"
+    EM_DASH = "\u2014"
     CLICKABLE = "checkbox", "radio"
     B = lxml.html.builder
 
@@ -1186,8 +1275,11 @@ class FormFieldFactory:
 
         """
 
-        button = cls.B.INPUT(value=label, name="Request")
+        id_label = label.lower().replace(" ", "-")
+        button = cls.B.INPUT(value=label, name=REQUEST)
         button.set("type", kwargs.get("button_type", "submit"))
+        button.set("class", "button usa-button")
+        button.set("id", f"submit-button-{id_label}")
         onclick = kwargs.get("onclick")
         if onclick:
             button.set("onclick", onclick)
@@ -1247,13 +1339,20 @@ class FormFieldFactory:
             lxml object for a wrapper element, enclosing an INPUT element
         """
 
-        wrapper = cls.text_field(name, **kwargs)
-        field = wrapper.find("input")
-        classes = field.get("class", "").split()
-        if "CdrDateField" not in classes:
-            classes.append("CdrDateField")
-            field.set("class", " ".join(classes))
-        return wrapper
+        field = cls.__field(name, "text", **kwargs)
+        value = kwargs.get("value")
+        label = kwargs.get("label", name.replace("_", " ").title())
+        label = cls.B.LABEL(label, cls.B.FOR(field.get("id")))
+        label.set("class", "usa-label")
+        field.set("type", "date")
+        date_picker = cls.B.DIV(field, cls.B.CLASS("usa-date-picker"))
+        if value:
+            date_picker.set("data-default-value", str(value))
+        return cls.B.DIV(
+            label,
+            date_picker,
+            cls.B.CLASS("usa-form-group")
+        )
 
     @classmethod
     def date_range(cls, name, **kwargs):
@@ -1283,20 +1382,25 @@ class FormFieldFactory:
             with a separating SPAN between
         """
 
-        opts = dict(**kwargs, wrapper_classes="date-range")
+        opts = dict(**kwargs) #, wrapper_classes="usa-form-group")
         wrapper = cls.__wrapper(name, **opts)
+        inner = cls.B.DIV(cls.B.CLASS("date-range-fields"))
+        wrapper.append(inner)
         for which in ("start", "end"):
-            opts["value"] = opts.get(f"{which}_date")
+            opts["value"] = value = opts.get(f"{which}_date")
             field = cls.__field(f"{name}-{which}", "text", **opts)
-            classes = field.get("class", "").split()
-            if "CdrDateField" not in classes:
-                classes.append("CdrDateField")
-                field.set("class", " ".join(classes))
-            wrapper.append(field)
+            field.set("type", "date")
+            date_picker = cls.B.DIV(field)
+            date_picker.set("class", "usa-date-picker xxmargin-top-0")
+            if value:
+                date_picker.set("data-default-value", str(value))
+            group = cls.B.DIV(date_picker)
+            group.set("class", "usa-form-group margin-top-0")
+            inner.append(group)
             if which == "start":
-                separator = cls.B.SPAN(cls.EN_DASH)
-                separator.set("class", "date-range-sep")
-                wrapper.append(separator)
+                separator = cls.B.SPAN(cls.EM_DASH)
+                separator.set("class", "date-range-sep margin-right-2")
+                inner.append(separator)
         return wrapper
 
     @classmethod
@@ -1319,9 +1423,10 @@ class FormFieldFactory:
             lxml object for a FIELDSET element
         """
 
-        fieldset = cls.B.FIELDSET()
+        fieldset = cls.B.FIELDSET(cls.B.CLASS("usa-fieldset"))
         if legend:
-            fieldset.append(cls.B.LEGEND(legend))
+            classes = "usa-legend"
+            fieldset.append(cls.B.LEGEND(legend, cls.B.CLASS(classes)))
         if opts.get("id"):
             fieldset.set("id", opts.get("id"))
         return fieldset
@@ -1617,12 +1722,12 @@ class FormFieldFactory:
             field.set("type", field_type)
 
         # Add the element's unique ID attribute.
-        if field_type in cls.CLICKABLE:
-            widget_id = kwargs.get("widget_id")
-            if not widget_id:
+        widget_id = kwargs.get("widget_id")
+        if not widget_id:
+            if field_type in cls.CLICKABLE:
                 widget_id = f"{name}-{value}".replace(" ", "-").lower()
-        else:
-            widget_id = name
+            else:
+                widget_id = name
         field.set("id", widget_id)
 
         # Add the classes for the widget element.
@@ -1630,7 +1735,17 @@ class FormFieldFactory:
         if field_type == "textarea" and "usa-textarea" not in classes:
             classes.add("usa-textarea")
         elif field_type in ("text", "password") and "usa-input" not in classes:
-            classes.add("usa-text")
+            classes.add("usa-input")
+            classes.add("usa-input--xl")
+        elif field_type == "select":
+            classes.add("usa-select")
+            classes.add("form-select")
+        elif field_type == "checkbox":
+            classes.add("usa-checkbox__input")
+        elif field_type == "radio":
+            classes.add("usa-radio__input")
+        elif field_type == "file":
+            classes.add("usa-file-input")
         if classes:
             field.set("class", " ".join(classes))
 
@@ -1658,6 +1773,9 @@ class FormFieldFactory:
 
             clickable
                 True if the field is a checkbox or radio button
+
+            field_type
+                For example, "checkbox"
 
             wrapper
                 string value for the name of the element to use
@@ -1692,6 +1810,13 @@ class FormFieldFactory:
 
         # Determine the classes to be applied to the wrapper element.
         classes = cls.__classes(kwargs.get("wrapper_classes"))
+        field_type = kwargs.get("field_type")
+        if field_type == "checkbox":
+            classes.add("usa-checkbox")
+        elif field_type == "radio":
+            classes.add("usa-radio")
+        elif field_type == "file":
+            classes.add("usa-form-group")
         label = kwargs.get("label", name.replace("_", " ").title())
         if label and not kwargs.get("clickable"):
             classes.add("labeled-field")
@@ -1730,9 +1855,10 @@ class FormFieldFactory:
         """
 
         # Create the field and its wrapper.
-        wrapper = cls.__wrapper(group, clickable=True, **kwargs)
         widget = cls.__field(group, field_type, **kwargs)
         widget.tail = " "
+        kwargs["field_type"] = field_type
+        wrapper = cls.__wrapper(group, clickable=True, **kwargs)
 
         # Add attributes unique to radio buttons and checkboxes.
         if kwargs.get("checked"):
@@ -1748,7 +1874,8 @@ class FormFieldFactory:
         # For these fields, the label follows the widget.
         label = kwargs.get("label", value.replace("_", " ").title())
         label = cls.B.LABEL(cls.B.FOR(widget.get("id")), label)
-        label.set("class", "clickable")
+        label_class = f"usa-{field_type}__label"
+        label.set("class", f"clickable {label_class}")
         if kwargs.get("tooltip"):
             label.set("title", kwargs["tooltip"])
         wrapper.append(widget)
@@ -1795,7 +1922,8 @@ class HTMLPage(FormFieldFactory):
     Sample usage:
 
         buttons = HTMLPage.button("Submit"), HTMLPage.button("Reports")
-        page = HTMLPage("Advanced Search", subtitle="Drug", buttons=buttons)
+        opts = dict(subtitle="Drug", buttons=buttons, control=self)
+        page = HTMLPage("Advanced Search", **opts)
         fieldset = page.fieldset("Search Criteria")
         fieldset.append(page.text_field("name", "Name"))
         fieldset.append(page.date_field("since", "Since"))
@@ -1855,6 +1983,21 @@ class HTMLPage(FormFieldFactory):
         "});"])
     OFFICIAL_WEBSITE = "An official website of the United States government"
     HOW_YOU_KNOW = "Here's how you know"
+    BOARD_MANAGERS = "Board Manager Menu Users"
+    CIAT_OCCM = "CIAT/OCCM Staff Menu Users"
+    DEV_SA = "Developer/SysAdmin Menu Users"
+    MENUS = (
+        (BOARD_MANAGERS, "Board Managers"),
+        (CIAT_OCCM, "CIAT/OCC"),
+        (DEV_SA, "Developers"),
+    )
+    MENU_PARMS = {
+        "GlossaryConceptByDefinitionStatus.py": ["report"],
+        "Help.py": ["id"],
+        "InterventionAndProcedureTerms.py": ["IncludeAlternateNames"],
+        "QCReport.py": ["DocType", "ReportType"],
+        "SummaryMailerReport.py": ["flavor"],
+    }
 
     def __init__(self, title, **kwargs):
         """Capture the initial settings for the page.
@@ -1932,6 +2075,49 @@ class HTMLPage(FormFieldFactory):
                     header.addnext(p)
         self.body.append(self.B.SCRIPT(src=f"{self.USWDS}/js/uswds.min.js"))
         sendPage(self.tostring())
+
+    def add_alert(self, message, **kwargs):
+        """Add an alert banner at the top of the main content.
+
+        Required position argument:
+          message - string or DOM object for base message; or sequence of same
+
+        Optional keyword arguments:
+          heading - optional string or DOM object for alert banner heading title
+          type - string (info, warning, error, success; default: info)
+          no_icon - if True, suppress display of alert icon
+          slim - if True, decrease the height of the alert
+          extra - optional sequence of additional elements to append to alert
+        """
+
+        container = self.main.find("div")
+        if container is None or container.get("class") != "grid-container":
+            raise Exception("add_alert(): grid container missing")
+        alerts = container.find("div")
+        if alerts is None or alerts.get("id") != "alerts-block":
+            alerts = self.B.DIV(id="alerts-block")
+            alerts.set("class", "padding-bottom-4")
+            container.insert(0, alerts)
+            self.main.set("class", "usa-section padding-top-4")
+        alert_type = kwargs.get("type", "info")
+        classes = ["usa-alert", f"usa-alert--{alert_type}"]
+        if kwargs.get("no_icon"):
+            classes.append("usa-alert--no-icon")
+        if kwargs.get("slim"):
+            classes.append("usa-alert--slim")
+        body = self.B.DIV(self.B.CLASS("usa-alert__body"))
+        alert = self.B.DIV(body, self.B.CLASS(" ".join(classes)))
+        heading = kwargs.get("heading")
+        if heading:
+            body.append(self.B.H4(heading, self.B.STYLE("usa-alert__heading")))
+        if message is not None:
+            if not isinstance(message, (list, tuple)):
+                message = [message]
+            body.append(self.B.P(*message, self.B.CLASS("usa-alert__text")))
+        extra = kwargs.get("extra", [])
+        for item in extra:
+            body.append(extra)
+        alerts.append(alert)
 
     def add_css(self, css):
         """Add style rules directly to the page."""
@@ -2174,6 +2360,114 @@ class HTMLPage(FormFieldFactory):
         return self.__opts.get("buttons")
 
     @cached_property
+    def control(self):
+        """Control object for the page, if known."""
+        return self.__opts.get("control")
+
+    @cached_property
+    def current_path(self):
+        """Menu path to this page, if known."""
+
+        if not self.control:
+            return False
+        if self.current_path_from_key:
+            return self.current_path_from_key
+        for menu in self.user_menus:
+            path = self.find_matching_path(menu)
+            if path:
+                return path
+        return None
+
+    def find_matching_path(self, menu):
+        """Find menu path matching the current page.
+
+        Required positional parameter:
+            menu - dictionary of menu values
+
+        Return:
+            None or sequence of menu value dictionaries
+        """
+
+        script = menu.get("script")
+        if script:
+            if self.script_matches_page(script):
+                return [menu]
+            return None
+        for child in menu.get("children", []):
+            path = self.find_matching_path(child)
+            if path:
+                return [menu] + path
+        return None
+
+    @cached_property
+    def current_path_from_key(self):
+        """Menu path derived from a parameter key."""
+
+        key = self.control.fields.getvalue("_mp")
+        if self.control:
+            self.control.logger.info("current path key is %s", key)
+        if not key or len(key) % 2 != 0:
+            return None
+        if not all(c in string.hexdigits for c in key):
+            return None
+        path = []
+        menus = self.menus
+        i = 0
+        while i < len(key):
+            if not menus:
+                return None
+            position = int(key[i:i+2], 16)
+            if self.control:
+                self.control.logger.debug("path position is %d", position)
+            if position >= len(menus):
+                return None
+            menu = menus[position]
+            path.append(menu)
+            menus = menu.get("children")
+            i += 2
+        if not path:
+            return None
+        script = path[-1].get("script")
+        if not self.script_matches_page(script):
+            if self.control:
+                self.control.logger.info("script %s not matched", script)
+            return None
+        return path
+
+    def script_matches_page(self, script):
+        """Find out if a script matches the current page.
+
+        Required positional argument:
+          script - string for script name, possibly with parameters
+
+        Return:
+          True if the script matches the page, otherwise false
+        """
+
+        if not self.control or not self.control.script:
+            return False
+        if "?" in script:
+            script, parms = script.split("?", 1)
+        else:
+            script, parms = script, ""
+        self.control.logger.debug("page script is %s", self.control.script)
+        if self.control.script != script:
+            return False
+        if script not in self.MENU_PARMS:
+            return True
+        parms = urllib.parse.parse_qs(parms)
+        for name in self.MENU_PARMS[script]:
+            menu_value = parms.get(name)
+            if menu_value and isinstance(menu_value, (list, tuple)):
+                menu_value = menu_value[0]
+            fields_value = self.control.fields.getvalue(name)
+            if menu_value != fields_value:
+                args = name, menu_value, fields_value
+                self.control.logger.info("parm %s: %s vs %s", *args)
+                return False
+        return True
+
+    @cached_property
     def cursor(self):
         """Read-only database cursor."""
         return db.connect(user="CdrGuest").cursor()
@@ -2181,6 +2475,11 @@ class HTMLPage(FormFieldFactory):
     @cached_property
     def footer(self):
         """Links at the bottom of the page."""
+        return self.make_footer()
+
+    @classmethod
+    def make_footer(cls):
+        """Pull this out so it can be used from elsewhere."""
 
         li_classes = " ".join([
             "mobile-lg:grid-col-6",
@@ -2193,31 +2492,31 @@ class HTMLPage(FormFieldFactory):
             ("NCI Web Site", "https://www.cancer.gov", True),
             ("CMS", "https://www-cms.cancer.gov", True),
         )
-        links = self.B.UL(self.B.CLASS("grid-row grid-gap"))
+        links = cls.B.UL(cls.B.CLASS("grid-row grid-gap"))
         for label, href, new_tab in link_values:
-            link = self.B.A(label, self.B.CLASS(link_class), href=href)
+            link = cls.B.A(label, cls.B.CLASS(link_class), href=href)
             if new_tab:
                 link.set("target", "_blank")
-            links.append(self.B.LI(link, self.B.CLASS(li_classes)))
-        nav = self.B.E(
+            links.append(cls.B.LI(link, cls.B.CLASS(li_classes)))
+        nav = cls.B.E(
             "nav",
             links,
-            self.B.CLASS("usa-footer__nav")
+            cls.B.CLASS("usa-footer__nav")
         )
         nav.set("aria-label", "footer navigation")
-        return self.B.E(
+        return cls.B.E(
             "footer",
-            self.B.DIV(
-                self.B.DIV(
-                    self.B.DIV(
+            cls.B.DIV(
+                cls.B.DIV(
+                    cls.B.DIV(
                         nav,
-                        self.B.CLASS("mobile-lg:grid-col-12")
+                        cls.B.CLASS("mobile-lg:grid-col-12")
                     ),
-                    self.B.CLASS("usa-footer__primary-container grid-row")
+                    cls.B.CLASS("usa-footer__primary-container grid-row")
                 ),
-                self.B.CLASS("usa-footer__primary-section")
+                cls.B.CLASS("usa-footer__primary-section")
             ),
-            self.B.CLASS("usa-footer usa-footer--slim")
+            cls.B.CLASS("usa-footer usa-footer--slim")
         )
 
     @cached_property
@@ -2233,8 +2532,14 @@ class HTMLPage(FormFieldFactory):
         added forms.
         """
 
-        return self.B.FORM(self.B.CLASS("usa-form"))
-        return self.body.find("form")
+        opts = dict(method=self.method, action=self.action)
+        form = self.B.FORM(self.B.CLASS("usa-form"), **opts)
+        if self.session:
+            form.append(self.hidden_field(SESSION, self.session))
+        form.set("id", self.PRIMARY_FORM_ID)
+        if self.__opts.get("body_classes") != "report":
+            form.set("target", "_blank")
+        return form
 
     @cached_property
     def head(self):
@@ -2242,10 +2547,12 @@ class HTMLPage(FormFieldFactory):
 
         http_equiv = self.B.META(content="IE=edge")
         http_equiv.set("http-equiv", "X-UA-Compatible")
+        viewport = "width=device-width, initial-scale=1.0"
         script = self.B.SCRIPT()
         head = self.B.HEAD(
             self.B.META(charset="utf-8"),
             http_equiv,
+            self.B.META(name="viewport", content=viewport),
             self.B.META(name="description", content="CDR Administration Tools"),
             self.B.META(name="author", content="Bob Kline and Volker Englisch"),
             self.B.TITLE(self.head_title),
@@ -2264,24 +2571,88 @@ class HTMLPage(FormFieldFactory):
             for key, value in attrs.items():
                 element.set(key, value)
             head.append(element)
+        style = (
+            "@media (min-width:30em){ .usa-form { max-width: none; }}",
+            ".usa-fieldset { margin-bottom: 2rem; }",
+            ".usa-label { font-weight: bold; max-width: none; }",
+            ".usa-form .usa-input--xl,",
+            ".usa-form .usa-input-group--xl { max-width: none; }",
+            ".usa-legend { font-size: 1.3em; font-weight: bold; }",
+            ".usa-legend { max-width: none; }",
+            ".usa-file-input { max-width: none; }",
+            ".date-range-fields > div { display: inline-block; }",
+            "body.report h1 { margin-bottom: 3rem; }",
+            "table.usa-table { margin-bottom: 3rem; }",
+            ".report-footer {",
+            "  font-style: italic; font-size: .9em; text-align: center;",
+            "}",
+            ".report-footer #elapsed { color: green; }",
+            ".hidden { display: none; }",
+            ".nowrap { white-space: nowrap; }",
+            ".usa-table td.text-bold { font-weight: bold; }",
+            ".report .usa-table { xxxtable-layout: fixed; width: 100%; }",
+            ".report .usa-table td { word-wrap: break-word; }",
+            ".break-all, .break-all * { word-break: break-all; }",
+        )
+        head.append(self.B.STYLE("\n".join(style)))
         return head
 
-    @property
+    def get_default_menu_link(menu):
+        while True:
+            script = menu.get("script")
+            positions.append(0)
+            if script:
+                separator = "&" if "?" in script else "?"
+                key = "".join([f"{p:02x}" for p in positions])
+                script = f"{script}{separator}_mp={key}"
+                if self.control:
+                    script += f"&{SESSION}={self.control.session}"
+                return script
+            children = menu.get("children")
+            if not children:
+                break
+            menu = children[0]
+        return "javascript:void(0);"
+
+    def find_menu_link(self, menu, positions):
+        script = menu.get("script")
+        if script:
+            separator = "&" if "?" in script else "?"
+            key = "".join([f"{p:02x}" for p in positions])
+            script = f"{script}{separator}_mp={key}"
+            if self.control:
+                script += f"&{SESSION}={self.control.session}"
+            return script
+        children = menu.get("children")
+        if not children:
+            return "javascript:void(0);"
+        return self.find_menu_link(children[0], positions + [0])
+
+    @cached_property
     def header(self):
         """The <header> element at the top of the body."""
 
-        menu = self.B.UL(self.B.CLASS("usa-nav__primary usa-accordion"))
-        for label in ("Board Managers", "CIAT/OCC", "Developers"):
-            item = self.B.LI(
-                self.B.A(
-                    self.B.SPAN(label),
-                    self.B.CLASS("usa-nav-link"),
-                    href="#"
-                ),
-                self.B.CLASS("usa-nav__primary-item")
-            )
-            menu.append(item)
-        onclick = "javascript:window.open('799769.xml', '_blank').focus();"
+        primary_menu = self.B.UL(self.B.CLASS("usa-nav__primary usa-accordion"))
+        if len(self.user_menus) > 1:
+            current_label = ""
+            if self.current_path:
+                current_label = self.current_path[0]["label"]
+            labels = [m["label"] for m in self.menus]
+            for user_menu in self.user_menus:
+                link_class = "usa-nav-link"
+                label = user_menu["label"]
+                if label == current_label:
+                    link_class += " usa-current"
+                positions = [labels.index(label)]
+                item = self.B.LI(
+                    self.B.A(
+                        self.B.SPAN(label),
+                        self.B.CLASS(link_class),
+                        href=self.find_menu_link(user_menu, positions)
+                    ),
+                    self.B.CLASS("usa-nav__primary-item")
+                )
+                primary_menu.append(item)
         search = self.B.E(
             "section",
             self.B.FORM(
@@ -2294,7 +2665,7 @@ class HTMLPage(FormFieldFactory):
                     self.B.CLASS("usa-input"),
                     id="search-field",
                     type="search",
-                    name="search",
+                    name="doc-id",
                     placeholder="CDR ID"
                 ),
                 self.B.BUTTON(
@@ -2305,10 +2676,11 @@ class HTMLPage(FormFieldFactory):
                     ),
                     self.B.CLASS("usa-button"),
                     type="submit",
-                    onclick=onclick
                 ),
                 self.B.CLASS("usa-search usa-search--small"),
-                role="search"
+                role="search",
+                action="ShowCdrDocument.py",
+                target="_blank"
             )
         )
         search.set("aria-label", "Search component")
@@ -2319,12 +2691,12 @@ class HTMLPage(FormFieldFactory):
                 self.B.CLASS("usa-nav__close"),
                 type="button"
             ),
-            menu,
+            primary_menu,
             search,
             self.B.CLASS("usa-nav")
         )
         nav.set("aria-label", "Primary navigation")
-        home = "/Admin.py"
+        home = f"Admin.py?{SESSION}={self.session}"
         title = "CDR Administration"
         return self.B.E(
             "header",
@@ -2390,14 +2762,95 @@ class HTMLPage(FormFieldFactory):
         return self.__title or ""
 
     @cached_property
+    def suppress_sidenav(self):
+        """Override to provide more nuanced logic."""
+        return True if self.__opts.get("suppress_sidenav") else False
+
+    @cached_property
+    def sidenav(self):
+        """Menu on the left sidebar."""
+
+        if self.suppress_sidenav:
+            return None
+        ul = self.B.UL(self.B.CLASS("usa-sidenav"))
+        menu_labels = [m["label"] for m in self.menus]
+        if self.current_path:
+            path_labels = [p["label"] for p in self.current_path]
+            menu = self.current_path[0]
+        else:
+            return None
+            path_labels = []
+            menu = self.user_menus[0]
+        if self.session:
+            self.session.logger.info("path labels: %r", path_labels)
+        positions = [menu_labels.index(menu["label"])]
+        for i, child in enumerate(menu["children"]):
+            args = positions + [i], child, path_labels
+            ul.append(self.create_sidenav_item(*args))
+        return self.B.E("nav", ul)
+
+    def create_sidenav_item(self, positions, menu, labels):
+        """Create a list item for the sidebar menu (possibly recursively).
+
+        Required positional arguments:
+          positions - sequence of integers for the nested menu positions
+          menu - dictionary of values for the current menu item
+          labels - sequence of labels for the menu path to the current page
+                   (empty if that path can't be determined)
+
+        Return:
+          list item DOM object
+        """
+
+        item = self.B.LI(self.B.CLASS("usa-sidenav__item"))
+        label = menu["label"]
+        current = False
+        if labels and len(positions) <= len(labels):
+            current = label == labels[len(positions)-1]
+        link = self.B.A(label, href=self.find_menu_link(menu, positions))
+        item.append(link)
+        if current:
+            link.set("class", "usa-current")
+            children = menu.get("children")
+            if children:
+                ul = self.B.UL(self.B.CLASS("usa-sidenav__sublist"))
+                for i, child in enumerate(children):
+                    args = positions + [i], child, labels
+                    ul.append(self.create_sidenav_item(*args))
+                item.append(ul)
+        return item
+
+    @cached_property
     def main(self):
         """This is where page content gets added."""
 
-        return self.B.E(
-            "main",
-            self.B.DIV(self.form, self.B.CLASS("grid-container")),
-            self.B.CLASS("usa-section")
-        )
+        container = self.B.DIV(self.B.CLASS("grid-container"))
+        if self.__opts.get("body_classes") == "report" or self.sidenav is None:
+            container.append(self.B.H1(self.subtitle))
+            container.append(self.form)
+        else:
+            container.append(
+                self.B.DIV(
+                    self.B.DIV(
+                        self.sidenav,
+                        self.B.CLASS("tablet:grid-col-4")
+                    ),
+                    self.B.DIV(
+                        self.B.H1(self.subtitle),
+                        self.form,
+                        self.B.CLASS("tablet:grid-col-8"),
+                        id="report-form"
+                    ),
+                    self.B.CLASS("grid-row grid-gap")
+                ),
+            )
+        return self.B.E("main", container, self.B.CLASS("usa-section"))
+
+    @cached_property
+    def menus(self):
+        path = pathlib.Path(TIER.etc) / "menus.json"
+        with path.open(encoding="utf-8") as fp:
+            return json.load(fp)
 
     @property
     def method(self):
@@ -2441,14 +2894,14 @@ class HTMLPage(FormFieldFactory):
             return json.loads(row.val)
         return self.SCRIPT_LINKS
 
-    @property
+    @cached_property
     def session(self):
         """CDR login context for this page."""
-        if not hasattr(self, "_session"):
-            self._session = self.__opts.get("session", "guest")
-            if isinstance(self._session, str):
-                self._session = Session(self._session)
-        return self._session
+
+        session = self.__opts.get("session", "guest")
+        if isinstance(session, str):
+            session = Session(session)
+        return session
 
     @cached_property
     def stylesheets(self):
@@ -2478,12 +2931,28 @@ class HTMLPage(FormFieldFactory):
             return json.loads(row.val)
         return self.CSS_LINKS
 
-    @property
+    @cached_property
     def subtitle(self):
         """Optional title to be displayed in a second, smaller banner."""
-        if not hasattr(self, "_subtitle"):
-            self._subtitle = self.__opts.get("subtitle")
-        return self._subtitle
+        return self.__opts.get("subtitle")
+
+    @cached_property
+    def user(self):
+        """Currently logged-in user."""
+        return self.session.User(self.session, id=self.session.user_id)
+
+    @cached_property
+    def user_menus(self):
+        """List of menus to which the current user has access."""
+
+        menus = dict((m["label"], m) for m in self.menus)
+        if not self.session:
+            return [menus["Guest"]]
+        allowed = []
+        for group, label in self.MENUS:
+            if group in self.user.groups:
+                allowed.append(menus[label])
+        return allowed or [menus["Guest"]]
 
 
 class Reporter:
@@ -2594,16 +3063,16 @@ class Reporter:
             if not self.tables and self.no_results:
                 no_results = self._page.B.P(self.no_results)
                 no_results.set("class", "no-results")
-                self._page.body.append(no_results)
+                self._page.form.append(no_results)
             for table in self.tables:
                 if table.node is not None:
-                    self._page.body.append(table.node)
+                    self._page.form.append(table.node)
             if self.footer is not None:
-                self._page.body.append(self.footer)
+                self._page.main.append(self.footer)
             if self.elapsed:
                 footnote = self._page.B.P(f"elapsed: {self.elapsed}")
                 footnote.set("class", "footnote")
-                self._page.body.append(footnote)
+                self._page.main.append(footnote)
         return self._page
 
     @property
@@ -2741,6 +3210,11 @@ class Reporter:
             # cell = book.write(rownum, colnum, values, styles)
             # if self.href:
             #     cell.hyperlink = self.href
+            if isinstance(values, bytes):
+                try:
+                    values = str(values, encoding="utf-8")
+                except:
+                    values = str(values)
             book.write(rownum, colnum, values, styles)
             return nextcol
 
@@ -2772,13 +3246,13 @@ class Reporter:
                     args = type(classes), repr(classes)
                     raise Exception(message.format(args))
                 if self.bold and not self.href:
-                    self._classes.add("strong")
+                    self._classes.add("text-bold")
                 if self.center:
-                    self._classes.add("center")
+                    self._classes.add("text-center")
                 elif self.right:
-                    self._classes.add("right")
+                    self._classes.add("text-right")
                 if self.middle:
-                    self._classes.add("middle")
+                    self._classes.add("text-middle")
             return self._classes
 
         @property
@@ -2986,6 +3460,9 @@ class Reporter:
         """
 
         B = lxml.html.builder
+        WIDE_CSS = (
+            ".report .usa-table { width: 90%; margin: 3rem auto 1.25rem; }"
+        )
 
         def __init__(self, rows, **opts):
             """Capture the information we need to render the table."""
@@ -3090,6 +3567,11 @@ class Reporter:
                         self._columns.append(column)
             return self._columns
 
+        @cached_property
+        def fixed(self):
+            """True if the table layout should be fixed."""
+            return True if self.__opts.get("fixed") else False
+
         @property
         def freeze_panes(self):
             """Optional cell marking row/col freezing (Excel only)."""
@@ -3128,8 +3610,14 @@ class Reporter:
 
                 # Add the column headers if they have been provided.
                 if self.columns:
+                    colgroup = self.B.COLGROUP()
+                    children.append(colgroup)
                     tr = self.B.TR()
                     for column in self.columns:
+                        col = self.B.COL()
+                        if column.width:
+                            col.set("style", f"width: {column.width}")
+                        colgroup.append(col)
                         th = self.B.TH(column.name)
                         if column.style:
                             th.set("style", column.style)
@@ -3143,7 +3631,9 @@ class Reporter:
                             else:
                                 th.set("class", " ".join(column.classes))
                         if column.colspan:
+                            colspan = str(column.colspan)
                             th.set("colspan", str(column.colspan))
+                            col.set("span", str(column.colspan))
                         tr.append(th)
                     children.append(self.B.THEAD(tr))
 
@@ -3166,13 +3656,18 @@ class Reporter:
                 # Create the table element if we found any child nodes.
                 if children:
                     self._node = self.B.TABLE(*children)
+                    if self.fixed:
+                        self._node.set("style", "table-layout: fixed;")
                     if self.id:
                         self._node.set("id", self.id)
-                    if self.classes:
-                        if isinstance(self.classes, str):
-                            self._node.set("class", self.classes)
-                        else:
-                            self._node.set("class", " ".join(self.classes))
+                    classes = self.classes
+                    if not classes:
+                        classes = set()
+                    elif isinstance(classes, str):
+                        classes = set(classes)
+                    classes.add("usa-table")
+                    classes.add("usa-table--borderless")
+                    self._node.set("class", " ".join(classes))
             return self._node
 
         @property
@@ -3194,6 +3689,60 @@ class Reporter:
         def show_report_date(self):
             """If True, add the report date between the caption and headers."""
             return True if self.__opts.get("show_report_date") else False
+
+
+class BasicWebPage:
+    """Avoids the USWDS framework to accomodate wider report tables."""
+
+    B = lxml.html.builder
+    CSS = (
+        'body { font-family: "Source Sans Pro Web", Arial, sans-serif; }',
+        "body > div { width: 95%; margin: 2rem auto; }",
+        "table { border-collapse: collapse; }",
+        "table caption { font-weight: bold; padding: .25rem; }",
+        "th, td { font-size: .95em; border: 1px solid black; }",
+        "th { vertical-align: middle; }",
+        "td { padding: .25rem; vertical-align: top; }",
+        ".report-footer { font-style: italic; font-size: .9em; ",
+        "                 text-align: center; }",
+        "#elapsed { color: green; }",
+    )
+
+    def send(self):
+        """Serialize the DOM and send it back to the browser."""
+        Controller.send_page(self.page)
+
+    @cached_property
+    def body(self):
+        """DOM object for the HTML BODY block."""
+        return self.B.BODY(self.wrapper)
+
+    @cached_property
+    def head(self):
+        """DOM object for the HTML HEAD block."""
+
+        http_equiv = self.B.META(content="IE=edge")
+        http_equiv.set("http-equiv", "X-UA-Compatible")
+        viewport = "width=device-width, initial-scale=1.0"
+        return self.B.HEAD(
+            self.B.META(charset="utf-8"),
+            http_equiv,
+            self.B.META(name="viewport", content=viewport),
+            self.B.TITLE("CDR Administration"),
+            self.B.LINK(href="/favicon.ico", rel="icon"),
+            self.B.STYLE("\n".join(self.CSS))
+        )
+
+    @cached_property
+    def page(self):
+        """DOM for the report's HTML page."""
+
+        return self.B.HTML(self.head, self.body)
+
+    @cached_property
+    def wrapper(self):
+        """DOM object for the HTML DIV element around body content."""
+        return self.B.DIV()
 
 
 class Excel:
@@ -3412,7 +3961,7 @@ class AdvancedSearch(FormFieldFactory):
     def __init__(self):
         self.match_all = True if self.fields.getvalue("match_all") else False
         self.session = Session(getSession(self.fields) or "guest")
-        self.request = self.fields.getvalue("Request")
+        self.request = self.fields.getvalue(REQUEST)
         self.search_fields = []
         self.query_fields = []
 
@@ -3423,6 +3972,11 @@ class AdvancedSearch(FormFieldFactory):
             self._fields = FieldStorage()
         return self._fields
 
+    @property
+    def logger(self):
+        """How we record what we do."""
+        return self.session.logger
+
     def run(self):
         try:
             if self.request == "Search":
@@ -3432,15 +3986,20 @@ class AdvancedSearch(FormFieldFactory):
         except Exception as e:
             try:
                 message = "AdvancedSearch.run(request=%r)"
-                self.session.logger.exception(message, self.request)
+                self.logger.exception(message, self.request)
             except Exception:
                 bail(f"Unable to log exception {e}")
             bail(f"AdvancedSearch.run() failure: {e}")
 
     def show_form(self, subtitle=None, error=None):
         args = self.session.name, subtitle or self.SUBTITLE, self.search_fields
-        page = self.Form(*args, error=error)
+        page = self.Form(*args, error=error, control=self)
         self.customize_form(page)
+        classes = page.B.CLASS("button usa-button")
+        opts = dict(name="Request", value="Search", type="submit")
+        submit = page.B.INPUT(classes, **opts)
+        page.form.append(submit)
+        page.body.append(page.B.SCRIPT(src=f"{page.USWDS}/js/uswds.min.js"))
         sendPage(page.tostring())
 
     def show_report(self):
@@ -3451,12 +4010,15 @@ class AdvancedSearch(FormFieldFactory):
         strings = connector.join([repr(c) for c in query.criteria])
         subtitle = self.SUBTITLE
         opts = dict(search_strings=strings, count=len(rows), subtitle=subtitle)
+        opts["control"] = self
+        opts["session"] = self.session
         if self.INCLUDE_ROWS:
             opts["rows"] = rows
         if self.FILTER:
             opts["filter"] = self.FILTER
         page = self.ResultsPage(self.DOCTYPE, **opts)
         self.customize_report(page)
+        page.body.append(page.B.SCRIPT(src=f"{page.USWDS}/js/uswds.min.js"))
         sendPage(page.tostring())
 
     def customize_form(self, page):
@@ -3487,6 +4049,11 @@ class AdvancedSearch(FormFieldFactory):
         rows = query.execute(self.session.cursor).fetchall()
         return [(f"CDR{row.id:010d}", row.title) for row in rows]
 
+    @cached_property
+    def script(self):
+        """Name of form submission handler."""
+        return os.path.basename(sys.argv[0])
+
     @property
     def states(self):
         fields = "s.id AS i", "s.title AS s", "c.title as c"
@@ -3516,7 +4083,7 @@ class AdvancedSearch(FormFieldFactory):
                 buttons = self.BUTTONS
             kwargs = dict(
                 **kwargs,
-                buttons=buttons,
+                buttons=kwargs.get("buttons", []),
                 session=session,
                 subtitle=subtitle,
                 method="get",
@@ -3543,6 +4110,7 @@ class AdvancedSearch(FormFieldFactory):
             else:
                 self.form.append(self.hidden_field("match_all", "yes"))
 
+
     class ResultsPage(HTMLPage):
 
         TITLE = "CDR Advanced Search Results"
@@ -3556,9 +4124,18 @@ class AdvancedSearch(FormFieldFactory):
         def __init__(self, doctype, **kwargs):
 
             # Let the base class get us started.
-            subtitle = kwargs.get("subtitle", doctype)
-            opts = dict(body_id="advanced-search-results", subtitle=subtitle)
+            opts = dict(
+                body_id="advanced-search-results",
+                subtitle=kwargs.get("subtitle"),
+                session=kwargs.get("session"),
+                control=kwargs.get("control"),
+            )
             HTMLPage.__init__(self, self.TITLE, **opts)
+
+            # Start the table for the results.
+            table = self.B.TABLE()
+            table.set("class", "usa-table usa-table--borderless")
+            self.add_css("#advanced-search-results table { min-width: 100%; }")
 
             # Add a summary line if we have the requisite information.
             strings = kwargs.get("search_strings")
@@ -3568,11 +4145,10 @@ class AdvancedSearch(FormFieldFactory):
                     summary = f"1 document matches {strings}"
                 else:
                     summary = f"{count:d} documents match {strings}"
-                self.body.append(self.B.P(summary))
+                table.append(self.B.CAPTION(summary))
 
-            # Start the table for the results.
-            table = self.B.TABLE()
-            self.body.append(table)
+            # Attach the table to the page.
+            self.form.append(table)
 
             # If we have the rows for the results set, add them to the table.
             rows = kwargs.get("rows")
@@ -3596,10 +4172,14 @@ class AdvancedSearch(FormFieldFactory):
 
                     # Assemble the table row and attach it.
                     tr = self.B.TR(self.B.CLASS("row-item"))
-                    tr.append(self.B.TD(f"{i+1}.", self.B.CLASS("row-number")))
-                    tr.append(self.B.TD(link, self.B.CLASS("doc-link")))
+                    tr.append(self.B.TD(f"{i+1}.", self.B.CLASS("text-right")))
+                    tr.append(self.B.TD(link, self.B.CLASS("text-center")))
                     tr.append(self.B.TD(title, self.B.CLASS("doc-title")))
                     table.append(tr)
+
+        @property
+        def sidenav(self):
+            return None
 
     class QueryField:
         """Information used to plug one field into the search query."""
@@ -3738,7 +4318,7 @@ class AdvancedSearch(FormFieldFactory):
 bail = Controller.bail
 
 # ----------------------------------------------------------------------#
-# LEGACY GLOBAL FUNCTIONS -- USE NEW CDRAPI MODULES INSTEAD IF YOU CAN #
+# LEGACY GLOBAL FUNCTIONS -- USE NEW CDRAPI MODULES INSTEAD IF YOU CAN  #
 # ----------------------------------------------------------------------#
 
 
@@ -3800,9 +4380,22 @@ def header(title, banner, subtitle, *args, **kwargs):
 
     # Assemble the optional keyword arguments.
     script = args[0] if args else kwargs.get("script")
+    session = kwargs.get("session")
+    fields = kwargs.get("fields")
+    logger = kwargs.get("logger")
     button_labels = args[1] if len(args) > 1 else kwargs.get("buttons")
     method = kwargs.get("method") or "post"
     head_extra = kwargs.get("stylesheet")
+
+    control = None
+    if session and fields and script and logger:
+        class Control:
+            def __init__(self, fields, logger, script, session):
+                self.fields = fields
+                self.logger = logger
+                self.script = script
+                self.session = session
+        control = Control(fields, logger, script, session)
 
     # Create the skeleton for the page (caller will add its own session).
     opts = dict(
@@ -3810,9 +4403,10 @@ def header(title, banner, subtitle, *args, **kwargs):
         subtitle=subtitle,
         method=method,
         body_id="legacy-page",
-        session=None,
+        session=session,
         stylesheets=["/stylesheets/dataform.css"],
         scripts=[],
+        control=control,
     )
     if script is not None:
         opts["action"] = f"/cgi-bin/cdr/{script}"
@@ -3830,9 +4424,15 @@ def header(title, banner, subtitle, *args, **kwargs):
 
     # Let the caller close out the form/body/html elements.
     html = page.tostring()
-    if "</form>" in html:
-        return "".join(html.split("</form>")[:-1])
-    return "".join(html.split("</body>")[:-1])
+    with open("d:/tmp/test.html", "w", encoding="utf-8") as fp:
+        fp.write(html)
+    with open("d:/tmp/splits.html", "w", encoding="utf-8") as fp:
+        fp.write(str(html.split("</form>")))
+    if html.count("</form>") > 1:
+        position = html.rfind("</form>")
+    else:
+        position = html.rfind("</body>")
+    return html[:position]
 
 
 # ----------------------------------------------------------------------
