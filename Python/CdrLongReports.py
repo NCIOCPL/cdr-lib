@@ -2041,7 +2041,11 @@ class Control:
             logger.info("CdrLongReports: job id %s", job_id)
             job = cdrbatch.CdrBatch(job_id)
             try:
-                cls.get_job_class(job.getJobName())(job).run()
+                job_name = job.getJobName()
+                job_class = cls.get_job_class(job_name)
+                if not job_class:
+                    raise Exception(f"Job class for {job_name} not found")
+                job_class(job).run()
             except Exception as e:
                 logger.exception("failure executing job %s", job_id)
                 job.fail("Caught exception: %s" % e)

@@ -2668,6 +2668,11 @@ class HTMLPage(FormFieldFactory):
                     name="doc-id",
                     placeholder="CDR ID"
                 ),
+                self.B.INPUT(
+                    type="hidden",
+                    name=SESSION,
+                    value=self.session.name
+                ),
                 self.B.BUTTON(
                     self.B.IMG(
                         self.B.CLASS("usa-search__submit-icon"),
