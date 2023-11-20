@@ -332,9 +332,10 @@ class Controller:
         would be if you have a non-tabular report to be sent.
         """
 
-        elapsed = self.report.page.html.get_element_by_id("elapsed", None)
-        if elapsed is not None:
-            elapsed.text = str(self.elapsed)
+        if self.format == "html":
+            elapsed = self.report.page.html.get_element_by_id("elapsed", None)
+            if elapsed is not None:
+                elapsed.text = str(self.elapsed)
         self.report.send(self.format)
 
     def populate_form(self, page):
@@ -2768,6 +2769,7 @@ class Reporter:
             # Add each of the data rows to the worksheet.
             for row in self.rows:
                 rownum += 1
+                self.debug("adding row %d", rownum)
                 colnum = 1
                 for cell in row:
                     if not isinstance(cell, Reporter.Cell):
@@ -2829,7 +2831,7 @@ class Reporter:
             """Optional id attribute for the table element (HTML only)."""
             return self.__opts.get("id")
 
-        @property
+        @cached_property
         def logger(self):
             """Access to logging."""
             return self.__opts.get("logger")
