@@ -24,6 +24,7 @@
 # Standard library modules
 import argparse
 import datetime
+from functools import cached_property
 import re
 import socket
 import sys
@@ -38,6 +39,9 @@ import cdr
 import cdrbatch
 import cdrcgi
 from cdrapi import db
+from cdrapi.docs import Doc
+from cdrapi.settings import Tier
+from cdrapi.users import Session
 
 
 class BatchReport:
@@ -80,7 +84,6 @@ class BatchReport:
     """
 
     import lxml.html.builder as B
-    from cdrapi.settings import Tier
 
     TIER = Tier()
     SUMMARY_LANGUAGE = "/Summary/SummaryMetaData/SummaryLanguage"
@@ -1802,6 +1805,206 @@ class PronunciationRecordingsReport(BatchReport):
         cls.run_test(parser, format="excel")
 
 
+class CitationsInSummaries(BatchReport):
+    """
+    Generates Excel workbook showing Summaries linked to Citation documents.
+    """
+
+    NAME = "Citations In Summaries"
+    COLS = (
+        cdrcgi.Reporter.Column("Citation ID", width="60px"),
+        cdrcgi.Reporter.Column("Citation Title", width="1000px"),
+        cdrcgi.Reporter.Column("PMID", width="70px"),
+        cdrcgi.Reporter.Column("Summary ID", width="60px"),
+        cdrcgi.Reporter.Column("Summary Title", width="500px"),
+        cdrcgi.Reporter.Column("Summary Boards", width="500px"),
+    )
+    OPTS = dict(columns=COLS, caption=NAME, sheet_name=NAME)
+    LINK_PATH = "/Summary/%CitationLink/@cdr:ref"
+
+    def __init__(self, job):
+        """Initialize the report object."""
+
+        BatchReport.__init__(self, job, self.NAME)
+        self.logger.info("Starting %s job", self.NAME)
+        self.limit = self.int_parm("limit")
+        self.debug = self.job.getParm("debug")
+        self.format = "excel"
+        self.session = Session("guest")
+
+    def add_sheets(self):
+        """Populate the workbook for the report."""
+
+        self.table.add_worksheet(self.excel)
+        self.logger.info("report added to workbook")
+
+    @cached_property
+    def rows(self):
+        """Rows for the report's table."""
+
+        query = db.Query("active_doc c", "c.id").order("c.id DESC").unique()
+        query.join("query_term q", "q.int_val = c.id")
+        query.join("active_doc s", "s.id = q.doc_id")
+        query.where(f"q.path LIKE '{self.LINK_PATH}'")
+        if self.limit:
+            query.limit(self.limit)
+            message = "limit to %d summary documents for testing"
+            self.logger.info(message, self.limit)
+        ids = [row.id for row in query.execute(self.cursor).fetchall()]
+        self.logger.info("found %d citations", len(ids))
+        rows = []
+        done = 0
+        for id in ids:
+            if self.quitting_time():
+                self.logger.info("test stopped after %s seconds", self.elapsed)
+                break
+            rows += self.Citation(self, id).rows
+            done += 1
+            message = (
+                f"assembled {len(rows)} report rows from {done} of "
+                f"{len(ids)} citations"
+            )
+            self.job.setProgressMsg(message)
+        self.logger.info("collected %d rows for report", len(rows))
+        message += "; building Excel report from these rows"
+        message += " (takes about an hour)"
+        self.job.setProgressMsg(message)
+        return rows
+
+    @cached_property
+    def summaries(self):
+        """Cache summary info here so we don't have to keep fetching it."""
+        return {}
+
+    @cached_property
+    def table(self):
+        """Table for the report's single worksheet."""
+        return cdrcgi.Reporter.Table(self.rows, logger=self.logger, **self.OPTS)
+
+    class Document:
+        """Base class for Citation and Summary"""
+
+        HOST = Tier("PROD").hosts["APPC"]
+        URL = f"https://{HOST}{cdrcgi.BASE}/QcReport.py?DocId={{:d}}"
+
+        @cached_property
+        def title(self):
+            """Title from the Citation document."""
+            return Doc(self.control.session, id=self.id).title
+
+    class Citation(Document):
+        """Creates spanned rows for summaries which link to the Citation."""
+
+        PMID_PATH = "/Citation/PubmedArticle/MedlineCitation/PMID"
+
+        def __init__(self, control, id):
+            """Save the caller's values.
+
+            Required positional arguments:
+              control - access to the database and the cache of summary info
+              id - unique CDR ID for the Citation document
+            """
+
+            self.control = control
+            self.id = id
+
+        @cached_property
+        def pmid(self):
+            """PubMed ID for the citation."""
+
+            query = db.Query("query_term", "value")
+            query.where(f"path = '{self.PMID_PATH}'")
+            query.where(query.Condition("doc_id", self.id))
+            for row in query.execute(self.control.cursor).fetchall():
+                pmid = row.value.strip()
+                if pmid:
+                    return pmid
+            return None
+
+        @cached_property
+        def rows(self):
+            """This citation's Table rows for the report."""
+
+            url = self.URL.format(self.id)
+            rowspan = len(self.summaries)
+            opts = {} if rowspan < 2 else dict(rowspan=str(rowspan))
+            row = [
+                cdrcgi.Reporter.Cell(self.id, center=True, href=url, **opts),
+                cdrcgi.Reporter.Cell(self.title.strip(), **opts),
+                cdrcgi.Reporter.Cell(self.pmid, **opts),
+                *self.summaries[0].row,
+            ]
+            rows = [row]
+            for summary in self.summaries[1:]:
+                rows.append(summary.row)
+            self.control.logger.debug("citation has %d rows", len(rows))
+            return rows
+
+        @cached_property
+        def summaries(self):
+            """The summaries linked to this citation."""
+
+            query = db.Query("active_doc s", "s.id").order("s.id")
+            query.join("query_term q", "q.doc_id = s.id")
+            query.where(query.Condition("q.int_val", self.id))
+            query.where(f"q.path LIKE '{self.control.LINK_PATH}'")
+            summaries = []
+            for row in query.unique().execute(self.control.cursor).fetchall():
+                if row.id not in self.control.summaries:
+                    summary = self.control.Summary(self.control, row.id)
+                    self.control.summaries[row.id] = summary
+                summaries.append(self.control.summaries[row.id])
+            return summaries
+
+
+    class Summary(Document):
+        """Summary linking to one or more citations included in the report."""
+
+        def __init__(self, control, id):
+            """Save the caller's values.
+
+            Required positional arguments:
+              control - access to the database
+              id - unique CDR ID for the Summary document
+            """
+
+            self.control = control
+            self.id = id
+
+        @cached_property
+        def boards(self):
+            """Board names for this summary (or its English original)."""
+
+            query = db.Query("query_term", "int_val")
+            query.where("path = '/Summary/TranslationOf/@cdr:ref'")
+            query.where(query.Condition("doc_id", self.id))
+            rows = query.execute(self.control.cursor).fetchall()
+            summary_id = rows[0][0] if rows else self.id
+            query = db.Query("query_term", "value").order("value")
+            query.where("path = '/Summary/SummaryMetaData/PDQBoard/Board'")
+            query.where(query.Condition("doc_id", summary_id))
+            rows = query.unique().execute(self.control.cursor).fetchall()
+            return [row.value for row in rows]
+
+        @cached_property
+        def row(self):
+            """Table row with report information for this summary document."""
+
+            url = self.URL.format(self.id)
+            link = cdrcgi.Reporter.Cell(self.id, center=True, href=url)
+            return [link, self.title, self.boards]
+
+
+    @classmethod
+    def test_harness(cls):
+        """Perform a test run from the command line."""
+
+        parser = cls.arg_parser(suffix=".xlsx")
+        help = "limit the maximum number of citations for testing"
+        parser.add_argument("--limit", type=int, default=100, help=help)
+        cls.run_test(parser, format="excel")
+
+
 class Control:
     """
     Top-level router for report requests.
@@ -1823,6 +2026,7 @@ class Control:
         PageTitleMismatches,
         GlossaryTermSearch,
         PronunciationRecordingsReport,
+        CitationsInSummaries,
     )
 
     @classmethod
