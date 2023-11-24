@@ -2767,7 +2767,11 @@ class HTMLPage(FormFieldFactory):
 
     @cached_property
     def menus(self):
-        path = pathlib.Path(TIER.etc) / "menus.json"
+        """Load the CDR administrative menu structures."""
+
+        directory = pathlib.Path(__file__).parent
+        path = directory / "menus.json"
+        self.session.logger.info("loading menus from %s", path.resolve())
         with path.open(encoding="utf-8") as fp:
             return json.load(fp)
 
@@ -2837,10 +2841,10 @@ class HTMLPage(FormFieldFactory):
                 elif isinstance(script, dict):
                     script_attrs.append(script)
                 else:
-                    self.logger.warning("bogus script %r", script)
+                    self.session.logger.warning("bogus script %r", script)
             return script_attrs
         if scripts is not None:
-            self.logger.warning("bogus scripts %r", scripts)
+            self.session.logger.warning("bogus scripts %r", scripts)
         query = db.Query("ctl", "val")
         query.where("grp = 'cdn'")
         query.where("name = 'cgi-js'")
@@ -2873,10 +2877,10 @@ class HTMLPage(FormFieldFactory):
                 elif isinstance(sheet, dict):
                     sheets.append(sheet)
                 else:
-                    self.logger.warning("bogus stylesheet %r", sheet)
+                    self.session.logger.warning("bogus stylesheet %r", sheet)
             return sheets
         if stylesheets is not None:
-            self.logger.warning("bogus stylesheets %r", stylesheets)
+            self.session.logger.warning("bogus stylesheets %r", stylesheets)
         return self.CSS_LINKS
         query = db.Query("ctl", "val")
         query.where("grp = 'cdn'")
