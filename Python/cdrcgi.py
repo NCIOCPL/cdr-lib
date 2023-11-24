@@ -319,10 +319,20 @@ class Controller:
             self.logger.exception("Controller.run() failure")
             bail(e)
 
-    @property
+    @cached_property
     def same_window(self):
         """Override for commands which should stay in the same window"""
         return []
+
+    @cached_property
+    def show_news(self):
+        """Whether we should display news announcements."""
+        return True if self.fields.getvalue("show_news") else False
+
+    @cached_property
+    def logged_out(self):
+        """True if the user has just logged out."""
+        return True if self.fields.getvalue("logged_out") else False
 
     @cached_property
     def alerts(self):
@@ -935,43 +945,31 @@ function {function_name}(value) {{
         """Message to display if no result tables are returned."""
         return "No report results found."
 
-    @property
+    @cached_property
     def report(self):
         """Create the `Reporter` object for this job."""
 
-        if not hasattr(self, "_report"):
-            tables = self.build_tables()
-            buttons = []
-            for button in (self.SUBMENU, self.ADMINMENU, self.LOG_OUT):
-                if button:
-                    buttons.append(HTMLPage.button(button))
-            opts = {
-                "banner": self.title or "",
-                "footer": self.footer,
-                "subtitle": self.subtitle,
-                "no_results": self.no_results,
-                "page_opts": {
-                    "buttons": buttons,
-                    "session": self.session,
-                    # "action": buttons and self.script or None,
-                    "action": self.script or None,
-                    "control": self,
-                }
-            }
-            self._report = Reporter(self.title, tables, **opts)
-        return self._report
+        tables = self.build_tables()
+        if self.format == "excel":
+            return Reporter(self.title, tables)
+        page_opts = dict(
+            session=self.session,
+            action=self.script or None,
+            control=self,
+        )
+        opts = dict(
+            footer=self.footer,
+            subtitle=self.subtitle,
+            no_results=self.no_results,
+            banner=self.title or "",
+            page_opts=page_opts,
+        )
+        return Reporter(self.title, tables, **opts)
 
-    @property
+    @cached_property
     def request(self):
         """Name of clicked request button, if any."""
-        if not hasattr(self, "_request"):
-            self._request = getRequest(self.fields)
-        return self._request
-
-    @request.setter
-    def request(self, value):
-        """Support re-routing."""
-        self._request = value
+        return getRequest(self.fields)
 
     @property
     def script(self):
@@ -982,16 +980,14 @@ function {function_name}(value) {{
                 self._script = os.path.basename(sys.argv[0])
         return self._script
 
-    @property
+    @cached_property
     def selection_method(self):
         """How does the user want to identify summaries for the report?"""
 
-        if not hasattr(self, "_selection_method"):
-            name = "selection_method"
-            self._selection_method = self.fields.getvalue(name, "board")
-            if self._selection_method not in self.SUMMARY_SELECTION_METHODS:
-                self.bail()
-        return self._selection_method
+        method = self.fields.getvalue("selection_method", "board")
+        if method not in self.SUMMARY_SELECTION_METHODS:
+            self.bail()
+        return method
 
     @property
     def session(self):
@@ -1064,7 +1060,7 @@ jQuery(function() {
     check_selection_method(method);
 });"""
 
-    @property
+    @cached_property
     def summary_titles(self):
         """Find the summaries that match the user's title fragment.
 
@@ -1077,30 +1073,29 @@ jQuery(function() {
         ONLY WORKS IF YOU IMPLEMENT THE `self.fragment` PROPERTY!!!
         """
 
-        if not hasattr(self, "_summary_titles"):
-            self._summary_titles = None
-            if hasattr(self, "fragment") and self.fragment:
-                class SummaryTitle:
-                    def __init__(self, doc_id, display, tooltip=None):
-                        self.id = doc_id
-                        self.display = display
-                        self.tooltip = tooltip
-                fragment = f"{self.fragment}%"
-                query = self.Query("active_doc d", "d.id", "d.title")
-                query.join("doc_type t", "t.id = d.doc_type")
-                query.where("t.name = 'Summary'")
-                query.where(query.Condition("d.title", fragment, "LIKE"))
-                query.order("d.title")
-                rows = query.execute(self.cursor).fetchall()
-                self._summary_titles = []
-                for doc_id, title in rows:
-                    if len(title) > 60:
-                        short_title = title[:57] + "..."
-                        summary = SummaryTitle(doc_id, short_title, title)
-                    else:
-                        summary = SummaryTitle(doc_id, title)
-                    self._summary_titles.append(summary)
-        return self._summary_titles
+        titles = None
+        if hasattr(self, "fragment") and self.fragment:
+            class SummaryTitle:
+                def __init__(self, doc_id, display, tooltip=None):
+                    self.id = doc_id
+                    self.display = display
+                    self.tooltip = tooltip
+            fragment = f"{self.fragment}%"
+            query = self.Query("active_doc d", "d.id", "d.title")
+            query.join("doc_type t", "t.id = d.doc_type")
+            query.where("t.name = 'Summary'")
+            query.where(query.Condition("d.title", fragment, "LIKE"))
+            query.order("d.title")
+            rows = query.execute(self.cursor).fetchall()
+            titles = []
+            for doc_id, title in rows:
+                if len(title) > 60:
+                    short_title = title[:57] + "..."
+                    summary = SummaryTitle(doc_id, short_title, title)
+                else:
+                    summary = SummaryTitle(doc_id, title)
+                titles.append(summary)
+        return titles
 
     @property
     def suppress_sidenav(self):
@@ -1175,7 +1170,6 @@ jQuery(function() {
                                 alert_body,
                                 self.B.CLASS("usa-alert usa-alert--error")
                             )
-                            #self.B.CLASS("usa-site-alert usa-site-alert--error")
                         ),
                         self.B.CLASS("grid-container")
                     ),
@@ -1231,6 +1225,7 @@ class FormFieldFactory:
 
     EN_DASH = "\u2013"
     EM_DASH = "\u2014"
+    LINK_COLOR = "#005ea2"
     CLICKABLE = "checkbox", "radio"
     B = lxml.html.builder
 
@@ -2046,36 +2041,6 @@ class HTMLPage(FormFieldFactory):
         self.__title = title
         self.__opts = kwargs
 
-    def tostring(self):
-        """Return the serialized Unicode string for the page object."""
-        opts = dict(self.STRING_OPTS, encoding="unicode")
-        return lxml.html.tostring(self.html, **opts)
-
-    def tobytes(self):
-        """Return the serialized page as ASCII bytes.
-
-        The Unicode characters contained on the page will have
-        been encoded as HTML entities.
-        """
-
-        return lxml.html.tostring(self.html, **self.STRING_OPTS)
-
-    def send(self):
-        """Push the page back to the browser via the web server."""
-        if self.body.get("class") == "admin-menu" and self.news:
-            header = self.body.find("form/header")
-            if header is not None:
-                for name in reversed(sorted(self.news, key=str.lower)):
-                    news = self.news[name]
-                    p = self.B.P(news)
-                    if "error" in name.lower() or "failure" in name.lower():
-                        p.set("class", "failure news")
-                    else:
-                        p.set("class", "info news")
-                    header.addnext(p)
-        self.body.append(self.B.SCRIPT(src=f"{self.USWDS}/js/uswds.min.js"))
-        sendPage(self.tostring())
-
     def add_alert(self, message, **kwargs):
         """Add an alert banner at the top of the main content.
 
@@ -2116,16 +2081,12 @@ class HTMLPage(FormFieldFactory):
             body.append(self.B.P(*message, self.B.CLASS("usa-alert__text")))
         extra = kwargs.get("extra", [])
         for item in extra:
-            body.append(extra)
+            body.append(item)
         alerts.append(alert)
 
     def add_css(self, css):
         """Add style rules directly to the page."""
         self.head.append(self.B.STYLE(css))
-
-    def add_script(self, script):
-        """Add script code directly to the page."""
-        self.head.append(self.B.SCRIPT(script))
 
     def add_output_options(self, default=None, onclick=None):
         """
@@ -2144,11 +2105,100 @@ class HTMLPage(FormFieldFactory):
             fieldset.append(self.radio_button("format", **opts))
         return fieldset
 
+    def add_script(self, script):
+        """Add script code directly to the page."""
+        self.head.append(self.B.SCRIPT(script))
+
     def add_session_field(self, session):
         """Add hidden session field if it isn't there already."""
         if self.form is not None:
             if not self.form.xpath(f"//input[@name='{SESSION}']"):
                 self.form.append(self.hidden_field(SESSION, session))
+
+    def create_sidenav_item(self, positions, menu, labels):
+        """Create a list item for the sidebar menu (possibly recursively).
+
+        Required positional arguments:
+          positions - sequence of integers for the nested menu positions
+          menu - dictionary of values for the current menu item
+          labels - sequence of labels for the menu path to the current page
+                   (empty if that path can't be determined)
+
+        Return:
+          list item DOM object
+        """
+
+        item = self.B.LI(self.B.CLASS("usa-sidenav__item"))
+        label = display = menu["label"]
+        children = menu.get("children")
+        current = False
+        if labels and len(positions) <= len(labels):
+            current = label == labels[len(positions)-1]
+        if children and not current:
+            display += " ..."
+        link = self.B.A(display, href=self.find_menu_link(menu, positions))
+        item.append(link)
+        if current:
+            link.set("class", "usa-current")
+            if children:
+                ul = self.B.UL(self.B.CLASS("usa-sidenav__sublist"))
+                for i, child in enumerate(children):
+                    args = positions + [i], child, labels
+                    ul.append(self.create_sidenav_item(*args))
+                item.append(ul)
+        return item
+
+    def find_matching_path(self, menu):
+        """Find menu path matching the current page.
+
+        Required positional parameter:
+            menu - dictionary of menu values
+
+        Return:
+            None or sequence of menu value dictionaries
+        """
+
+        script = menu.get("script")
+        if script:
+            if self.script_matches_page(script):
+                return [menu]
+            return None
+        for child in menu.get("children", []):
+            path = self.find_matching_path(child)
+            if path:
+                return [menu] + path
+        return None
+
+    def find_menu_link(self, menu, positions):
+        script = menu.get("script")
+        if script:
+            separator = "&" if "?" in script else "?"
+            key = "".join([f"{p:02x}" for p in positions])
+            script = f"{script}{separator}_mp={key}"
+            if self.control:
+                script += f"&{SESSION}={self.control.session}"
+            return script
+        children = menu.get("children")
+        if not children:
+            return "javascript:void(0);"
+        return self.find_menu_link(children[0], positions + [0])
+
+    def get_default_menu_link(menu):
+        while True:
+            script = menu.get("script")
+            positions.append(0)
+            if script:
+                separator = "&" if "?" in script else "?"
+                key = "".join([f"{p:02x}" for p in positions])
+                script = f"{script}{separator}_mp={key}"
+                if self.control:
+                    script += f"&{SESSION}={self.control.session}"
+                return script
+            children = menu.get("children")
+            if not children:
+                break
+            menu = children[0]
+        return "javascript:void(0);"
 
     def menu_link(self, script, display, **params):
         """
@@ -2161,6 +2211,82 @@ class HTMLPage(FormFieldFactory):
         if params:
             url = f"{url}?{urllib.parse.urlencode(params)}"
         return self.B.A(display, href=url)
+
+    def script_matches_page(self, script):
+        """Find out if a script matches the current page.
+
+        Required positional argument:
+          script - string for script name, possibly with parameters
+
+        Return:
+          True if the script matches the page, otherwise false
+        """
+
+        if not self.control or not self.control.script:
+            return False
+        if "?" in script:
+            script, parms = script.split("?", 1)
+        else:
+            script, parms = script, ""
+        self.control.logger.debug("page script is %s", self.control.script)
+        if self.control.script != script:
+            return False
+        if script not in self.MENU_PARMS:
+            return True
+        parms = urllib.parse.parse_qs(parms)
+        for name in self.MENU_PARMS[script]:
+            menu_value = parms.get(name)
+            if menu_value and isinstance(menu_value, (list, tuple)):
+                menu_value = menu_value[0]
+            fields_value = self.control.fields.getvalue(name)
+            if menu_value != fields_value:
+                args = name, menu_value, fields_value
+                self.control.logger.info("parm %s: %s vs %s", *args)
+                return False
+        return True
+
+    def send(self):
+        """Push the page back to the browser via the web server."""
+
+        if self.control:
+            if self.control.show_news and self.news:
+                for name in reversed(sorted(self.news, key=str.lower)):
+                    news = self.news[name]
+                    key = name.lower()
+                    if "error" in key or "failure" in key:
+                        message_type = "error"
+                    elif "warning" in key:
+                        message_type = "warning"
+                    elif "success" in key:
+                        message_type = "success"
+                    else:
+                        message_type = "info"
+                    self.add_alert(news, type=message_type)
+            if self.control.logged_out:
+                opts = dict(href="/", style=f"color: {self.LINK_COLOR};")
+                message = (
+                    "You have been successfully logged out from the CDR.",
+                    " Click ",
+                    self.B.A("here", **opts),
+                    " to log back in.",
+                )
+                self.add_alert(message, type="success")
+        self.body.append(self.B.SCRIPT(src=f"{self.USWDS}/js/uswds.min.js"))
+        sendPage(self.tostring())
+
+    def tobytes(self):
+        """Return the serialized page as ASCII bytes.
+
+        The Unicode characters contained on the page will have
+        been encoded as HTML entities.
+        """
+
+        return lxml.html.tostring(self.html, **self.STRING_OPTS)
+
+    def tostring(self):
+        """Return the serialized Unicode string for the page object."""
+        opts = dict(self.STRING_OPTS, encoding="unicode")
+        return lxml.html.tostring(self.html, **opts)
 
     @property
     def action(self):
@@ -2315,32 +2441,6 @@ class HTMLPage(FormFieldFactory):
         body.append(self.main)
         body.append(self.footer)
         return body
-        banner = self.B.H1(self.banner_title)
-        header = self.B.E("header", banner)
-        if self.subtitle:
-            header.append(self.B.H2(self.subtitle))
-        if self.buttons:
-            buttons = self.B.SPAN(*self.buttons)
-            buttons.set("id", "header-buttons")
-            banner.append(buttons)
-            form = self.B.FORM(action=self.action, method=self.method)
-            if self.session:
-                form.append(self.hidden_field(SESSION, self.session))
-            form.set("id", self.PRIMARY_FORM_ID)
-            body.append(form)
-            form.append(header)
-        else:
-            body.append(header)
-        return body
-
-    @property
-    def body_id(self):
-        """ID attribute to be applied to the page's body element."""
-        if not hasattr(self, "_body_id"):
-            self._body_id = self.__opts.get("body_id")
-            if not self._body_id:
-                self._body_id = "cdr-page"
-        return self._body_id
 
     @property
     def body_classes(self):
@@ -2353,6 +2453,15 @@ class HTMLPage(FormFieldFactory):
             else:
                 self._body_classes = set()
         return self._body_classes
+
+    @property
+    def body_id(self):
+        """ID attribute to be applied to the page's body element."""
+        if not hasattr(self, "_body_id"):
+            self._body_id = self.__opts.get("body_id")
+            if not self._body_id:
+                self._body_id = "cdr-page"
+        return self._body_id
 
     @property
     def buttons(self):
@@ -2376,27 +2485,6 @@ class HTMLPage(FormFieldFactory):
             path = self.find_matching_path(menu)
             if path:
                 return path
-        return None
-
-    def find_matching_path(self, menu):
-        """Find menu path matching the current page.
-
-        Required positional parameter:
-            menu - dictionary of menu values
-
-        Return:
-            None or sequence of menu value dictionaries
-        """
-
-        script = menu.get("script")
-        if script:
-            if self.script_matches_page(script):
-                return [menu]
-            return None
-        for child in menu.get("children", []):
-            path = self.find_matching_path(child)
-            if path:
-                return [menu] + path
         return None
 
     @cached_property
@@ -2434,39 +2522,6 @@ class HTMLPage(FormFieldFactory):
             return None
         return path
 
-    def script_matches_page(self, script):
-        """Find out if a script matches the current page.
-
-        Required positional argument:
-          script - string for script name, possibly with parameters
-
-        Return:
-          True if the script matches the page, otherwise false
-        """
-
-        if not self.control or not self.control.script:
-            return False
-        if "?" in script:
-            script, parms = script.split("?", 1)
-        else:
-            script, parms = script, ""
-        self.control.logger.debug("page script is %s", self.control.script)
-        if self.control.script != script:
-            return False
-        if script not in self.MENU_PARMS:
-            return True
-        parms = urllib.parse.parse_qs(parms)
-        for name in self.MENU_PARMS[script]:
-            menu_value = parms.get(name)
-            if menu_value and isinstance(menu_value, (list, tuple)):
-                menu_value = menu_value[0]
-            fields_value = self.control.fields.getvalue(name)
-            if menu_value != fields_value:
-                args = name, menu_value, fields_value
-                self.control.logger.info("parm %s: %s vs %s", *args)
-                return False
-        return True
-
     @cached_property
     def cursor(self):
         """Read-only database cursor."""
@@ -2475,49 +2530,7 @@ class HTMLPage(FormFieldFactory):
     @cached_property
     def footer(self):
         """Links at the bottom of the page."""
-        return self.make_footer()
-
-    @classmethod
-    def make_footer(cls):
-        """Pull this out so it can be used from elsewhere."""
-
-        li_classes = " ".join([
-            "mobile-lg:grid-col-6",
-            "desktop:grid-col-auto",
-            "usa-footer__primary-content",
-        ])
-        link_class = "usa-footer__primary-link"
-        link_values = (
-            ("Help", "javascript:void(0);", False),
-            ("NCI Web Site", "https://www.cancer.gov", True),
-            ("CMS", "https://www-cms.cancer.gov", True),
-        )
-        links = cls.B.UL(cls.B.CLASS("grid-row grid-gap"))
-        for label, href, new_tab in link_values:
-            link = cls.B.A(label, cls.B.CLASS(link_class), href=href)
-            if new_tab:
-                link.set("target", "_blank")
-            links.append(cls.B.LI(link, cls.B.CLASS(li_classes)))
-        nav = cls.B.E(
-            "nav",
-            links,
-            cls.B.CLASS("usa-footer__nav")
-        )
-        nav.set("aria-label", "footer navigation")
-        return cls.B.E(
-            "footer",
-            cls.B.DIV(
-                cls.B.DIV(
-                    cls.B.DIV(
-                        nav,
-                        cls.B.CLASS("mobile-lg:grid-col-12")
-                    ),
-                    cls.B.CLASS("usa-footer__primary-container grid-row")
-                ),
-                cls.B.CLASS("usa-footer__primary-section")
-            ),
-            cls.B.CLASS("usa-footer usa-footer--slim")
-        )
+        return self.make_footer(self.session)
 
     @cached_property
     def form(self):
@@ -2593,40 +2606,11 @@ class HTMLPage(FormFieldFactory):
             ".report .usa-table { xxxtable-layout: fixed; width: 100%; }",
             ".report .usa-table td { word-wrap: break-word; }",
             ".break-all, .break-all * { word-break: break-all; }",
+            f".usa-form a:visited {{ color: {self.LINK_COLOR}; }}",
+            ".error { color: red; font-weight: bold; }",
         )
         head.append(self.B.STYLE("\n".join(style)))
         return head
-
-    def get_default_menu_link(menu):
-        while True:
-            script = menu.get("script")
-            positions.append(0)
-            if script:
-                separator = "&" if "?" in script else "?"
-                key = "".join([f"{p:02x}" for p in positions])
-                script = f"{script}{separator}_mp={key}"
-                if self.control:
-                    script += f"&{SESSION}={self.control.session}"
-                return script
-            children = menu.get("children")
-            if not children:
-                break
-            menu = children[0]
-        return "javascript:void(0);"
-
-    def find_menu_link(self, menu, positions):
-        script = menu.get("script")
-        if script:
-            separator = "&" if "?" in script else "?"
-            key = "".join([f"{p:02x}" for p in positions])
-            script = f"{script}{separator}_mp={key}"
-            if self.control:
-                script += f"&{SESSION}={self.control.session}"
-            return script
-        children = menu.get("children")
-        if not children:
-            return "javascript:void(0);"
-        return self.find_menu_link(children[0], positions + [0])
 
     @cached_property
     def header(self):
@@ -2755,76 +2739,6 @@ class HTMLPage(FormFieldFactory):
             self._html = self.B.HTML(self.head, self.body)
         return self._html
 
-    @property
-    def title(self):
-        """Return the title string for the page.
-
-        Used by default in the head block and in the main banner, but
-        each can be overridden individually using keyword arguments
-        passed to the constructor.
-        """
-
-        return self.__title or ""
-
-    @cached_property
-    def suppress_sidenav(self):
-        """Override to provide more nuanced logic."""
-        return True if self.__opts.get("suppress_sidenav") else False
-
-    @cached_property
-    def sidenav(self):
-        """Menu on the left sidebar."""
-
-        if self.suppress_sidenav:
-            return None
-        ul = self.B.UL(self.B.CLASS("usa-sidenav"))
-        menu_labels = [m["label"] for m in self.menus]
-        if self.current_path:
-            path_labels = [p["label"] for p in self.current_path]
-            menu = self.current_path[0]
-        else:
-            return None
-            path_labels = []
-            menu = self.user_menus[0]
-        if self.session:
-            self.session.logger.info("path labels: %r", path_labels)
-        positions = [menu_labels.index(menu["label"])]
-        for i, child in enumerate(menu["children"]):
-            args = positions + [i], child, path_labels
-            ul.append(self.create_sidenav_item(*args))
-        return self.B.E("nav", ul)
-
-    def create_sidenav_item(self, positions, menu, labels):
-        """Create a list item for the sidebar menu (possibly recursively).
-
-        Required positional arguments:
-          positions - sequence of integers for the nested menu positions
-          menu - dictionary of values for the current menu item
-          labels - sequence of labels for the menu path to the current page
-                   (empty if that path can't be determined)
-
-        Return:
-          list item DOM object
-        """
-
-        item = self.B.LI(self.B.CLASS("usa-sidenav__item"))
-        label = menu["label"]
-        current = False
-        if labels and len(positions) <= len(labels):
-            current = label == labels[len(positions)-1]
-        link = self.B.A(label, href=self.find_menu_link(menu, positions))
-        item.append(link)
-        if current:
-            link.set("class", "usa-current")
-            children = menu.get("children")
-            if children:
-                ul = self.B.UL(self.B.CLASS("usa-sidenav__sublist"))
-                for i, child in enumerate(children):
-                    args = positions + [i], child, labels
-                    ul.append(self.create_sidenav_item(*args))
-                item.append(ul)
-        return item
-
     @cached_property
     def main(self):
         """This is where page content gets added."""
@@ -2862,12 +2776,49 @@ class HTMLPage(FormFieldFactory):
         """CGI verb to be used for form submission."""
         return self.__opts.get("method", "post")
 
-    @property
+    @cached_property
     def news(self):
         """Information to be displayed at the top of the menu pages."""
-        if not hasattr(self, "_news"):
-            self._news = cdr.getControlGroup("news")
-        return self._news
+        return cdr.getControlGroup("news")
+
+    @cached_property
+    def sidenav(self):
+        """Menu on the left sidebar."""
+
+        if self.suppress_sidenav:
+            return None
+        ul = self.B.UL(self.B.CLASS("usa-sidenav"))
+        menu_labels = [m["label"] for m in self.menus]
+        if self.current_path:
+            path_labels = [p["label"] for p in self.current_path]
+            menu = self.current_path[0]
+        else:
+            return None
+            path_labels = []
+            menu = self.user_menus[0]
+        if self.session:
+            self.session.logger.info("path labels: %r", path_labels)
+        positions = [menu_labels.index(menu["label"])]
+        for i, child in enumerate(menu["children"]):
+            args = positions + [i], child, path_labels
+            ul.append(self.create_sidenav_item(*args))
+        return self.B.E("nav", ul)
+
+    @cached_property
+    def suppress_sidenav(self):
+        """Override to provide more nuanced logic."""
+        return True if self.__opts.get("suppress_sidenav") else False
+
+    @property
+    def title(self):
+        """Return the title string for the page.
+
+        Used by default in the head block and in the main banner, but
+        each can be overridden individually using keyword arguments
+        passed to the constructor.
+        """
+
+        return self.__title or ""
 
     @cached_property
     def scripts(self):
@@ -2959,6 +2910,63 @@ class HTMLPage(FormFieldFactory):
                 allowed.append(menus[label])
         return allowed or [menus["Guest"]]
 
+    @classmethod
+    def make_footer(cls, session=None):
+        """Pull this out so it can be used from elsewhere.
+
+        Optional keyword argument:
+          session - current session for this request
+        """
+
+        li_classes = " ".join([
+            "mobile-lg:grid-col-6",
+            "desktop:grid-col-auto",
+            "usa-footer__primary-content",
+        ])
+        link_class = "usa-footer__primary-link"
+        session_name = session or "guest"
+        session_parm = f"{SESSION}={session_name}"
+        search_parms = f"DocType=Citation&{session_parm}"
+        link_values = [
+            ("Help", f"HelpSearch.py?{session_parm}", False),
+            ("NCI Web Site", "https://www.cancer.gov", True),
+            ("CMS", "https://www-cms.cancer.gov", True),
+            ("Filter", f"Filter.py?{session_parm}", False),
+            ("Queries", f"CdrQueries.py?{session_parm}", True),
+            ("Search", f"CiteSearch.py?{search_parms}", True),
+        ]
+        if session_name == "guest":
+            values = "Log In", "/"
+        else:
+            values = "Log Out", f"LogOut.py?{session_parm}"
+        link_values.append((*values, False))
+        links = cls.B.UL(cls.B.CLASS("grid-row grid-gap"))
+        for label, href, new_tab in link_values:
+            link = cls.B.A(label, cls.B.CLASS(link_class), href=href)
+            if new_tab:
+                link.set("target", "_blank")
+            links.append(cls.B.LI(link, cls.B.CLASS(li_classes)))
+        nav = cls.B.E(
+            "nav",
+            links,
+            cls.B.CLASS("usa-footer__nav")
+        )
+        nav.set("aria-label", "footer navigation")
+        return cls.B.E(
+            "footer",
+            cls.B.DIV(
+                cls.B.DIV(
+                    cls.B.DIV(
+                        nav,
+                        cls.B.CLASS("mobile-lg:grid-col-12")
+                    ),
+                    cls.B.CLASS("usa-footer__primary-container grid-row")
+                ),
+                cls.B.CLASS("usa-footer__primary-section")
+            ),
+            cls.B.CLASS("usa-footer usa-footer--slim")
+        )
+
 
 class Reporter:
     """Create web-based or Excel workbook reports.
@@ -3035,21 +3043,18 @@ class Reporter:
 
         return self.__opts.get("elapsed")
 
-    @property
+    @cached_property
     def footer(self):
         """Optional footer to appear on the HTML report."""
         return self.__opts.get("footer")
 
-    @property
+    @cached_property
     def no_results(self):
-        """What to say if no result tables are found."""
+        """What to say if no result tables are found (unused for Excel)."""
 
-        if not hasattr(self, "_no_results"):
-            if "no_results" in self.__opts:
-                self._no_results = self.__opts.get("no_results")
-            else:
-                self._no_results = "No report results found."
-        return self._no_results
+        if "no_results" in self.__opts:
+            return self.__opts.get("no_results")
+        return "No report results found."
 
     @property
     def page(self):
@@ -3130,6 +3135,7 @@ class Reporter:
     @property
     def wrap(self):
         return self.__opts.get("wrap", True)
+
 
     class Cell:
         """Data for one cell in a report table."""
@@ -3669,7 +3675,7 @@ class Reporter:
                     if not classes:
                         classes = set()
                     elif isinstance(classes, str):
-                        classes = set(classes)
+                        classes = {classes}
                     classes.add("usa-table")
                     classes.add("usa-table--borderless")
                     self._node.set("class", " ".join(classes))
@@ -3704,14 +3710,17 @@ class BasicWebPage:
         'body { font-family: "Source Sans Pro Web", Arial, sans-serif; }',
         "body > div { width: 95%; margin: 2rem auto; }",
         "table { border-collapse: collapse; }",
-        "table caption { font-weight: bold; padding: .25rem; }",
-        "th, td { font-size: .95em; border: 1px solid black; }",
+        "table caption { font-weight: bold; padding: 1rem; }",
+        "th, td { font-size: .95em; border: 1px solid black; padding: .25rem}",
         "th { vertical-align: middle; }",
-        "td { padding: .25rem; vertical-align: top; }",
+        "td { vertical-align: top; }",
         ".report-footer { font-style: italic; font-size: .9em; ",
         "                 text-align: center; }",
         "#elapsed { color: green; }",
-    )
+        ".error { color: red; font-weight: bold; }",
+        ".nowrap { white-space: nowrap; }",
+        ".hidden { display: none; }",
+     )
 
     def send(self):
         """Serialize the DOM and send it back to the browser."""
@@ -3970,18 +3979,6 @@ class AdvancedSearch(FormFieldFactory):
         self.search_fields = []
         self.query_fields = []
 
-    @property
-    def fields(self):
-        """Named values from the CGI form."""
-        if not hasattr(self, "_fields"):
-            self._fields = FieldStorage()
-        return self._fields
-
-    @property
-    def logger(self):
-        """How we record what we do."""
-        return self.session.logger
-
     def run(self):
         try:
             if self.request == "Search":
@@ -4004,8 +4001,7 @@ class AdvancedSearch(FormFieldFactory):
         opts = dict(name="Request", value="Search", type="submit")
         submit = page.B.INPUT(classes, **opts)
         page.form.append(submit)
-        page.body.append(page.B.SCRIPT(src=f"{page.USWDS}/js/uswds.min.js"))
-        sendPage(page.tostring())
+        page.send()
 
     def show_report(self):
         args = self.query_fields, self.DOCTYPE, self.match_all
@@ -4023,8 +4019,7 @@ class AdvancedSearch(FormFieldFactory):
             opts["filter"] = self.FILTER
         page = self.ResultsPage(self.DOCTYPE, **opts)
         self.customize_report(page)
-        page.body.append(page.B.SCRIPT(src=f"{page.USWDS}/js/uswds.min.js"))
-        sendPage(page.tostring())
+        page.send()
 
     def customize_form(self, page):
         """Override in derived class if default behavior isn't enough."""
@@ -4039,13 +4034,6 @@ class AdvancedSearch(FormFieldFactory):
         return [row.value for row in rows if row.value.strip()]
 
     @property
-    def valid_values(self):
-        if not hasattr(self, "_valid_values"):
-            doctype = cdr.getDoctype("guest", self.DOCTYPE)
-            self._valid_values = dict(doctype.vvLists)
-        return self._valid_values
-
-    @property
     def countries(self):
         query = db.Query("document d", "d.id", "d.title")
         query.join("doc_type t", "t.id = d.doc_type")
@@ -4053,6 +4041,33 @@ class AdvancedSearch(FormFieldFactory):
         query.order("d.title")
         rows = query.execute(self.session.cursor).fetchall()
         return [(f"CDR{row.id:010d}", row.title) for row in rows]
+
+    @cached_property
+    def fields(self):
+        """Named values from the CGI form."""
+        return FieldStorage()
+
+    @cached_property
+    def logged_out(self):
+        """True if the user has just logged out."""
+        return True if self.fields.getvalue("logged_out") else False
+
+    @cached_property
+    def logger(self):
+        """How we record what we do."""
+        return self.session.logger
+
+    @cached_property
+    def show_news(self):
+        """Whether we should display news announcements."""
+        return True if self.fields.getvalue("show_news") else False
+
+    @property
+    def valid_values(self):
+        if not hasattr(self, "_valid_values"):
+            doctype = cdr.getDoctype("guest", self.DOCTYPE)
+            self._valid_values = dict(doctype.vvLists)
+        return self._valid_values
 
     @cached_property
     def script(self):
