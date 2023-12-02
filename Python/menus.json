@@ -22,7 +22,7 @@
             "children": [
               {
                 "label": "Board Member QC Report",
-                "script": "QcReport.py?DocType=PDQBoardMemberInfo"
+                "script": "QCR.py?DocType=PDQBoardMemberInfo"
               },
               {
                 "label": "Board Roster Reports",
@@ -65,8 +65,21 @@
         "label": "Drug Information Reports",
         "children": [
           {
+            "label": "DIS QC Reports",
+            "children": [
+              {
+                "label": "Drug Information QC Report",
+                "script": "QcReport.py?DocType=DrugInformationSummary&DocVersion=0"
+              },
+              {
+                "label": "Publish Preview",
+                "script": "QcReport.py?DocType=DrugInformationSummary&ReportType=pp&DocVersion=0"
+              }
+            ]
+          },
+          {
             "label": "Processing Reports",
-            "children":[
+            "children": [
               {
                 "label": "Drug Date Last Modified Report",
                 "script": "DrugDateLastModified.py"
@@ -91,7 +104,7 @@
           },
           {
             "label": "Find DIS Documents",
-            "children":[
+            "children": [
               {
                 "label": "Advanced Search",
                 "script": "DISSearch.py?type=advanced"
@@ -103,21 +116,8 @@
             ]
           },
           {
-            "label": "DIS QC Reports",
-            "children":[
-              {
-                "label": "Drug Information QC Report",
-                "script": "QcReport.py?DocType=DrugInformationSummary&DocVersion=0"
-              },
-              {
-                "label": "Publish Preview",
-                "script": "QcReport.py?DocType=DrugInformationSummary&ReportType=pp&DocVersion=0"
-              }
-            ]
-          },
-          {
             "label": "DIS Content Reports",
-            "children":[
+            "children": [
               {
                 "label": "DIS By Drug Type Report",
                 "script": "DISByDrugType.py"
@@ -139,11 +139,7 @@
         "children": [
           {
             "label": "Glossary QC Reports",
-            "children":[
-              {
-                "label": "Publish Preview",
-                "script": "QcReport.py?DocType=GlossaryTermName&ReportType=pp"
-              },
+            "children": [
               {
                 "label": "GTC QC Report",
                 "script": "QcReport.py?DocType=GlossaryTermConcept"
@@ -161,6 +157,10 @@
                 "script": "QcReport.py?DocType=GlossaryTermName&ReportType=gtnwc&DocVersion=0"
               },
               {
+                "label": "Publish Preview",
+                "script": "QcReport.py?DocType=GlossaryTermName&ReportType=pp"
+              },
+              {
                 "label": "Documents Linked to GTN",
                 "script": "GlossaryTermLinks.py"
               }
@@ -168,7 +168,7 @@
           },
           {
             "label": "Glossary Processing Reports",
-            "children":[
+            "children": [
               {
                 "label": "GTC by English Definition Status",
                 "script": "GlossaryConceptByDefinitionStatus.py?report=English"
@@ -201,7 +201,7 @@
           },
           {
             "label": "Glossary Search Reports",
-            "children":[
+            "children": [
               {
                 "label": "Keyword Search Report",
                 "script": "GlossaryKeywordSearchReport.py"
@@ -218,7 +218,7 @@
           },
           {
             "label": "Glossary Content Reports",
-            "children":[
+            "children": [
               {
                 "label": "HP Glossary Terms Report",
                 "script": "HPGlossaryTermsReport.py"
@@ -235,10 +235,31 @@
         "label": "Media Reports",
         "children": [
           {
-            "label": "Media Processing Reports",
-            "children":[
+            "label": "Media Content Reports",
+            "children": [
               {
-                "label": "Board Meeting Recording Tracking Report",
+                "label": "Media Doc QC Report",
+                "script": "QcReport.py?DocType=Media&ReportType=img&DocVersion=0"
+              },
+              {
+                "label": "Image Demographic Info Report",
+                "script": "ImageDemographicInformationReport.py"
+              },
+              {
+                "label": "Caption and Content Report",
+                "script": "MediaCaptionContent.py"
+              },
+              {
+                "label": "Media Images Report",
+                "script": "MediaLanguageCompare.py"
+              }
+            ]
+          },
+          {
+            "label": "Media Processing Reports",
+            "children": [
+              {
+                "label": "Meeting Recording Tracking",
                 "script": "RecordingTrackingReport.py"
               },
               {
@@ -269,7 +290,7 @@
           },
           {
             "label": "Find Media Documents",
-            "children":[
+            "children": [
               {
                 "label": "Advanced Search",
                 "script": "MediaSearch.py"
@@ -285,29 +306,8 @@
             ]
           },
           {
-            "label": "Media Content Reports",
-            "children":[
-              {
-                "label": "Image Demographic Information Report",
-                "script": "ImageDemographicInformationReport.py"
-              },
-              {
-                "label": "Media Caption and Content Report",
-                "script": "MediaCaptionContent.py"
-              },
-              {
-                "label": "Media Images Report",
-                "script": "MediaLanguageCompare.py"
-              },
-              {
-                "label": "Media Doc QC Report",
-                "script": "QcReport.py?DocType=Media&ReportType=img&DocVersion=0"
-              }
-            ]
-          },
-          {
             "label": "Media Usage Reports",
-            "children":[
+            "children": [
               {
                 "label": "Linked Media Documents",
                 "script": "MediaLinks.py"
@@ -323,6 +323,31 @@
       {
         "label": "Summary and Module Reports",
         "children": [
+          {
+            "label": "Summary QC Reports",
+            "children": [
+              {
+                "label": "HP Bold/Underline QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=bu"
+              },
+              {
+                "label": "HP Redline/Strikeout QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=rs"
+              },
+              {
+                "label": "PT Bold/Underline QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=patbu"
+              },
+              {
+                "label": "PT Redline/Strikeout QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pat"
+              },
+              {
+                "label": "Publish Preview Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pp"
+              }
+            ]
+          },
           {
             "label": "Changes And Reviews",
             "children": [
@@ -350,7 +375,7 @@
           },
           {
             "label": "Summary Content Reports",
-            "children":[
+            "children": [
               {
                 "label": "Metadata",
                 "script": "SummaryMetaData.py"
@@ -381,33 +406,8 @@
                 "script": "SummaryCitations.py"
               },
               {
-                "label": "Non-Journal Article Citations Report",
+                "label": "Non-Journal Article Citations",
                 "script": "SummariesWithNonJournalArticleCitations.py"
-              }
-            ]
-          },
-          {
-            "label": "Summary QC Reports",
-            "children": [
-              {
-                "label": "HP Bold/Underline QC Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=bu"
-              },
-              {
-                "label": "HP Redline/Strikeout QC Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=rs"
-              },
-              {
-                "label": "PT Bold/Underline QC Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=patbu"
-              },
-              {
-                "label": "PT Redline/Strikeout QC Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pat"
-              },
-              {
-                "label": "Publish Preview Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pp"
               }
             ]
           },
@@ -422,7 +422,7 @@
         "children": [
           {
             "label": "Document Versions",
-            "children":[
+            "children": [
               {
                 "label": "Document Version History",
                 "script": "DocVersionHistory.py"
@@ -502,7 +502,7 @@
           },
           {
             "label": "Problem Reports",
-            "children":[
+            "children": [
               {
                 "label": "External Map Failures Report",
                 "script": "ExternMapFailures.py"
@@ -554,7 +554,7 @@
         "children": [
           {
             "label": "SummaryMailers (Advisory Board)",
-            "script": "SummaryMailerReqForm.py?BoardType=Advisory"
+            "script": "SummaryMailerReqForm.py"
           },
           {
             "label": "PDQ\u00ae Board Member Correspondence Mailers",
@@ -567,7 +567,7 @@
         "children": [
           {
             "label": "Document Versions",
-            "children":[
+            "children": [
               {
                 "label": "Document Version History",
                 "script": "DocVersionHistory.py"
@@ -584,7 +584,7 @@
           },
           {
             "label": "Document Content Reports",
-            "children":[
+            "children": [
               {
                 "label": "Show CDR Document XML",
                 "script": "ShowCdrDocument.py"
@@ -601,7 +601,7 @@
           },
           {
             "label": "Locked Documents",
-            "children":[
+            "children": [
               {
                 "label": "Checked Out Documents",
                 "script": "CheckedOutDocs.py"
@@ -614,7 +614,7 @@
           },
           {
             "label": "Document Processing Reports",
-            "children":[
+            "children": [
               {
                 "label": "Date Last Modified",
                 "script": "DateLastModified.py"
@@ -647,7 +647,7 @@
           },
           {
             "label": "Document Links",
-            "children":[
+            "children": [
               {
                 "label": "Linked Documents",
                 "script": "LinkedDocs.py"
@@ -660,7 +660,7 @@
           },
           {
             "label": "Problem Reports",
-            "children":[
+            "children": [
               {
                 "label": "External Map Failures Report",
                 "script": "ExternMapFailures.py"
@@ -677,7 +677,7 @@
           },
           {
             "label": "Miscellaneous General Reports",
-            "children":[
+            "children": [
               {
                 "label": "Batch Job Status",
                 "script": "getBatchStatus.py"
@@ -694,8 +694,21 @@
         "label": "Drug Information Reports",
         "children": [
           {
+            "label": "DIS QC Reports",
+            "children": [
+              {
+                "label": "Drug Information QC Report",
+                "script": "QcReport.py?DocType=DrugInformationSummary&DocVersion=0"
+              },
+              {
+                "label": "Publish Preview",
+                "script": "QcReport.py?DocType=DrugInformationSummary&ReportType=pp&DocVersion=0"
+              }
+            ]
+          },
+          {
             "label": "Processing Reports",
-            "children":[
+            "children": [
               {
                 "label": "Drug Date Last Modified Report",
                 "script": "DrugDateLastModified.py"
@@ -720,7 +733,7 @@
           },
           {
             "label": "Find DIS Documents",
-            "children":[
+            "children": [
               {
                 "label": "Advanced Search",
                 "script": "DISSearch.py?type=advanced"
@@ -732,21 +745,8 @@
             ]
           },
           {
-            "label": "DIS QC Reports",
-            "children":[
-              {
-                "label": "Drug Information QC Report",
-                "script": "QcReport.py?DocType=DrugInformationSummary&DocVersion=0"
-              },
-              {
-                "label": "Publish Preview",
-                "script": "QcReport.py?DocType=DrugInformationSummary&ReportType=pp&DocVersion=0"
-              }
-            ]
-          },
-          {
             "label": "DIS Content Reports",
-            "children":[
+            "children": [
               {
                 "label": "DIS By Drug Type Report",
                 "script": "DISByDrugType.py"
@@ -768,11 +768,7 @@
         "children": [
           {
             "label": "Glossary QC Reports",
-            "children":[
-              {
-                "label": "Publish Preview",
-                "script": "QcReport.py?DocType=GlossaryTermName&ReportType=pp"
-              },
+            "children": [
               {
                 "label": "GTC QC Report",
                 "script": "QcReport.py?DocType=GlossaryTermConcept"
@@ -790,6 +786,10 @@
                 "script": "QcReport.py?DocType=GlossaryTermName&ReportType=gtnwc&DocVersion=0"
               },
               {
+                "label": "Publish Preview",
+                "script": "QcReport.py?DocType=GlossaryTermName&ReportType=pp"
+              },
+              {
                 "label": "Documents Linked to GTN",
                 "script": "GlossaryTermLinks.py"
               }
@@ -797,7 +797,7 @@
           },
           {
             "label": "Glossary Processing Reports",
-            "children":[
+            "children": [
               {
                 "label": "GTC by English Definition Status",
                 "script": "GlossaryConceptByDefinitionStatus.py?report=English"
@@ -830,7 +830,7 @@
           },
           {
             "label": "Glossary Search Reports",
-            "children":[
+            "children": [
               {
                 "label": "Keyword Search Report",
                 "script": "GlossaryKeywordSearchReport.py"
@@ -847,7 +847,7 @@
           },
           {
             "label": "Glossary Content Reports",
-            "children":[
+            "children": [
               {
                 "label": "HP Glossary Terms Report",
                 "script": "HPGlossaryTermsReport.py"
@@ -864,10 +864,31 @@
         "label": "Media Reports",
         "children": [
           {
-            "label": "Media Processing Reports",
-            "children":[
+            "label": "Media Content Reports",
+            "children": [
               {
-                "label": "Board Meeting Recording Tracking Report",
+                "label": "Media Doc QC Report",
+                "script": "QcReport.py?DocType=Media&ReportType=img&DocVersion=0"
+              },
+              {
+                "label": "Image Demographic Info Report",
+                "script": "ImageDemographicInformationReport.py"
+              },
+              {
+                "label": "Caption and Content Report",
+                "script": "MediaCaptionContent.py"
+              },
+              {
+                "label": "Media Images Report",
+                "script": "MediaLanguageCompare.py"
+              }
+            ]
+          },
+          {
+            "label": "Media Processing Reports",
+            "children": [
+              {
+                "label": "Meeting Recording Tracking",
                 "script": "RecordingTrackingReport.py"
               },
               {
@@ -898,7 +919,7 @@
           },
           {
             "label": "Find Media Documents",
-            "children":[
+            "children": [
               {
                 "label": "Advanced Search",
                 "script": "MediaSearch.py"
@@ -914,29 +935,8 @@
             ]
           },
           {
-            "label": "Media Content Reports",
-            "children":[
-              {
-                "label": "Image Demographic Information Report",
-                "script": "ImageDemographicInformationReport.py"
-              },
-              {
-                "label": "Media Caption and Content Report",
-                "script": "MediaCaptionContent.py"
-              },
-              {
-                "label": "Media Images Report",
-                "script": "MediaLanguageCompare.py"
-              },
-              {
-                "label": "Media Doc QC Report",
-                "script": "QcReport.py?DocType=Media&ReportType=img&DocVersion=0"
-              }
-            ]
-          },
-          {
             "label": "Media Usage Reports",
-            "children":[
+            "children": [
               {
                 "label": "Linked Media Documents",
                 "script": "MediaLinks.py"
@@ -952,6 +952,31 @@
       {
         "label": "Summary Reports",
         "children": [
+          {
+            "label": "Summary QC Reports",
+            "children": [
+              {
+                "label": "HP Bold/Underline QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=bu"
+              },
+              {
+                "label": "HP Redline/Strikeout QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=rs"
+              },
+              {
+                "label": "PT Bold/Underline QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=patbu"
+              },
+              {
+                "label": "PT Redline/Strikeout QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pat"
+              },
+              {
+                "label": "Publish Preview Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pp"
+              }
+            ]
+          },
           {
             "label": "Summary Processing Reports",
             "children": [
@@ -987,7 +1012,7 @@
           },
           {
             "label": "Summary Content Reports",
-            "children":[
+            "children": [
               {
                 "label": "Metadata",
                 "script": "SummaryMetaData.py"
@@ -1022,7 +1047,7 @@
                 "script": "SummaryCitations.py"
               },
               {
-                "label": "Non-Journal Article Citations Report",
+                "label": "Non-Journal Article Citations",
                 "script": "SummariesWithNonJournalArticleCitations.py"
               },
               {
@@ -1040,33 +1065,8 @@
             ]
           },
           {
-            "label": "Summary QC Reports",
-            "children": [
-              {
-                "label": "HP Bold/Underline QC Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=bu"
-              },
-              {
-                "label": "HP Redline/Strikeout QC Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=rs"
-              },
-              {
-                "label": "PT Bold/Underline QC Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=patbu"
-              },
-              {
-                "label": "PT Redline/Strikeout QC Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pat"
-              },
-              {
-                "label": "Publish Preview Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pp"
-              }
-            ]
-          },
-          {
             "label": "Summary Mailer Reports",
-            "children":[
+            "children": [
               {
                 "label": "Summary Mailer Report",
                 "script": "SummaryMailerReport.py?flavor=standard"
@@ -1096,7 +1096,7 @@
           },
           {
             "label": "Drug Term Reports",
-            "children":[
+            "children": [
               {
                 "label": "Drug Review Report",
                 "script": "DrugReviewReport.py"
@@ -1109,7 +1109,7 @@
           },
           {
             "label": "Term Hierarchy Reports",
-            "children":[
+            "children": [
               {
                 "label": "Term Hierarchy Tree",
                 "script": "TermHierarchyTree.py?prompt=yes"
@@ -1126,7 +1126,7 @@
           },
           {
             "label": "NCI Thesaurus (EVS)",
-            "children":[
+            "children": [
               {
                 "label": "EVS Concepts",
                 "script": "SyncWithEVS.py"
@@ -1148,7 +1148,7 @@
         "children": [
           {
             "label": "Board Member Information",
-            "children":[
+            "children": [
               {
                 "label": "Board Member Information QC Report",
                 "script": "QcReport.py?DocType=PDQBoardMemberInfo"
@@ -1377,7 +1377,7 @@
             "children": [
               {
                 "label": "SummaryMailers (Advisory Board)",
-                "script": "SummaryMailerReqForm.py?BoardType=Advisory"
+                "script": "SummaryMailerReqForm.py"
               },
               {
                 "label": "PDQ\u00ae Board Member Correspondence Mailers",
@@ -1413,7 +1413,7 @@
           },
           {
             "label": "Database Control Tables",
-            "children":[
+            "children": [
               {
                 "label": "Control Values",
                 "script": "EditControlValues.py"
@@ -1442,7 +1442,7 @@
           },
           {
             "label": "Document Types",
-            "children":[
+            "children": [
               {
                 "label": "Manage Document Types",
                 "script": "EditDocTypes.py"
@@ -1519,7 +1519,7 @@
         "children": [
           {
             "label": "Document Versions",
-            "children":[
+            "children": [
               {
                 "label": "Document Version History",
                 "script": "DocVersionHistory.py"
@@ -1536,7 +1536,7 @@
           },
           {
             "label": "Document Content Reports",
-            "children":[
+            "children": [
               {
                 "label": "Show CDR Document XML",
                 "script": "ShowCdrDocument.py"
@@ -1553,7 +1553,7 @@
           },
           {
             "label": "Locked Documents",
-            "children":[
+            "children": [
               {
                 "label": "Checked Out Documents",
                 "script": "CheckedOutDocs.py"
@@ -1566,7 +1566,7 @@
           },
           {
             "label": "Document Processing Reports",
-            "children":[
+            "children": [
               {
                 "label": "Date Last Modified",
                 "script": "DateLastModified.py"
@@ -1599,7 +1599,7 @@
           },
           {
             "label": "Document Links",
-            "children":[
+            "children": [
               {
                 "label": "Linked Documents",
                 "script": "LinkedDocs.py"
@@ -1612,7 +1612,7 @@
           },
           {
             "label": "Problem Reports",
-            "children":[
+            "children": [
               {
                 "label": "External Map Failures Report",
                 "script": "ExternMapFailures.py"
@@ -1629,7 +1629,7 @@
           },
           {
             "label": "Miscellaneous General Reports",
-            "children":[
+            "children": [
               {
                 "label": "Batch Job Status",
                 "script": "getBatchStatus.py"
@@ -1646,8 +1646,21 @@
         "label": "Drug Information Reports",
         "children": [
           {
+            "label": "DIS QC Reports",
+            "children": [
+              {
+                "label": "Drug Information QC Report",
+                "script": "QcReport.py?DocType=DrugInformationSummary&DocVersion=0"
+              },
+              {
+                "label": "Publish Preview",
+                "script": "QcReport.py?DocType=DrugInformationSummary&ReportType=pp&DocVersion=0"
+              }
+            ]
+          },
+          {
             "label": "Processing Reports",
-            "children":[
+            "children": [
               {
                 "label": "Drug Date Last Modified Report",
                 "script": "DrugDateLastModified.py"
@@ -1672,7 +1685,7 @@
           },
           {
             "label": "Find DIS Documents",
-            "children":[
+            "children": [
               {
                 "label": "Advanced Search",
                 "script": "DISSearch.py?type=advanced"
@@ -1684,21 +1697,8 @@
             ]
           },
           {
-            "label": "DIS QC Reports",
-            "children":[
-              {
-                "label": "Drug Information QC Report",
-                "script": "QcReport.py?DocType=DrugInformationSummary&DocVersion=0"
-              },
-              {
-                "label": "Publish Preview",
-                "script": "QcReport.py?DocType=DrugInformationSummary&ReportType=pp&DocVersion=0"
-              }
-            ]
-          },
-          {
             "label": "DIS Content Reports",
-            "children":[
+            "children": [
               {
                 "label": "DIS By Drug Type Report",
                 "script": "DISByDrugType.py"
@@ -1720,11 +1720,7 @@
         "children": [
           {
             "label": "Glossary QC Reports",
-            "children":[
-              {
-                "label": "Publish Preview",
-                "script": "QcReport.py?DocType=GlossaryTermName&ReportType=pp"
-              },
+            "children": [
               {
                 "label": "GTC QC Report",
                 "script": "QcReport.py?DocType=GlossaryTermConcept"
@@ -1742,6 +1738,10 @@
                 "script": "QcReport.py?DocType=GlossaryTermName&ReportType=gtnwc&DocVersion=0"
               },
               {
+                "label": "Publish Preview",
+                "script": "QcReport.py?DocType=GlossaryTermName&ReportType=pp"
+              },
+              {
                 "label": "Documents Linked to GTN",
                 "script": "GlossaryTermLinks.py"
               }
@@ -1749,7 +1749,7 @@
           },
           {
             "label": "Glossary Processing Reports",
-            "children":[
+            "children": [
               {
                 "label": "GTC by English Definition Status",
                 "script": "GlossaryConceptByDefinitionStatus.py?report=English"
@@ -1782,7 +1782,7 @@
           },
           {
             "label": "Glossary Search Reports",
-            "children":[
+            "children": [
               {
                 "label": "Keyword Search Report",
                 "script": "GlossaryKeywordSearchReport.py"
@@ -1799,7 +1799,7 @@
           },
           {
             "label": "Glossary Content Reports",
-            "children":[
+            "children": [
               {
                 "label": "HP Glossary Terms Report",
                 "script": "HPGlossaryTermsReport.py"
@@ -1816,10 +1816,31 @@
         "label": "Media Reports",
         "children": [
           {
-            "label": "Media Processing Reports",
-            "children":[
+            "label": "Media Content Reports",
+            "children": [
               {
-                "label": "Board Meeting Recording Tracking Report",
+                "label": "Media Doc QC Report",
+                "script": "QcReport.py?DocType=Media&ReportType=img&DocVersion=0"
+              },
+              {
+                "label": "Image Demographic Info Report",
+                "script": "ImageDemographicInformationReport.py"
+              },
+              {
+                "label": "Caption and Content Report",
+                "script": "MediaCaptionContent.py"
+              },
+              {
+                "label": "Media Images Report",
+                "script": "MediaLanguageCompare.py"
+              }
+            ]
+          },
+          {
+            "label": "Media Processing Reports",
+            "children": [
+              {
+                "label": "Meeting Recording Tracking",
                 "script": "RecordingTrackingReport.py"
               },
               {
@@ -1850,7 +1871,7 @@
           },
           {
             "label": "Find Media Documents",
-            "children":[
+            "children": [
               {
                 "label": "Advanced Search",
                 "script": "MediaSearch.py"
@@ -1866,29 +1887,8 @@
             ]
           },
           {
-            "label": "Media Content Reports",
-            "children":[
-              {
-                "label": "Image Demographic Information Report",
-                "script": "ImageDemographicInformationReport.py"
-              },
-              {
-                "label": "Media Caption and Content Report",
-                "script": "MediaCaptionContent.py"
-              },
-              {
-                "label": "Media Images Report",
-                "script": "MediaLanguageCompare.py"
-              },
-              {
-                "label": "Media Doc QC Report",
-                "script": "QcReport.py?DocType=Media&ReportType=img&DocVersion=0"
-              }
-            ]
-          },
-          {
             "label": "Media Usage Reports",
-            "children":[
+            "children": [
               {
                 "label": "Linked Media Documents",
                 "script": "MediaLinks.py"
@@ -1904,6 +1904,31 @@
       {
         "label": "Summary Reports",
         "children": [
+          {
+            "label": "Summary QC Reports",
+            "children": [
+              {
+                "label": "HP Bold/Underline QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=bu"
+              },
+              {
+                "label": "HP Redline/Strikeout QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=rs"
+              },
+              {
+                "label": "PT Bold/Underline QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=patbu"
+              },
+              {
+                "label": "PT Redline/Strikeout QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pat"
+              },
+              {
+                "label": "Publish Preview Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pp"
+              }
+            ]
+          },
           {
             "label": "Summary Processing Reports",
             "children": [
@@ -1939,7 +1964,7 @@
           },
           {
             "label": "Summary Content Reports",
-            "children":[
+            "children": [
               {
                 "label": "Metadata",
                 "script": "SummaryMetaData.py"
@@ -1974,7 +1999,7 @@
                 "script": "SummaryCitations.py"
               },
               {
-                "label": "Non-Journal Article Citations Report",
+                "label": "Non-Journal Article Citations",
                 "script": "SummariesWithNonJournalArticleCitations.py"
               },
               {
@@ -1992,33 +2017,8 @@
             ]
           },
           {
-            "label": "Summary QC Reports",
-            "children": [
-              {
-                "label": "HP Bold/Underline QC Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=bu"
-              },
-              {
-                "label": "HP Redline/Strikeout QC Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=rs"
-              },
-              {
-                "label": "PT Bold/Underline QC Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=patbu"
-              },
-              {
-                "label": "PT Redline/Strikeout QC Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pat"
-              },
-              {
-                "label": "Publish Preview Report",
-                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pp"
-              }
-            ]
-          },
-          {
             "label": "Summary Mailer Reports",
-            "children":[
+            "children": [
               {
                 "label": "Summary Mailer Report",
                 "script": "SummaryMailerReport.py?flavor=standard"
@@ -2048,7 +2048,7 @@
           },
           {
             "label": "Drug Term Reports",
-            "children":[
+            "children": [
               {
                 "label": "Drug Review Report",
                 "script": "DrugReviewReport.py"
@@ -2061,7 +2061,7 @@
           },
           {
             "label": "Term Hierarchy Reports",
-            "children":[
+            "children": [
               {
                 "label": "Term Hierarchy Tree",
                 "script": "TermHierarchyTree.py?prompt=yes"
@@ -2078,7 +2078,7 @@
           },
           {
             "label": "NCI Thesaurus (EVS)",
-            "children":[
+            "children": [
               {
                 "label": "EVS Concepts",
                 "script": "SyncWithEVS.py"
@@ -2100,7 +2100,7 @@
         "children": [
           {
             "label": "Board Member Information",
-            "children":[
+            "children": [
               {
                 "label": "Board Member Information QC Report",
                 "script": "QcReport.py?DocType=PDQBoardMemberInfo"
@@ -2198,7 +2198,7 @@
           },
           {
             "label": "Manage Locks",
-            "children":[
+            "children": [
               {
                 "label": "Clear FileSweeper Lock File",
                 "script": "clear-filesweeper-lockfile.py"
@@ -2207,12 +2207,12 @@
                 "label": "Unlock Media Sync Queue",
                 "script": "UnlockMedia.py"
               }
-    
+
             ]
           },
           {
             "label": "Manage Document Statuses",
-            "children":[
+            "children": [
               {
                 "label": "Unblock Document",
                 "script": "UnblockDoc.py"
@@ -2316,7 +2316,7 @@
           },
           {
             "label": "Drug Term Reports",
-            "children":[
+            "children": [
               {
                 "label": "Drug Review Report",
                 "script": "DrugReviewReport.py"
@@ -2329,7 +2329,7 @@
           },
           {
             "label": "Term Hierarchy Reports",
-            "children":[
+            "children": [
               {
                 "label": "Term Hierarchy Tree",
                 "script": "TermHierarchyTree.py?prompt=yes"

@@ -6,10 +6,10 @@
 #
 # JIRA::OCECDR-3800 - eliminated security vulnerabilities
 # ----------------------------------------------------------------------
-import sys
-import cdr
+from sys import exit as sys_exit
+from cdr import DEFAULT_LOGDIR, Logging
 from cdrapi import db
-import cdrcgi
+from cdrcgi import Controller, HTMLPage
 
 # ----------------------------------------------------------------------
 # Module level constants
@@ -50,8 +50,8 @@ _ST_JOB_VALID = ST_IN_PROCESS, ST_STOPPED, ST_COMPLETED, ST_ABORTED
 
 # Logging
 LOGNAME = "BatchJobs"
-LF = f"{cdr.DEFAULT_LOGDIR}/{LOGNAME}"
-LOGGER = cdr.Logging.get_logger(LOGNAME)
+LF = f"{DEFAULT_LOGDIR}/{LOGNAME}"
+LOGGER = Logging.get_logger(LOGNAME)
 
 
 # ------------------------------------------------------------------
@@ -598,7 +598,7 @@ class CdrBatch:
             self.fail("Database error queueing job: %s" % e)
 
         if not self.__conn.autocommit:
-            cdrcgi.bail("autocommit has been turned off")
+            Controller.bail("autocommit has been turned off")
 
         # Get the job id
         try:
@@ -680,7 +680,7 @@ class CdrBatch:
 
         # Exit here
         if exit:
-            sys.exit(1)
+            sys_exit(1)
 
     # ------------------------------------------------------------------
     # Check current status
@@ -798,18 +798,18 @@ class CdrBatch:
             action=opts.get("script"),
             subtitle=opts.get("subtitle") or self.getJobName(),
         )
-        title = opts.get("title", "").strip() or cdrcgi.Controller.TITLE
-        page = cdrcgi.HTMLPage(title, **opts)
+        title = opts.get("title", "").strip() or Controller.TITLE
+        page = HTMLPage(title, **opts)
         fieldset = page.fieldset("Report Queued for Background Processing")
-        parms = f"{cdrcgi.SESSION}={session}&jobId={self.__jobId}"
+        parms = f"{Controller.SESSION}={session}&jobId={self.__jobId}"
         url = f"getBatchStatus.py?{parms}"
         args = (
             "To monitor the status of the job, click this ",
-            cdrcgi.HTMLPage.B.A("link", href=url),
+            HTMLPage.B.A("link", href=url),
             ". You can also use the ",
-            cdrcgi.HTMLPage.B.EM("Batch Job Status"),
+            HTMLPage.B.EM("Batch Job Status"),
             " report on the ",
-            cdrcgi.HTMLPage.B.EM("Utilities"),
+            HTMLPage.B.EM("Utilities"),
             " menu.",
         )
         fieldset.append(page.B.P(*args))

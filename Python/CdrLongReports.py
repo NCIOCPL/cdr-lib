@@ -661,7 +661,7 @@ class URLChecker(BatchReport):
         """
 
         # pylint: disable=import-error, no-member
-        from requests.packages.urllib3.exceptions import InsecureRequestWarning
+        from urllib3.exceptions import InsecureRequestWarning
         requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
     class Page:
@@ -1885,7 +1885,8 @@ class CitationsInSummaries(BatchReport):
         """Base class for Citation and Summary"""
 
         HOST = Tier("PROD").hosts["APPC"]
-        URL = f"https://{HOST}{cdrcgi.BASE}/QcReport.py?DocId={{:d}}"
+        BASE = cdrcgi.Controller.BASE
+        URL = f"https://{HOST}{BASE}/QcReport.py?DocId={{:d}}"
 
         @cached_property
         def title(self):

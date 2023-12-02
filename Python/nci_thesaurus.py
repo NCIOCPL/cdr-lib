@@ -150,7 +150,7 @@ class EVS:
                 except Exception:
                     tries -= 1
                     if tries < 1:
-                        self.bail("EVS not available")
+                        raise Exception("EVS not available")
                     logger.exception("failure fetching concepts")
                     sleep(self.SLEEP)
         args = len(concepts), datetime.now() - start
