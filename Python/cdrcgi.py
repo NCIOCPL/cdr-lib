@@ -2338,8 +2338,9 @@ class HTMLPage(FormFieldFactory):
             ),
             self.B.CLASS("usa-banner__header")
         )
-        img = self.B.IMG(src="/images/icon-dot-gov.svg", role="img", alt="")
-        img.set("class", "usa-banner__guidance table:grid-col-6")
+        opts = dict(role="img", alt="")
+        img = self.B.IMG(src="/images/icon-dot-gov.svg", **opts)
+        img.set("class", "usa-banner__icon usa-media-block__img")
         img.set("aria-hidden", "true")
         dot_gov = self.B.DIV(
             img,
@@ -2363,7 +2364,7 @@ class HTMLPage(FormFieldFactory):
             "8c-5.979 0-10.843 4.77-10.996 10.712L15 19v9h22v-9c0-6.075-4.925-"
             "11-11-11z"
         )
-        path = self.B.E("path", file="#000000", d=path_data)
+        path = self.B.E("path", fill="#000000", d=path_data)
         path.set("fill-rule", "evenodd")
         svg = self.B.E(
             "svg",
@@ -2377,6 +2378,9 @@ class HTMLPage(FormFieldFactory):
             role="img",
             focusable="false"
         )
+        img = self.B.IMG(src="/images/icon-https.svg", **opts)
+        img.set("class", "usa-banner__icon usa-media-block__img")
+        img.set("aria-hidden", "true")
         svg.set("class", "usa-banner__lock-image")
         svg.set("aria-labelledby", "banner-lock-description")
         lock = self.B.DIV(
@@ -2391,8 +2395,8 @@ class HTMLPage(FormFieldFactory):
                     self.B.SPAN(svg, self.B.CLASS("icon-lock")),
                     " ) or ",
                     self.B.STRONG("https://"),
-                    " means you've safely connected to the .gov website. ",
-                    "Share sensitive information only on official secure ",
+                    " means you’ve safely connected to the .gov website. ",
+                    "Share sensitive information only on official, secure ",
                     "websites."
                 ),
                 self.B.CLASS("usa-media-block__body")
@@ -2406,7 +2410,7 @@ class HTMLPage(FormFieldFactory):
         content.set("id", "gov-banner-default")
         accordion = self.B.DIV(header, content, self.B.CLASS("usa-accordion"))
         banner = self.B.E("section", accordion, self.B.CLASS("usa-banner"))
-        official_website = self.OFFICIAL_WEBSITE[3:].capitalize()
+        official_website = f"O{self.OFFICIAL_WEBSITE[4:]}"
         banner.set("aria-label", official_website)
         return banner
 
