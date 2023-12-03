@@ -377,6 +377,10 @@
             "label": "Summary Content Reports",
             "children": [
               {
+                "label": "Current Markup",
+                "script": "SummariesWithMarkup.py"
+              },
+              {
                 "label": "Metadata",
                 "script": "SummaryMetaData.py"
               },
@@ -387,10 +391,6 @@
               {
                 "label": "Type of Comments",
                 "script": "SummaryComments.py"
-              },
-              {
-                "label": "Current Markup",
-                "script": "SummariesWithMarkup.py"
               },
               {
                 "label": "Standard Wording",
@@ -1014,6 +1014,10 @@
             "label": "Summary Content Reports",
             "children": [
               {
+                "label": "Current Markup",
+                "script": "SummariesWithMarkup.py"
+              },
+              {
                 "label": "Metadata",
                 "script": "SummaryMetaData.py"
               },
@@ -1024,10 +1028,6 @@
               {
                 "label": "Type of Comments",
                 "script": "SummaryComments.py"
-              },
-              {
-                "label": "Current Markup",
-                "script": "SummariesWithMarkup.py"
               },
               {
                 "label": "Standard Wording",
@@ -1966,6 +1966,10 @@
             "label": "Summary Content Reports",
             "children": [
               {
+                "label": "Current Markup",
+                "script": "SummariesWithMarkup.py"
+              },
+              {
                 "label": "Metadata",
                 "script": "SummaryMetaData.py"
               },
@@ -1976,10 +1980,6 @@
               {
                 "label": "Type of Comments",
                 "script": "SummaryComments.py"
-              },
-              {
-                "label": "Current Markup",
-                "script": "SummariesWithMarkup.py"
               },
               {
                 "label": "Standard Wording",
