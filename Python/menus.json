@@ -1359,7 +1359,7 @@
             "label": "Publishing Reports",
             "children": [
               {
-                "label": "Published Document Count (Latest Weekly Export Job)",
+                "label": "Published Document Count",
                 "script": "CountByDoctype.py"
               },
               {
