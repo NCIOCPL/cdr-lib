@@ -1179,7 +1179,7 @@
                 "script": "UnverifiedCitations.py"
               },
               {
-                "label": "Citations Linked to Summaries",
+                "label": "Citations In Summaries",
                 "script": "CitationsInSummaries.py"
               },
               {
@@ -2131,7 +2131,7 @@
                 "script": "UnverifiedCitations.py"
               },
               {
-                "label": "Citations Linked to Summaries",
+                "label": "Citations In Summaries",
                 "script": "CitationsInSummaries.py"
               },
               {
