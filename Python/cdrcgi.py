@@ -166,8 +166,7 @@ class FieldStorage:
     def __len__(self):
         """Dictionary-style len(x) support."""
         return len(self.keys())
-    def __repr__(self) -> str:
-        return "__repr__"
+
     def __str__(self):
         """Improve debugging/logging output."""
 
@@ -186,7 +185,6 @@ class FieldStorage:
         """Pass through the serialized string."""
         return str(self)
 
-
     class SimpleValue:
         """Basic name+value pairings."""
 
@@ -204,7 +202,6 @@ class FieldStorage:
         def __repr__(self) -> str:
             """Improve debugging/logging output."""
             return repr(self.value)
-
 
     class StreamedValue():
         """Items which might be a posted file or other streamed value."""
@@ -303,9 +300,9 @@ class Controller:
         self.__opts = opts
         self.logger.info("started %s", self.subtitle or "controller")
 
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
     # Top-level processing routines.
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
 
     def run(self):
         """Override in derived class if there are custom actions."""
@@ -379,9 +376,9 @@ class Controller:
         """Stub, to be overridden by real controllers."""
         return []
 
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
     # General-purpose utility methods.
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
 
     def load_group(self, group):
         """Fetch the active members of a named user group.
@@ -471,9 +468,9 @@ class Controller:
         session = session or self.session
         self.navigate_to(where, session, **params)
 
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
     # Routines specific to Summary reports.
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
 
     def add_audience_fieldset(self, page):
         """Add radio buttons for PDQ audience.
@@ -539,7 +536,8 @@ class Controller:
         elif not current:
             current = self.LANGUAGES[0]
         for value in self.LANGUAGES:
-            opts = dict(value=value, checked=value==current)
+            checked = value == current
+            opts = dict(value=value, checked=checked)
             fieldset.append(page.radio_button("language", **opts))
         page.form.append(fieldset)
 
@@ -633,9 +631,9 @@ class Controller:
         OD = OrderedDict
         return OD([(board.id, board.short_name) for board in boards])
 
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
     # Static and class methods.
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
     @staticmethod
     def add_date_range_to_caption(caption, start, end):
         """Format caption with date range (we do this a lot).
@@ -673,11 +671,12 @@ class Controller:
 
         class ErrorPage(HTMLPage):
             def __init__(self, message, extra):
-                HTMLPage.__init__(self, "CDR Error") #, **opts)
+                HTMLPage.__init__(self, "CDR Error")
                 self.message = message
                 self.extra = extra
                 if extra and not isinstance(extra, (list, tuple)):
                     self.extra = [extra]
+
             @cached_property
             def main(self):
                 alert_body = self.B.DIV(
@@ -823,9 +822,9 @@ function {function_name}(value) {{
         jQuery(".{class_name}").hide();
 }}"""
 
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
     # Instance properties.
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
 
     @cached_property
     def alerts(self):
@@ -1060,7 +1059,10 @@ function {function_name}(value) {{
         if isinstance(session, bytes):
             session = str(session, "ascii")
         if isinstance(session, str):
-            session = Session(session)
+            try:
+                session = Session(session)
+            except Exception as e:
+                self.bail("Invalid or expired session.")
         if not isinstance(session, Session):
             raise Exception(f"{session}: Not a session object")
         return session
@@ -1415,7 +1417,7 @@ class FormFieldFactory:
             with a separating SPAN between
         """
 
-        opts = dict(**kwargs) #, wrapper_classes="usa-form-group")
+        opts = dict(**kwargs)
         wrapper = cls.__wrapper(name, **opts)
         inner = cls.B.DIV(cls.B.CLASS("date-range-fields"))
         wrapper.append(inner)
@@ -1955,35 +1957,14 @@ class HTMLPage(FormFieldFactory):
     VERSION = "202101071440"
     USWDS = "https://cdnjs.cloudflare.com/ajax/libs/uswds/3.6.0"
     APIS = "https://ajax.googleapis.com/ajax/libs"
-    JQUERY = f"{APIS}/jquery/3.6.0/jquery.min.js"
-    JQUERY_UI = f"{APIS}/jqueryui/1.12.1/jquery-ui.min.js"
-    JQUERY_CSS = f"{APIS}/jqueryui/1.12.1/themes/smoothness/jquery-ui.css"
+    JQUERY = "/js/jquery-3.7.1.min.js"
+    JQUERY_UI = "/js/jquery-ui-1.13.2.min.js"
+    JQUERY_CSS = "/stylesheets/jquery-ui-1.13.2.css"
     CSS_LINKS = (
-        dict(
-            href=f"{USWDS}/css/uswds.min.css",
-            rel="stylesheet",
-        ),
-        dict(
-            href=(
-                "https://code.jquery.com/ui/1.13.0-rc.3/themes"
-                "/smoothness/jquery-ui.css"
-            ),
-            rel="stylesheet",
-        ),
+        dict(href="/uswds/css/uswds.min.css", rel="stylesheet"),
+        dict(href=JQUERY_CSS, rel="stylesheet"),
     )
-    SCRIPT_LINKS = (
-        dict(
-            src="https://code.jquery.com/jquery-3.6.0.min.js",
-            integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=",
-            crossorigin="anonymous",
-        ),
-        dict(
-            src="https://code.jquery.com/ui/1.13.0/jquery-ui.min.js",
-            integrity="sha256-hlKLmzaRlE8SCJC1Kw8zoUbU8BxA+8kR3gseuKfMjxA=",
-            crossorigin="anonymous",
-            defer=None,
-        ),
-    )
+    SCRIPT_LINKS = dict(src=JQUERY), dict(src=JQUERY_UI)
     PRIMARY_FORM_ID = "primary-form"
     STRING_OPTS = dict(pretty_print=True, doctype="<!DOCTYPE html>")
     OFFICIAL_WEBSITE = "An official website of the United States government"
@@ -2045,9 +2026,9 @@ class HTMLPage(FormFieldFactory):
         self.__title = title
         self.__opts = kwargs
 
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
     # Instance methods.
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
 
     def add_alert(self, message, **kwargs):
         """Add a prominent notification at the top of the main content.
@@ -2115,7 +2096,7 @@ class HTMLPage(FormFieldFactory):
 
     def add_uswds_script(self):
         """Separated out to be done at the last minute."""
-        self.body.append(self.B.SCRIPT(src=f"{self.USWDS}/js/uswds.min.js"))
+        self.body.append(self.B.SCRIPT(src="/uswds/js/uswds.min.js"))
 
     def add_script(self, script):
         """Add script code directly to the page."""
@@ -2126,7 +2107,8 @@ class HTMLPage(FormFieldFactory):
 
         if self.form is not None:
             if not self.form.xpath(f"//input[@name='{Controller.SESSION}']"):
-                self.form.append(self.hidden_field(Controller.SESSION, session))
+                field = self.hidden_field(Controller.SESSION, session)
+                self.form.append(field)
 
     def create_sidenav_item(self, positions, menu, labels):
         """Create a list item for the sidebar menu (possibly recursively).
@@ -2285,9 +2267,9 @@ class HTMLPage(FormFieldFactory):
         opts = dict(self.STRING_OPTS, encoding="unicode")
         return lxml_html.tostring(self.html, **opts)
 
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
     # Instance properties.
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
 
     @cached_property
     def action(self):
@@ -2534,11 +2516,17 @@ class HTMLPage(FormFieldFactory):
             self.B.META(charset="utf-8"),
             http_equiv,
             self.B.META(name="viewport", content=viewport),
-            self.B.META(name="description", content="CDR Administration Tools"),
-            self.B.META(name="author", content="Bob Kline and Volker Englisch"),
+            self.B.META(
+                name="description",
+                content="CDR Administration Tools"
+            ),
+            self.B.META(
+                name="author",
+                content="Bob Kline and Volker Englisch"
+            ),
             self.B.TITLE(self.head_title),
             self.B.LINK(href="/favicon.ico", rel="icon"),
-            self.B.SCRIPT(src=f"{self.USWDS}/js/uswds-init.min.js")
+            self.B.SCRIPT(src="/uswds/js/uswds-init.min.js")
         )
         for attrs in self.stylesheets:
             element = self.B.LINK()
@@ -2571,7 +2559,7 @@ class HTMLPage(FormFieldFactory):
             ".hidden { display: none; }",
             ".nowrap { white-space: nowrap; }",
             ".usa-table td.text-bold { font-weight: bold; }",
-            ".report .usa-table { xxxtable-layout: fixed; width: 100%; }",
+            ".report .usa-table { width: 100%; }",
             ".report .usa-table td { word-wrap: break-word; }",
             ".break-all, .break-all * { word-break: break-all; }",
             f".usa-form a:visited {{ color: {self.LINK_COLOR}; }}",
@@ -2691,7 +2679,7 @@ class HTMLPage(FormFieldFactory):
     @cached_property
     def html(self):
         """Top-level object for the page."""
-        return  self.B.HTML(self.head, self.body)
+        return self.B.HTML(self.head, self.body)
 
     @cached_property
     def main(self):
@@ -2797,13 +2785,13 @@ class HTMLPage(FormFieldFactory):
             return script_attrs
         if scripts is not None:
             self.session.logger.warning("bogus scripts %r", scripts)
-        query = db.Query("ctl", "val")
-        query.where("grp = 'cdn'")
-        query.where("name = 'cgi-js'")
-        query.where("inactivated IS NULL")
-        row = query.execute(self.cursor).fetchone()
-        if row:
-            return load_json_string(row.val)
+        #query = db.Query("ctl", "val")
+        #query.where("grp = 'cdn'")
+        #query.where("name = 'cgi-js'")
+        #query.where("inactivated IS NULL")
+        #row = query.execute(self.cursor).fetchone()
+        #if row:
+        #    return load_json_string(row.val)
         return self.SCRIPT_LINKS
 
     @cached_property
@@ -2841,9 +2829,9 @@ class HTMLPage(FormFieldFactory):
                 allowed.append(menus[label])
         return allowed or [menus["Guest"]]
 
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
     # Method not requiring an instance.
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
 
     @classmethod
     def make_footer(cls, session=None):
@@ -2937,9 +2925,9 @@ class Reporter:
         self.__tables = tables
         self.__opts = opts
 
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
     # Instance method.
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
 
     def send(self, format="html"):
         """Send the web page or Excel workbook to the browser.
@@ -2959,9 +2947,9 @@ class Reporter:
             self.page.send()
         sys_exit(0)
 
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
     # Instance properties.
-    #----------------------------------------------------------------
+    # ----------------------------------------------------------------
 
     @cached_property
     def css(self):
@@ -3076,7 +3064,6 @@ class Reporter:
     def wrap(self):
         return self.__opts.get("wrap", True)
 
-
     class Cell:
         """Data for one cell in a report table."""
 
@@ -3164,7 +3151,7 @@ class Reporter:
             if isinstance(values, bytes):
                 try:
                     values = str(values, encoding="utf-8")
-                except:
+                except Exception:
                     values = str(values)
             book.write(rownum, colnum, values, styles)
             return nextcol
@@ -3321,7 +3308,6 @@ class Reporter:
                     values.append(value)
             return values or [""]
 
-
     class Column:
         """Header and properties for one column in a report table."""
 
@@ -3374,7 +3360,6 @@ class Reporter:
         def width(self):
             """Minimum width of column (e.g., '40px')."""
             return self.__opts.get("width")
-
 
     class Table:
         """Grid of rows and columns for the report.
@@ -3990,7 +3975,6 @@ class AdvancedSearch(FormFieldFactory):
     def valid_values(self):
         return dict(getDoctype("guest", self.DOCTYPE).vvLists)
 
-
     class Form(HTMLPage):
         TITLE = "CDR Advanced Search"
         MATCH_ALL_HELP = "If unchecked any field match will succeed."
@@ -4023,7 +4007,6 @@ class AdvancedSearch(FormFieldFactory):
                 fieldset.append(self.checkbox("match_all", **opts))
             else:
                 self.form.append(self.hidden_field("match_all", "yes"))
-
 
     class ResultsPage(HTMLPage):
 
@@ -4095,7 +4078,6 @@ class AdvancedSearch(FormFieldFactory):
         def sidenav(self):
             return None
 
-
     class QueryField:
         """Information used to plug one field into the search query."""
 
@@ -4112,7 +4094,6 @@ class AdvancedSearch(FormFieldFactory):
 
             self.var = var
             self.selectors = selectors
-
 
     class Query:
         """Builds a database query for an advanced search.

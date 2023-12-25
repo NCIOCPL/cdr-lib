@@ -5951,7 +5951,7 @@ def removeLockFile(fname):
     # It is illegal to remove a lock created by another process
     if fname not in _lockedFiles:
         raise Exception('File "%s" not locked in this process' % fname)
-    del(_lockedFiles[fname])
+    del _lockedFiles[fname]
 
     # If we got here, this ought to work, propagate exception if it fails
     os.remove(fname)

@@ -22,7 +22,7 @@
             "children": [
               {
                 "label": "Board Member QC Report",
-                "script": "QCR.py?DocType=PDQBoardMemberInfo"
+                "script": "QcReport.py?DocType=PDQBoardMemberInfo"
               },
               {
                 "label": "Board Roster Reports",

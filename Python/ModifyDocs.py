@@ -790,7 +790,6 @@ Run completed.
                 fp.write("    fp.write(repr(response))\n")
                 fp.write("print 'response in {}'\n".format(log))
 
-
     class Normalizer:
         """Object which prepares an XML document for comparison."""
 

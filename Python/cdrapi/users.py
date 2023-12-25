@@ -168,10 +168,13 @@ class Session:
         """
         Determine whether the account can perform a specific action
 
+        Hands off the real work to the session's User object.
+
         Called by:
           cdr.canDo()
           client XML wrapper command CdrCanDo
           numerous internal API methods
+          many CDR Admin CGI scripts
 
         Pass:
           action - string for the name of the action
@@ -189,14 +192,7 @@ class Session:
             self.log("Session.can_do({}, {})".format(action, doctype))
         else:
             self.log("Session.can_do({})".format(action))
-        query = db.Query("grp_usr", "COUNT(*)")
-        query.join("grp_action", "grp_action.grp = grp_usr.grp")
-        query.join("action", "action.id = grp_action.action")
-        query.join("doc_type", "doc_type.id = grp_action.doc_type")
-        query.where(query.Condition("grp_usr.usr", self.user_id))
-        query.where(query.Condition("action.name", action))
-        query.where(query.Condition("doc_type.name", doctype or ""))
-        return query.execute(self.cursor).fetchall()[0][0] > 0
+        return self.user.can_do(action, doctype=doctype)
 
     def get_permissions(self):
         """
@@ -1205,6 +1201,30 @@ class Session:
                 else:
                     self._groups = None
             return self._groups
+
+        def can_do(self, action, **opts):
+            """True if the account is allowed to perform the specified action.
+
+            Required positional argument:
+              action - string identifying the action in question
+
+            Optional keyword arguments:
+              doctype - string identifing the document type on which the
+                        action may or may not be performed
+
+            Return:
+              True if the action is allowed for the account, else False
+            """
+
+            doctype = opts.get("doctype") or ""
+            query = db.Query("grp_usr", "COUNT(*) as n")
+            query.join("grp_action", "grp_action.grp = grp_usr.grp")
+            query.join("action", "action.id = grp_action.action")
+            query.join("doc_type", "doc_type.id = grp_action.doc_type")
+            query.where(query.Condition("grp_usr.usr", self.id))
+            query.where(query.Condition("action.name", action))
+            query.where(query.Condition("doc_type.name", doctype))
+            return query.execute(self.session.cursor).fetchone().n > 0
 
         def save(self, password=None):
             """

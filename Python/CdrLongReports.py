@@ -1664,7 +1664,7 @@ class PronunciationRecordingsReport(BatchReport):
                    "Comments", "Last Version Publishable?",
                    "Date First Published", "Date Last Modified",
                    "Published Date")
-        assert(len(widths) == len(headers))
+        assert len(widths) == len(headers)
         for i, width in enumerate(widths, start=1):
             self.excel.set_width(i, width)
         lang = {"en": "English", "es": "Spanish"}.get(self.language, "ALL")
@@ -1879,7 +1879,9 @@ class CitationsInSummaries(BatchReport):
     @cached_property
     def table(self):
         """Table for the report's single worksheet."""
-        return cdrcgi.Reporter.Table(self.rows, logger=self.logger, **self.OPTS)
+
+        opts = dict(logger=self.logger, **self.OPTS)
+        return cdrcgi.Reporter.Table(self.rows, **opts)
 
     class Document:
         """Base class for Citation and Summary"""
@@ -1957,7 +1959,6 @@ class CitationsInSummaries(BatchReport):
                 summaries.append(self.control.summaries[row.id])
             return summaries
 
-
     class Summary(Document):
         """Summary linking to one or more citations included in the report."""
 
@@ -1994,7 +1995,6 @@ class CitationsInSummaries(BatchReport):
             url = self.URL.format(self.id)
             link = cdrcgi.Reporter.Cell(self.id, center=True, href=url)
             return [link, self.title, self.boards]
-
 
     @classmethod
     def test_harness(cls):

@@ -439,6 +439,9 @@ class Normalizer:
             if key != self.normalized_name:
                 if key not in normalized_other_names:
                     normalized_other_names[key] = other_name
+                elif hasattr(other_name, "approved") and other_name.approved:
+                    if not normalized_other_names[key].approved:
+                        normalized_other_names[key] = other_name
         return normalized_other_names
 
 
