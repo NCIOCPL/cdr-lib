@@ -1978,11 +1978,11 @@ class HTMLPage(FormFieldFactory):
         (DEV_SA, "Developers"),
     )
     MENU_PARMS = {
-        "GlossaryConceptByDefinitionStatus.py": ["report"],
-        "Help.py": ["id"],
-        "InterventionAndProcedureTerms.py": ["IncludeAlternateNames"],
-        "QCReport.py": ["DocType", "ReportType"],
-        "SummaryMailerReport.py": ["flavor"],
+        "glossaryconceptbydefinitionstatus.py": ["report"],
+        "help.py": ["id"],
+        "interventionandprocedureterms.py": ["IncludeAlternateNames"],
+        "qcreport.py": ["DocType", "ReportType"],
+        "summarymailerreport.py": ["flavor"],
     }
 
     def __init__(self, title, **kwargs):
@@ -2143,6 +2143,34 @@ class HTMLPage(FormFieldFactory):
                 item.append(ul)
         return item
 
+    def filter_menu(self, menu):
+        """Remove menu items the user is not allowed to use.
+
+        Required positional argument:
+          menu - nested dictionary of menu items
+
+        Return:
+          pruned menu or None if no actions are allowed
+        """
+
+        label = menu["label"]
+        children = []
+        for child in menu["children"]:
+            if child.get("children"):
+                child = self.filter_menu(child)
+                if child:
+                    children.append(child)
+            else:
+                permission = child.get("permission")
+                if not permission or permission in self.user_permissions:
+                    children.append(child)
+                else:
+                    args = child["label"], permission
+                    self.control.logger.info("skipping %s (%s)", *args)
+        if not children:
+            return None
+        return dict(label=label, children=children)
+
     def find_matching_path(self, menu):
         """Find menu path matching the current page.
 
@@ -2207,7 +2235,8 @@ class HTMLPage(FormFieldFactory):
         else:
             script, parms = script, ""
         self.control.logger.debug("page script is %s", self.control.script)
-        if self.control.script != script:
+        script = script.lower()
+        if self.control.script.lower() != script:
             return False
         if script not in self.MENU_PARMS:
             return True
@@ -2219,7 +2248,7 @@ class HTMLPage(FormFieldFactory):
             fields_value = self.control.fields.getvalue(name)
             if menu_value != fields_value:
                 args = name, menu_value, fields_value
-                self.control.logger.info("parm %s: %s vs %s", *args)
+                self.control.logger.debug("parm %s: %s vs %s", *args)
                 return False
         return True
 
@@ -2490,7 +2519,7 @@ class HTMLPage(FormFieldFactory):
     @cached_property
     def footer(self):
         """Links at the bottom of the page."""
-        return self.make_footer(self.session)
+        return self.make_footer(self.session, self.user)
 
     @cached_property
     def form(self):
@@ -2542,6 +2571,7 @@ class HTMLPage(FormFieldFactory):
             head.append(element)
         style = (
             "@media (min-width:30em){ .usa-form { max-width: none; }}",
+            ".usa-nav__primary { margin-right: 1rem; }",
             ".usa-fieldset { margin-bottom: 2rem; }",
             ".usa-label { font-weight: bold; max-width: none; }",
             ".usa-form .usa-input--xl,",
@@ -2744,8 +2774,6 @@ class HTMLPage(FormFieldFactory):
             menu = self.current_path[0]
         else:
             return None
-            path_labels = []
-            menu = self.user_menus[0]
         if self.session:
             self.session.logger.info("path labels: %r", path_labels)
         positions = [menu_labels.index(menu["label"])]
@@ -2826,19 +2854,41 @@ class HTMLPage(FormFieldFactory):
         allowed = []
         for group, label in self.MENUS:
             if group in self.user.groups:
-                allowed.append(menus[label])
+                menu = self.filter_menu(menus[label])
+                if menu:
+                    allowed.append(menu)
         return allowed or [menus["Guest"]]
+
+    @cached_property
+    def user_permissions(self):
+        """Set of actions the user is allowed to perform."""
+
+        query = db.Query("grp_action ga", "a.name", "t.name")
+        query.join("grp_usr gu", "gu.grp = ga.grp")
+        query.join("action a", "a.id = ga.action")
+        query.join("doc_type t", "t.id = ga.doc_type")
+        query.where(query.Condition("gu.usr", self.user.id))
+        rows = query.execute(self.session.cursor).fetchall()
+        actions = set()
+        for action, doctype in rows:
+            if doctype:
+                actions.add(f"{action}:{doctype}")
+            else:
+                actions.add(action)
+        return actions
+
 
     # ----------------------------------------------------------------
     # Method not requiring an instance.
     # ----------------------------------------------------------------
 
     @classmethod
-    def make_footer(cls, session=None):
+    def make_footer(cls, session=None, user=None):
         """Pull this out so it can be used from elsewhere.
 
         Optional keyword argument:
           session - current session for this request
+          user - account which is currently logged in
         """
 
         li_classes = " ".join([
@@ -2866,6 +2916,10 @@ class HTMLPage(FormFieldFactory):
             link = cls.B.A(label, cls.B.CLASS(link_class), href=href)
             if new_tab:
                 link.set("target", "_blank")
+            if label == "Log Out":
+                fullname = user.fullname
+                name = user.name
+                link.set("title", f"Logged in as {fullname} ({name}).")
             links.append(cls.B.LI(link, cls.B.CLASS(li_classes)))
         nav = cls.B.E(
             "nav",

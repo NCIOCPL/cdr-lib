@@ -513,7 +513,8 @@
               },
               {
                 "label": "URL Check",
-                "script": "CheckUrls.py"
+                "script": "CheckUrls.py",
+                "permission": "RUN LONG REPORT"
               }
             ]
           },
@@ -533,11 +534,13 @@
         "children": [
           {
             "label": "Audio Download",
-            "script": "FtpAudio.py"
+            "script": "FtpAudio.py",
+            "permission": "AUDIO DOWNLOAD"
           },
           {
             "label": "Audio Import",
-            "script": "LoadGlossaryAudioFiles.py"
+            "script": "LoadGlossaryAudioFiles.py",
+            "permission": "AUDIO IMPORT"
           },
           {
             "label": "Audio Request Spreadsheet",
@@ -545,7 +548,9 @@
           },
           {
             "label": "Audio Review Glossary Term",
-            "script": "GlossaryTermAudioReview.py"
+            "script": "GlossaryTermAudioReview.py",
+            "permission": "REVIEW TERM AUDIO"
+
           }
         ]
       },
@@ -554,7 +559,8 @@
         "children": [
           {
             "label": "SummaryMailers (Advisory Board)",
-            "script": "SummaryMailerReqForm.py"
+            "script": "SummaryMailerReqForm.py",
+            "permission": "SUMMARY MAILERS"
           },
           {
             "label": "PDQ\u00ae Board Member Correspondence Mailers",
@@ -671,7 +677,9 @@
               },
               {
                 "label": "URL Check",
-                "script": "CheckUrls.py"
+                "script": "CheckUrls.py",
+                "permission": "RUN LONG REPORT"
+
               }
             ]
           },
@@ -1180,7 +1188,9 @@
               },
               {
                 "label": "Citations In Summaries",
-                "script": "CitationsInSummaries.py"
+                "script": "CitationsInSummaries.py",
+                "permission": "RUN LONG REPORT"
+
               },
               {
                 "label": "New Citations Report",
@@ -1290,7 +1300,8 @@
         "children": [
           {
             "label": "Create World Server Translated Summary",
-            "script": "post-translated-summary.py"
+            "script": "post-translated-summary.py",
+            "permission": "CREATE WS SUMMARIES"
           },
           {
             "label": "Fetch English Summary For Translation",
@@ -1298,7 +1309,8 @@
           },
           {
             "label": "Translation Job Queues",
-            "script": "TranslationJobQueues.py"
+            "script": "TranslationJobQueues.py",
+            "permission": "MANAGE TRANSLATION QUEUE"
           }
         ]
       },
@@ -1327,7 +1339,8 @@
           },
           {
             "label": "Update Pre-Medline Citations",
-            "script": "UpdatePreMedlineCitations.py"
+            "script": "UpdatePreMedlineCitations.py",
+            "permission": "MODIFY DOCUMENT:Citation"
           }
         ]
       }
@@ -1341,15 +1354,18 @@
         "children": [
           {
             "label": "Publishing - Create Job",
-            "script": "Publishing.py"
+            "script": "Publishing.py",
+            "permission": "USE PUBLISHING SYSTEM"
           },
           {
             "label": "Publishing - Fail Job",
-            "script": "FailBatchJob.py"
+            "script": "FailBatchJob.py",
+            "permission": "SET_SYS_VALUE"
           },
           {
             "label": "Re-Publishing",
-            "script": "Republish.py"
+            "script": "Republish.py",
+            "permission": "USE PUBLISHING SYSTEM"
           },
           {
             "label": "Filter Document",
@@ -1377,7 +1393,8 @@
             "children": [
               {
                 "label": "SummaryMailers (Advisory Board)",
-                "script": "SummaryMailerReqForm.py"
+                "script": "SummaryMailerReqForm.py",
+                "permission": "SUMMARY MAILERS"
               },
               {
                 "label": "PDQ\u00ae Board Member Correspondence Mailers",
@@ -1399,11 +1416,13 @@
               },
               {
                 "label": "Install Client File",
-                "script": "InstallClientFile.py"
+                "script": "InstallClientFile.py",
+                "permission": "MANAGE CLIENT FILES"
               },
               {
                 "label": "Remove Client File",
-                "script": "RemoveClientFile.py"
+                "script": "RemoveClientFile.py",
+                "permission": "MANAGE CLIENT FILES"
               },
               {
                 "label": "XMetaL CDR Icons",
@@ -1416,7 +1435,8 @@
             "children": [
               {
                 "label": "Control Values",
-                "script": "EditControlValues.py"
+                "script": "EditControlValues.py",
+                "permission": "SET_SYS_VALUE"
               },
               {
                 "label": "Linking Tables",
@@ -1432,7 +1452,8 @@
               },
               {
                 "label": "Value Tables",
-                "script": "edit-value-table.py"
+                "script": "edit-value-table.py",
+                "permission": "MANAGE DB TABLES"
               },
               {
                 "label": "Database Tables/Columns",
@@ -1453,7 +1474,8 @@
               },
               {
                 "label": "Post Schema",
-                "script": "post-schema.py"
+                "script": "post-schema.py",
+                "permission": "MODIFY DOCUMENT:schema"
               },
               {
                 "label": "Show Schema",
@@ -1470,8 +1492,7 @@
               },
               {
                 "label": "Manage Filter Sets",
-                "script": "EditFilterSets.py"
-              }
+                "script": "EditFilterSets.py"              }
             ]
           },
           {
@@ -1493,22 +1514,26 @@
           },
           {
             "label": "Scheduled Jobs",
-            "script": "Scheduler.py"
+            "script": "Scheduler.py",
+            "permission": "MANAGE SCHEDULER"
           },
           {
             "label": "Server Settings",
             "children": [
               {
                 "label": "Configuration Files",
-                "script": "EditConfig.py"
+                "script": "EditConfig.py",
+                "permission": "SET_SYS_VALUE"
               },
               {
                 "label": "Fetch Tier Settings",
-                "script": "fetch-tier-settings.py?prompt=yes"
+                "script": "fetch-tier-settings.py?prompt=yes",
+                "permission": "GET SYS CONFIG"
               },
               {
                 "label": "Manage Glossary Servers",
-                "script": "glossary-servers.py"
+                "script": "glossary-servers.py",
+                "permission": "MANAGE GLOSSARY SERVERS"
               }
             ]
           }
@@ -1623,7 +1648,9 @@
               },
               {
                 "label": "URL Check",
-                "script": "CheckUrls.py"
+                "script": "CheckUrls.py",
+                "permission": "RUN LONG REPORT"
+
               }
             ]
           },
@@ -2132,7 +2159,9 @@
               },
               {
                 "label": "Citations In Summaries",
-                "script": "CitationsInSummaries.py"
+                "script": "CitationsInSummaries.py",
+                "permission": "RUN LONG REPORT"
+
               },
               {
                 "label": "New Citations Report",
@@ -2184,7 +2213,8 @@
             "children": [
               {
                 "label": "View Server Logs",
-                "script": "log-tail.py"
+                "script": "log-tail.py",
+                "permission": "VIEW LOGS"
               },
               {
                 "label": "View Client Logs",
@@ -2201,11 +2231,13 @@
             "children": [
               {
                 "label": "Clear FileSweeper Lock File",
-                "script": "clear-filesweeper-lockfile.py"
+                "script": "clear-filesweeper-lockfile.py",
+                "permission": "MANAGE SCHEDULER"
               },
               {
                 "label": "Unlock Media Sync Queue",
-                "script": "UnlockMedia.py"
+                "script": "UnlockMedia.py",
+                "permission": "USE PUBLISHING SYSTEM"
               }
 
             ]
@@ -2229,7 +2261,8 @@
           },
           {
             "label": "Email Logged-in Users",
-            "script": "MessageLoggedInUsers.py"
+            "script": "MessageLoggedInUsers.py",
+            "permission": "EMAIL USERS"
           },
           {
             "label": "Replace CWD with Older Version",
