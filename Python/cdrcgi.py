@@ -2164,7 +2164,7 @@ class HTMLPage(FormFieldFactory):
                 permission = child.get("permission")
                 if not permission or permission in self.user_permissions:
                     children.append(child)
-                else:
+                elif self.control:
                     args = child["label"], permission
                     self.control.logger.info("skipping %s (%s)", *args)
         if not children:
@@ -2742,15 +2742,6 @@ class HTMLPage(FormFieldFactory):
         """Load the CDR administrative menu structures."""
         return self.load_menus()
 
-    @staticmethod
-    def load_menus():
-        """Separated out so other tools can use it."""
-
-        directory = Path(__file__).parent
-        path = directory / "menus.json"
-        with path.open(encoding="utf-8") as fp:
-            return load_json_file(fp)
-
     @cached_property
     def method(self):
         """CGI verb to be used for form submission."""
@@ -2760,37 +2751,6 @@ class HTMLPage(FormFieldFactory):
     def news(self):
         """Information to be displayed at the top of the menu pages."""
         return getControlGroup("news")
-
-    @cached_property
-    def sidenav(self):
-        """Menu on the left sidebar."""
-
-        if self.suppress_sidenav:
-            return None
-        ul = self.B.UL(self.B.CLASS("usa-sidenav"))
-        menu_labels = [m["label"] for m in self.menus]
-        if self.current_path:
-            path_labels = [p["label"] for p in self.current_path]
-            menu = self.current_path[0]
-        else:
-            return None
-        if self.session:
-            self.session.logger.info("path labels: %r", path_labels)
-        positions = [menu_labels.index(menu["label"])]
-        for i, child in enumerate(menu["children"]):
-            args = positions + [i], child, path_labels
-            ul.append(self.create_sidenav_item(*args))
-        return self.B.E("nav", ul)
-
-    @cached_property
-    def suppress_sidenav(self):
-        """Override to provide more nuanced logic."""
-        return True if self.__opts.get("suppress_sidenav") else False
-
-    @cached_property
-    def title(self):
-        """Browser title for the page."""
-        return self.__title or ""
 
     @cached_property
     def scripts(self):
@@ -2830,14 +2790,45 @@ class HTMLPage(FormFieldFactory):
         return Session(session) if isinstance(session, str) else session
 
     @cached_property
-    def stylesheets(self):
-        """CSS rules to be loaded for the page."""
-        return self.CSS_LINKS
+    def sidenav(self):
+        """Menu on the left sidebar."""
+
+        if self.suppress_sidenav:
+            return None
+        ul = self.B.UL(self.B.CLASS("usa-sidenav"))
+        menu_labels = [m["label"] for m in self.menus]
+        if self.current_path:
+            path_labels = [p["label"] for p in self.current_path]
+            menu = self.current_path[0]
+        else:
+            return None
+        if self.session:
+            self.session.logger.info("path labels: %r", path_labels)
+        positions = [menu_labels.index(menu["label"])]
+        for i, child in enumerate(menu["children"]):
+            args = positions + [i], child, path_labels
+            ul.append(self.create_sidenav_item(*args))
+        return self.B.E("nav", ul)
 
     @cached_property
     def subtitle(self):
         """Shown at the top of the page in an H1 element (badly named)."""
         return self.__opts.get("subtitle")
+
+    @cached_property
+    def suppress_sidenav(self):
+        """Override to provide more nuanced logic."""
+        return True if self.__opts.get("suppress_sidenav") else False
+
+    @cached_property
+    def stylesheets(self):
+        """CSS rules to be loaded for the page."""
+        return self.CSS_LINKS
+
+    @cached_property
+    def title(self):
+        """Browser title for the page."""
+        return self.__title or ""
 
     @cached_property
     def user(self):
@@ -2881,6 +2872,15 @@ class HTMLPage(FormFieldFactory):
     # ----------------------------------------------------------------
     # Method not requiring an instance.
     # ----------------------------------------------------------------
+
+    @staticmethod
+    def load_menus():
+        """Separated out so other tools can use it."""
+
+        directory = Path(__file__).parent
+        path = directory / "menus.json"
+        with path.open(encoding="utf-8") as fp:
+            return load_json_file(fp)
 
     @classmethod
     def make_footer(cls, session=None, user=None):
