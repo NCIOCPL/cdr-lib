@@ -140,10 +140,19 @@ class EVS:
                     if not response.ok:
                         raise Exception(response.reason)
                     values = response.json()
-                    if not values.get("total"):
+                    total = values.get("total")
+                    if not total:
                         done = True
                         break
-                    concepts += values.get("concepts")
+                    chunk = values.get("concepts")
+                    if not chunk:
+                        logger.info("api=%s; parms=%s", api, parms)
+                        logger.error("no concepts in %s", values)
+                        raise Exception("EVS response has no concepts")
+                    concepts += chunk
+                    if len(concepts) >= total:
+                        done = True
+                        break
                     parms["fromRecord"] += self.BATCH_SIZE
                     sleep(self.SLEEP)
                     break
