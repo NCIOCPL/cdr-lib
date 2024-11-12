@@ -321,7 +321,7 @@ class EVS:
                 for value in values:
                     row.append(page.B.TD(str(value)))
                 body.append(row)
-            page.form.append(table)
+            page.wrapper.append(table)
 
         # Add any new CDR Term documents requested.
         if creates:
@@ -363,7 +363,7 @@ class EVS:
                 for value in values:
                     row.append(page.B.TD(value))
                 body.append(row)
-            page.form.append(table)
+            page.wrapper.append(table)
 
     @staticmethod
     def __map_concepts(concepts):
@@ -448,6 +448,9 @@ class Normalizer:
             if key != self.normalized_name:
                 if key not in normalized_other_names:
                     normalized_other_names[key] = other_name
+                elif hasattr(other_name, "approved") and other_name.approved:
+                    if not normalized_other_names[key].approved:
+                        normalized_other_names[key] = other_name
         return normalized_other_names
 
 

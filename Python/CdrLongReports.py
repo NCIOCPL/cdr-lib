@@ -661,7 +661,7 @@ class URLChecker(BatchReport):
         """
 
         # pylint: disable=import-error, no-member
-        from requests.packages.urllib3.exceptions import InsecureRequestWarning
+        from urllib3.exceptions import InsecureRequestWarning
         requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
     class Page:
@@ -1664,7 +1664,7 @@ class PronunciationRecordingsReport(BatchReport):
                    "Comments", "Last Version Publishable?",
                    "Date First Published", "Date Last Modified",
                    "Published Date")
-        assert(len(widths) == len(headers))
+        assert len(widths) == len(headers)
         for i, width in enumerate(widths, start=1):
             self.excel.set_width(i, width)
         lang = {"en": "English", "es": "Spanish"}.get(self.language, "ALL")
@@ -1879,13 +1879,16 @@ class CitationsInSummaries(BatchReport):
     @cached_property
     def table(self):
         """Table for the report's single worksheet."""
-        return cdrcgi.Reporter.Table(self.rows, logger=self.logger, **self.OPTS)
+
+        opts = dict(logger=self.logger, **self.OPTS)
+        return cdrcgi.Reporter.Table(self.rows, **opts)
 
     class Document:
         """Base class for Citation and Summary"""
 
         HOST = Tier("PROD").hosts["APPC"]
-        URL = f"https://{HOST}{cdrcgi.BASE}/QcReport.py?DocId={{:d}}"
+        BASE = cdrcgi.Controller.BASE
+        URL = f"https://{HOST}{BASE}/QcReport.py?DocId={{:d}}"
 
         @cached_property
         def title(self):
@@ -1956,7 +1959,6 @@ class CitationsInSummaries(BatchReport):
                 summaries.append(self.control.summaries[row.id])
             return summaries
 
-
     class Summary(Document):
         """Summary linking to one or more citations included in the report."""
 
@@ -1993,7 +1995,6 @@ class CitationsInSummaries(BatchReport):
             url = self.URL.format(self.id)
             link = cdrcgi.Reporter.Cell(self.id, center=True, href=url)
             return [link, self.title, self.boards]
-
 
     @classmethod
     def test_harness(cls):
@@ -2041,7 +2042,11 @@ class Control:
             logger.info("CdrLongReports: job id %s", job_id)
             job = cdrbatch.CdrBatch(job_id)
             try:
-                cls.get_job_class(job.getJobName())(job).run()
+                job_name = job.getJobName()
+                job_class = cls.get_job_class(job_name)
+                if not job_class:
+                    raise Exception(f"Job class for {job_name} not found")
+                job_class(job).run()
             except Exception as e:
                 logger.exception("failure executing job %s", job_id)
                 job.fail("Caught exception: %s" % e)

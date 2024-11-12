@@ -178,7 +178,8 @@ class Table:
         self.path = self.cols = self.values = self.map = self.names = None
         if isinstance(source, str):
             path = f"{source}/tables/{name}"
-            self.values = [tuple(eval(row)) for row in open(path, encoding="utf-8")]
+            with open(path, encoding="utf-8") as f:
+                self.values = [tuple(eval(row)) for row in f]
             self.cols = self.values.pop(0)
         else:
             source.execute(f"SELECT * FROM {name}")
@@ -301,7 +302,6 @@ SELECT d.id, d.title, d.xml
                 self.docs[key] = tuple(row)
                 self.map[doc_id] = doc_title
 
-
     @property
     def prohibited(self):
         if not hasattr(self, "_prohibited"):
@@ -320,4 +320,3 @@ SELECT d.id, d.title, d.xml
                 self._prohibited.add(_title.lower().strip())
 
         return self._prohibited
-

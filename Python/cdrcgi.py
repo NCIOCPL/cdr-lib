@@ -2,90 +2,59 @@
 
 This module has the following sections:
 
-    Imports and global values
+    Imports of modules on which this one depends
 
     Tools for creating CGI forms and reports
 
+        FieldStorage
+            Replacement for deprecated cgi.FieldStorage class
         Controller
             Base class for top-level controller of CGI scripts
         FormFieldFactory
             Provides convenient class methods for creating HTML form fields
         HTMLPage
             Creates a CDR web page for forms and reports using a common
-            customizable layout
+            customizable layout; uses the USWDS framework
         Reporter
             Creates CDR reports which can be sent to the web browser or
             to Excel
+        BasicWebPage
+            Framework for creating reports which need more space than can
+            be provided by the USWDS-based classes
         Excel
             Wrapper for building Excel workbooks using OpenPyXl
         AdvancedSearch
             Search forms for each of the CDR document types
-
-    Older legacy versions of these tools
-        Control, Page, Report, ExcelStyle
-
-        Keep these older class as long as we still have scripts
-        which haven't been converted to their successors
-
-    Miscellaneous global function
-
-        Most of these should be gradually retired, in favor of
-        the core CDR API functionality.
 """
 
 # Packages from the standard library.
-import collections
-import datetime
+from collections import OrderedDict, UserDict
+from datetime import date, datetime
 from email.utils import parseaddr as parse_email_address
 from functools import cached_property
-import json
-import os
-import re
-import sys
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
+from json import load as load_json_file, loads as load_json_string
+from os import environ
+from pathlib import Path
+from re import compile as re_compile, search as re_search, sub as re_sub
+from string import hexdigits
+from sys import argv as sys_argv, exit as sys_exit
+from sys import stdin as sys_stdin, stdout as sys_stdout
+from types import SimpleNamespace
+from urllib import parse as urllib_parse
 
 # Third-party libraries/packages.
-import lxml.html
-import lxml.html.builder
-import multipart
-import openpyxl
-import openpyxl.workbook.views
+from lxml import html as lxml_html
+from lxml.html import builder as html_builder, HtmlElement
+from multipart import MultipartError, MultipartParser, parse_options_header
+from openpyxl import styles as excel_styles, Workbook as ExcelWorkbook
 
 # Project modules.
-import cdr
+from cdr import Board, getControlGroup, getDoctype, Logging, TMP, URDATE
 from cdrapi import db
+from cdrapi.docs import Doc
 from cdrapi.settings import Tier
 from cdrapi.users import Session
 
-
-# Global values
-DATETIMELEN = len("YYYY-MM-DD HH:MM:SS")
-TAMPERING = "CGI parameter tampering detected"
-USERNAME = "UserName"
-PASSWORD = "Password"
-PORT = "Port"
-SESSION = "Session"
-REQUEST = "Request"
-DOCID = "DocId"
-FILTER = "Filter"
-BASE = "/cgi-bin/cdr"
-MAINMENU = "Admin Menu"
-DEVTOP = "Developer Menu"
-TIER = Tier()
-WEBSERVER = os.environ.get("SERVER_NAME") or TIER.hosts.get("APPC")
-SPLTNAME = WEBSERVER.lower().split(".")
-THISHOST = SPLTNAME[0]
-ISPLAIN = "." not in THISHOST
-DOMAIN = "." + ".".join(SPLTNAME[1:])
-DAY_ONE = cdr.URDATE
-
-
-# ----------------------------------------------------------------------#
-#                         NEW CLASSES -- USE THESE                      #
-# ----------------------------------------------------------------------#
 
 class FieldStorage:
     """Replacement for deprecated cgi.FieldStorage class."""
@@ -103,26 +72,26 @@ class FieldStorage:
         self.logger = logger
         if logger:
             logger.debug("Constructing FieldStorage object")
-        method = os.environ.get("REQUEST_METHOD", "GET").upper()
-        content_type = os.environ.get("CONTENT_TYPE", self.ENCODED[0])
-        content_type, options = multipart.parse_options_header(content_type)
+        method = environ.get("REQUEST_METHOD", "GET").upper()
+        content_type = environ.get("CONTENT_TYPE", self.ENCODED[0])
+        content_type, options = parse_options_header(content_type)
         charset = options.get("charset", "utf-8")
         self.__fields = {}
-        query_string = os.environ.get("QUERY_STRING")
+        query_string = environ.get("QUERY_STRING")
         qs_opts = dict(encoding=charset, keep_blank_values=True)
 
         # Capture values passed as parameters appended to the URL.
         if query_string:
             if logger:
                 logger.debug("query_string: %s", query_string)
-            for key, value in urllib.parse.parse_qsl(query_string, **qs_opts):
+            for key, value in urllib_parse.parse_qsl(query_string, **qs_opts):
                 if logger:
                     logger.debug("adding %s from query_string", key)
                 self.__add(self.SimpleValue(key, value))
 
         # Read values POSTed by the client.
         if method not in ("GET", "HEAD"):
-            content_length = int(os.environ.get("CONTENT_LENGTH", "-1"))
+            content_length = int(environ.get("CONTENT_LENGTH", "-1"))
             if logger:
                 logger.debug("content_length: %s", content_length)
                 logger.debug("content_type: %s", content_type)
@@ -132,21 +101,18 @@ class FieldStorage:
                     logger.debug("boundary: %s", boundary)
                 if not boundary:
                     message = "No boundary for multipart/form-data"
-                    raise multipart.MultipartError(message)
-                args = sys.stdin.buffer, boundary, content_length
+                    raise MultipartError(message)
+                args = sys_stdin.buffer, boundary, content_length
                 kwargs = dict(charset=charset)
-                for part in multipart.MultipartParser(*args, **kwargs):
+                for part in MultipartParser(*args, **kwargs):
                     if logger:
                         logger.debug("adding %s from multipart", part.name)
                     self.__add(self.StreamedValue(part))
-                    #self.__fields[item.name].append(item)
             elif content_type in self.ENCODED and content_length > 0:
-                data = sys.stdin.buffer.read(content_length).decode(charset)
+                data = sys_stdin.buffer.read(content_length).decode(charset)
                 if logger:
                     logger.debug("parsing %s", data)
-                opts = dict(encoding=charset, keep_blank_values=True)
-                for key, value in urllib.parse.parse_qsl(data, **qs_opts):
-                    #self.__fields[key].append(self.SimpleValue(key, value))
+                for key, value in urllib_parse.parse_qsl(data, **qs_opts):
                     self.__add(self.SimpleValue(key, value))
 
     def __add(self, item):
@@ -158,7 +124,7 @@ class FieldStorage:
         """Return the first value received."""
 
         items = self.__fields.get(key, [])
-        return items[0].value if values else default
+        return items[0].value if items else default
 
     def getlist(self, key):
         """Return list of received values."""
@@ -201,6 +167,23 @@ class FieldStorage:
         """Dictionary-style len(x) support."""
         return len(self.keys())
 
+    def __str__(self):
+        """Improve debugging/logging output."""
+
+        fields = []
+        for name, values in self.__fields.items():
+            if len(values) < 1:
+                fields.append(f"{name}=''")
+            elif len(values) == 1:
+                fields.append(f"{name}={values[0]!r}")
+            else:
+                fields.append(f"{name}={values!r}")
+        fields = ", ".join(fields)
+        return f"[{fields}]"
+
+    def __repr__(self) -> str:
+        """Pass through the serialized string."""
+        return str(self)
 
     class SimpleValue:
         """Basic name+value pairings."""
@@ -212,6 +195,13 @@ class FieldStorage:
             self.value = value
             self.filename = self.file = None
 
+        def __str__(self):
+            """Show the value for debugging/logging."""
+            return self.value
+
+        def __repr__(self) -> str:
+            """Improve debugging/logging output."""
+            return repr(self.value)
 
     class StreamedValue():
         """Items which might be a posted file or other streamed value."""
@@ -219,6 +209,14 @@ class FieldStorage:
         def __init__(self, part):
             """Store the object extracted by the Multipart parser."""
             self.__part = part
+
+        def __str__(self):
+            """Show the value for debugging/logging."""
+            return f"file {self.filename}"
+
+        def __repr__(self):
+            """Show the value for debugging/logging."""
+            return f"file {self.filename}"
 
         @cached_property
         def name(self):
@@ -232,7 +230,7 @@ class FieldStorage:
 
         @cached_property
         def filename(self):
-            """String for the name (not the whole path) for an posted file."""
+            """String for the name (not the whole path) for a posted file."""
             return self.__part.filename
 
         @cached_property
@@ -265,12 +263,21 @@ class Controller:
     method to provide the report's data.
     """
 
+    DATETIMELEN = len("YYYY-MM-DD HH:MM:SS")
+    TAMPERING = "CGI parameter tampering detected"
+    USERNAME = "UserName"
+    PASSWORD = "Password"
+    PORT = "Port"
+    SESSION = "Session"
+    REQUEST = "Request"
+    DOCID = "DocId"
+    BASE = "/cgi-bin/cdr"
+    TIER = Tier()
+    WEBSERVER = environ.get("SERVER_NAME") or TIER.hosts.get("APPC")
+    DAY_ONE = URDATE
     PAGE_TITLE = "CDR Administration"
     TITLE = PAGE_TITLE
     SUBTITLE = None
-    REPORTS_MENU = SUBMENU = "Reports Menu"
-    ADMINMENU = MAINMENU
-    DEVMENU = DEVTOP
     SUBMIT = "Submit"
     LOG_OUT = "Log Out"
     FORMATS = "html", "excel"
@@ -281,42 +288,44 @@ class Controller:
     LANGUAGES = "English", "Spanish"
     INCLUDE_ANY_LANGUAGE_CHECKBOX = INCLUDE_ANY_AUDIENCE_CHECKBOX = False
     SUMMARY_SELECTION_METHODS = "id", "title", "board"
-    EMAIL_PATTERN = re.compile(r"[^@]+@[^@\.]+\.[^@]+$")
+    EMAIL_PATTERN = re_compile(r"[^@]+@[^@\.]+\.[^@]+$")
     KEEP_COMPLETE_TITLES = False
+    SAME_WINDOW = "jQuery('#primary-form').attr('target', '_self');"
+    NONBREAKING_HYPHEN = "\u2011"
 
     def __init__(self, **opts):
         """Set up a skeletal controller."""
 
-        self.__started = datetime.datetime.now()
+        self.__started = datetime.now()
         self.__opts = opts
         self.logger.info("started %s", self.subtitle or "controller")
+
+    # ----------------------------------------------------------------
+    # Top-level processing routines.
+    # ----------------------------------------------------------------
 
     def run(self):
         """Override in derived class if there are custom actions."""
 
         try:
-            if self.request:
-                if self.request == self.ADMINMENU:
-                    self.redirect("Admin.py")
-                elif self.request == self.REPORTS_MENU:
-                    self.redirect("Reports.py")
-                elif self.request == self.DEVMENU:
-                    self.redirect("DevSA.py")
-                elif self.request == self.LOG_OUT:
-                    logout(self.session.name)
-                elif self.request and self.request == self.SUBMIT:
-                    self.show_report()
-                else:
-                    self.show_form()
-            else:
-                self.show_form()
+            return self.show_report() if self.request else self.show_form()
         except Exception as e:
             self.logger.exception("Controller.run() failure")
-            bail(e)
+            self.bail(e)
 
     def show_form(self):
         """Populate an HTML page with a form and fields and send it."""
+
         self.populate_form(self.form_page)
+        for label in self.buttons:
+            button = self.form_page.button(label)
+            if self.same_window and label in self.same_window:
+                button.set("onclick", self.SAME_WINDOW)
+            self.form_page.form.append(button)
+        for alert in self.alerts:
+            message = alert["message"]
+            del alert["message"]
+            self.form_page.add_alert(message, **alert)
         self.form_page.send()
 
     def show_report(self):
@@ -333,9 +342,31 @@ class Controller:
         """
 
         if self.format == "html":
+            if self.use_basic_web_page:
+                report = BasicWebPage()
+                report.wrapper.append(report.B.H1(self.subtitle))
+                tables = self.build_tables() or []
+                if not isinstance(tables, (list, tuple)):
+                    tables = [tables]
+                for table in tables:
+                    report.wrapper.append(table.node)
+                report.wrapper.append(self.footer)
+                return report.send()
+            if self.report_css:
+                self.report.page.add_css(self.report_css)
             elapsed = self.report.page.html.get_element_by_id("elapsed", None)
             if elapsed is not None:
                 elapsed.text = str(self.elapsed)
+            for alert in self.alerts:
+                message = alert["message"]
+                del alert["message"]
+                self.report.page.add_alert(message, **alert)
+            if self.wide_css:
+                sibling = self.report.page.form.getparent()
+                for table in self.report.page.form.findall("table"):
+                    sibling.addnext(table)
+                    sibling = table
+                self.report.page.add_css(self.wide_css)
         self.report.send(self.format)
 
     def populate_form(self, page):
@@ -345,21 +376,9 @@ class Controller:
         """Stub, to be overridden by real controllers."""
         return []
 
-    def log_elapsed(self):
-        """Record how long this took."""
-        self.logger.info(f"elapsed: {self.elapsed.total_seconds():f}")
-
-    def redirect(self, where, session=None, **params):
-        """Send the user to another page.
-
-        Pass:
-            where - base URL, up to but not including parameters
-            session - session string or object to override this session (opt)
-            params - dictionary of other named parameters
-        """
-
-        session = session or self.session
-        self.navigate_to(where, session, **params)
+    # ----------------------------------------------------------------
+    # General-purpose utility methods.
+    # ----------------------------------------------------------------
 
     def load_group(self, group):
         """Fetch the active members of a named user group.
@@ -417,6 +436,10 @@ class Controller:
                     self.values.append((value_id, value_name))
         return Values(rows)
 
+    def log_elapsed(self):
+        """Record how long this took."""
+        self.logger.info(f"elapsed: {self.elapsed.total_seconds():f}")
+
     def make_url(self, script, **params):
         """Create a URL.
 
@@ -428,10 +451,95 @@ class Controller:
             value appropriate for the href attribute of a link
         """
 
-        if SESSION not in params:
-            params[SESSION] = self.session.name
-        params = urllib.parse.urlencode(params, doseq=True)
+        if self.SESSION not in params:
+            params[self.SESSION] = self.session.name
+        params = urllib_parse.urlencode(params, doseq=True)
         return f"{script}?{params}"
+
+    def redirect(self, where, session=None, **params):
+        """Send the user to another page.
+
+        Pass:
+            where - base URL, up to but not including parameters
+            session - session string or object to override this session (opt)
+            params - dictionary of other named parameters
+        """
+
+        session = session or self.session
+        self.navigate_to(where, session, **params)
+
+    # ----------------------------------------------------------------
+    # Routines specific to Summary reports.
+    # ----------------------------------------------------------------
+
+    def add_audience_fieldset(self, page):
+        """Add radio buttons for PDQ audience.
+
+        Pass:
+            page - object on which we place the fields
+        """
+
+        fieldset = page.fieldset("Audience")
+        fieldset.set("class", "by-board-block usa-fieldset")
+        fieldset.set("id", "audience-block")
+        default = self.default_audience
+        if self.INCLUDE_ANY_AUDIENCE_CHECKBOX:
+            checked = False if default else True
+            opts = dict(label="Any", value="", checked=checked)
+            fieldset.append(page.radio_button("audience", **opts))
+        elif not default:
+            default = self.AUDIENCES[0]
+        for value in self.AUDIENCES:
+            checked = True if value == default else False
+            opts = dict(value=value, checked=checked)
+            fieldset.append(page.radio_button("audience", **opts))
+        page.form.append(fieldset)
+
+    def add_board_fieldset(self, page):
+        """Add checkboxes for the PDQ Editorial Boards.
+
+        Pass:
+            page - object on which we place the fields
+        """
+
+        fieldset = page.fieldset("Board")
+        fieldset.set("class", "by-board-block usa-fieldset")
+        fieldset.set("id", "board-set")
+        boards = ["all"]
+        if hasattr(self, "board") and isinstance(self.board, (list, tuple)):
+            boards = self.board
+        checked = "all" in boards or not boards
+        opts = dict(label="All Boards", value="all", checked=checked)
+        fieldset.append(page.checkbox("board", **opts))
+        for value, label in self.get_boards().items():
+            opts = dict(value=value, label=label, classes="ind")
+            if value in boards:
+                opts["checked"] = True
+            fieldset.append(page.checkbox("board", **opts))
+        page.form.append(fieldset)
+
+    def add_language_fieldset(self, page):
+        """Add radio buttons for summary language.
+
+        Pass:
+            page - object on which we place the fields
+        """
+
+        fieldset = page.fieldset("Language")
+        fieldset.set("class", "by-board-block usa-fieldset")
+        fieldset.set("id", "language-block")
+        current = self.language if hasattr(self, "language") else None
+        if self.INCLUDE_ANY_LANGUAGE_CHECKBOX:
+            checked = not current
+            opts = dict(label="Any", value="", checked=checked)
+            fieldset.append(page.radio_button("language", **opts))
+        elif not current:
+            current = self.LANGUAGES[0]
+        for value in self.LANGUAGES:
+            checked = value == current
+            opts = dict(value=value, checked=checked)
+            fieldset.append(page.radio_button("language", **opts))
+        page.form.append(fieldset)
 
     def add_summary_selection_fields(self, page, **kwopts):
         """
@@ -481,18 +589,17 @@ class Controller:
                 opts = dict(label=t.display, value=t.id, tooltip=t.tooltip)
                 fieldset.append(page.radio_button("cdr-id", **opts))
             page.form.append(fieldset)
-            self.new_tab_on_submit(page)
 
         else:
+
             # Fields for the original form.
             fieldset = page.fieldset("Selection Method")
             methods = "PDQ Board", "CDR ID", "Summary Title"
-            checked = True
             for method in methods:
                 value = method.split()[-1].lower()
+                checked = value == self.selection_method
                 opts = dict(label=f"By {method}", value=value, checked=checked)
                 fieldset.append(page.radio_button("selection_method", **opts))
-                checked = False
             page.form.append(fieldset)
             self.add_board_fieldset(page)
             if kwopts.get("audience", True):
@@ -500,111 +607,33 @@ class Controller:
             if kwopts.get("language", True):
                 self.add_language_fieldset(page)
             fieldset = page.fieldset("Summary Document ID")
-            fieldset.set("class", "by-id-block")
+            fieldset.set("class", "by-id-block usa-fieldset")
             label = kwopts.get("id-label", "CDR ID")
             opts = dict(label=label, tooltip=kwopts.get("id-tip"))
+            if hasattr(self, "cdr_id"):
+                if isinstance(self.cdr_id, (int, str)):
+                    opts["value"] = self.cdr_id
             fieldset.append(page.text_field("cdr-id", **opts))
             page.form.append(fieldset)
             fieldset = page.fieldset("Summary Title")
-            fieldset.set("class", "by-title-block")
-            tooltip = "Use wildcard (%) as appropriate."
-            fieldset.append(page.text_field("title", tooltip=tooltip))
+            fieldset.set("class", "by-title-block usa-fieldset")
+            opts = dict(tooltip="Use wildcard (%) as appropriate.")
+            if hasattr(self, "fragment") and self.fragment:
+                opts["value"] = self.fragment
+            fieldset.append(page.text_field("title", **opts))
             page.form.append(fieldset)
             page.add_script(self.summary_selection_js)
-
-    def add_board_fieldset(self, page):
-        """Add checkboxes for the PDQ Editorial Boards.
-
-        Pass:
-            page - object on which we place the fields
-        """
-
-        fieldset = page.fieldset("Board")
-        fieldset.set("class", "by-board-block")
-        fieldset.set("id", "board-set")
-        opts = dict(label="All Boards", value="all", checked=True)
-        fieldset.append(page.checkbox("board", **opts))
-        for value, label in self.get_boards().items():
-            opts = dict(value=value, label=label, classes="ind")
-            fieldset.append(page.checkbox("board", **opts))
-        page.form.append(fieldset)
-
-    def add_audience_fieldset(self, page):
-        """Add radio buttons for PDQ audience.
-
-        Pass:
-            page - object on which we place the fields
-        """
-
-        fieldset = page.fieldset("Audience")
-        fieldset.set("class", "by-board-block")
-        fieldset.set("id", "audience-block")
-        default = self.default_audience
-        if self.INCLUDE_ANY_AUDIENCE_CHECKBOX:
-            checked = False if default else True
-            opts = dict(label="Any", value="", checked=checked)
-            fieldset.append(page.radio_button("audience", **opts))
-        elif not default:
-            default = self.AUDIENCES[0]
-        for value in self.AUDIENCES:
-            checked = True if value == default else False
-            opts = dict(value=value, checked=checked)
-            fieldset.append(page.radio_button("audience", **opts))
-        page.form.append(fieldset)
-
-    def add_language_fieldset(self, page):
-        """Add radio buttons for summary language.
-
-        Pass:
-            page - object on which we place the fields
-        """
-
-        fieldset = page.fieldset("Language")
-        fieldset.set("class", "by-board-block")
-        fieldset.set("id", "language-block")
-        checked = True
-        if self.INCLUDE_ANY_LANGUAGE_CHECKBOX:
-            opts = dict(label="Any", value="", checked=True)
-            fieldset.append(page.radio_button("language", **opts))
-            checked = False
-        for value in self.LANGUAGES:
-            opts = dict(value=value, checked=checked)
-            fieldset.append(page.radio_button("language", **opts))
-            checked = False
-        page.form.append(fieldset)
 
     def get_boards(self):
         """Construct a dictionary of PDQ board names indexed by CDR ID."""
 
-        boards = cdr.Board.get_boards().values()
-        OD = collections.OrderedDict
+        boards = Board.get_boards().values()
+        OD = OrderedDict
         return OD([(board.id, board.short_name) for board in boards])
 
-    def new_tab_on_submit(self, page):
-        """
-        Take over the onclick event for the Submit button in order to
-        show the report in a new tab. This avoids the problem of the
-        request to resubmit a form unnecessarily when navigating back
-        to the base report request page through an intermediate page
-        (such as the one to choose from multiple matching titles).
-
-        Pass:
-            page - reference to the page object to which the script is added
-        """
-
-        page.add_script(f"""\
-jQuery("input[value='Submit']").click(function(e) {{
-    var parms = jQuery("form").serialize();
-    if (!/Request=Submit/.test(parms)) {{
-        if (parms)
-            parms += "&";
-        parms += "Request=Submit";
-    }}
-    var url = "{self.script}?" + parms;
-    window.open(url, "_blank");
-    e.preventDefault();
-}});""")
-
+    # ----------------------------------------------------------------
+    # Static and class methods.
+    # ----------------------------------------------------------------
     @staticmethod
     def add_date_range_to_caption(caption, start, end):
         """Format caption with date range (we do this a lot).
@@ -626,8 +655,73 @@ jQuery("input[value='Submit']").click(function(e) {{
             return f"{caption} Through {end}"
         return caption
 
-    @staticmethod
-    def navigate_to(where, session, **params):
+    @classmethod
+    def bail(cls, message=TAMPERING, /, **opts):
+        """Send an error page to the browser.
+
+        Optional positional argument:
+          message - string describing the problem
+                    by default this is a vague intended to convey as little
+                    information to a hacker as possible
+
+        Optional keyword arguments:
+          extra - sequence of extra lines to append
+          logfile - name of logfile to write to
+        """
+
+        class ErrorPage(HTMLPage):
+            def __init__(self, message, extra):
+                HTMLPage.__init__(self, "CDR Error")
+                self.message = message
+                self.extra = extra
+                if extra and not isinstance(extra, (list, tuple)):
+                    self.extra = [extra]
+
+            @cached_property
+            def main(self):
+                alert_body = self.B.DIV(
+                    self.B.H3(
+                        str(self.message),
+                        self.B.CLASS("usa-alert__heading")
+                    )
+                )
+                if self.extra:
+                    if len(self.extra) == 1:
+                        p = self.B.P(str(self.extra[0]))
+                        p.set("class", "usa-alert__text")
+                        alert_body.append(p)
+                    else:
+                        extra = self.B.UL()
+                        for arg in self.extra:
+                            extra.append(self.B.LI(str(arg)))
+                        alert_body.append(extra)
+                alert_body.set("class", "usa-alert__body")
+                return self.B.E(
+                    "main",
+                    self.B.DIV(
+                        self.B.E(
+                            "section",
+                            self.B.DIV(
+                                alert_body,
+                                self.B.CLASS("usa-alert usa-alert--error")
+                            )
+                        ),
+                        self.B.CLASS("grid-container")
+                    ),
+                    self.B.CLASS("usa-section")
+                )
+
+        page = ErrorPage(message, opts.get("extra"))
+        logfile = opts.get("logfile")
+        if logfile:
+            if logfile.lower().endswith(".log"):
+                logfile = logfile[:-4]
+            logger = Logging.get_logger(logfile)
+            logger.error("cdrcgi bailout: %s", message)
+        page.send()
+
+    @classmethod
+    def navigate_to(cls, where, session, **params):
         """Send the user to another page.
 
         This is the non-instance version.
@@ -637,27 +731,19 @@ jQuery("input[value='Submit']").click(function(e) {{
             params - dictionary of other named parameters
         """
 
-        params[SESSION] = session
-        params = urllib.parse.urlencode(params)
-        print(f"Location:https://{WEBSERVER}{BASE}/{where}?{params}\n")
-        sys.exit(0)
-
-    @staticmethod
-    def send_page(page, text_type="html"):
-        """Send a string back to the web server using UTF-8 encoding.
-
-        Pass:
-            page - Unicode string for the page
-            text_type - typically "html" but sometimes "xml"
-        """
-
-        string = f"Content-type: text/{text_type};charset=utf-8\n\n{page}"
-        sys.stdout.buffer.write(string.encode("utf-8"))
-        sys.exit(0)
+        where = where.split("?")[0]
+        params[__class__.SESSION] = session
+        params = urllib_parse.urlencode(params)
+        print(f"Location:https://{cls.WEBSERVER}{cls.BASE}/{where}?{params}\n")
+        sys_exit(0)
 
     @staticmethod
     def parse_date(iso_date):
         """Convert a date string to a `datetime.date` object.
+
+        Changed requirements: might not be an ISO date any more, because
+        for some strange reasone, the USWDS project uses a non-standard
+        format.
 
         Pass:
             iso_date - optional string for the date
@@ -668,8 +754,11 @@ jQuery("input[value='Submit']").click(function(e) {{
 
         if iso_date is None or not iso_date.strip():
             return None
-        year, month, date = iso_date.strip().split("-")
-        return datetime.date(int(year), int(month), int(date))
+        if "/" in iso_date:
+            month, day, year = iso_date.strip().split("/")
+        else:
+            year, month, day = iso_date.strip().split("-")
+        return date(int(year), int(month), int(day))
 
     @classmethod
     def parse_email_address(cls, address):
@@ -694,6 +783,26 @@ jQuery("input[value='Submit']").click(function(e) {{
         return None
 
     @staticmethod
+    def send_page(page, text_type="html", mime_type=None):
+        """Send a string back to the web server using UTF-8 encoding.
+
+        Required position argument:
+            page - Unicode string for the page or DOM object
+
+        Optional keyword arguments:
+            text_type - typically "html" but sometimes "xml"
+            mime_type - for other types; for example, "application/json"
+        """
+
+        if not isinstance(page, str):
+            opts = dict(HTMLPage.STRING_OPTS, encoding="unicode")
+            page = lxml_html.tostring(page, **opts)
+        mime_type = mime_type or f"text/{text_type}"
+        string = f"Content-type: {mime_type};charset=utf-8\n\n{page}"
+        sys_stdout.buffer.write(string.encode("utf-8"))
+        sys_exit(0)
+
+    @staticmethod
     def toggle_display(function_name, show_value, class_name):
         """Create JavaScript function to show or hide elements.
 
@@ -713,70 +822,42 @@ function {function_name}(value) {{
         jQuery(".{class_name}").hide();
 }}"""
 
-    @property
-    def HTMLPage(self):
-        """Allow overriding of page class."""
-        return HTMLPage
+    # ----------------------------------------------------------------
+    # Instance properties.
+    # ----------------------------------------------------------------
 
-    @property
-    def Query(self):
-        """Convenience reference to database query class object."""
-        return db.Query
+    @cached_property
+    def alerts(self):
+        """Override to add alerts which should be shown on the page."""
+        return []
 
-    @property
-    def Reporter(self):
-        """Allow overriding of page class."""
-        return Reporter
-
-    @property
-    def banner(self):
-        """Title displayed boldly at the top of the page."""
-        return self.__opts.get("banner") or self.title
-
-    @property
+    @cached_property
     def buttons(self):
-        """Sequence of names for request buttons to be provided
+        """Sequence of names for request buttons to be provided."""
 
-        By default, SUBMIT, SUBMENU, ADMINMENU and LOG_OUT will be used.
-        Any of these can be suppressed by setting the class value to None
-        in the derived class. Alternatively, the "buttons" keyword arg
-        can be passed with a list of button names. Downstream these
-        names will be converted to HTML input elements with the name
-        attribute set to "Submit". Pass an empty list to the constructor
-        for the "buttons" keyword argument to have no buttons displayed
-        (None won't have the same effect).
-        """
+        buttons = self.__opts.get("buttons")
+        if buttons is None:
+            if self.SUBMIT:
+                return [self.SUBMIT]
+            return []
+        return buttons
 
-        if not hasattr(self, "_buttons"):
-            buttons = self.SUBMIT, self.SUBMENU, self.ADMINMENU, self.LOG_OUT
-            self._buttons = self.__opts.get("buttons")
-            if self._buttons is None:
-                self._buttons = []
-                for button in buttons:
-                    if button:
-                        self._buttons.append(button)
-        return self._buttons
-
-    @property
+    @cached_property
     def conn(self):
         """Database connection for this controller."""
-        if not hasattr(self, "_conn"):
-            self._conn = db.connect()
-        return self._conn
+        return db.connect()
 
-    @property
+    @cached_property
     def cursor(self):
         """Database cursor for this controller."""
-        if not hasattr(self, "_cursor"):
-            self._cursor = self.conn.cursor()
-        return self._cursor
+        return self.conn.cursor()
 
     @property
     def default_audience(self):
         """Let a subclass override the default for the audience picklist."""
         return None
 
-    @property
+    @cached_property
     def doc_titles(self):
         """Cached lookup of CDR document titles by ID.
 
@@ -788,167 +869,178 @@ function {function_name}(value) {{
         property `KEEP_COMPLETE_TITLES` to `True` in the derived class.
         """
 
-        if not hasattr(self, "_doc_titles"):
+        class DocTitles(UserDict):
 
-            class DocTitles(collections.UserDict):
+            def __init__(self, control):
+                self.__control = control
+                UserDict.__init__(self)
 
-                def __init__(self, control):
-                    self.__control = control
-                    collections.UserDict.__init__(self)
+            def __getitem__(self, key):
+                if key not in self.data:
+                    query = self.__control.Query("document", "title")
+                    query.where(query.Condition("id", key))
+                    row = query.execute(self.__control.cursor).fetchone()
+                    title = row.title.strip() if row else ""
+                    if not self.__control.KEEP_COMPLETE_TITLES:
+                        pieces = [p.strip() for p in row.title.split(";")]
+                        title = pieces[0]
+                        if title.lower() == "inactive" and len(pieces) > 1:
+                            title = f"{pieces[1]} (inactive)"
+                    self.data[key] = title or None
+                return self.data[key]
 
-                def __getitem__(self, key):
-                    if key not in self.data:
-                        query = self.__control.Query("document", "title")
-                        query.where(query.Condition("id", key))
-                        row = query.execute(self.__control.cursor).fetchone()
-                        title = row.title.strip() if row else ""
-                        if not self.__control.KEEP_COMPLETE_TITLES:
-                            pieces = [p.strip() for p in row.title.split(";")]
-                            title = pieces[0]
-                            if title.lower() == "inactive" and len(pieces) > 1:
-                                title = f"{pieces[1]} (inactive)"
-                        self.data[key] = title or None
-                    return self.data[key]
-            self._doc_titles = DocTitles(self)
-        return self._doc_titles
+        return DocTitles(self)
 
     @property
     def elapsed(self):
-        """How long have we been running?"""
-        return datetime.datetime.now() - self.started
+        """How long have we been running? Don't cache."""
+        return datetime.now() - self.started
 
-    @property
+    @cached_property
     def fields(self):
         """CGI fields for the web form."""
-        if not hasattr(self, "_fields"):
-            self._fields = FieldStorage()
-        return self._fields
+        return FieldStorage()
 
-    @property
+    @cached_property
     def footer(self):
         """Override to alter or suppress the default report footer."""
 
-        if not hasattr(self, "_footer"):
-            user = self.session.User(self.session, id=self.session.user_id)
-            name = user.fullname or user.name
-            today = datetime.date.today()
-            generated = f"Report generated {today} by {name}"
-            elapsed = HTMLPage.B.SPAN(str(self.elapsed), id="elapsed")
-            args = generated, HTMLPage.B.BR(), "Elapsed: ", elapsed
-            self._footer = HTMLPage.B.E("footer", HTMLPage.B.P(*args))
-        return self._footer
+        user = self.session.User(self.session, id=self.session.user_id)
+        name = user.fullname or user.name
+        today = date.today()
+        generated = f"Report generated {today} by {name}"
+        elapsed = HTMLPage.B.SPAN(str(self.elapsed), id="elapsed")
+        args = generated, HTMLPage.B.BR(), "Elapsed: ", elapsed
+        footer = HTMLPage.B.P(*args)
+        footer.set("class", "report-footer")
+        return footer
 
-    @property
-    def form_page(self):
-        """Create a form page.
-
-        Cache the page so we don't end up populating one page and
-        sending another one.
-        """
-        if not hasattr(self, "_form_page"):
-            opts = {
-                "action": self.script,
-                "buttons": [HTMLPage.button(b) for b in self.buttons],
-                "subtitle": self.subtitle,
-                "session": self.session,
-                "method": self.method,
-            }
-            self._form_page = HTMLPage(self.title, **opts)
-        return self._form_page
-
-    @property
+    @cached_property
     def format(self):
         """Either "html" (the default) or "excel"."""
-        if not hasattr(self, "_format"):
-            self._format = self.fields.getvalue("format")
-            if not self._format:
-                self._format = self.__opts.get("format") or self.FORMATS[0]
-            if self._format not in self.FORMATS:
-                self.bail("invalid report format")
-        return self._format
 
-    @property
+        format = self.fields.getvalue("format")
+        if not format:
+            format = self.__opts.get("format") or self.FORMATS[0]
+        if format not in self.FORMATS:
+            self.bail("invalid report format")
+        return format
+
+    @cached_property
+    def form_page(self):
+        """Create a form page."""
+
+        opts = {
+            "control": self,
+            "action": self.script,
+            "buttons": [HTMLPage.button(b) for b in self.buttons],
+            "subtitle": self.subtitle,
+            "session": self.session,
+            "method": self.method,
+            "suppress_sidenav": self.suppress_sidenav,
+        }
+        return self.HTMLPage(self.title, **opts)
+
+    @cached_property
+    def HTMLPage(self):
+        """Allow overriding of page class."""
+        return HTMLPage
+
+    @cached_property
+    def logged_out(self):
+        """True if the user has just logged out."""
+        return True if self.fields.getvalue("logged_out") else False
+
+    @cached_property
     def logger(self):
         """Object for recording what we do."""
-        if not hasattr(self, "_logger"):
-            self._logger = self.__opts.get("logger")
-            if self._logger is None:
-                opts = dict(level=self.loglevel)
-                self._logger = cdr.Logging.get_logger(self.LOGNAME, **opts)
-        return self._logger
 
-    @property
+        logger = self.__opts.get("logger")
+        if logger is not None:
+            return logger
+        opts = dict(level=self.loglevel)
+        return Logging.get_logger(self.LOGNAME, **opts)
+
+    @cached_property
     def loglevel(self):
         """Override this to provide runtime control of logging."""
         return self.LOGLEVEL
 
-    @property
+    @cached_property
     def method(self):
         """Allow override of form method."""
         return self.fields.getvalue("method") or self.METHOD
 
-    @property
+    @cached_property
     def no_results(self):
         """Message to display if no result tables are returned."""
         return "No report results found."
 
-    @property
+    @cached_property
+    def Query(self):
+        """Convenience reference to database query class object."""
+        return db.Query
+
+    @cached_property
     def report(self):
         """Create the `Reporter` object for this job."""
 
-        if not hasattr(self, "_report"):
-            tables = self.build_tables()
-            buttons = []
-            for button in (self.SUBMENU, self.ADMINMENU, self.LOG_OUT):
-                if button:
-                    buttons.append(HTMLPage.button(button))
-            opts = {
-                "banner": self.title or "",
-                "footer": self.footer,
-                "subtitle": self.subtitle,
-                "no_results": self.no_results,
-                "page_opts": {
-                    "buttons": buttons,
-                    "session": self.session,
-                    "action": buttons and self.script or None,
-                }
-            }
-            self._report = Reporter(self.title, tables, **opts)
-        return self._report
+        tables = self.build_tables()
+        if self.format == "excel":
+            return Reporter(self.title, tables)
+        page_opts = dict(
+            session=self.session,
+            action=self.script or None,
+            control=self,
+        )
+        opts = dict(
+            footer=self.footer,
+            subtitle=self.subtitle,
+            no_results=self.no_results,
+            page_opts=page_opts,
+        )
+        return Reporter(self.title, tables, **opts)
 
-    @property
+    @cached_property
+    def report_css(self):
+        """Override to provide additional styling to a reports page."""
+        return None
+
+    @cached_property
+    def Reporter(self):
+        """Allow overriding of page class."""
+        return Reporter
+
+    @cached_property
     def request(self):
         """Name of clicked request button, if any."""
-        if not hasattr(self, "_request"):
-            self._request = getRequest(self.fields)
-        return self._request
 
-    @request.setter
-    def request(self, value):
-        """Support re-routing."""
-        self._request = value
+        request = self.fields.getvalue(self.REQUEST, "").strip()
+        if re_search("[^A-Za-z0-9 -]", request):
+            self.logger.warning("bad request %r", request)
+            return self.bail()
+        return request
 
-    @property
+    @cached_property
+    def same_window(self):
+        """Override for commands which should stay in the same window"""
+        return []
+
+    @cached_property
     def script(self):
         """Name of form submission handler."""
-        if not hasattr(self, "_script"):
-            self._script = self.__opts.get("script")
-            if self._script is None:
-                self._script = os.path.basename(sys.argv[0])
-        return self._script
+        return self.__opts.get("script") or Path(sys_argv[0]).name
 
-    @property
+    @cached_property
     def selection_method(self):
         """How does the user want to identify summaries for the report?"""
 
-        if not hasattr(self, "_selection_method"):
-            name = "selection_method"
-            self._selection_method = self.fields.getvalue(name, "board")
-            if self._selection_method not in self.SUMMARY_SELECTION_METHODS:
-                self.bail()
-        return self._selection_method
+        method = self.fields.getvalue("selection_method", "board")
+        if method not in self.SUMMARY_SELECTION_METHODS:
+            self.bail()
+        return method
 
-    @property
+    @cached_property
     def session(self):
         """Session object for this controller.
 
@@ -959,21 +1051,28 @@ function {function_name}(value) {{
         intended to work on the local tier.
         """
 
-        if not hasattr(self, "_session"):
-            session = self.__opts.get("session")
-            if not session:
-                session = self.fields.getvalue(SESSION) or "guest"
-            if isinstance(session, bytes):
-                session = str(session, "ascii")
-            if isinstance(session, str):
-                self._session = Session(session)
-            else:
-                self._session = session
-            if not isinstance(self._session, Session):
-                raise Exception("Not a session object")
-        return self._session
+        session = self.__opts.get("session")
+        if not session:
+            session = self.fields.getvalue(self.SESSION) or "guest"
+        if isinstance(session, (list, tuple)):
+            session = session[0]
+        if isinstance(session, bytes):
+            session = str(session, "ascii")
+        if isinstance(session, str):
+            try:
+                session = Session(session)
+            except Exception as e:
+                self.bail("Invalid or expired session.")
+        if not isinstance(session, Session):
+            raise Exception(f"{session}: Not a session object")
+        return session
 
-    @property
+    @cached_property
+    def show_news(self):
+        """Whether we should display news announcements."""
+        return True if self.fields.getvalue("show_news") else False
+
+    @cached_property
     def summary_selection_js(self):
         "Local JavaScript to manage sections of the form dynamically."
 
@@ -1017,7 +1116,7 @@ jQuery(function() {
     check_selection_method(method);
 });"""
 
-    @property
+    @cached_property
     def summary_titles(self):
         """Find the summaries that match the user's title fragment.
 
@@ -1030,78 +1129,64 @@ jQuery(function() {
         ONLY WORKS IF YOU IMPLEMENT THE `self.fragment` PROPERTY!!!
         """
 
-        if not hasattr(self, "_summary_titles"):
-            self._summary_titles = None
-            if hasattr(self, "fragment") and self.fragment:
-                class SummaryTitle:
-                    def __init__(self, doc_id, display, tooltip=None):
-                        self.id = doc_id
-                        self.display = display
-                        self.tooltip = tooltip
-                fragment = f"{self.fragment}%"
-                query = self.Query("active_doc d", "d.id", "d.title")
-                query.join("doc_type t", "t.id = d.doc_type")
-                query.where("t.name = 'Summary'")
-                query.where(query.Condition("d.title", fragment, "LIKE"))
-                query.order("d.title")
-                rows = query.execute(self.cursor).fetchall()
-                self._summary_titles = []
-                for doc_id, title in rows:
-                    if len(title) > 60:
-                        short_title = title[:57] + "..."
-                        summary = SummaryTitle(doc_id, short_title, title)
-                    else:
-                        summary = SummaryTitle(doc_id, title)
-                    self._summary_titles.append(summary)
-        return self._summary_titles
+        titles = None
+        if hasattr(self, "fragment") and self.fragment:
+            class SummaryTitle:
+                def __init__(self, doc_id, display, tooltip=None):
+                    self.id = doc_id
+                    self.display = display
+                    self.tooltip = tooltip
+            fragment = f"{self.fragment}%"
+            query = self.Query("active_doc d", "d.id", "d.title")
+            query.join("doc_type t", "t.id = d.doc_type")
+            query.where("t.name = 'Summary'")
+            query.where(query.Condition("d.title", fragment, "LIKE"))
+            query.order("d.title")
+            rows = query.execute(self.cursor).fetchall()
+            titles = []
+            for doc_id, title in rows:
+                if len(title) > 60:
+                    short_title = title[:57] + "..."
+                    summary = SummaryTitle(doc_id, short_title, title)
+                else:
+                    summary = SummaryTitle(doc_id, title)
+                titles.append(summary)
+        return titles
 
-    @property
+    @cached_property
+    def suppress_sidenav(self):
+        """Override to implement more nuanced logic."""
+        return False
+
+    @cached_property
     def timestamp(self):
         """String used to distinguish multiple instances of named items."""
         return self.started.strftime("%Y%m%d%H%M%S")
 
-    @property
+    @cached_property
     def started(self):
         """When did we start processing?"""
         return self.__started
 
-    @property
+    @cached_property
     def subtitle(self):
-        """String to be displayed under the main banner, if supplied."""
+        """String to be displayed as the page title (bad name)."""
         return self.__opts.get("subtitle") or self.SUBTITLE
 
-    @property
+    @cached_property
     def title(self):
-        """Title to be used for the page."""
+        """String used as the browser title for the page."""
         return self.__opts.get("title") or self.TITLE or self.PAGE_TITLE
 
-    @staticmethod
-    def bail(message=TAMPERING, banner="CDR Web Interface", extra=None,
-             logfile=None):
-        """
-        Send an error page to the browser with a specific banner and title.
-        Pass:
-            message - Display this.
-            banner  - Optional changed line for page banner.
-            extra   - Optional sequence of extra lines to append.
-            logfile - Optional name of logfile to write to.
-        Return:
-            No return. Exits here.
-        """
+    @cached_property
+    def use_basic_web_page(self):
+        """True if report should use the alternate (simpler) layout."""
+        return False
 
-        subtitle = "An error has occurred"
-        opts = dict(banner=banner, subtitle=subtitle, scripts=[])
-        page = HTMLPage("CDR Error", **opts)
-        page.body.append(page.B.P(str(message), page.B.CLASS("error")))
-        if extra:
-            for arg in extra:
-                page.body.append(page.B.P(str(arg), page.B.CLASS("error")))
-        if logfile:
-            if logfile.lower().endswith(".log"):
-                logfile = logfile[:-4]
-            logger = cdr.Logging.get_logger(logfile)
-            logger.error("cdrcgi bailout: %s", message)
-        page.send()
+    @cached_property
+    def wide_css(self):
+        """Override to allow tables in a report more width."""
+        return None
 
 
 class FormFieldFactory:
@@ -1143,19 +1228,57 @@ class FormFieldFactory:
     """
 
     EN_DASH = "\u2013"
+    EM_DASH = "\u2014"
+    LINK_COLOR = "#005ea2"
     CLICKABLE = "checkbox", "radio"
-    B = lxml.html.builder
+    B = html_builder
+
+    @classmethod
+    def accordion(cls, name, **kwargs):
+        """Collapsable wrapper.
+
+        Required positional argument:
+          name - unique name for this wrapper
+
+        Optional keyword arguments:
+          label - text to display in the header
+          open - start with the section uncollapsed
+          prose - if True add class usa-prose to payload
+          bordered - if True add a border to the wrapper
+
+        Return:
+          object with wrapper and payload properties
+        """
+
+        id = f"{name}-accordion"
+        label = kwargs.get("label")
+        if not label:
+            label = name.replace("-", " ").replace("_", " ").title()
+        button = cls.B.BUTTON(
+            label,
+            cls.B.CLASS("usa-accordion__button"),
+            type="button",
+        )
+        payload_classes = ["usa-accordion__content"]
+        wrapper_classes = ["usa-accordion"]
+        if kwargs.get("prose"):
+            payload_classes.append("usa-prose")
+        if kwargs.get("bordered"):
+            wrapper_classes.append("usa-accordion--bordered")
+        button.set("aria-expanded", "true" if kwargs.get("open") else "false")
+        button.set("aria-controls", id)
+        accordion = SimpleNamespace()
+        accordion.payload = cls.B.DIV(id=id)
+        header = cls.B.H4(button)
+        header.set("class", "usa-accordion__heading")
+        accordion.payload.set("class", " ".join(payload_classes))
+        accordion.wrapper = cls.B.DIV(header, accordion.payload)
+        accordion.wrapper.set("class", " ".join(wrapper_classes))
+        return accordion
 
     @classmethod
     def button(cls, label, **kwargs):
         """Create a button to be added to an HTMLPage object.
-
-        Typically, one or more of these buttons will be passed as the
-        buttons keyword argument to the HTMLPage constructor, to be
-        displayed on the right side of the main banner, but it is also
-        possible to place a button elsewhere on the page. It is also
-        possible to override the default buttons for a form by overriding
-        its page's `buttons` property.
 
         These are called "buttons" even though the HTML element used
         to create the widget is an "input" element with type of
@@ -1187,8 +1310,11 @@ class FormFieldFactory:
 
         """
 
-        button = cls.B.INPUT(value=label, name="Request")
+        id_label = label.lower().replace(" ", "-")
+        button = cls.B.INPUT(value=label, name=Controller.REQUEST)
         button.set("type", kwargs.get("button_type", "submit"))
+        button.set("class", "button usa-button")
+        button.set("id", f"submit-button-{id_label}")
         onclick = kwargs.get("onclick")
         if onclick:
             button.set("onclick", onclick)
@@ -1248,13 +1374,20 @@ class FormFieldFactory:
             lxml object for a wrapper element, enclosing an INPUT element
         """
 
-        wrapper = cls.text_field(name, **kwargs)
-        field = wrapper.find("input")
-        classes = field.get("class", "").split()
-        if "CdrDateField" not in classes:
-            classes.append("CdrDateField")
-            field.set("class", " ".join(classes))
-        return wrapper
+        field = cls.__field(name, "text", **kwargs)
+        value = kwargs.get("value")
+        label = kwargs.get("label", name.replace("_", " ").title())
+        label = cls.B.LABEL(label, cls.B.FOR(field.get("id")))
+        label.set("class", "usa-label")
+        field.set("type", "date")
+        date_picker = cls.B.DIV(field, cls.B.CLASS("usa-date-picker"))
+        if value:
+            date_picker.set("data-default-value", str(value))
+        return cls.B.DIV(
+            label,
+            date_picker,
+            cls.B.CLASS("usa-form-group")
+        )
 
     @classmethod
     def date_range(cls, name, **kwargs):
@@ -1284,20 +1417,25 @@ class FormFieldFactory:
             with a separating SPAN between
         """
 
-        opts = dict(**kwargs, wrapper_classes="date-range")
+        opts = dict(**kwargs)
         wrapper = cls.__wrapper(name, **opts)
+        inner = cls.B.DIV(cls.B.CLASS("date-range-fields"))
+        wrapper.append(inner)
         for which in ("start", "end"):
-            opts["value"] = opts.get(f"{which}_date")
+            opts["value"] = value = opts.get(f"{which}_date")
             field = cls.__field(f"{name}-{which}", "text", **opts)
-            classes = field.get("class", "").split()
-            if "CdrDateField" not in classes:
-                classes.append("CdrDateField")
-                field.set("class", " ".join(classes))
-            wrapper.append(field)
+            field.set("type", "date")
+            date_picker = cls.B.DIV(field)
+            date_picker.set("class", "usa-date-picker xxmargin-top-0")
+            if value:
+                date_picker.set("data-default-value", str(value))
+            group = cls.B.DIV(date_picker)
+            group.set("class", "usa-form-group margin-top-0")
+            inner.append(group)
             if which == "start":
-                separator = cls.B.SPAN(cls.EN_DASH)
-                separator.set("class", "date-range-sep")
-                wrapper.append(separator)
+                separator = cls.B.SPAN(cls.EM_DASH)
+                separator.set("class", "date-range-sep margin-right-2")
+                inner.append(separator)
         return wrapper
 
     @classmethod
@@ -1320,9 +1458,10 @@ class FormFieldFactory:
             lxml object for a FIELDSET element
         """
 
-        fieldset = cls.B.FIELDSET()
+        fieldset = cls.B.FIELDSET(cls.B.CLASS("usa-fieldset"))
         if legend:
-            fieldset.append(cls.B.LEGEND(legend))
+            classes = "usa-legend"
+            fieldset.append(cls.B.LEGEND(legend, cls.B.CLASS(classes)))
         if opts.get("id"):
             fieldset.set("id", opts.get("id"))
         return fieldset
@@ -1330,9 +1469,6 @@ class FormFieldFactory:
     @classmethod
     def file_field(cls, name, **kwargs):
         """Create a file upload field block with optional label.
-
-        The widget design for picking a field varies from browser to
-        browser.
 
         Required positional argument:
 
@@ -1474,6 +1610,7 @@ class FormFieldFactory:
             default = kwargs.get("default")
             if not isinstance(default, (list, tuple, set)):
                 default = [default] if default else []
+            default = {str("" if d is None else d) for d in default}
             if not multiple and len(default) > 1:
                 error = "Multiple defaults specified for single picklist"
                 raise Exception(error)
@@ -1488,7 +1625,7 @@ class FormFieldFactory:
                 if value is None:
                     value = ""
                 option = cls.B.OPTION(str(display), value=str(value))
-                if value in default:
+                if str(value) in default:
                     option.set("selected")
                 field.append(option)
 
@@ -1543,6 +1680,81 @@ class FormFieldFactory:
         field = cls.__field(name, "text", **kwargs)
         wrapper = cls.__wrapper(name, **kwargs)
         wrapper.append(field)
+        return wrapper
+
+    @classmethod
+    def __classes(cls, classes):
+        """Package the classes to be assigned to an element as a set
+
+        Required positional argument:
+
+            classes
+                one of the following:
+                   - None
+                   - a space-delimited string of class names
+                   - a `tuple` of class names
+                   - a `list` of class names
+                   - a `set` of class names
+
+        Returns:
+
+            a `set` of zero or more class name strings
+        """
+
+        if classes is None:
+            return set()
+        if isinstance(classes, str):
+            return set(classes.split())
+        return set(classes)
+
+    @classmethod
+    def __clickable(cls, group, field_type, **kwargs):
+        """Create a wrapped checkbox or radio button field.
+
+        Required positional arguments:
+
+            group
+                string identifying a set of related clickable fields
+                which will be returned as a sequence of checked
+                values to the form processor
+
+            field_type
+                one of "checkbox" or "radio"
+
+        See the `__field()` and `__wrapper()` methods for a
+        description of the available optional keyword arguments.
+
+        Return:
+
+            lxml object for a wrapper element, enclosing an INPUT element
+        """
+
+        # Create the field and its wrapper.
+        widget = cls.__field(group, field_type, **kwargs)
+        widget.tail = " "
+        kwargs["field_type"] = field_type
+        wrapper = cls.__wrapper(group, clickable=True, **kwargs)
+
+        # Add attributes unique to radio buttons and checkboxes.
+        if kwargs.get("checked"):
+            widget.set("checked")
+        value = kwargs.get("value")
+        if value is None:
+            value = ""
+        value = str(value)
+        onclick = kwargs.get("onclick", f"check_{group}('{value}')")
+        if onclick:
+            widget.set("onclick", onclick.replace("-", "_"))
+
+        # For these fields, the label follows the widget.
+        label = kwargs.get("label", value.replace("_", " ").title())
+        label = cls.B.LABEL(cls.B.FOR(widget.get("id")), label)
+        label_class = f"usa-{field_type}__label"
+        label.set("class", f"clickable {label_class}")
+        if kwargs.get("tooltip"):
+            label.set("title", kwargs["tooltip"])
+        wrapper.append(widget)
+        wrapper.append(label)
         return wrapper
 
     @classmethod
@@ -1618,16 +1830,30 @@ class FormFieldFactory:
             field.set("type", field_type)
 
         # Add the element's unique ID attribute.
-        if field_type in cls.CLICKABLE:
-            widget_id = kwargs.get("widget_id")
-            if not widget_id:
+        widget_id = kwargs.get("widget_id")
+        if not widget_id:
+            if field_type in cls.CLICKABLE:
                 widget_id = f"{name}-{value}".replace(" ", "-").lower()
-        else:
-            widget_id = name
+            else:
+                widget_id = name
         field.set("id", widget_id)
 
         # Add the classes for the widget element.
         classes = cls.__classes(kwargs.get("classes"))
+        if field_type == "textarea" and "usa-textarea" not in classes:
+            classes.add("usa-textarea")
+        elif field_type in ("text", "password") and "usa-input" not in classes:
+            classes.add("usa-input")
+            classes.add("usa-input--xl")
+        elif field_type == "select":
+            classes.add("usa-select")
+            classes.add("form-select")
+        elif field_type == "checkbox":
+            classes.add("usa-checkbox__input")
+        elif field_type == "radio":
+            classes.add("usa-radio__input")
+        elif field_type == "file":
+            classes.add("usa-file-input")
         if classes:
             field.set("class", " ".join(classes))
 
@@ -1655,6 +1881,9 @@ class FormFieldFactory:
 
             clickable
                 True if the field is a checkbox or radio button
+
+            field_type
+                For example, "checkbox"
 
             wrapper
                 string value for the name of the element to use
@@ -1689,11 +1918,19 @@ class FormFieldFactory:
 
         # Determine the classes to be applied to the wrapper element.
         classes = cls.__classes(kwargs.get("wrapper_classes"))
+        field_type = kwargs.get("field_type")
+        if field_type == "checkbox":
+            classes.add("usa-checkbox")
+        elif field_type == "radio":
+            classes.add("usa-radio")
+        elif field_type == "file":
+            classes.add("usa-form-group")
         label = kwargs.get("label", name.replace("_", " ").title())
         if label and not kwargs.get("clickable"):
             classes.add("labeled-field")
             widget_id = kwargs.get("widget_id") or name
             label = cls.B.LABEL(label, cls.B.FOR(widget_id))
+            label.set("class", "usa-label")
             if kwargs.get("tooltip"):
                 label.set("title", kwargs["tooltip"])
             wrapper.append(label)
@@ -1702,79 +1939,6 @@ class FormFieldFactory:
 
         # Done.
         return wrapper
-
-    @classmethod
-    def __clickable(cls, group, field_type, **kwargs):
-        """Create a wrapped checkbox or radio button field.
-
-        Required positional arguments:
-
-            group
-                string identifying a set of related clickable fields
-                which will be returned as a sequence of checked
-                values to the form processor
-
-            field_type
-                one of "checkbox" or "radio"
-
-        See the `__field()` and `__wrapper()` methods for a
-        description of the available optional keyword arguments.
-
-        Return:
-
-            lxml object for a wrapper element, enclosing an INPUT element
-        """
-
-        # Create the field and its wrapper.
-        wrapper = cls.__wrapper(group, clickable=True, **kwargs)
-        widget = cls.__field(group, field_type, **kwargs)
-        widget.tail = " "
-
-        # Add attributes unique to radio buttons and checkboxes.
-        if kwargs.get("checked"):
-            widget.set("checked")
-        value = kwargs.get("value")
-        if value is None:
-            value = ""
-        value = str(value)
-        onclick = kwargs.get("onclick", f"check_{group}('{value}')")
-        if onclick:
-            widget.set("onclick", onclick.replace("-", "_"))
-
-        # For these fields, the label follows the widget.
-        label = kwargs.get("label", value.replace("_", " ").title())
-        label = cls.B.LABEL(cls.B.FOR(widget.get("id")), label)
-        label.set("class", "clickable")
-        if kwargs.get("tooltip"):
-            label.set("title", kwargs["tooltip"])
-        wrapper.append(widget)
-        wrapper.append(label)
-        return wrapper
-
-    @classmethod
-    def __classes(cls, classes):
-        """Package the classes to be assigned to an element as a set
-
-        Required positional argument:
-
-            classes
-                one of the following:
-                   - None
-                   - a space-delimited string of class names
-                   - a `tuple` of class names
-                   - a `list` of class names
-                   - a `set` of class names
-
-        Returns:
-
-            a `set` of zero or more class name strings
-        """
-
-        if classes is None:
-            return set()
-        if isinstance(classes, str):
-            return set(classes.split())
-        return set(classes)
 
 
 class HTMLPage(FormFieldFactory):
@@ -1787,63 +1951,39 @@ class HTMLPage(FormFieldFactory):
 
     Be sure to keep the JQUERY... class values. They're not used here,
     but other scripts use them.
-
-    Sample usage:
-
-        buttons = HTMLPage.button("Submit"), HTMLPage.button("Reports")
-        page = HTMLPage("Advanced Search", subtitle="Drug", buttons=buttons)
-        fieldset = page.fieldset("Search Criteria")
-        fieldset.append(page.text_field("name", "Name"))
-        fieldset.append(page.date_field("since", "Since"))
-        page.form.append(fieldset)
-        page.send()
     """
 
+    BASE = Controller.BASE
     VERSION = "202101071440"
-    CDR_CSS = f"../../stylesheets/cdr.css?v={VERSION}"
+    USWDS = "https://cdnjs.cloudflare.com/ajax/libs/uswds/3.6.0"
     APIS = "https://ajax.googleapis.com/ajax/libs"
-    JQUERY = f"{APIS}/jquery/3.6.0/jquery.min.js"
-    JQUERY_UI = f"{APIS}/jqueryui/1.12.1/jquery-ui.min.js"
-    JQUERY_CSS = f"{APIS}/jqueryui/1.12.1/themes/smoothness/jquery-ui.css"
+    JQUERY = "/js/jquery-3.7.1.min.js"
+    JQUERY_UI = "/js/jquery-ui-1.13.2.min.js"
+    JQUERY_CSS = "/stylesheets/jquery-ui-1.13.2.css"
     CSS_LINKS = (
-        dict(
-            href=CDR_CSS,
-            rel="stylesheet",
-        ),
-        dict(
-            href=(
-                "https://code.jquery.com/ui/1.13.0-rc.3/themes"
-                "/smoothness/jquery-ui.css"
-            ),
-            rel="stylesheet",
-        ),
+        dict(href="/uswds/css/uswds.min.css", rel="stylesheet"),
+        dict(href=JQUERY_CSS, rel="stylesheet"),
     )
-    SCRIPT_LINKS = (
-        dict(
-            src="https://code.jquery.com/jquery-3.6.0.min.js",
-            integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=",
-            crossorigin="anonymous",
-        ),
-        dict(
-            src="https://code.jquery.com/ui/1.13.0/jquery-ui.min.js",
-            integrity="sha256-hlKLmzaRlE8SCJC1Kw8zoUbU8BxA+8kR3gseuKfMjxA=",
-            crossorigin="anonymous",
-            defer=None,
-        ),
-    )
+    SCRIPT_LINKS = dict(src=JQUERY), dict(src=JQUERY_UI)
     PRIMARY_FORM_ID = "primary-form"
     STRING_OPTS = dict(pretty_print=True, doctype="<!DOCTYPE html>")
-    CALENDAR_SCRIPT = "\n".join([
-        "jQuery(function() {",
-        "    jQuery('.CdrDateField').datepicker({",
-        "        dateFormat: 'yy-mm-dd',",
-        "        showOn: 'button',",
-        "        buttonImageOnly: true,",
-        "        buttonImage: '/images/calendar.png',",
-        "        buttonText: 'Select date',",
-        "        dayNamesMin: [ 'S', 'M', 'T', 'W', 'T', 'F', 'S' ]",
-        "    });",
-        "});"])
+    OFFICIAL_WEBSITE = "An official website of the United States government"
+    HOW_YOU_KNOW = "Here's how you know"
+    BOARD_MANAGERS = "Board Manager Menu Users"
+    CIAT_OCCM = "CIAT/OCCM Staff Menu Users"
+    DEV_SA = "Developer/SysAdmin Menu Users"
+    MENUS = (
+        (BOARD_MANAGERS, "Board Managers"),
+        (CIAT_OCCM, "CIAT/OCC"),
+        (DEV_SA, "Developers"),
+    )
+    MENU_PARMS = {
+        "glossaryconceptbydefinitionstatus.py": ["report"],
+        "help.py": ["id"],
+        "interventionandprocedureterms.py": ["IncludeAlternateNames"],
+        "qcreport.py": ["DocType", "ReportType"],
+        "summarymailerreport.py": ["flavor"],
+    }
 
     def __init__(self, title, **kwargs):
         """Capture the initial settings for the page.
@@ -1851,21 +1991,15 @@ class HTMLPage(FormFieldFactory):
         Required positional argument:
 
             title
-                string representing the page's title
+                string representing the page's browser title
 
         Optional keyword arguments:
 
             action
                 form submission handler (default: URL which draws form)
 
-            banner
-                string for main banner (default: page title)
-
             body_id
                 ID attribute for body element (default: "cdr-page")
-
-            buttons
-                sequence of objects created by FormFieldFactory.button()
 
             head_title
                 title for head block (default: page title)
@@ -1883,7 +2017,7 @@ class HTMLPage(FormFieldFactory):
                 object representing the current CDR login context
 
             subtitle
-                string for a smaller second banner
+                used as the title of the page (not well named)
 
             stylesheets
                 urls for CSS to load (default: CDR and jQueryUI CSS)
@@ -1892,42 +2026,56 @@ class HTMLPage(FormFieldFactory):
         self.__title = title
         self.__opts = kwargs
 
-    def tostring(self):
-        """Return the serialized Unicode string for the page object."""
-        opts = dict(self.STRING_OPTS, encoding="unicode")
-        return lxml.html.tostring(self.html, **opts)
+    # ----------------------------------------------------------------
+    # Instance methods.
+    # ----------------------------------------------------------------
 
-    def tobytes(self):
-        """Return the serialized page as ASCII bytes.
+    def add_alert(self, message, **kwargs):
+        """Add a prominent notification at the top of the main content.
 
-        The Unicode characters contained on the page will have
-        been encoded as HTML entities.
+        Required position argument:
+          message - string or DOM object for base message; or sequence of same
+
+        Optional keyword arguments:
+          heading - optional string or DOM object for alert heading title
+          type - string (info, warning, error, success; default: info)
+          no_icon - if True, suppress display of alert icon
+          slim - if True, decrease the height of the alert
+          extra - optional sequence of additional elements to append to alert
         """
 
-        return lxml.html.tostring(self.html, **self.STRING_OPTS)
-
-    def send(self):
-        """Push the page back to the browser via the web server."""
-        if self.body.get("class") == "admin-menu" and self.news:
-            header = self.body.find("form/header")
-            if header is not None:
-                for name in reversed(sorted(self.news, key=str.lower)):
-                    news = self.news[name]
-                    p = self.B.P(news)
-                    if "error" in name.lower() or "failure" in name.lower():
-                        p.set("class", "failure news")
-                    else:
-                        p.set("class", "info news")
-                    header.addnext(p)
-        sendPage(self.tostring())
+        container = self.main.find("div")
+        if container is None or container.get("class") != "grid-container":
+            raise Exception("add_alert(): grid container missing")
+        alerts = container.find("div")
+        if alerts is None or alerts.get("id") != "alerts-block":
+            alerts = self.B.DIV(id="alerts-block")
+            alerts.set("class", "padding-bottom-4")
+            container.insert(0, alerts)
+            self.main.set("class", "usa-section padding-top-4")
+        alert_type = kwargs.get("type", "info")
+        classes = ["usa-alert", f"usa-alert--{alert_type}"]
+        if kwargs.get("no_icon"):
+            classes.append("usa-alert--no-icon")
+        if kwargs.get("slim"):
+            classes.append("usa-alert--slim")
+        body = self.B.DIV(self.B.CLASS("usa-alert__body"))
+        alert = self.B.DIV(body, self.B.CLASS(" ".join(classes)))
+        heading = kwargs.get("heading")
+        if heading:
+            body.append(self.B.H4(heading, self.B.STYLE("usa-alert__heading")))
+        if message is not None:
+            if not isinstance(message, (list, tuple)):
+                message = [message]
+            body.append(self.B.P(*message, self.B.CLASS("usa-alert__text")))
+        extra = kwargs.get("extra", [])
+        for item in extra:
+            body.append(item)
+        alerts.append(alert)
 
     def add_css(self, css):
         """Add style rules directly to the page."""
         self.head.append(self.B.STYLE(css))
-
-    def add_script(self, script):
-        """Add script code directly to the page."""
-        self.head.append(self.B.SCRIPT(script))
 
     def add_output_options(self, default=None, onclick=None):
         """
@@ -1946,11 +2094,117 @@ class HTMLPage(FormFieldFactory):
             fieldset.append(self.radio_button("format", **opts))
         return fieldset
 
+    def add_uswds_script(self):
+        """Separated out to be done at the last minute."""
+        self.body.append(self.B.SCRIPT(src="/uswds/js/uswds.min.js"))
+
+    def add_script(self, script):
+        """Add script code directly to the page."""
+        self.head.append(self.B.SCRIPT(script))
+
     def add_session_field(self, session):
         """Add hidden session field if it isn't there already."""
+
         if self.form is not None:
-            if not self.form.xpath(f"//input[@name='{SESSION}']"):
-                self.form.append(self.hidden_field(SESSION, session))
+            if not self.form.xpath(f"//input[@name='{Controller.SESSION}']"):
+                field = self.hidden_field(Controller.SESSION, session)
+                self.form.append(field)
+
+    def create_sidenav_item(self, positions, menu, labels):
+        """Create a list item for the sidebar menu (possibly recursively).
+
+        Required positional arguments:
+          positions - sequence of integers for the nested menu positions
+          menu - dictionary of values for the current menu item
+          labels - sequence of labels for the menu path to the current page
+                   (empty if that path can't be determined)
+
+        Return:
+          list item DOM object
+        """
+
+        item = self.B.LI(self.B.CLASS("usa-sidenav__item"))
+        label = display = menu["label"]
+        children = menu.get("children")
+        current = False
+        if labels and len(positions) <= len(labels):
+            current = label == labels[len(positions)-1]
+        if children and not current:
+            display += " ..."
+        link = self.B.A(display, href=self.find_menu_link(menu, positions))
+        item.append(link)
+        if current:
+            link.set("class", "usa-current")
+            if children:
+                ul = self.B.UL(self.B.CLASS("usa-sidenav__sublist"))
+                for i, child in enumerate(children):
+                    args = positions + [i], child, labels
+                    ul.append(self.create_sidenav_item(*args))
+                item.append(ul)
+        return item
+
+    def filter_menu(self, menu):
+        """Remove menu items the user is not allowed to use.
+
+        Required positional argument:
+          menu - nested dictionary of menu items
+
+        Return:
+          pruned menu or None if no actions are allowed
+        """
+
+        label = menu["label"]
+        children = []
+        for child in menu["children"]:
+            if child.get("children"):
+                child = self.filter_menu(child)
+                if child:
+                    children.append(child)
+            else:
+                permission = child.get("permission")
+                if not permission or permission in self.user_permissions:
+                    children.append(child)
+                elif self.control:
+                    args = child["label"], permission
+                    self.control.logger.info("skipping %s (%s)", *args)
+        if not children:
+            return None
+        return dict(label=label, children=children)
+
+    def find_matching_path(self, menu):
+        """Find menu path matching the current page.
+
+        Required positional parameter:
+            menu - dictionary of menu values
+
+        Return:
+            None or sequence of menu value dictionaries
+        """
+
+        script = menu.get("script")
+        if script:
+            if self.script_matches_page(script):
+                return [menu]
+            return None
+        for child in menu.get("children", []):
+            path = self.find_matching_path(child)
+            if path:
+                return [menu] + path
+        return None
+
+    def find_menu_link(self, menu, positions):
+        script = menu.get("script")
+        if script:
+            separator = "&" if "?" in script else "?"
+            key = "".join([f"{p:02x}" for p in positions])
+            script = f"{script}{separator}_mp={key}"
+            if self.control:
+                script += f"&{Controller.SESSION}={self.control.session}"
+            return script
+        children = menu.get("children")
+        if not children:
+            return "javascript:void(0);"
+        return self.find_menu_link(children[0], positions + [0])
 
     def menu_link(self, script, display, **params):
         """
@@ -1958,190 +2212,545 @@ class HTMLPage(FormFieldFactory):
         """
 
         url = script
-        if self.session and SESSION not in params:
-            params[SESSION] = self.session
+        if self.session and Controller.SESSION not in params:
+            params[Controller.SESSION] = self.session
         if params:
-            url = f"{url}?{urllib.parse.urlencode(params)}"
+            url = f"{url}?{urllib_parse.urlencode(params)}"
         return self.B.A(display, href=url)
 
-    @property
-    def action(self):
-        """URL for the form submission handler."""
-        if not hasattr(self, "_action"):
-            self._action = self.__opts.get("action")
-            if self._action is None:
-                self._action = os.path.basename(sys.argv[0])
-            if self._action == "flask":
-                self._action = ""
-        return self._action
+    def script_matches_page(self, script):
+        """Find out if a script matches the current page.
 
-    @property
-    def banner_title(self):
-        """The title to be displayed in the main banner for the page."""
-        if not hasattr(self, "_banner_title"):
-            self._banner_title = self.__opts.get("banner_title")
-            if self._banner_title is None:
-                self._banner_title = self.title
-        return self._banner_title
+        Required positional argument:
+          script - string for script name, possibly with parameters
 
-    @property
-    def body(self):
-        """The body content element for the page.
-
-        May or may not contain a form wrapper for the page's content,
-        depending on whether any buttons were passed to the HTMLPage's
-        constructor. Typically, the code creating an HTMLPage object
-        will then append to this object, or the enclosed form object,
-        or both.
+        Return:
+          True if the script matches the page, otherwise false
         """
 
-        if not hasattr(self, "_body"):
-            self._body = self.B.BODY(id=self.body_id)
-            if self.body_classes:
-                self._body.set("class", " ".join(self.body_classes))
-            banner = self.B.H1(self.banner_title)
-            header = self.B.E("header", banner)
-            if self.subtitle:
-                header.append(self.B.H2(self.subtitle))
-            if self.buttons:
-                buttons = self.B.SPAN(*self.buttons)
-                buttons.set("id", "header-buttons")
-                banner.append(buttons)
-                form = self.B.FORM(action=self.action, method=self.method)
-                if self.session:
-                    form.append(self.hidden_field(SESSION, self.session))
-                form.set("id", self.PRIMARY_FORM_ID)
-                self._body.append(form)
-                form.append(header)
-            else:
-                self._body.append(header)
-        return self._body
+        if not self.control or not self.control.script:
+            return False
+        if "?" in script:
+            script, parms = script.split("?", 1)
+        else:
+            script, parms = script, ""
+        self.control.logger.debug("page script is %s", self.control.script)
+        script = script.lower()
+        if self.control.script.lower() != script:
+            return False
+        if script not in self.MENU_PARMS:
+            return True
+        parms = urllib_parse.parse_qs(parms)
+        for name in self.MENU_PARMS[script]:
+            menu_value = parms.get(name)
+            if menu_value and isinstance(menu_value, (list, tuple)):
+                menu_value = menu_value[0]
+            fields_value = self.control.fields.getvalue(name)
+            if menu_value != fields_value:
+                args = name, menu_value, fields_value
+                self.control.logger.debug("parm %s: %s vs %s", *args)
+                return False
+        return True
 
-    @property
+    def send(self):
+        """Push the page back to the browser via the web server."""
+
+        if self.control:
+            if self.control.show_news and self.news:
+                for name in reversed(sorted(self.news, key=str.lower)):
+                    news = self.news[name]
+                    key = name.lower()
+                    if "error" in key or "failure" in key:
+                        message_type = "error"
+                    elif "warning" in key:
+                        message_type = "warning"
+                    elif "success" in key:
+                        message_type = "success"
+                    else:
+                        message_type = "info"
+                    self.add_alert(news, type=message_type)
+            if self.control.logged_out:
+                opts = dict(href="/", style=f"color: {self.LINK_COLOR};")
+                message = (
+                    "You have been successfully logged out from the CDR.",
+                    " Click ",
+                    self.B.A("here", **opts),
+                    " to log back in.",
+                )
+                self.add_alert(message, type="success")
+        self.add_uswds_script()
+        Controller.send_page(self.tostring())
+
+    def tobytes(self):
+        """Return the serialized page as ASCII bytes.
+
+        The Unicode characters contained on the page will have
+        been encoded as HTML entities.
+        """
+
+        return lxml_html.tostring(self.html, **self.STRING_OPTS)
+
+    def tostring(self):
+        """Return the serialized Unicode string for the page object."""
+
+        opts = dict(self.STRING_OPTS, encoding="unicode")
+        return lxml_html.tostring(self.html, **opts)
+
+    # ----------------------------------------------------------------
+    # Instance properties.
+    # ----------------------------------------------------------------
+
+    @cached_property
+    def action(self):
+        """URL for the form submission handler."""
+
+        action = self.__opts.get("action")
+        if action is None:
+            action = Path(sys_argv[0]).name
+        if action == "flask":
+            action = ""
+        return action
+
+    @cached_property
+    def banner(self):
+        """USWDS standard banner."""
+
+        img = self.B.IMG(src="/images/us_flag_small.png", alt="")
+        img.set("class", "usa-banner__header-flag")
+        img.set("aria-hidden", "true")
+        flag = self.B.DIV(img, self.B.CLASS("grid-col-auto"))
+        action = self.B.P(self.HOW_YOU_KNOW)
+        action.set("class", "usa-banner__header-action")
+        hidden = self.B.DIV(
+            self.B.P(
+                self.OFFICIAL_WEBSITE,
+                self.B.CLASS("usa-banner__header-text")
+            ),
+            self.B.P(
+                self.HOW_YOU_KNOW,
+                self.B.CLASS("usa-banner__header-action")
+            ),
+            self.B.CLASS("grid-col-fill tablet:grid-col-auto")
+        )
+        hidden.set("aria-hidden", "true")
+        span = self.B.SPAN(self.HOW_YOU_KNOW)
+        span.set("class", "usa-banner__button-text")
+        button = self.B.BUTTON(span, type="button")
+        button.set("class", "usa-accordion__button usa-banner__button")
+        button.set("aria-expanded", "false")
+        button.set("aria-controls", "gov-banner-default")
+        header = self.B.E(
+            "header",
+            self.B.DIV(
+                flag,
+                hidden,
+                button,
+                self.B.CLASS("usa-banner__inner")
+            ),
+            self.B.CLASS("usa-banner__header")
+        )
+        opts = dict(role="img", alt="")
+        img = self.B.IMG(src="/images/icon-dot-gov.svg", **opts)
+        img.set("class", "usa-banner__icon usa-media-block__img")
+        img.set("aria-hidden", "true")
+        dot_gov = self.B.DIV(
+            img,
+            self.B.DIV(
+                self.B.P(
+                    self.B.STRONG("Official websites use .gov"),
+                    self.B.BR(),
+                    "A ",
+                    self.B.STRONG(".gov"),
+                    " website belongs to an official government organization ",
+                    "in the United States."
+                ),
+                self.B.CLASS("usa-media-block__body")
+            ),
+            self.B.CLASS("usa-banner__guidance tablet:grid-col-6")
+        )
+        desc = "Locked padlock icon"
+        path_data = (
+            "M26 0c10.493 0 19 8.507 19 19v9h3a4 4 0 0 1 4 4v28a4 4 0 0 1-4 "
+            "4H4a4 4 0 0 1-4-4V32a4 4 0 0 1 4-4h3v-9C7 8.507 15.507 0 26 0zm0 "
+            "8c-5.979 0-10.843 4.77-10.996 10.712L15 19v9h22v-9c0-6.075-4.925-"
+            "11-11-11z"
+        )
+        path = self.B.E("path", fill="#000000", d=path_data)
+        path.set("fill-rule", "evenodd")
+        svg = self.B.E(
+            "svg",
+            self.B.TITLE("Lock", id="banner-lock-title"),
+            self.B.E("desc", desc, id="banner-lock-description"),
+            path,
+            xmlns="http://www.w3.org/2000/svg",
+            width="52",
+            height="64",
+            viewBox="0 0 52 64",
+            role="img",
+            focusable="false"
+        )
+        img = self.B.IMG(src="/images/icon-https.svg", **opts)
+        img.set("class", "usa-banner__icon usa-media-block__img")
+        img.set("aria-hidden", "true")
+        svg.set("class", "usa-banner__lock-image")
+        svg.set("aria-labelledby", "banner-lock-description")
+        lock = self.B.DIV(
+            img,
+            self.B.DIV(
+                self.B.P(
+                    self.B.STRONG("Secure .gov websites use HTTPS"),
+                    self.B.BR(),
+                    "A ",
+                    self.B.STRONG("lock"),
+                    " ( ",
+                    self.B.SPAN(svg, self.B.CLASS("icon-lock")),
+                    " ) or ",
+                    self.B.STRONG("https://"),
+                    " means you’ve safely connected to the .gov website. ",
+                    "Share sensitive information only on official, secure ",
+                    "websites."
+                ),
+                self.B.CLASS("usa-media-block__body")
+            ),
+            self.B.CLASS("usa-banner__guidance tablet:grid-col-6")
+        )
+        content = self.B.DIV(
+            self.B.DIV(dot_gov, lock, self.B.CLASS("grid-row grid-gap-lg")),
+            self.B.CLASS("usa-banner__content usa-accordion__content")
+        )
+        content.set("id", "gov-banner-default")
+        accordion = self.B.DIV(header, content, self.B.CLASS("usa-accordion"))
+        banner = self.B.E("section", accordion, self.B.CLASS("usa-banner"))
+        official_website = f"O{self.OFFICIAL_WEBSITE[4:]}"
+        banner.set("aria-label", official_website)
+        return banner
+
+    @cached_property
+    def body(self):
+        """The body content element for the page."""
+
+        body = self.B.BODY(id=self.body_id)
+        if self.body_classes:
+            body.set("class", " ".join(self.body_classes))
+        skipnav = self.B.A("Skip to main content", href="#main-content")
+        skipnav.set("class", "usa-skipnav")
+        body.append(skipnav)
+        body.append(self.banner)
+        body.append(self.B.DIV(self.B.CLASS("usa-overlay")))
+        body.append(self.header)
+        body.append(self.main)
+        body.append(self.footer)
+        return body
+
+    @cached_property
+    def body_classes(self):
+
+        classes = self.__opts.get("body_classes")
+        if classes:
+            if isinstance(classes, str):
+                classes = classes.strip().split()
+            return set(classes)
+        return set()
+
+    @cached_property
     def body_id(self):
         """ID attribute to be applied to the page's body element."""
-        if not hasattr(self, "_body_id"):
-            self._body_id = self.__opts.get("body_id")
-            if not self._body_id:
-                self._body_id = "cdr-page"
-        return self._body_id
+        return self.__opts.get("body_id") or "cdr-page"
 
-    @property
-    def body_classes(self):
-        if not hasattr(self, "_body_classes"):
-            classes = self.__opts.get("body_classes")
-            if classes:
-                if isinstance(classes, str):
-                    classes = classes.strip().split()
-                self._body_classes = set(classes)
-            else:
-                self._body_classes = set()
-        return self._body_classes
+    @cached_property
+    def control(self):
+        """Control object for the page, if known."""
+        return self.__opts.get("control")
 
-    @property
-    def buttons(self):
-        """The buttons to appear on the right side of the main banner."""
-        return self.__opts.get("buttons")
+    @cached_property
+    def current_path(self):
+        """Menu path to this page, if known."""
+
+        if not self.control:
+            return False
+        if self.current_path_from_key:
+            return self.current_path_from_key
+        for menu in self.user_menus:
+            path = self.find_matching_path(menu)
+            if path:
+                return path
+        return None
+
+    @cached_property
+    def current_path_from_key(self):
+        """Menu path derived from a parameter key."""
+
+        key = self.control.fields.getvalue("_mp")
+        if self.control:
+            self.control.logger.info("current path key is %s", key)
+        if not key or len(key) % 2 != 0:
+            return None
+        if not all(c in hexdigits for c in key):
+            return None
+        path = []
+        menus = self.menus
+        i = 0
+        while i < len(key):
+            if not menus:
+                return None
+            position = int(key[i:i+2], 16)
+            if self.control:
+                self.control.logger.debug("path position is %d", position)
+            if position >= len(menus):
+                return None
+            menu = menus[position]
+            path.append(menu)
+            menus = menu.get("children")
+            i += 2
+        if not path:
+            return None
+        script = path[-1].get("script")
+        if not self.script_matches_page(script):
+            if self.control:
+                self.control.logger.info("script %s not matched", script)
+            return None
+        return path
 
     @cached_property
     def cursor(self):
         """Read-only database cursor."""
         return db.connect(user="CdrGuest").cursor()
 
-    @property
+    @cached_property
+    def footer(self):
+        """Links at the bottom of the page."""
+        return self.make_footer(self.session, self.user)
+
+    @cached_property
     def form(self):
-        """The body's <form> element.
+        """The body's <form> element."""
 
-        Only present if one or more buttons passed to the constructor,
-        or if the caller has added its own form(s). If the page has
-        more than one form, this only finds the first one (and it won't
-        even find that, if it was attached by the caller inside a
-        wrapper other than `body`). In these more complicated cases,
-        it will be the caller's responsibility to keep track of the
-        added forms.
-        """
+        opts = dict(method=self.method, action=self.action)
+        form = self.B.FORM(self.B.CLASS("usa-form"), **opts)
+        if self.session:
+            form.append(self.hidden_field(Controller.SESSION, self.session))
+        form.set("id", self.PRIMARY_FORM_ID)
+        if self.__opts.get("body_classes") != "report":
+            form.set("target", "_blank")
+        return form
 
-        return self.body.find("form")
-
-    @property
+    @cached_property
     def head(self):
         """Assemble the head block for the HTML page."""
-        if not hasattr(self, "_head"):
-            self._head = self.B.HEAD(
-                self.B.META(charset="utf-8"),
-                self.B.TITLE(self.head_title),
-                self.B.LINK(href="/favicon.ico", rel="icon")
-            )
-            for attrs in self.stylesheets:
-                element = self.B.LINK()
-                for key, value in attrs.items():
-                    element.set(key, value)
+
+        http_equiv = self.B.META(content="IE=edge")
+        http_equiv.set("http-equiv", "X-UA-Compatible")
+        viewport = "width=device-width, initial-scale=1.0"
+        head = self.B.HEAD(
+            self.B.META(charset="utf-8"),
+            http_equiv,
+            self.B.META(name="viewport", content=viewport),
+            self.B.META(
+                name="description",
+                content="CDR Administration Tools"
+            ),
+            self.B.META(
+                name="author",
+                content="Bob Kline and Volker Englisch"
+            ),
+            self.B.TITLE(self.head_title),
+            self.B.LINK(href="/favicon.ico", rel="icon"),
+            self.B.SCRIPT(src="/uswds/js/uswds-init.min.js")
+        )
+        for attrs in self.stylesheets:
+            element = self.B.LINK()
+            for key, value in attrs.items():
+                element.set(key, value)
                 if "rel" not in attrs:
                     element.set("rel", "stylesheet")
-                self._head.append(element)
-            for attrs in self.scripts:
-                element = self.B.SCRIPT()
-                for key, value in attrs.items():
-                    element.set(key, value)
-                self._head.append(element)
-        return self._head
+            head.append(element)
+        for attrs in self.scripts:
+            element = self.B.SCRIPT()
+            for key, value in attrs.items():
+                element.set(key, value)
+            head.append(element)
+        style = (
+            "@media (min-width:30em){ .usa-form { max-width: none; }}",
+            ".usa-nav__primary { margin-right: 1rem; }",
+            ".usa-fieldset { margin-bottom: 2rem; }",
+            ".usa-label { font-weight: bold; max-width: none; }",
+            ".usa-form .usa-input--xl,",
+            ".usa-form .usa-input-group--xl { max-width: none; }",
+            ".usa-legend { font-size: 1.3em; font-weight: bold; }",
+            ".usa-legend { max-width: none; }",
+            ".usa-file-input { max-width: none; }",
+            ".date-range-fields > div { display: inline-block; }",
+            "body.report h1 { margin-bottom: 3rem; }",
+            "table.usa-table { margin-bottom: 3rem; }",
+            ".report-footer {",
+            "  font-style: italic; font-size: .9em; text-align: center;",
+            "}",
+            ".report-footer #elapsed { color: green; }",
+            ".hidden { display: none; }",
+            ".nowrap { white-space: nowrap; }",
+            ".usa-table td.text-bold { font-weight: bold; }",
+            ".report .usa-table { width: 100%; }",
+            ".report .usa-table td { word-wrap: break-word; }",
+            ".break-all, .break-all * { word-break: break-all; }",
+            f".usa-form a:visited {{ color: {self.LINK_COLOR}; }}",
+            ".error { color: red; font-weight: bold; }",
+        )
+        head.append(self.B.STYLE("\n".join(style)))
+        return head
 
-    @property
+    @cached_property
     def header(self):
         """The <header> element at the top of the body."""
-        header = self.body.find("form/header")
-        if header is not None:
-            return header
-        return self.body.find("header")
 
-    @property
+        classes = "usa-nav__primary usa-accordion"
+        primary_menu = self.B.UL(self.B.CLASS(classes))
+        if len(self.user_menus) > 1:
+            current_label = ""
+            if self.current_path:
+                current_label = self.current_path[0]["label"]
+            labels = [m["label"] for m in self.menus]
+            for user_menu in self.user_menus:
+                link_class = "usa-nav-link"
+                label = user_menu["label"]
+                if label == current_label:
+                    link_class += " usa-current"
+                positions = [labels.index(label)]
+                item = self.B.LI(
+                    self.B.A(
+                        self.B.SPAN(label),
+                        self.B.CLASS(link_class),
+                        href=self.find_menu_link(user_menu, positions)
+                    ),
+                    self.B.CLASS("usa-nav__primary-item")
+                )
+                primary_menu.append(item)
+        search = self.B.E(
+            "section",
+            self.B.FORM(
+                self.B.LABEL(
+                    "Search",
+                    self.B.FOR("search-field"),
+                    self.B.CLASS("usa-sr-only")
+                ),
+                self.B.INPUT(
+                    self.B.CLASS("usa-input"),
+                    id="search-field",
+                    type="search",
+                    name="doc-id",
+                    placeholder="CDR ID"
+                ),
+                self.B.INPUT(
+                    type="hidden",
+                    name=Controller.SESSION,
+                    value=self.session.name
+                ),
+                self.B.BUTTON(
+                    self.B.IMG(
+                        self.B.CLASS("usa-search__submit-icon"),
+                        src="/images/search--white.svg",
+                        alt="Search"
+                    ),
+                    self.B.CLASS("usa-button"),
+                    type="submit",
+                ),
+                self.B.CLASS("usa-search usa-search--small"),
+                role="search",
+                action="ShowCdrDocument.py",
+                target="_blank"
+            )
+        )
+        search.set("aria-label", "Search component")
+        if not self.session or self.session.name == "guest":
+            search.set("class", "margin-bottom-1")
+        nav = self.B.E(
+            "nav",
+            self.B.BUTTON(
+                self.B.IMG(src="/images/close.svg", role="img", alt="Close"),
+                self.B.CLASS("usa-nav__close"),
+                type="button"
+            ),
+            primary_menu,
+            search,
+            self.B.CLASS("usa-nav")
+        )
+        nav.set("aria-label", "Primary navigation")
+
+        home = f"{self.BASE}/Admin.py?{Controller.SESSION}={self.session}"
+        title = "CDR Administration"
+        return self.B.E(
+            "header",
+            self.B.DIV(
+                self.B.DIV(
+                    self.B.DIV(
+                        self.B.EM(self.B.A(title, title="Home", href=home)),
+                        self.B.BUTTON(
+                            "Menu",
+                            self.B.CLASS("usa-menu-btn"),
+                            type="button"
+                        ),
+                        self.B.CLASS("usa-logo"),
+                        id="header-logo"
+                    ),
+                    self.B.CLASS("usa-navbar")
+                ),
+                nav,
+                self.B.CLASS("usa-nav-container")
+            ),
+            self.B.CLASS("usa-header usa-header--basic")
+        )
+
+    @cached_property
     def head_title(self):
         """The title to be inserted into the head block of the page."""
-        if not hasattr(self, "_head_title"):
-            self._head_title = self.__opts.get("head_title")
-            if self._head_title is None:
-                self._head_title = self.title
-        return self._head_title
 
-    @property
+        head_title = self.__opts.get("head_title")
+        return self.title if head_title is None else head_title
+
+    @cached_property
     def html(self):
-        """Top-level object for the page.
+        """Top-level object for the page."""
+        return self.B.HTML(self.head, self.body)
 
-        Slips in the calendar JavaScript if there are any date fields.
-        """
+    @cached_property
+    def main(self):
+        """This is where page content gets added."""
 
-        if not hasattr(self, "_html"):
-            if not hasattr(self, "_has_calendar_js"):
-                self._has_calendar_js = False
-            if not self._has_calendar_js:
-                if self.body.xpath("//*[contains(@class, 'CdrDateField')]"):
-                    self.body.append(self.B.SCRIPT(self.CALENDAR_SCRIPT))
-                    self._has_calendar_js = True
-            self._html = self.B.HTML(self.head, self.body)
-        return self._html
+        container = self.B.DIV(self.B.CLASS("grid-container"))
+        if self.__opts.get("body_classes") == "report" or self.sidenav is None:
+            container.append(self.B.H1(self.subtitle))
+            container.append(self.form)
+        else:
+            container.append(
+                self.B.DIV(
+                    self.B.DIV(
+                        self.sidenav,
+                        self.B.CLASS("tablet:grid-col-4")
+                    ),
+                    self.B.DIV(
+                        self.B.H1(self.subtitle),
+                        self.form,
+                        self.B.CLASS("tablet:grid-col-8"),
+                        id="report-form"
+                    ),
+                    self.B.CLASS("grid-row grid-gap")
+                ),
+            )
+        return self.B.E("main", container, self.B.CLASS("usa-section"))
 
-    @property
-    def title(self):
-        """Return the title string for the page.
+    @cached_property
+    def menus(self):
+        """Load the CDR administrative menu structures."""
+        return self.load_menus()
 
-        Used by default in the head block and in the main banner, but
-        each can be overridden individually using keyword arguments
-        passed to the constructor.
-        """
-
-        return self.__title or ""
-
-    @property
+    @cached_property
     def method(self):
         """CGI verb to be used for form submission."""
         return self.__opts.get("method", "post")
 
-    @property
+    @cached_property
     def news(self):
         """Information to be displayed at the top of the menu pages."""
-        if not hasattr(self, "_news"):
-            self._news = cdr.getControlGroup("news")
-        return self._news
+        return getControlGroup("news")
 
     @cached_property
     def scripts(self):
@@ -2160,60 +2769,178 @@ class HTMLPage(FormFieldFactory):
                 elif isinstance(script, dict):
                     script_attrs.append(script)
                 else:
-                    self.logger.warning("bogus script %r", script)
+                    self.session.logger.warning("bogus script %r", script)
             return script_attrs
         if scripts is not None:
-            self.logger.warning("bogus scripts %r", scripts)
-        query = db.Query("ctl", "val")
-        query.where("grp = 'cdn'")
-        query.where("name = 'cgi-js'")
-        query.where("inactivated IS NULL")
-        row = query.execute(self.cursor).fetchone()
-        if row:
-            return json.loads(row.val)
+            self.session.logger.warning("bogus scripts %r", scripts)
+        #query = db.Query("ctl", "val")
+        #query.where("grp = 'cdn'")
+        #query.where("name = 'cgi-js'")
+        #query.where("inactivated IS NULL")
+        #row = query.execute(self.cursor).fetchone()
+        #if row:
+        #    return load_json_string(row.val)
         return self.SCRIPT_LINKS
 
-    @property
+    @cached_property
     def session(self):
         """CDR login context for this page."""
-        if not hasattr(self, "_session"):
-            self._session = self.__opts.get("session", "guest")
-            if isinstance(self._session, str):
-                self._session = Session(self._session)
-        return self._session
+
+        session = self.__opts.get("session", "guest")
+        return Session(session) if isinstance(session, str) else session
+
+    @cached_property
+    def sidenav(self):
+        """Menu on the left sidebar."""
+
+        if self.suppress_sidenav:
+            return None
+        ul = self.B.UL(self.B.CLASS("usa-sidenav"))
+        menu_labels = [m["label"] for m in self.menus]
+        if self.current_path:
+            path_labels = [p["label"] for p in self.current_path]
+            menu = self.current_path[0]
+        else:
+            return None
+        if self.session:
+            self.session.logger.info("path labels: %r", path_labels)
+        positions = [menu_labels.index(menu["label"])]
+        for i, child in enumerate(menu["children"]):
+            args = positions + [i], child, path_labels
+            ul.append(self.create_sidenav_item(*args))
+        return self.B.E("nav", ul)
+
+    @cached_property
+    def subtitle(self):
+        """Shown at the top of the page in an H1 element (badly named)."""
+        return self.__opts.get("subtitle")
+
+    @cached_property
+    def suppress_sidenav(self):
+        """Override to provide more nuanced logic."""
+        return True if self.__opts.get("suppress_sidenav") else False
 
     @cached_property
     def stylesheets(self):
         """CSS rules to be loaded for the page."""
-
-        stylesheets = self.__opts.get("stylesheets")
-        if isinstance(stylesheets, (list, tuple)):
-            sheets = []
-            for sheet in stylesheets:
-                if isinstance(sheet, str):
-                    sheets.append(dict(href=sheet, rel="stylesheet"))
-                elif isinstance(sheet, dict):
-                    sheets.append(sheet)
-                else:
-                    self.logger.warning("bogus stylesheet %r", sheet)
-            return sheets
-        if stylesheets is not None:
-            self.logger.warning("bogus stylesheets %r", stylesheets)
-        query = db.Query("ctl", "val")
-        query.where("grp = 'cdn'")
-        query.where("name = 'cgi-css'")
-        query.where("inactivated IS NULL")
-        row = query.execute(self.cursor).fetchone()
-        if row:
-            return json.loads(row.val)
         return self.CSS_LINKS
 
-    @property
-    def subtitle(self):
-        """Optional title to be displayed in a second, smaller banner."""
-        if not hasattr(self, "_subtitle"):
-            self._subtitle = self.__opts.get("subtitle")
-        return self._subtitle
+    @cached_property
+    def title(self):
+        """Browser title for the page."""
+        return self.__title or ""
+
+    @cached_property
+    def user(self):
+        """Currently logged-in user."""
+        return self.session.User(self.session, id=self.session.user_id)
+
+    @cached_property
+    def user_menus(self):
+        """List of menus to which the current user has access."""
+
+        menus = dict((m["label"], m) for m in self.menus)
+        if not self.session:
+            return [menus["Guest"]]
+        allowed = []
+        for group, label in self.MENUS:
+            if group in self.user.groups:
+                menu = self.filter_menu(menus[label])
+                if menu:
+                    allowed.append(menu)
+        return allowed or [menus["Guest"]]
+
+    @cached_property
+    def user_permissions(self):
+        """Set of actions the user is allowed to perform."""
+
+        query = db.Query("grp_action ga", "a.name", "t.name")
+        query.join("grp_usr gu", "gu.grp = ga.grp")
+        query.join("action a", "a.id = ga.action")
+        query.join("doc_type t", "t.id = ga.doc_type")
+        query.where(query.Condition("gu.usr", self.user.id))
+        rows = query.execute(self.session.cursor).fetchall()
+        actions = set()
+        for action, doctype in rows:
+            if doctype:
+                actions.add(f"{action}:{doctype}")
+            else:
+                actions.add(action)
+        return actions
+
+
+    # ----------------------------------------------------------------
+    # Method not requiring an instance.
+    # ----------------------------------------------------------------
+
+    @staticmethod
+    def load_menus():
+        """Separated out so other tools can use it."""
+
+        directory = Path(__file__).parent
+        path = directory / "menus.json"
+        with path.open(encoding="utf-8") as fp:
+            return load_json_file(fp)
+
+    @classmethod
+    def make_footer(cls, session=None, user=None):
+        """Pull this out so it can be used from elsewhere.
+
+        Optional keyword argument:
+          session - current session for this request
+          user - account which is currently logged in
+        """
+
+        li_classes = " ".join([
+            "mobile-lg:grid-col-6",
+            "desktop:grid-col-auto",
+            "usa-footer__primary-content",
+        ])
+        link_class = "usa-footer__primary-link"
+        session_name = session and str(session) or "guest"
+        session_parm = f"{Controller.SESSION}={session_name}"
+        link_values = [
+            ("Help", f"HelpSearch.py?{session_parm}", False),
+            ("NCI Web Site", "https://www.cancer.gov", True),
+            ("CMS", "https://www-cms.cancer.gov", True),
+            ("Filter", f"Filter.py?{session_parm}", False),
+            ("Queries", f"CdrQueries.py?{session_parm}", True),
+        ]
+        if session_name == "guest":
+            values = "Log In", "/"
+        else:
+            values = "Log Out", f"LogOut.py?{session_parm}"
+        link_values.append((*values, False))
+        links = cls.B.UL(cls.B.CLASS("grid-row grid-gap"))
+        for label, href, new_tab in link_values:
+            link = cls.B.A(label, cls.B.CLASS(link_class), href=href)
+            if new_tab:
+                link.set("target", "_blank")
+            if label == "Log Out":
+                fullname = user.fullname
+                name = user.name
+                link.set("title", f"Logged in as {fullname} ({name}).")
+            links.append(cls.B.LI(link, cls.B.CLASS(li_classes)))
+        nav = cls.B.E(
+            "nav",
+            links,
+            cls.B.CLASS("usa-footer__nav")
+        )
+        nav.set("aria-label", "footer navigation")
+        return cls.B.E(
+            "footer",
+            cls.B.DIV(
+                cls.B.DIV(
+                    cls.B.DIV(
+                        nav,
+                        cls.B.CLASS("mobile-lg:grid-col-12")
+                    ),
+                    cls.B.CLASS("usa-footer__primary-container grid-row")
+                ),
+                cls.B.CLASS("usa-footer__primary-section")
+            ),
+            cls.B.CLASS("usa-footer usa-footer--slim")
+        )
 
 
 class Reporter:
@@ -2247,26 +2974,38 @@ class Reporter:
 
     def __init__(self, title, tables, **opts):
         """Capture the values for the report."""
+
         self.__title = title
         self.__tables = tables
         self.__opts = opts
 
+    # ----------------------------------------------------------------
+    # Instance method.
+    # ----------------------------------------------------------------
+
     def send(self, format="html"):
-        """Send the web page or Excel workbook to the browser."""
+        """Send the web page or Excel workbook to the browser.
+
+        Optional positional argument:
+          format - one of "html" (the default) or "excel"
+
+        Return:
+          Never returns, but exits (or perhaps throws an Exception)
+        """
+
         if format == "excel":
             self.workbook.send()
             if self.debug:
-                self.workbook.save(cdr.TMP)
+                self.workbook.save(TMP)
         else:
             self.page.send()
-        sys.exit(0)
+        sys_exit(0)
 
-    @property
-    def banner(self):
-        """Banner for the top of an HTML report (unused for Excel output)."""
-        return self.__opts.get("banner")
+    # ----------------------------------------------------------------
+    # Instance properties.
+    # ----------------------------------------------------------------
 
-    @property
+    @cached_property
     def css(self):
         """Sequence of string for <style> elements on HTML reports."""
         if not hasattr(self, "_css"):
@@ -2277,12 +3016,12 @@ class Reporter:
                 self._css = []
         return self._css
 
-    @property
+    @cached_property
     def debug(self):
         """Boolean; if True, save the workbook to the file system."""
         return self.__opts.get("debug")
 
-    @property
+    @cached_property
     def elapsed(self):
         """Optional length of time the report took to generate.
 
@@ -2291,78 +3030,73 @@ class Reporter:
 
         return self.__opts.get("elapsed")
 
-    @property
+    @cached_property
     def footer(self):
         """Optional footer to appear on the HTML report."""
         return self.__opts.get("footer")
 
-    @property
+    @cached_property
     def no_results(self):
-        """What to say if no result tables are found."""
+        """What to say if no result tables are found (unused for Excel)."""
 
-        if not hasattr(self, "_no_results"):
-            if "no_results" in self.__opts:
-                self._no_results = self.__opts.get("no_results")
-            else:
-                self._no_results = "No report results found."
-        return self._no_results
+        if "no_results" in self.__opts:
+            return self.__opts.get("no_results")
+        return "No report results found."
 
-    @property
+    @cached_property
     def page(self):
         """HTML version of report."""
-        if not hasattr(self, "_page"):
-            opts = {
-                "banner": self.banner,
-                "subtitle": self.subtitle,
-                "body_classes": "report",
-                "styles": self.css,
-            }
-            opts.update(self.page_opts)
-            self._page = HTMLPage(self.title, **opts)
-            if self.css:
-                self._page.add_css(self.css)
-            if not self.tables and self.no_results:
-                no_results = self._page.B.P(self.no_results)
-                no_results.set("class", "no-results")
-                self._page.body.append(no_results)
-            for table in self.tables:
-                if table.node is not None:
-                    self._page.body.append(table.node)
-            if self.footer is not None:
-                self._page.body.append(self.footer)
-            if self.elapsed:
-                footnote = self._page.B.P(f"elapsed: {self.elapsed}")
-                footnote.set("class", "footnote")
-                self._page.body.append(footnote)
-        return self._page
 
-    @property
+        opts = {
+            "subtitle": self.subtitle,
+            "body_classes": "report",
+            "styles": self.css,
+        }
+        opts.update(self.page_opts)
+        page = HTMLPage(self.title, **opts)
+        if self.css:
+            page.add_css(self.css)
+        if not self.tables and self.no_results:
+            no_results = page.B.P(self.no_results)
+            no_results.set("class", "no-results")
+            page.form.append(no_results)
+        for table in self.tables:
+            if table.node is not None:
+                page.form.append(table.node)
+        if self.footer is not None:
+            page.main.append(self.footer)
+        if self.elapsed:
+            footnote = page.B.P(f"elapsed: {self.elapsed}")
+            footnote.set("class", "footnote")
+            page.main.append(footnote)
+        return page
+
+    @cached_property
     def page_opts(self):
         """Dictionary of options passed to HTMLPage class's constructor."""
         return self.__opts.get("page_opts") or {}
 
-    @property
+    @cached_property
     def subtitle(self):
-        """String for display under the primary banner of the web report.
+        """Title shown at the top of the page (not well named).
 
         Not used for Excel reports.
         """
 
         return self.__opts.get("subtitle")
 
-    @property
+    @cached_property
     def tables(self):
         """Sequence of tables to be included in the report.
 
         A single table will be converted to a list.
         """
-        if not hasattr(self, "_tables"):
-            self._tables = self.__tables
-            if isinstance(self._tables, Reporter.Table):
-                self._tables = [self._tables]
-        return self._tables
 
-    @property
+        if isinstance(self.__tables, Reporter.Table):
+            return [self.__tables]
+        return self.__tables
+
+    @cached_property
     def title(self):
         """Title of the report.
 
@@ -2371,26 +3105,23 @@ class Reporter:
 
         return self.__title
 
-    @property
+    @cached_property
     def workbook(self):
         """Wrapper for Excel workbook."""
-        if not hasattr(self, "_workbook"):
-            opts = dict(stamp=True)
-            if self.wrap is not None:
-                opts["wrap"] = self.wrap
-            self._workbook = Excel(self.title, stamp=True, wrap=self.wrap)
-            for table in self.tables:
-                table.add_worksheet(self._workbook)
-        return self._workbook
 
-    @property
+        workbook = Excel(self.title, stamp=True, wrap=self.wrap)
+        for table in self.tables:
+            table.add_worksheet(workbook)
+        return workbook
+
+    @cached_property
     def wrap(self):
         return self.__opts.get("wrap", True)
 
     class Cell:
         """Data for one cell in a report table."""
 
-        B = lxml.html.builder
+        B = html_builder
 
         def __init__(self, *values, **opts):
             """Capture the information needed to show this cell on the report.
@@ -2471,97 +3202,86 @@ class Reporter:
             # cell = book.write(rownum, colnum, values, styles)
             # if self.href:
             #     cell.hyperlink = self.href
+            if isinstance(values, bytes):
+                try:
+                    values = str(values, encoding="utf-8")
+                except Exception:
+                    values = str(values)
             book.write(rownum, colnum, values, styles)
             return nextcol
 
-        @property
+        @cached_property
         def bold(self):
             """Boolean indicating whether the cell values should be bolded."""
             return self.__opts.get("bold")
 
-        @property
+        @cached_property
         def center(self):
             """Boolean indicating whether to center the cell's content."""
             return self.__opts.get("center")
 
-        @property
+        @cached_property
         def classes(self):
             """Sequence of class names for this cell."""
-            if not hasattr(self, "_classes"):
-                classes = self.__opts.get("classes")
-                if not classes:
-                    self._classes = set()
-                elif isinstance(classes, set):
-                    self._classes = classes
-                elif isinstance(classes, str):
-                    self._classes = {classes}
-                elif isinstance(classes, (tuple, list)):
-                    self._classes = set(classes)
-                else:
-                    message = "unexpected type {} for Cell classes: {}"
-                    args = type(classes), repr(classes)
-                    raise Exception(message.format(args))
-                if self.bold and not self.href:
-                    self._classes.add("strong")
-                if self.center:
-                    self._classes.add("center")
-                elif self.right:
-                    self._classes.add("right")
-                if self.middle:
-                    self._classes.add("middle")
-            return self._classes
 
-        @property
+            classes = self.__opts.get("classes")
+            if not classes:
+                classes = set()
+            elif isinstance(classes, set):
+                classes = classes
+            elif isinstance(classes, str):
+                classes = {classes}
+            elif isinstance(classes, (tuple, list)):
+                classes = set(classes)
+            else:
+                message = "unexpected type {} for Cell classes: {}"
+                args = type(classes), repr(classes)
+                raise Exception(message.format(args))
+            if self.bold and not self.href:
+                classes.add("text-bold")
+            if self.center:
+                classes.add("text-center")
+            elif self.right:
+                classes.add("text-right")
+            if self.middle:
+                classes.add("text-middle")
+            return classes
+
+        @cached_property
         def colspan(self):
-            """How many columns does this cell span horizontally?
+            """How many columns does this cell span horizontally?"""
 
-            Default is 1.
-            """
+            colspan = self.__opts.get("colspan")
+            return int(colspan) if colspan else None
 
-            if not hasattr(self, "_colspan"):
-                self._colspan = self.__opts.get("colspan")
-                if self._colspan:
-                    self._colspan = int(self._colspan)
-            return self._colspan
-
-        @property
+        @cached_property
         def href(self):
             """URL value for link."""
             return self.__opts.get("href")
 
-        @property
+        @cached_property
         def middle(self):
             """Override vertical alignment."""
-            return self.__opts.get("middle")
+            return True if self.__opts.get("middle") else False
 
-        @property
+        @cached_property
         def right(self):
-            """Boolean indicating whether the values should be right aligned.
-            """
+            """True if values should be right aligned."""
+            return True if self.__opts.get("right") else False
 
-            return self.__opts.get("right")
-
-        @property
+        @cached_property
         def rowspan(self):
-            """How many rows does this cell span vertically?
+            """How many rows does this cell span vertically?"""
 
-            Default is 1.
-            """
+            rowspan = self.__opts.get("rowspan")
+            return int(rowspan) if rowspan else None
 
-            if not hasattr(self, "_rowspan"):
-                self._rowspan = self.__opts.get("rowspan")
-                if self._rowspan:
-                    self._rowspan = int(self._rowspan)
-            return self._rowspan
-
-        @property
+        @cached_property
         def sheet_styles(self):
             """Optional dictionary of style attributes for the Excel report."""
-            if not hasattr(self, "_sheet_styles"):
-                self._sheet_styles = self.__opts.get("sheet_styles") or {}
-            return self._sheet_styles
+            return self.__opts.get("sheet_styles") or {}
 
-        @property
+        @cached_property
         def style(self):
             """Custom CSS specified directly on the element.
 
@@ -2571,7 +3291,7 @@ class Reporter:
 
             return self.__opts.get("style")
 
-        @property
+        @cached_property
         def target(self):
             """Target for links.
 
@@ -2580,71 +3300,67 @@ class Reporter:
 
             return self.__opts.get("target")
 
-        @property
+        @cached_property
         def td(self):
             """HTML node for this cell in a web report."""
-            if not hasattr(self, "_td"):
-                self._td = container = self.B.TD()
-                if self.href:
-                    container = self.B.A(href=self.href)
-                    if self.target:
-                        container.set("target", self.target)
-                    if self.bold:
-                        container.set("class", "strong")
-                    self._td.append(container)
-                if len(self.values) == 1:
-                    if isinstance(self.values[0], lxml.html.HtmlElement):
-                        container.append(self.values[0])
-                    else:
-                        container.text = str(self.values[0])
-                else:
-                    values = list(self.values)
-                    container.append(self.B.SPAN(str(values.pop(0))))
-                    while values:
-                        container.append(self.B.BR())
-                        container.append(self.B.SPAN(str(values.pop(0))))
-                if self.colspan:
-                    self._td.set("colspan", str(self.colspan))
-                if self.rowspan:
-                    self._td.set("rowspan", str(self.rowspan))
-                if self.classes:
-                    self._td.set("class", " ".join(self.classes))
-                if self.title:
-                    self._td.set("title", self.title)
-                if self.style:
-                    self._td.set("style", self.style)
-            return self._td
 
-        @property
+            td = container = self.B.TD()
+            if self.href:
+                container = self.B.A(href=self.href)
+                if self.target:
+                    container.set("target", self.target)
+                if self.bold:
+                    container.set("class", "strong")
+                td.append(container)
+            if len(self.values) == 1:
+                if isinstance(self.values[0], HtmlElement):
+                    container.append(self.values[0])
+                else:
+                    container.text = str(self.values[0])
+            else:
+                values = list(self.values)
+                container.append(self.B.SPAN(str(values.pop(0))))
+                while values:
+                    container.append(self.B.BR())
+                    container.append(self.B.SPAN(str(values.pop(0))))
+            if self.colspan:
+                td.set("colspan", str(self.colspan))
+            if self.rowspan:
+                td.set("rowspan", str(self.rowspan))
+            if self.classes:
+                td.set("class", " ".join(self.classes))
+            if self.title:
+                td.set("title", self.title)
+            if self.style:
+                td.set("style", self.style)
+            return td
+
+        @cached_property
         def title(self):
             """Optional string to be shown in popup when hovering."""
-            if not hasattr(self, "_title"):
-                if "title" in self.__opts:
-                    self._title = self.__opts["title"]
-                elif "tooltip" in self.__opts:
-                    self._title = self.__opts["tooltip"]
-                else:
-                    self._title = None
-            return self._title
 
-        @property
+            if "title" in self.__opts:
+                return self.__opts["title"]
+            elif "tooltip" in self.__opts:
+                return self.__opts["tooltip"]
+            return None
+
+        @cached_property
         def tooltip(self):
             """Alias for the title property."""
             return self.title
 
-        @property
+        @cached_property
         def values(self):
             """Collect the values for the cell into a sequence."""
-            if not hasattr(self, "_values"):
-                self._values = []
-                for value in self.__vals:
-                    if isinstance(value, (list, tuple)):
-                        self._values += list(value)
-                    elif value is not None:
-                        self._values.append(value)
-                if not self._values:
-                    self._values = [""]
-            return self._values
+
+            values = []
+            for value in self.__vals:
+                if isinstance(value, (list, tuple)):
+                    values += list(value)
+                elif value is not None:
+                    values.append(value)
+            return values or [""]
 
     class Column:
         """Header and properties for one column in a report table."""
@@ -2654,57 +3370,47 @@ class Reporter:
             self.__name = name
             self.__opts = opts
 
-        @property
+        @cached_property
         def classes(self):
             """Optional classes for the th element (HTML only)."""
             return self.__opts.get("classes")
 
-        @property
+        @cached_property
         def colspan(self):
             """How many columns does this header need to cover?"""
             return self.__opts.get("colspan")
 
-        @property
+        @cached_property
         def id(self):
             """Optional unique ID for the th element (HTML only)."""
             return self.__opts.get("id")
 
-        @property
+        @cached_property
         def name(self):
             """What we display at the top of the column."""
             return self.__name
 
-        @property
+        @cached_property
         def skip(self):
             """Keep track of rows to be skipped when rowspan is set."""
-            if not hasattr(self, "_skip"):
-                self._skip = 0
-            return self._skip
+            return 0
 
-        @skip.setter
-        def skip(self, other):
-            """Let table rendering modify this value."""
-            self._skip = other
-
-        @property
+        @cached_property
         def tooltip(self):
             """Popup string for help when the user hovers over the column."""
             return self.__opts.get("tooltip")
 
-        @property
+        @cached_property
         def style(self):
             """HTML style attribute for column element on web page."""
-            if not hasattr(self, "_style"):
-                self._style = None
-                style = self.__opts.get("style") or ""
-                rules = [r for r in style.rstrip(";").split(";") if r]
-                if self.width:
-                    rules.append(f"min-width: {self.width}")
-                if rules:
-                    self._style = ";".join(rules)
-            return self._style
 
-        @property
+            style = self.__opts.get("style") or ""
+            rules = [r for r in style.rstrip(";").split(";") if r]
+            if self.width:
+                rules.append(f"min-width: {self.width}")
+            return ";".join(rules) if rules else None
+
+        @cached_property
         def width(self):
             """Minimum width of column (e.g., '40px')."""
             return self.__opts.get("width")
@@ -2715,7 +3421,10 @@ class Reporter:
         A report can have more than one table.
         """
 
-        B = lxml.html.builder
+        B = html_builder
+        WIDE_CSS = (
+            ".report .usa-table { width: 90%; margin: 3rem auto 1.25rem; }"
+        )
 
         def __init__(self, rows, **opts):
             """Capture the information we need to render the table."""
@@ -2749,7 +3458,7 @@ class Reporter:
 
             # Show the report date between caption and headers if requested.
             if self.show_report_date:
-                report_date = f"Report date: {datetime.date.today()}"
+                report_date = f"Report date: {date.today()}"
                 book.merge(rownum, 1, rownum, len(self.columns))
                 book.write(rownum, 1, report_date, dict(font=book.bold))
                 rownum += 1
@@ -2769,7 +3478,6 @@ class Reporter:
             # Add each of the data rows to the worksheet.
             for row in self.rows:
                 rownum += 1
-                self.debug("adding row %d", rownum)
                 colnum = 1
                 for cell in row:
                     if not isinstance(cell, Reporter.Cell):
@@ -2782,51 +3490,52 @@ class Reporter:
             if self.logger:
                 self.logger.debug(message, *args)
 
-        @property
+        @cached_property
         def caption(self):
             """Sequence of strings to be displayed for the table's caption.
 
             If more than one string, each will be rendered on a separate line.
             """
 
-            if not hasattr(self, "_caption"):
-                self._caption = self.__opts.get("caption")
-                if not self._caption:
-                    self._caption = []
-                elif isinstance(self._caption, str):
-                    self._caption = [self._caption]
-            return self._caption
+            caption = self.__opts.get("caption")
+            if not caption:
+                return []
+            return [caption] if isinstance(caption, str) else caption
 
-        @property
+        @cached_property
         def classes(self):
             """Optional classes for the table element (HTML only)."""
             return self.__opts.get("classes")
 
-        @property
+        @cached_property
         def cols(self):
             """Alias for `columns` property."""
             return self.columns
 
-        @property
+        @cached_property
         def columns(self):
             """Sequence of `Reporter.Column` objects for this table."""
-            if not hasattr(self, "_columns"):
-                self._columns = []
-                columns = self.__opts.get("columns") or self.__opts.get("cols")
-                if columns:
-                    self._columns = []
-                    for column in columns:
-                        if isinstance(column, str):
-                            column = Reporter.Column(column)
-                        self._columns.append(column)
-            return self._columns
 
-        @property
+            values = self.__opts.get("columns") or self.__opts.get("cols")
+            columns = []
+            if values:
+                for value in values:
+                    if isinstance(value, str):
+                        value = Reporter.Column(value)
+                    columns.append(value)
+            return columns
+
+        @cached_property
+        def fixed(self):
+            """True if the table layout should be fixed."""
+            return True if self.__opts.get("fixed") else False
+
+        @cached_property
         def freeze_panes(self):
             """Optional cell marking row/col freezing (Excel only)."""
             return self.__opts.get("freeze_panes")
 
-        @property
+        @cached_property
         def id(self):
             """Optional id attribute for the table element (HTML only)."""
             return self.__opts.get("id")
@@ -2836,82 +3545,93 @@ class Reporter:
             """Access to logging."""
             return self.__opts.get("logger")
 
-        @property
+        @cached_property
         def node(self):
             """HTML object for table."""
-            if not hasattr(self, "_node"):
 
-                # Hold off until we know we have child nodes for the table.
-                self._node = None
-                children = []
+            # Hold off until we know we have child nodes for the table.
+            children = []
 
-                # Add the caption strings to the table if we have any.
-                caption = list(self.caption)
-                if self.show_report_date:
-                    caption.append("")
-                    caption.append(f"Report date: {datetime.date.today()}")
-                if caption:
-                    nodes = [self.B.SPAN(caption[0])]
-                    for line in caption[1:]:
-                        nodes.append(self.B.BR())
-                        nodes.append(self.B.SPAN(line))
-                    children.append(self.B.CAPTION(*nodes))
+            # Add the caption strings to the table if we have any.
+            caption = list(self.caption)
+            if self.show_report_date:
+                caption.append("")
+                caption.append(f"Report date: {date.today()}")
+            if caption:
+                nodes = [self.B.SPAN(caption[0])]
+                for line in caption[1:]:
+                    nodes.append(self.B.BR())
+                    nodes.append(self.B.SPAN(line))
+                children.append(self.B.CAPTION(*nodes))
 
-                # Add the column headers if they have been provided.
-                if self.columns:
-                    tr = self.B.TR()
-                    for column in self.columns:
-                        th = self.B.TH(column.name)
-                        if column.style:
-                            th.set("style", column.style)
-                        if column.id:
-                            th.set("id", column.ids)
-                        if column.tooltip:
-                            th.set("title", column.tooltip)
-                        if column.classes:
-                            if isinstance(column.classes, str):
-                                th.set("class", column.classes)
-                            else:
-                                th.set("class", " ".join(column.classes))
-                        if column.colspan:
-                            th.set("colspan", str(column.colspan))
-                        tr.append(th)
-                    children.append(self.B.THEAD(tr))
-
-                # Only create the <tbody> element if there are data rows.
-                if self.rows:
-                    tbody = self.B.TBODY()
-                    for row in self.rows:
-                        tr = self.B.TR()
-                        self.debug("row has %d cells", len(row))
-                        for cell in row:
-                            if not isinstance(cell, Reporter.Cell):
-                                cell = Reporter.Cell(cell)
-                            self.debug("cell values: %s", cell.values)
-                            self.debug("td: %s", cell.td)
-                            tr.append(cell.td)
-                        self.debug("tr: %s", lxml.html.tostring(tr))
-                        tbody.append(tr)
-                    children.append(tbody)
-
-                # Create the table element if we found any child nodes.
-                if children:
-                    self._node = self.B.TABLE(*children)
-                    if self.id:
-                        self._node.set("id", self.id)
-                    if self.classes:
-                        if isinstance(self.classes, str):
-                            self._node.set("class", self.classes)
+            # Add the column headers if they have been provided.
+            if self.columns:
+                colgroup = self.B.COLGROUP()
+                children.append(colgroup)
+                tr = self.B.TR()
+                for column in self.columns:
+                    col = self.B.COL()
+                    if column.width:
+                        col.set("style", f"width: {column.width}")
+                    colgroup.append(col)
+                    th = self.B.TH(column.name)
+                    if column.style:
+                        th.set("style", column.style)
+                    if column.id:
+                        th.set("id", column.ids)
+                    if column.tooltip:
+                        th.set("title", column.tooltip)
+                    if column.classes:
+                        if isinstance(column.classes, str):
+                            th.set("class", column.classes)
                         else:
-                            self._node.set("class", " ".join(self.classes))
-            return self._node
+                            th.set("class", " ".join(column.classes))
+                    if column.colspan:
+                        th.set("colspan", str(column.colspan))
+                        col.set("span", str(column.colspan))
+                    tr.append(th)
+                children.append(self.B.THEAD(tr))
 
-        @property
+            # Only create the <tbody> element if there are data rows.
+            if self.rows:
+                tbody = self.B.TBODY()
+                for row in self.rows:
+                    tr = self.B.TR()
+                    self.debug("row has %d cells", len(row))
+                    for cell in row:
+                        if not isinstance(cell, Reporter.Cell):
+                            cell = Reporter.Cell(cell)
+                        self.debug("cell values: %s", cell.values)
+                        self.debug("td: %s", cell.td)
+                        tr.append(cell.td)
+                    self.debug("tr: %s", lxml_html.tostring(tr))
+                    tbody.append(tr)
+                children.append(tbody)
+
+            # Create the table element if we found any child nodes.
+            if not children:
+                return None
+            node = self.B.TABLE(*children)
+            if self.fixed:
+                node.set("style", "table-layout: fixed;")
+            if self.id:
+                node.set("id", self.id)
+            classes = self.classes
+            if not classes:
+                classes = set()
+            elif isinstance(classes, str):
+                classes = {classes}
+            classes.add("usa-table")
+            classes.add("usa-table--borderless")
+            node.set("class", " ".join(classes))
+            return node
+
+        @cached_property
         def rows(self):
             """Sequence of data cells displayed by the table."""
             return self.__rows
 
-        @property
+        @cached_property
         def sheet_name(self):
             """Optional name of the sheet.
 
@@ -2921,10 +3641,67 @@ class Reporter:
 
             return self.__opts.get("sheet_name")
 
-        @property
+        @cached_property
         def show_report_date(self):
             """If True, add the report date between the caption and headers."""
             return True if self.__opts.get("show_report_date") else False
+
+
+class BasicWebPage:
+    """Avoids the USWDS framework to accomodate wider report tables."""
+
+    B = html_builder
+    CSS = (
+        'body { font-family: "Source Sans Pro Web", Arial, sans-serif; }',
+        "body > div { width: 95%; margin: 2rem auto; }",
+        "table { border-collapse: collapse; }",
+        "table caption { font-weight: bold; padding: 1rem; }",
+        "th, td { font-size: .95em; border: 1px solid black; padding: .25rem}",
+        "th { vertical-align: middle; }",
+        "td { vertical-align: top; }",
+        ".report-footer { font-style: italic; font-size: .9em; ",
+        "                 text-align: center; }",
+        "#elapsed { color: green; }",
+        ".error { color: red; font-weight: bold; }",
+        ".nowrap { white-space: nowrap; }",
+        ".hidden { display: none; }",
+        ".text-center { text-align: center; }",
+     )
+
+    def send(self):
+        """Serialize the DOM and send it back to the browser."""
+        Controller.send_page(self.page)
+
+    @cached_property
+    def body(self):
+        """DOM object for the HTML BODY block."""
+        return self.B.BODY(self.wrapper)
+
+    @cached_property
+    def head(self):
+        """DOM object for the HTML HEAD block."""
+
+        http_equiv = self.B.META(content="IE=edge")
+        http_equiv.set("http-equiv", "X-UA-Compatible")
+        viewport = "width=device-width, initial-scale=1.0"
+        return self.B.HEAD(
+            self.B.META(charset="utf-8"),
+            http_equiv,
+            self.B.META(name="viewport", content=viewport),
+            self.B.TITLE("CDR Administration"),
+            self.B.LINK(href="/favicon.ico", rel="icon"),
+            self.B.STYLE("\n".join(self.CSS))
+        )
+
+    @cached_property
+    def page(self):
+        """DOM for the report's HTML page."""
+        return self.B.HTML(self.head, self.body)
+
+    @cached_property
+    def wrapper(self):
+        """DOM object for the HTML DIV element around body content."""
+        return self.B.DIV()
 
 
 class Excel:
@@ -2991,8 +3768,8 @@ class Excel:
             f"Content-disposition: attachment; filename={self.filename}"
         )
         headers = "\r\n".join(headers) + "\r\n\r\n"
-        sys.stdout.buffer.write(headers.encode("utf-8"))
-        self.book.save(sys.stdout.buffer)
+        sys_stdout.buffer.write(headers.encode("utf-8"))
+        self.book.save(sys_stdout.buffer)
 
     def set_width(self, col, width):
         letter = Excel.get_column_letter(col)
@@ -3005,88 +3782,81 @@ class Excel:
                 setattr(cell, name, styles[name])
         return cell
 
-    @property
+    @cached_property
     def hyperlink(self):
         """Font styling we want for links."""
-        if not hasattr(self, "_hyperlink"):
-            opts = dict(color="000000FF", underline="single")
-            self._hyperlink = openpyxl.styles.Font(**opts)
-        return self._hyperlink
 
-    @property
+        opts = dict(color="000000FF", underline="single")
+        return excel_styles.Font(**opts)
+
+    @cached_property
     def bold(self):
-        if not hasattr(self, "_bold"):
-            self._bold = openpyxl.styles.Font(bold=True)
-        return self._bold
+        return excel_styles.Font(bold=True)
 
-    @property
+    @cached_property
     def center(self):
-        if not hasattr(self, "_center"):
-            opts = dict(horizontal="center", vertical="top",
-                        wrap_text=self.wrap)
-            self._center = openpyxl.styles.Alignment(**opts)
-        return self._center
 
-    @property
+        opts = dict(horizontal="center", vertical="top", wrap_text=self.wrap)
+        return excel_styles.Alignment(**opts)
+
+    @cached_property
     def right(self):
-        if not hasattr(self, "_right"):
-            opts = dict(horizontal="right", vertical="top",
-                        wrap_text=self.wrap)
-            self._right = openpyxl.styles.Alignment(**opts)
-        return self._right
 
-    @property
+        opts = dict(horizontal="right", vertical="top", wrap_text=self.wrap)
+        return excel_styles.Alignment(**opts)
+
+    @cached_property
     def left(self):
-        if not hasattr(self, "_left"):
-            opts = dict(horizontal="left", vertical="top", wrap_text=self.wrap)
-            self._left = openpyxl.styles.Alignment(**opts)
-        return self._left
 
-    @property
+        opts = dict(horizontal="left", vertical="top", wrap_text=self.wrap)
+        return excel_styles.Alignment(**opts)
+
+    @cached_property
     def center_middle(self):
         """Center both horizontally and vertically."""
-        if not hasattr(self, "_center_middle"):
-            opts = dict(horizontal="center", vertical="center",
-                        wrap_text=self.wrap)
-            self._center_middle = openpyxl.styles.Alignment(**opts)
-        return self._center_middle
 
-    @property
+        opts = dict(
+            horizontal="center",
+            vertical="center",
+            wrap_text=self.wrap,
+        )
+        self._center_middle = excel_styles.Alignment(**opts)
+
+    @cached_property
     def book(self):
         """Create a workbook with no sheets."""
-        if not hasattr(self, "_book"):
-            self._book = openpyxl.Workbook()
-            for view in self._book.views:
-                view.windowWidth = self.WINDOW_WIDTH
-                view.windowHeight = self.WINDOW_HEIGHT
-            if not self.__opts.get("keep_initial_sheet"):
-                for sheet in self._book.worksheets:
-                    self._book.remove(sheet)
-        return self._book
 
-    @property
+        book = ExcelWorkbook()
+        for view in book.views:
+            view.windowWidth = self.WINDOW_WIDTH
+            view.windowHeight = self.WINDOW_HEIGHT
+        if not self.__opts.get("keep_initial_sheet"):
+            for sheet in book.worksheets:
+                book.remove(sheet)
+        return book
+
+    @cached_property
     def sheet(self):
         """The most recently added sheet if any, else None."""
         return self.book.worksheets[-1] if self.book.worksheets else None
 
-    @property
+    @cached_property
     def title(self):
         return self.__title
 
-    @property
+    @cached_property
     def filename(self):
-        if not hasattr(self, "_filename"):
-            stamp = ""
-            if self.__opts.get("stamp") or not self.title:
-                stamp = datetime.datetime.now().strftime("-%Y%m%d%H%M%S")
-            if self.title:
-                title = re.sub(r"\W", "_", self.title)
-            else:
-                title = "workbook"
-            self._filename = f"{title}{stamp}.xlsx"
-        return self._filename
 
-    @property
+        stamp = ""
+        if self.__opts.get("stamp") or not self.title:
+            stamp = datetime.now().strftime("-%Y%m%d%H%M%S")
+        if self.title:
+            title = re_sub(r"\W", "_", self.title)
+        else:
+            title = "workbook"
+        return f"{title}{stamp}.xlsx"
+
+    @cached_property
     def wrap(self):
         return self.__opts.get("wrap")
 
@@ -3114,8 +3884,9 @@ class Excel:
         To go back from chars to pixels:
             pixels = int(round(6 * ((100 * chars - .5) / 100) + 5))
         """
+
         max_digit_width = 6
-        pixels = int(re.sub("[^0-9]+", "", pixels))
+        pixels = int(re_sub("[^0-9]+", "", pixels))
         return int((pixels - 5) / max_digit_width * 100 + 0.5) / 100
 
 
@@ -3139,20 +3910,16 @@ class AdvancedSearch(FormFieldFactory):
     INCLUDE_ROWS = True
     FILTER = SUBTITLE = DOCTYPE = None
     DBQuery = db.Query
+    SESSION = Controller.SESSION
+    REQUEST = Controller.REQUEST
+    BASE = Controller.BASE
 
     def __init__(self):
         self.match_all = True if self.fields.getvalue("match_all") else False
-        self.session = Session(getSession(self.fields) or "guest")
-        self.request = self.fields.getvalue("Request")
+        self.session = Session(self.fields.getvalue(self.SESSION) or "guest")
+        self.request = self.fields.getvalue(self.REQUEST)
         self.search_fields = []
         self.query_fields = []
-
-    @property
-    def fields(self):
-        """Named values from the CGI form."""
-        if not hasattr(self, "_fields"):
-            self._fields = FieldStorage()
-        return self._fields
 
     def run(self):
         try:
@@ -3163,16 +3930,20 @@ class AdvancedSearch(FormFieldFactory):
         except Exception as e:
             try:
                 message = "AdvancedSearch.run(request=%r)"
-                self.session.logger.exception(message, self.request)
+                self.logger.exception(message, self.request)
             except Exception:
-                bail(f"Unable to log exception {e}")
-            bail(f"AdvancedSearch.run() failure: {e}")
+                Controller.bail(f"Unable to log exception {e}")
+            Controller.bail(f"AdvancedSearch.run() failure: {e}")
 
     def show_form(self, subtitle=None, error=None):
         args = self.session.name, subtitle or self.SUBTITLE, self.search_fields
-        page = self.Form(*args, error=error)
+        page = self.Form(*args, error=error, control=self)
         self.customize_form(page)
-        sendPage(page.tostring())
+        classes = page.B.CLASS("button usa-button")
+        opts = dict(name="Request", value="Search", type="submit")
+        submit = page.B.INPUT(classes, **opts)
+        page.form.append(submit)
+        page.send()
 
     def show_report(self):
         args = self.query_fields, self.DOCTYPE, self.match_all
@@ -3182,13 +3953,15 @@ class AdvancedSearch(FormFieldFactory):
         strings = connector.join([repr(c) for c in query.criteria])
         subtitle = self.SUBTITLE
         opts = dict(search_strings=strings, count=len(rows), subtitle=subtitle)
+        opts["control"] = self
+        opts["session"] = self.session
         if self.INCLUDE_ROWS:
             opts["rows"] = rows
         if self.FILTER:
             opts["filter"] = self.FILTER
         page = self.ResultsPage(self.DOCTYPE, **opts)
         self.customize_report(page)
-        sendPage(page.tostring())
+        page.send()
 
     def customize_form(self, page):
         """Override in derived class if default behavior isn't enough."""
@@ -3202,14 +3975,7 @@ class AdvancedSearch(FormFieldFactory):
         rows = query.execute(self.session.cursor).fetchall()
         return [row.value for row in rows if row.value.strip()]
 
-    @property
-    def valid_values(self):
-        if not hasattr(self, "_valid_values"):
-            doctype = cdr.getDoctype("guest", self.DOCTYPE)
-            self._valid_values = dict(doctype.vvLists)
-        return self._valid_values
-
-    @property
+    @cached_property
     def countries(self):
         query = db.Query("document d", "d.id", "d.title")
         query.join("doc_type t", "t.id = d.doc_type")
@@ -3218,7 +3984,32 @@ class AdvancedSearch(FormFieldFactory):
         rows = query.execute(self.session.cursor).fetchall()
         return [(f"CDR{row.id:010d}", row.title) for row in rows]
 
-    @property
+    @cached_property
+    def fields(self):
+        """Named values from the CGI form."""
+        return FieldStorage()
+
+    @cached_property
+    def logged_out(self):
+        """True if the user has just logged out."""
+        return True if self.fields.getvalue("logged_out") else False
+
+    @cached_property
+    def logger(self):
+        """How we record what we do."""
+        return self.session.logger
+
+    @cached_property
+    def script(self):
+        """Name of form submission handler."""
+        return Path(sys_argv[0]).name
+
+    @cached_property
+    def show_news(self):
+        """Whether we should display news announcements."""
+        return True if self.fields.getvalue("show_news") else False
+
+    @cached_property
     def states(self):
         fields = "s.id AS i", "s.title AS s", "c.title as c"
         query = db.Query("document s", *fields)
@@ -3229,25 +4020,22 @@ class AdvancedSearch(FormFieldFactory):
         rows = query.execute(self.session.cursor).fetchall()
         return [(f"CDR{row.i:010d}", f"{row.s} [{row.c}]") for row in rows]
 
-    @property
+    @cached_property
     def statuses(self):
         """Valid active_status value for non-deleted CDR documents."""
         return [("A", "Active"), ("I", "Inactive")]
 
+    @cached_property
+    def valid_values(self):
+        return dict(getDoctype("guest", self.DOCTYPE).vvLists)
+
     class Form(HTMLPage):
-        BUTTONS = (
-            HTMLPage.button("Search"),
-            HTMLPage.button("Clear", button_type="reset"),
-        )
         TITLE = "CDR Advanced Search"
         MATCH_ALL_HELP = "If unchecked any field match will succeed."
 
         def __init__(self, session, subtitle, fields, **kwargs):
-            if "buttons" not in kwargs:
-                buttons = self.BUTTONS
             kwargs = dict(
                 **kwargs,
-                buttons=buttons,
                 session=session,
                 subtitle=subtitle,
                 method="get",
@@ -3287,9 +4075,18 @@ class AdvancedSearch(FormFieldFactory):
         def __init__(self, doctype, **kwargs):
 
             # Let the base class get us started.
-            subtitle = kwargs.get("subtitle", doctype)
-            opts = dict(body_id="advanced-search-results", subtitle=subtitle)
+            opts = dict(
+                body_id="advanced-search-results",
+                subtitle=kwargs.get("subtitle"),
+                session=kwargs.get("session"),
+                control=kwargs.get("control"),
+            )
             HTMLPage.__init__(self, self.TITLE, **opts)
+
+            # Start the table for the results.
+            table = self.B.TABLE()
+            table.set("class", "usa-table usa-table--borderless")
+            self.add_css("#advanced-search-results table { min-width: 100%; }")
 
             # Add a summary line if we have the requisite information.
             strings = kwargs.get("search_strings")
@@ -3299,38 +4096,41 @@ class AdvancedSearch(FormFieldFactory):
                     summary = f"1 document matches {strings}"
                 else:
                     summary = f"{count:d} documents match {strings}"
-                self.body.append(self.B.P(summary))
+                table.append(self.B.CAPTION(summary))
 
-            # Start the table for the results.
-            table = self.B.TABLE()
-            self.body.append(table)
+            # Attach the table to the page.
+            self.form.append(table)
 
             # If we have the rows for the results set, add them to the table.
             rows = kwargs.get("rows")
             if rows:
                 for i, row in enumerate(rows):
-                    cdr_id = cdr.normalize(row[0])
+                    cdr_id = f"CDR{Doc.extract_id(row[0]):010d}"
                     title = row[1].replace(";", "; ")
 
                     # Create the link.
-                    base = f"{BASE}/QcReport.py"
+                    base = f"{Controller.BASE}/QcReport.py"
                     if doctype in self.PERSONS_ORGS_GLOSSARY:
                         url = f"{base}?DocId={cdr_id}"
                     elif doctype == "Summary":
                         url = f"{base}?DocId={cdr_id}&ReportType=nm"
                     else:
-                        base = f"{BASE}/Filter.py"
+                        base = f"{Controller.BASE}/Filter.py"
                         filtre = kwargs.get("filter")
                         url = f"{base}?DocId={cdr_id}&Filter={filtre}"
-                    url += f"&{SESSION}={self.session}"
+                    url += f"&{Controller.SESSION}={self.session}"
                     link = self.B.A(cdr_id, href=url)
 
                     # Assemble the table row and attach it.
                     tr = self.B.TR(self.B.CLASS("row-item"))
-                    tr.append(self.B.TD(f"{i+1}.", self.B.CLASS("row-number")))
-                    tr.append(self.B.TD(link, self.B.CLASS("doc-link")))
+                    tr.append(self.B.TD(f"{i+1}.", self.B.CLASS("text-right")))
+                    tr.append(self.B.TD(link, self.B.CLASS("text-center")))
                     tr.append(self.B.TD(title, self.B.CLASS("doc-title")))
                     table.append(tr)
+
+        @cached_property
+        def sidenav(self):
+            return None
 
     class QueryField:
         """Information used to plug one field into the search query."""
@@ -3345,6 +4145,7 @@ class AdvancedSearch(FormFieldFactory):
             In some cases `selectors` is a single string, in which case it
             is the name of a column in the `document` table.
             """
+
             self.var = var
             self.selectors = selectors
 
@@ -3378,704 +4179,104 @@ class AdvancedSearch(FormFieldFactory):
             """Convenience method to make the code cleaner."""
             return self.query.execute(cursor)
 
-        @property
+        @cached_property
         def query(self):
             """Build the query for the search if it's not already cached."""
 
-            if not hasattr(self, "_query"):
+            # Set up some convenience aliases.
+            Query = db.Query
+            Condition = Query.Condition
+            Or = Query.Or
 
-                # Set up some convenience aliases.
-                Query = db.Query
-                Condition = Query.Condition
-                Or = Query.Or
+            # Create a query object.
+            columns = "d.id", "d.title"
+            query = Query("document d", *columns).order("d.title")
 
-                # Create a query object.
-                columns = "d.id", "d.title"
-                self._query = Query("document d", *columns).order("d.title")
+            # Add the conditions: one for each field with a value.
+            conditions = []
+            have_doctype = False
+            for field in self.fields:
 
-                # Add the conditions: one for each field with a value.
-                conditions = []
-                have_doctype = False
-                for field in self.fields:
+                # See if we got a value for this field.
+                value = field.var.strip() if field.var else None
+                if not value:
+                    continue
 
-                    # See if we got a value for this field.
-                    value = field.var.strip() if field.var else None
-                    if not value:
-                        continue
+                # Remember the criterion for display to the user.
+                self.criteria.append(value)
 
-                    # Remember the criterion for display to the user.
-                    self.criteria.append(value)
+                # If 'selectors' is a string, it's a column in `document`.
+                value_op = self.__getQueryOp(value)
+                if isinstance(field.selectors, str):
+                    column = f"d.{field.selectors}"
+                    conditions.append(Condition(column, value, value_op))
+                    continue
 
-                    # If 'selectors' is a string, it's a column in `document`.
-                    value_op = getQueryOp(value)
-                    if isinstance(field.selectors, str):
-                        column = f"d.{field.selectors}"
-                        conditions.append(Condition(column, value, value_op))
-                        continue
+                # Build up a subquery for the field.
+                have_doctype = True
+                subquery = Query("query_term", "doc_id").unique()
 
-                    # Build up a subquery for the field.
-                    have_doctype = True
-                    subquery = Query("query_term", "doc_id").unique()
+                # These are ORd together.
+                selector_conditions = []
+                for path in field.selectors:
+                    path_op = "LIKE" if "%" in path else "="
 
-                    # These are ORd together.
-                    selector_conditions = []
-                    for path in field.selectors:
-                        path_op = "LIKE" if "%" in path else "="
+                    # Simple case: test for a string stored in the doc.
+                    if not path.endswith("/@cdr:ref[int_val]"):
+                        path_test = Condition("path", path, path_op)
+                        value_test = Condition("value", value, value_op)
+                        selector_conditions.append((path_test, value_test))
 
-                        # Simple case: test for a string stored in the doc.
-                        if not path.endswith("/@cdr:ref[int_val]"):
-                            path_test = Condition("path", path, path_op)
-                            value_test = Condition("value", value, value_op)
-                            selector_conditions.append((path_test, value_test))
+                    # Trickier case: find values in linked documents.
+                    else:
+                        path = path.replace("[int_val]", "")
+                        title_query = Query("document", "id").unique()
+                        args = "title", value, value_op
+                        title_query.where(Condition(*args))
+                        args = "int_val", title_query, "IN"
+                        title_test = Condition(*args)
+                        path_test = Condition("path", path, path_op)
+                        selector_conditions.append((path_test, title_test))
 
-                        # Trickier case: find values in linked documents.
-                        else:
-                            path = path.replace("[int_val]", "")
-                            title_query = Query("document", "id").unique()
-                            args = "title", value, value_op
-                            title_query.where(Condition(*args))
-                            args = "int_val", title_query, "IN"
-                            title_test = Condition(*args)
-                            path_test = Condition("path", path, path_op)
-                            selector_conditions.append((path_test, title_test))
+                # Add the conditions for this field's selectors to the mix.
+                subquery.where(Or(*selector_conditions))
+                conditions.append(Condition("d.id", subquery, "IN"))
 
-                    # Add the conditions for this field's selectors to the mix.
-                    subquery.where(Or(*selector_conditions))
-                    conditions.append(Condition("d.id", subquery, "IN"))
+            # Sanity check.
+            if not conditions:
+                raise Exception("No search conditions specified")
 
-                # Sanity check.
-                if not conditions:
-                    raise Exception("No search conditions specified")
+            # If all the selectors are from the document table (or,
+            # view, to be precise), then we still need to narrow
+            # the search to this document type.
+            if not have_doctype:
+                query.join("doc_type t", "t.id = d.doc_type")
+                query.where(Condition("t.name", self.doctype))
 
-                # If all the selectors are from the document table (or,
-                # view, to be precise), then we still need to narrow
-                # the search to this document type.
-                if not have_doctype:
-                    self._query.join("doc_type t", "t.id = d.doc_type")
-                    self._query.where(Condition("t.name", self.doctype))
-                # Plug the top-level conditions into the query.
-                if self.match_all:
-                    for condition in conditions:
-                        self._query.where(condition)
-                else:
-                    self._query.where(Or(*conditions))
+            # Plug the top-level conditions into the query.
+            if self.match_all:
+                for condition in conditions:
+                    query.where(condition)
+            else:
+                query.where(Or(*conditions))
 
             # All the fields with values have been folded into the query.
-            return self._query
-
-
-# NEWLINE = "@@@NEWLINE-PLACEHOLDER@@@"
-# BR = "@@@BR-PLACEHOLDER@@@"
-bail = Controller.bail
-
-# ----------------------------------------------------------------------#
-# LEGACY GLOBAL FUNCTIONS -- USE NEW CDRAPI MODULES INSTEAD IF YOU CAN #
-# ----------------------------------------------------------------------#
-
-
-def header(title, banner, subtitle, *args, **kwargs):
-    """Create the top portion of a serialized HTML form document.
-
-    This is an ancient function, and was how we created CDR web pages
-    back around the turn of the century. It needs to be retired, but
-    doing so will involve rewrites of around 40 scripts. The worst
-    of the function's numerous flaws was that it involved building
-    up HTML using string manipulation, mixing byte strings and unicode
-    strings, and throwing in some regular expression parsing for fun.
-    At least we have replaced strings splicing with a real HTML
-    object builder (from the lxml package). All strings must be real
-    `str` objects, not `bytes` or `bytearray` objects.
-
-    The existing code calling this function never went beyond passing
-    the first two of the keyword arguments as positional arguments,
-    so we catch those ("script" and "buttons") either way. The old
-    numBreaks, bkgd, and formExtra keyword arguments are now ignored.
-
-    As of 2020-09-21 there is now only one CGI script which uses this
-    function: QcReport.py. If that ever gets rewritten, we can retire
-    this legacy function.
-
-    Required positional arguments:
-
-        title
-            string used in the html/head/title
-
-        banner
-            string displayed in the header element's h1 child
-
-        subtitle
-            string displayed in the header element's h2 child
-
-    Optional keyword arguments:
-
-        script
-            file name for the script handling the form submission
-            (can also be passed as the 4th positional argument)
-
-        buttons
-            sequence of strings used for buttons placed on the left
-            side of the banner (can also be passed as the 5th positional
-            argument)
-
-        method
-            set to "get" to override the default ("post")
-
-        stylesheet
-            optional string containing serialized HTML fragments
-            to be placed at the end of html/head
-
-    Returns:
-        serialized HTML string with the closing tags for the form,
-        body, and html stripped off
-    """
-
-    # Assemble the optional keyword arguments.
-    script = args[0] if args else kwargs.get("script")
-    button_labels = args[1] if len(args) > 1 else kwargs.get("buttons")
-    method = kwargs.get("method") or "post"
-    head_extra = kwargs.get("stylesheet")
-
-    # Create the skeleton for the page (caller will add its own session).
-    opts = dict(
-        banner=banner,
-        subtitle=subtitle,
-        method=method,
-        body_id="legacy-page",
-        session=None,
-        stylesheets=["/stylesheets/dataform.css"],
-        scripts=[],
-    )
-    if script is not None:
-        opts["action"] = f"/cgi-bin/cdr/{script}"
-    if button_labels:
-        buttons = []
-        for label in button_labels:
-            buttons.append(HTMLPage.button(label))
-        opts["buttons"] = buttons
-    page = HTMLPage(title, **opts)
-
-    # Fold in any additional html/head child elements.
-    if head_extra:
-        for fragment in lxml.html.fragments_fromstring(head_extra):
-            page.head.append(fragment)
-
-    # Let the caller close out the form/body/html elements.
-    html = page.tostring()
-    if "</form>" in html:
-        return "".join(html.split("</form>")[:-1])
-    return "".join(html.split("</body>")[:-1])
-
-
-# ----------------------------------------------------------------------
-# Scrubber
-# ----------------------------------------------------------------------
-def scrubStr(chkStr, charset="[^A-Za-z0-9 -]", bailout=True,
-             msg="Invalid content in data"):
-    """
-    Ensure that only legal characters appear in the passed string.
-
-    Pass:
-        chkStr  - String to scrub.
-        charset - Allowed characters in the string.  The default set is
-                  suitable for Request, Session, and possibly other strings.
-        bailout - True = bail(msg) if any unallowed chars found.
-        msg     - Default bail msg, purposely vague to avoid giving
-                  clues to hackers.
-
-    Return:
-        If scrubbed string is unchanged or bailout == False:
-            Return scrubbed string.
-        Returns passed string if it's None or ''
-    """
-    if not chkStr:
-        return chkStr
-
-    scrub = re.sub(charset, "", chkStr)
-    if scrub != chkStr and bailout:
-        bail(msg)
-
-    return scrub
-
-
-# ----------------------------------------------------------------------
-# Get a session ID based on current form field values.
-# Can't use this funtion to log into the CDR any more (OCECDR-3849).
-# Validate the returned value.
-# ----------------------------------------------------------------------
-def getSession(fields, **opts):
-    try:
-        session = fields.getvalue(SESSION, None)
-    except Exception:
-        return "guest"
-
-    # Bail if required session is missing. I'm tempted to make required
-    # the default.
-    if not session:
-        if opts.get("required"):
-            bail("Session missing")
-        else:
-            return "guest"
-
-    # Make sure it's an active session.
-    query = db.Query("session", "id")
-    query.where(query.Condition("name", session))
-    query.where("ended IS NULL")
-    try:
-        rows = query.execute(opts.get("cursor")).fetchall()
-    except Exception:
-        # Looks like there's a bug in ADODB, triggered when a query
-        # parameter is longer than the target column's definition.
-        bail("Invalid session ID")
-    if not rows:
-        bail("Session not active")
-
-    return session
-
-
-# ----------------------------------------------------------------------
-# Get the name of the submitted request. Scrub the returned value.
-# ----------------------------------------------------------------------
-def getRequest(fields):
-    return scrubStr(fields.getvalue(REQUEST, None))
-
-
-# ----------------------------------------------------------------------
-# Send an HTML page back to the client.
-# If the parms parameter gets passed we need to redirect the output
-# and run the QCforWord.py script to properly convert the HTML output
-# to Word.
-# ----------------------------------------------------------------------
-def sendPage(page, textType='html', parms='', docId='', docType='', docVer=''):
-    """
-    Send a completed page of text to stdout, assumed to be piped by a
-    webserver to a web browser.
-
-    Note that _all_ the values passed in are Unicode strings. Any
-    encoding happens on the way out the door.
-
-    Pass:
-        page     - Text to send, assumed to be a unicode string (not bytes).
-        textType - HTTP Content-type, assumed to be html.
-        parms    - RowID storing all parameters if report needs to
-                   be converted to Word, usually an empty string.
-        docType  - if parms is supplied the document type is needed
-                   to properly redirect the output, usually an empty string.
-
-    Return:
-        No return.  After writing to the browser, the process exits.
-    """
-
-    # Handle redirect.
-    if parms:
-        url = f"https://{WEBSERVER}{BASE}/QCforWord.py"
-        args = docId, docType, docVer, parms
-        parms = "DocId={}&DocType={}&DocVersion={}&{}".format(*args)
-        print(f"Location: {url}?{parms}\n")
-        sys.exit(0)
-    else:
-        Controller.send_page(page, textType)
-
-
-# ----------------------------------------------------------------------
-# Log out of the CDR session and put up a new login screen.
-# ----------------------------------------------------------------------
-def logout(session):
-
-    # Make sure we have a session to log out of.
-    if not session:
-        bail('No session found.')
-    if isinstance(session, str):
-        session = Session(session)
-
-    # Perform the logout.
-    message = "Session Logged Out Successfully"
-    try:
-        session.logout()
-    except Exception as e:
-        message = str(e)
-
-    # Display a page with a link to log back in.
-    opts = dict(
-        buttons=[HTMLPage.button("Log In")],
-        action="/cgi-bin/secure/admin.py",
-        subtitle=message,
-    )
-    page = HTMLPage(Controller.PAGE_TITLE, **opts)
-    mesg = "\u263a Thanks for spending quality time with the CDR! \u263a"
-    para = HTMLPage.B.P(mesg, HTMLPage.B.CLASS("news center"))
-    page.form.append(para)
-    page.send()
-
-
-# ----------------------------------------------------------------------
-# Navigate to menu location or publish preview.
-# ----------------------------------------------------------------------
-def navigateTo(where, session, **params):
-    Controller.navigate_to(where, session, **params)
-
-
-# ----------------------------------------------------------------------
-# Determine whether query contains unescaped wildcards.
-# ----------------------------------------------------------------------
-def getQueryOp(query):
-    escaped = 0
-    for char in query:
-        if char == '\\':
-            escaped = not escaped
-        elif not escaped and char in "_%":
-            return "LIKE"
-    return "="
-
-
-# ----------------------------------------------------------------------
-# Escape single quotes in string.
-# ----------------------------------------------------------------------
-def getQueryVal(val):
-    return val.replace("'", "''")
-
-
-# ----------------------------------------------------------------------
-# Helper function to reduce SQL injection possibilities in input
-# ----------------------------------------------------------------------
-def sanitize(formStr, dType='str', maxLen=None, noSemis=True,
-             quoteQuotes=True, noDashDash=True, excp=False):
-    """
-    Validate and/or sanitize a string to try to prevent SQL injection
-    attacks using SQL inserted into formData.
-
-    Pass:
-        formStr      - String received from a form.
-        dType        - Expected data type, one of:
-                        'str'     = string, i.e., any data entry okay
-                        'int'     = integer
-                        'date'    = ISO date format YYYY-MM-DD
-                        'datetime'= ISO datetime YYYY-MM-DD HH:MM:SS
-                        'cdrID'   = One of our IDs with optional frag ID
-                                    All forms are okay, including plain int.
-        maxLen       - Max allowed string length.
-        noSemis      - True = remove semicolons.
-        quoteQuotes  - True = double single quotes, i.e., ' -> ''
-        noDashDash   - True = convert runs of '-' to single '-'
-        excp         - True = raise ValueError with a specific message.
-
-    Return:
-        Possibly modified string.
-        If validation fails, return None unless excp=True.
-          [Note: raising an exception will break some existing code, but
-           returning None will be safe and most existing code will behave
-           as if there were no user input.]
-    """
-    newStr = formStr
-
-    # Data type checking
-    if dType != 'str':
-        if dType == 'int':
-            try:
-                int(newStr)
-            except ValueError:
-                if excp:
-                    raise
-                return None
-        elif dType == 'date':
-            try:
-                time.strptime(newStr, '%Y-%m-%d')
-            except ValueError:
-                if excp:
-                    raise
-                return None
-        elif dType == 'datetime':
-            try:
-                time.strptime(newStr, '%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                try:
-                    time.strptime(newStr, '%Y-%m-%d %H:%M')
-                except ValueError:
-                    try:
-                        time.strptime(newStr, '%Y-%m-%d %H')
-                    except ValueError:
-                        try:
-                            time.strptime(newStr, '%Y-%m-%d')
-                        except ValueError:
-                            if excp:
-                                raise
-                            return None
-        elif dType == 'cdrID':
-            try:
-                cdr.exNormalize(newStr)
-            except Exception as e:
-                if excp:
-                    raise ValueError(e)
-                return None
-
-    # Maximum string length
-    if maxLen:
-        if len(newStr) > maxLen:
-            if excp:
-                raise ValueError("Max value length exceeded.")
-            return None
-
-    # Semicolons forbidden
-    # This version just strips them out
-    # XXX Is that safe?
-    if noSemis:
-        newStr = newStr.replace(";", "")
-
-    # Double single quotation marks
-    if quoteQuotes:
-        newStr = newStr.replace("'", "''")
-
-    # Convert any substring of 2 or more dashes (SQL comment) to single dash
-    if noDashDash:
-        while True:
-            pos = newStr.find("--")
-            if pos >= 0:
-                newStr = newStr[:pos] + newStr[pos+1:]
-            else:
-                break
-
-    # Return (possibly modified) string
-    return newStr
-
-
-# ----------------------------------------------------------------------
-# Get the full user name for a given session.
-# ----------------------------------------------------------------------
-def getFullUserName(session, conn):
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""\
-                SELECT fullname
-                  FROM usr
-                  JOIN session
-                    ON session.usr = usr.id
-                 WHERE session.name = ?""", session)
-        name = cursor.fetchone()[0]
-    except Exception:
-        bail("Unable to find current user name")
-    return name
-
-
-# ----------------------------------------------------------------------
-# Determine whether a parameter is a valid ISO date.
-# ----------------------------------------------------------------------
-def is_date(date):
-    return re.match(r"^\d\d\d\d-\d\d-\d\d$", str(date)) and True or False
-
-
-def _valParmHelper(val, bailout=True, reveal=True, msg=None):
-    """
-    If validation has failed for a value, this helper function handles
-    bailouts and messages.
-
-    Pass:
-        val     - value which failed validation
-        bailout - True = Invoke cdrcgi.bail()
-        reveal  - False = hide the value that failed, else show it in the
-                  bail.  Only meaningful if bailout == True.
-        msg     - Custom message to display on error.  Else use defaults.
-                  Only meaningful if bailout == True.
-
-    Return:
-        False, or no return if bailing out.
-    """
-    if bailout:
-        if reveal:
-            if not msg:
-                msg = 'Invalid parameter value received: "%s"' % val
-        else:
-            if not msg:
-                msg = 'Invalid parameter value received'
-        bail(msg)
-
-    # Caller just wants pass/fail, no bail
-    return False
-
-
-# Default values for valParm functions
-# To change defaults for all valParm calls in a single script:
-# In the script that imports cdrcgi:
-#    cdrcgi.BAILOUT_DEFAULT = False # A new value for all valParm calls
-# Other scripts are unaffected
-BAILOUT_DEFAULT = True  # True = bail() if validation faile
-REVEAL_DEFAULT = True   # True = Reveal invalid values to the user
-
-# Some common, frequently used, pre-tested, validation patterns
-VP_UNSIGNED_INT = r'^\d+$'
-VP_SIGNED_INT = r'^(-|\+)?\d+$'
-VP_PADDED_INT = r'^\s*\d+\s*$'
-VP_SIGNED_PAD = r'^\s*(-|\+)?\d+\s*$'
-VP_US_ZIPCODE = r'^\s*\d{5}(-\d{4})?\s*$'
-VP_DATETIME = r"^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$"
-
-
-def valParmVal(val, **opts):
-    """
-    Validate a value, typically a CGI parameter, against a list
-    of valid values or a regular expression.
-
-    This should not be too expensive in the intended cases of validating
-    parameters passed in from CGI forms.
-
-    Note that regex and valList are both optional. If both are empty,
-    and emptyOK is False, then the value(s) will always fail validation.
-
-    Pass:
-        val     - Value(s) to validate.
-                  May be a single value, a list of values, or even a list
-                  of lists of values.
-        valList - List of valid values. If only a single value is
-                  acceptable, it can be passed either as a string,
-                  or as a sequence containing a single string.
-        regex   - Regular expression for testing validity.
-                  Use $ at the end of the expression, unless you
-                  want the value(s) accepted if the beginning of
-                  each value matches the expression
-        iCase   - if True, ignore case when testing the value(s)
-        emptyOK - If True, empty/missing values are accepted as valid.
-                  If val is a sequence this option is applied to the
-                  individual values in the sequence, not to the sequence
-                  itself. In other words, if an empty sequence is
-                  passed for val, True is always returned. If that's
-                  not appropriate, use a separate test of your sequence
-                  to ensure that it has at least one element.
-
-        See _valParmHelper for the rest.
-
-    Return:
-        True = passed, False = failed, or no return if bailout.
-    """
-    if isinstance(val, (list, set, tuple)):
-        return all([valParmVal(v, **opts) for v in val])
-    if not val and (opts.get("emptyOK") or opts.get("empty_ok")):
-        return True
-
-    # Get the other optional parameters.
-    regex = opts.get("regex")
-    bailout = opts.get("bailout", BAILOUT_DEFAULT) and True or False
-    reveal = opts.get("reveal", REVEAL_DEFAULT) and True or False
-    icase = (opts.get("icase") or opts.get("iCase")) and True or False
-    msg = opts.get("msg")
-
-    # Validate the value against a regular expression
-    if regex:
-        flags = icase and re.IGNORECASE or 0
-        if re.match(regex, val, flags):
-            return True
-    else:
-        values = opts.get("valList") or opts.get("val_list") or []
-        if isinstance(values, str):
-            values = [values]
-        cval = val
-        if icase:
-            values = [v.lower() for v in values]
-            cval = val.lower()
-        if cval in values:
-            return True
-        with open(f"{cdr.TMP}/val-parm-val.log", "a", encoding="utf-8") as fp:
-            fp.write("cval=%s values=%s\n" % (cval, values))
-    return _valParmHelper(val, bailout, reveal, msg)
-
-
-def valParmEmail(val, **opts):
-    """
-    Validate an email format.
-
-    This uses the Python email.utils.parseaddr() function to break the address
-    into name and email parts, then does ultra simple additional validation.
-
-    It is a very permissive function.  It will not catch every error, but
-    should allow all valid addresses through.  Accepts anything with:
-
-        text1@text2 - where text2 includes at least one '.'.
-
-    Pass:
-        val = Email address to validate
-        See _valParmHelper for the rest.
-
-    Return:
-        Email portion of the string, e.g., for '"Joe Blow" <joe@mail.us>'
-        returns 'joe@mail.us'.  Test for "not False"
-        Note: email address may still be wrong and even absurdly wrong.
-
-        False = Failed format checking
-                Note: email address may still be
-    """
-
-    # Allow missing val if so requested.
-    if not val and (opts.get("empty_ok") or opts.get("emptyOK")):
-        return True
-
-    # Get the optional paramaters
-    bailout = opts.get("bailout", BAILOUT_DEFAULT) and True or False
-    reveal = opts.get("reveal", REVEAL_DEFAULT) and True or False
-    msg = opts.get("msg")
-
-    # Parse out the parts
-    (name, email) = parse_email_address(val)
-
-    # If it's completely screwed up
-    if not email:
-        return _valParmHelper(val, bailout, reveal, msg)
-
-    # Simple validation, may improve it later, but full RFC requires
-    # an incredible thousand character regex.
-    match = Controller.EMAIL_PATTERN.search(email)
-    if match:
-        return email
-
-    return _valParmHelper(val, bailout, reveal, msg)
-
-
-def valParmDate(val, fmt="ISOdate", **opts):
-    """
-    Uses time.strptime for validation via cdr.strptime().  This will validate
-    semantics as well as format.
-
-    Pass:
-        val    - Date as a string.
-        fmt    - Standard python datetime format, or 'ISOdate'.
-                 Default is ISOdate, no time, e.g., '2015-07-04'.
-                 Invalid date format can also cause False to be returned.
-        See _valParmHelper for the rest.
-
-    Return:
-        True = passed, False = failed, or no return if bail.
-    """
-
-    # Allow missing value if so requested.
-    if not val and (opts.get("empty_ok") or opts.get("emptyOK")):
-        return True
-
-    # Get the optional paramaters
-    fmt = opts.get("fmt", "ISOdate")
-    bailout = opts.get("bailout", BAILOUT_DEFAULT) and True or False
-    reveal = opts.get("reveal", REVEAL_DEFAULT) and True or False
-    msg = opts.get("msg")
-
-    # strptime accepts a non-ISO format, e.g., 2015-7-4 instead of 2015-07-04
-    # Don't allow that if ISO is requested
-    if fmt == 'ISOdate':
-        if not is_date(val):
-            return _valParmHelper(val, bailout, reveal, msg)
-
-        # Pattern passed, set format for strptime value check
-        fmt = '%Y-%m-%d'
-
-    # Check the numbers against actual dates
-    try:
-        if cdr.strptime(val, fmt) is not None:
-            return True
-    except ValueError:
-        pass
-
-    # Special case for handling datetime that might have optional
-    # milliseconds or microseconds attached
-    try:
-        fmt2 = fmt + ".%f"
-        if cdr.strptime(val, fmt2) is not None:
-            return True
-    except ValueError:
-        pass
-
-    # Date check failed
-    return _valParmHelper(val, bailout, reveal, msg)
+            return query
+
+        @staticmethod
+        def __getQueryOp(query):
+            """Determine whether query contains unescaped wildcards.
+
+            Required positional argument:
+            query - string contining search query
+
+            Return:
+            SQL operator "LIKE" or "="
+            """
+            escaped = 0
+            for char in query:
+                if char == '\\':
+                    escaped = not escaped
+                elif not escaped and char in "_%":
+                    return "LIKE"
+            return "="

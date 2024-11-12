@@ -36,6 +36,7 @@ from cdrapi.users import Session
 from urllib.parse import urlparse
 from copy import deepcopy
 
+
 class Control:
     """
     Top-level object for CDR publishing job processing
@@ -963,7 +964,7 @@ class Control:
         langcode = langs[Doc.get_text(meta.find("SummaryLanguage"))]
         try:
             url = urlparse(node.get("xref")).path
-        except:
+        except Exception:
             raise Exception(f"CDR{doc_id:d}: bad or missing summary URL")
         if not url:
             raise Exception(f"CDR{doc_id:d}: missing summary URL")
@@ -1076,7 +1077,8 @@ class Control:
             session.logger.warning("Truncating description %r", description)
             description = description[:cls.DESCRIPTION_MAX]
         if len(browser_title) > cls.BROWSER_TITLE_MAX:
-            session.logger.warning("Truncating browser title %r", browser_title)
+            message = "Truncating browser title %r"
+            session.logger.warning(message, browser_title)
             browser_title = browser_title[:cls.BROWSER_TITLE_MAX]
         if len(cthp_card_title) > cls.CTHP_CARD_TITLE_MAX:
             session.logger.warning("Truncating cthp title %r", cthp_card_title)
@@ -1386,7 +1388,6 @@ class Control:
         conn.close()
         return pushed
 
-
     def count_removed_docs(self):
         """
         Count the number of documents removed for this job
@@ -1400,7 +1401,6 @@ class Control:
         query.where("xml IS NULL")
         removed = query.execute(self.cursor).fetchone().removed
         return removed
-
 
     def normalize(self, xml):
         """
