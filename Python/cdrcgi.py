@@ -2740,7 +2740,7 @@ class HTMLPage(FormFieldFactory):
     @cached_property
     def menus(self):
         """Load the CDR administrative menu structures."""
-        return self.load_menus()
+        return self.load_menus(self.cursor)
 
     @cached_property
     def method(self):
@@ -2874,9 +2874,16 @@ class HTMLPage(FormFieldFactory):
     # ----------------------------------------------------------------
 
     @staticmethod
-    def load_menus():
+    def load_menus(cursor=None):
         """Separated out so other tools can use it."""
 
+        query = db.Query("ctl", "val")
+        query.where("grp = 'admin'")
+        query.where("name = 'menus'")
+        query.where("inactivated IS NULL")
+        row = query.execute(cursor).fetchone()
+        if row:
+            return load_json_string(row.val)
         directory = Path(__file__).parent
         path = directory / "menus.json"
         with path.open(encoding="utf-8") as fp:
@@ -2904,6 +2911,7 @@ class HTMLPage(FormFieldFactory):
             ("NCI Web Site", "https://www.cancer.gov", True),
             ("CMS", "https://www-cms.cancer.gov", True),
             ("Filter", f"Filter.py?{session_parm}", False),
+            ("Menus", f"show-menu-hierarchy.py?{session_parm}", True),
             ("Queries", f"CdrQueries.py?{session_parm}", True),
         ]
         if session_name == "guest":
