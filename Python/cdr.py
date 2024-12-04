@@ -299,6 +299,8 @@ def login(username, password="", **opts):
     comment = opts.get("comment")
     return _Control.get_session(credentials, tier=tier, comment=comment)
 
+# Add an alias
+logon = login
 
 def dupSession(session, **opts):
     """
