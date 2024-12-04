@@ -2913,6 +2913,7 @@ class HTMLPage(FormFieldFactory):
             ("Filter", f"Filter.py?{session_parm}", False),
             ("Menus", f"show-menu-hierarchy.py?{session_parm}", True),
             ("Queries", f"CdrQueries.py?{session_parm}", True),
+            ("Search", f"AdvancedSearch.py?{session_parm}", False),
         ]
         if session_name == "guest":
             values = "Log In", "/"

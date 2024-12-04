@@ -418,6 +418,10 @@
         ]
       },
       {
+        "label": "Advanced Search",
+        "script": "AdvancedSearch.py"
+      },
+      {
         "label": "Other Reports",
         "children": [
           {
@@ -1235,65 +1239,8 @@
         ]
       },
       {
-        "label": "Search",
-        "children": [
-          {
-            "label": "Citation",
-            "script": "CiteSearch.py"
-          },
-          {
-            "label": "Country",
-            "script": "CountrySearch.py"
-          },
-          {
-            "label": "Documentation",
-            "script": "HelpSearch.py"
-          },
-          {
-            "label": "Drug Information Summary",
-            "script": "DISSearch.py"
-          },
-          {
-            "label": "Glossary Term Concept",
-            "script": "GlossaryTermConceptSearch.py"
-          },
-          {
-            "label": "Glossary Term Name",
-            "script": "GlossaryTermNameSearch.py"
-          },
-          {
-            "label": "Media",
-            "script": "MediaSearch.py"
-          },
-          {
-            "label": "Miscellaneous",
-            "script": "MiscSearch.py"
-          },
-          {
-            "label": "Organization",
-            "script": "OrgSearch2.py"
-          },
-          {
-            "label": "Person",
-            "script": "PersonSearch.py"
-          },
-          {
-            "label": "Person (Locations in Result Display)",
-            "script": "PersonLocSearch.py"
-          },
-          {
-            "label": "Political SubUnit",
-            "script": "PoliticalSubUnitSearch.py"
-          },
-          {
-            "label": "Summary",
-            "script": "SummarySearch.py"
-          },
-          {
-            "label": "Term",
-            "script": "TermSearch.py"
-          }
-        ]
+        "label": "Advanced Search",
+        "script": "AdvancedSearch.py"
       },
       {
         "label": "Translations",
@@ -2206,6 +2153,10 @@
         ]
       },
       {
+        "label": "Advanced Search",
+        "script": "AdvancedSearch.py"
+      },
+      {
         "label": "Utilities",
         "children": [
           {
@@ -2277,64 +2228,7 @@
     "children": [
       {
         "label": "Advanced Search",
-        "children": [
-          {
-            "label": "Citation",
-            "script": "CiteSearch.py"
-          },
-          {
-            "label": "Country",
-            "script": "CountrySearch.py"
-          },
-          {
-            "label": "Documentation",
-            "script": "HelpSearch.py"
-          },
-          {
-            "label": "Drug Information Summary",
-            "script": "DISSearch.py"
-          },
-          {
-            "label": "Glossary Term Concept",
-            "script": "GlossaryTermConceptSearch.py"
-          },
-          {
-            "label": "Glossary Term Name",
-            "script": "GlossaryTermNameSearch.py"
-          },
-          {
-            "label": "Media",
-            "script": "MediaSearch.py"
-          },
-          {
-            "label": "Miscellaneous",
-            "script": "MiscSearch.py"
-          },
-          {
-            "label": "Organization",
-            "script": "OrgSearch2.py"
-          },
-          {
-            "label": "Person",
-            "script": "PersonSearch.py"
-          },
-          {
-            "label": "Person (Locations in Result Display)",
-            "script": "PersonLocSearch.py"
-          },
-          {
-            "label": "Political SubUnit",
-            "script": "PoliticalSubUnitSearch.py"
-          },
-          {
-            "label": "Summary",
-            "script": "SummarySearch.py"
-          },
-          {
-            "label": "Term",
-            "script": "TermSearch.py"
-          }
-        ]
+        "script": "AdvancedSearch.py"
       },
       {
         "label": "Terminology Reports",
