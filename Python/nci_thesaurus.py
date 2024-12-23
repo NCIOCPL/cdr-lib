@@ -140,17 +140,26 @@ class EVS:
                     if not response.ok:
                         raise Exception(response.reason)
                     values = response.json()
-                    if not values.get("total"):
+                    total = values.get("total")
+                    if not total:
                         done = True
                         break
-                    concepts += values.get("concepts")
+                    chunk = values.get("concepts")
+                    if not chunk:
+                        logger.info("api=%s; parms=%s", api, parms)
+                        logger.error("no concepts in %s", values)
+                        raise Exception("EVS response has no concepts")
+                    concepts += chunk
+                    if len(concepts) >= total:
+                        done = True
+                        break
                     parms["fromRecord"] += self.BATCH_SIZE
                     sleep(self.SLEEP)
                     break
                 except Exception:
                     tries -= 1
                     if tries < 1:
-                        self.bail("EVS not available")
+                        raise Exception("EVS not available")
                     logger.exception("failure fetching concepts")
                     sleep(self.SLEEP)
         args = len(concepts), datetime.now() - start
@@ -312,7 +321,7 @@ class EVS:
                 for value in values:
                     row.append(page.B.TD(str(value)))
                 body.append(row)
-            page.form.append(table)
+            page.wrapper.append(table)
 
         # Add any new CDR Term documents requested.
         if creates:
@@ -354,7 +363,7 @@ class EVS:
                 for value in values:
                     row.append(page.B.TD(value))
                 body.append(row)
-            page.form.append(table)
+            page.wrapper.append(table)
 
     @staticmethod
     def __map_concepts(concepts):
@@ -439,6 +448,9 @@ class Normalizer:
             if key != self.normalized_name:
                 if key not in normalized_other_names:
                     normalized_other_names[key] = other_name
+                elif hasattr(other_name, "approved") and other_name.approved:
+                    if not normalized_other_names[key].approved:
+                        normalized_other_names[key] = other_name
         return normalized_other_names
 
 

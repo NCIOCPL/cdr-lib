@@ -587,6 +587,7 @@ if FULL:
                 ctrl = dict(DocTitle="DocTitle for xxtest")
                 doc = cdr.makeCdrDoc(filter1, "Filter", None, ctrl)
                 doc_id = cdr.addDoc(self.session, doc=doc, tier=self.TIER)
+                self.logger.info("test 37 new doc_id=%r", doc_id)
                 self.assertTrue(doc_id.startswith("CDR"))
                 filter_id = int(doc_id[3:])
                 update = "UPDATE doc_type SET title_filter = ? WHERE name = ?"

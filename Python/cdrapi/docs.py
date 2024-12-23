@@ -3823,7 +3823,7 @@ class Doc:
               level - how serious is the problem (default 'error')
             """
 
-            self.message = message #re.sub(r"\s+", " ", message.strip())
+            self.message = message  # re.sub(r"\s+", " ", message.strip())
             self.location = location
             self.type = opts.get("type") or Doc.VALIDATION
             self.level = opts.get("level") or Doc.LEVEL_ERROR
@@ -4823,7 +4823,7 @@ class Term:
         full_xml = etree.tostring(term, encoding="utf-8")
         if need_locking:
             with self.session.cache.term_lock:
-                if not(self.xml and self.full_xml):
+                if not (self.xml and self.full_xml):
                     self.xml, self.full_xml = xml, full_xml
         else:
             self.xml, self.full_xml = xml, full_xml

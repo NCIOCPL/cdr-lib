@@ -1,0 +1,2278 @@
+[
+  {
+    "label": "Board Managers",
+    "children": [
+      {
+        "label": "PCIB Management Reports",
+        "children": [
+          {
+            "label": "Board Meeting Dates",
+            "script": "BoardMeetingDates.py"
+          },
+          {
+            "label": "PCIB Statistics Report",
+            "script": "RunPCIBStatReport.py"
+          },
+          {
+            "label": "PDQ Content Counts",
+            "script": "PDQContentCounts.py?prompt=yes"
+          },
+          {
+            "label": "Board Member Reports",
+            "children": [
+              {
+                "label": "Board Member QC Report",
+                "script": "QcReport.py?DocType=PDQBoardMemberInfo"
+              },
+              {
+                "label": "Board Roster Reports",
+                "script": "BoardRoster.py"
+              },
+              {
+                "label": "Board Roster Reports (Combined)",
+                "script": "BoardRosterFull.py"
+              },
+              {
+                "label": "Invitation History Report",
+                "script": "BoardInvitationHistory.py"
+              },
+              {
+                "label": "Board Members and Topics",
+                "script": "PdqBoards.py"
+              }
+            ]
+          },
+          {
+            "label": "Mailer Reports",
+            "children": [
+              {
+                "label": "Summary Mailer Report",
+                "script": "SummaryMailerReport.py?flavor=standard"
+              },
+              {
+                "label": "Summary Mailer History Report",
+                "script": "SummaryMailerReport.py?flavor=history"
+              },
+              {
+                "label": "Create Correspondence Mailer",
+                "script": "BoardMemberMailerReqForm.py"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Drug Information Reports",
+        "children": [
+          {
+            "label": "DIS QC Reports",
+            "children": [
+              {
+                "label": "Drug Information QC Report",
+                "script": "QcReport.py?DocType=DrugInformationSummary&DocVersion=0"
+              },
+              {
+                "label": "Publish Preview",
+                "script": "QcReport.py?DocType=DrugInformationSummary&ReportType=pp&DocVersion=0"
+              }
+            ]
+          },
+          {
+            "label": "Processing Reports",
+            "children": [
+              {
+                "label": "Drug Date Last Modified Report",
+                "script": "DrugDateLastModified.py"
+              },
+              {
+                "label": "Comprehensive Review Dates",
+                "script": "DrugCRD.py"
+              },
+              {
+                "label": "DIS Processing Report",
+                "script": "DISProcessingStatusReport.py"
+              },
+              {
+                "label": "DIS with Markup Report",
+                "script": "DISWithMarkup.py"
+              },
+                  {
+                "label": "DIS Type Of Change",
+                "script": "DISTypeChangeReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Find DIS Documents",
+            "children": [
+              {
+                "label": "Advanced Search",
+                "script": "DISSearch.py?type=advanced"
+              },
+              {
+                "label": "Drug Information Summaries Lists",
+                "script": "DISLists.py"
+              }
+            ]
+          },
+          {
+            "label": "DIS Content Reports",
+            "children": [
+              {
+                "label": "DIS By Drug Type Report",
+                "script": "DISByDrugType.py"
+              },
+              {
+                "label": "Drug Description Report",
+                "script": "DrugDescriptionReport.py"
+              },
+              {
+                "label": "Drug Indications Report",
+                "script": "DrugIndicationsReport.py"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Glossary Term Reports",
+        "children": [
+          {
+            "label": "Glossary QC Reports",
+            "children": [
+              {
+                "label": "GTC QC Report",
+                "script": "QcReport.py?DocType=GlossaryTermConcept"
+              },
+              {
+                "label": "GTC Full QC Report (Full)",
+                "script": "GlossaryConceptFull.py?initial-menu-page=true"
+              },
+              {
+                "label": "GTN QC Report",
+                "script": "QcReport.py?DocType=GlossaryTermName&DocVersion=0"
+              },
+              {
+                "label": "GTN QC Report (With Concept)",
+                "script": "QcReport.py?DocType=GlossaryTermName&ReportType=gtnwc&DocVersion=0"
+              },
+              {
+                "label": "Publish Preview",
+                "script": "QcReport.py?DocType=GlossaryTermName&ReportType=pp"
+              },
+              {
+                "label": "Documents Linked to GTN",
+                "script": "GlossaryTermLinks.py"
+              }
+            ]
+          },
+          {
+            "label": "Glossary Processing Reports",
+            "children": [
+              {
+                "label": "GTC by English Definition Status",
+                "script": "GlossaryConceptByDefinitionStatus.py?report=English"
+              },
+              {
+                "label": "GTC by Spanish Definition Status",
+                "script": "GlossaryConceptByDefinitionStatus.py?report=Spanish"
+              },
+              {
+                "label": "GTC Documents Modified Report",
+                "script": "GlossaryConceptDocsModified.py"
+              },
+              {
+                "label": "GTN Documents Modified Report",
+                "script": "GlossaryNameDocsModified.py"
+              },
+              {
+                "label": "Translation Job Workflow Report",
+                "script": "glossary-translation-job-report.py"
+              },
+              {
+                "label": "Processing Status Report",
+                "script": "GlossaryProcessingStatusReport.py"
+              },
+              {
+                "label": "New Published Glossary Terms",
+                "script": "NewlyPublishedGlossaryTerms.py"
+              }
+            ]
+          },
+          {
+            "label": "Glossary Search Reports",
+            "children": [
+              {
+                "label": "Keyword Search Report",
+                "script": "GlossaryKeywordSearchReport.py"
+              },
+              {
+                "label": "Term and Variant Search Report",
+                "script": "GlossaryTermPhrases.py"
+              },
+              {
+                "label": "GTC By Type Report",
+                "script": "GlossaryConceptByTypeReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Glossary Content Reports",
+            "children": [
+              {
+                "label": "HP Glossary Terms Report",
+                "script": "HPGlossaryTermsReport.py"
+              },
+              {
+                "label": "Pronunciation by Term Stem",
+                "script": "PronunciationByWordStem.py"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Media Reports",
+        "children": [
+          {
+            "label": "Media Content Reports",
+            "children": [
+              {
+                "label": "Media Doc QC Report",
+                "script": "QcReport.py?DocType=Media&ReportType=img&DocVersion=0"
+              },
+              {
+                "label": "Image Demographic Info Report",
+                "script": "ImageDemographicInformationReport.py"
+              },
+              {
+                "label": "Caption and Content Report",
+                "script": "MediaCaptionContent.py"
+              },
+              {
+                "label": "Media Images Report",
+                "script": "MediaLanguageCompare.py"
+              }
+            ]
+          },
+          {
+            "label": "Media Processing Reports",
+            "children": [
+              {
+                "label": "Meeting Recording Tracking",
+                "script": "RecordingTrackingReport.py"
+              },
+              {
+                "label": "Images Processing Status Report",
+                "script": "ImageMediaProcessingStatusReport.py"
+              },
+              {
+                "label": "Media Doc Publishing Report",
+                "script": "PublishedMediaDocuments.py"
+              },
+              {
+                "label": "Pronunciation Recordings Tracking",
+                "script": "PronunciationRecordings.py"
+              },
+              {
+                "label": "Pronunciation Review Statistics",
+                "script": "GlossaryTermAudioReviewReport.py"
+              },
+              {
+                "label": "Translation Job Workflow Report",
+                "script": "media-translation-job-report.py"
+              },
+              {
+                "label": "Media Permissions Report",
+                "script": "MediaPermissionsReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Find Media Documents",
+            "children": [
+              {
+                "label": "Advanced Search",
+                "script": "MediaSearch.py"
+              },
+              {
+                "label": "Media Keyword Search Report",
+                "script": "MediaKeywordSearchReport.py"
+              },
+              {
+                "label": "Media Lists",
+                "script": "MediaLists.py"
+              }
+            ]
+          },
+          {
+            "label": "Media Usage Reports",
+            "children": [
+              {
+                "label": "Linked Media Documents",
+                "script": "MediaLinks.py"
+              },
+              {
+                "label": "Media in Summary Report",
+                "script": "MediaInSummary.py"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Summary and Module Reports",
+        "children": [
+          {
+            "label": "Summary QC Reports",
+            "children": [
+              {
+                "label": "HP Bold/Underline QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=bu"
+              },
+              {
+                "label": "HP Redline/Strikeout QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=rs"
+              },
+              {
+                "label": "PT Bold/Underline QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=patbu"
+              },
+              {
+                "label": "PT Redline/Strikeout QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pat"
+              },
+              {
+                "label": "Publish Preview Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pp"
+              }
+            ]
+          },
+          {
+            "label": "Changes And Reviews",
+            "children": [
+              {
+                "label": "Changes to Summaries",
+                "script": "ChangesToSummaries.py"
+              },
+              {
+                "label": "History of Summary Changes",
+                "script": "SummaryChanges.py"
+              },
+              {
+                "label": "Date Last Modified",
+                "script": "SummaryDateLastModified.py"
+              },
+              {
+                "label": "Type Of Change",
+                "script": "SummaryTypeChangeReport.py"
+              },
+              {
+                "label": "Comprehensive Review Dates",
+                "script": "SummaryCRD.py"
+              }
+            ]
+          },
+          {
+            "label": "Summary Content Reports",
+            "children": [
+              {
+                "label": "Current Markup",
+                "script": "SummariesWithMarkup.py"
+              },
+              {
+                "label": "Metadata",
+                "script": "SummaryMetaData.py"
+              },
+              {
+                "label": "TOC Levels",
+                "script": "SummariesTocReport.py"
+              },
+              {
+                "label": "Type of Comments",
+                "script": "SummaryComments.py"
+              },
+              {
+                "label": "Standard Wording",
+                "script": "SummaryStandardWording.py"
+              }
+            ]
+          },
+          {
+            "label": "Summary Citations",
+            "children": [
+              {
+                "label": "Citations in Alphabetical Order",
+                "script": "SummaryCitations.py"
+              },
+              {
+                "label": "Non-Journal Article Citations",
+                "script": "SummariesWithNonJournalArticleCitations.py"
+              }
+            ]
+          },
+          {
+            "label": "Titles in Alphabetical Order",
+            "script": "SummariesLists.py"
+          }
+        ]
+      },
+      {
+        "label": "Advanced Search",
+        "script": "AdvancedSearch.py"
+      },
+      {
+        "label": "Other Reports",
+        "children": [
+          {
+            "label": "Document Versions",
+            "children": [
+              {
+                "label": "Document Version History",
+                "script": "DocVersionHistory.py"
+              },
+              {
+                "label": "Docs Mod Since Last Pub Version",
+                "script": "ModWithoutPubVersion.py"
+              },
+              {
+                "label": "Versions that Replaced CWDs",
+                "script": "ReplaceCWDReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Document Content Reports",
+            "children": [
+              {
+                "label": "Show CDR Document XML",
+                "script": "ShowCdrDocument.py"
+              },
+              {
+                "label": "Show Summary Elements",
+                "script": "ShowSummaryIncludes.py"
+              },
+              {
+                "label": "URL List Report",
+                "script": "UrlListReport.py"
+              },
+              {
+                "label": "Linked Documents",
+                "script": "LinkedDocs.py"
+              }
+            ]
+          },
+          {
+            "label": "Locked Documents",
+            "children": [
+              {
+                "label": "Checked Out Documents",
+                "script": "CheckedOutDocs.py"
+              },
+              {
+                "label": "Checked Out Docs With No Activity",
+                "script": "InactivityReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Document Processing Reports",
+            "children": [
+              {
+                "label": "Date Last Modified",
+                "script": "DateLastModified.py"
+              },
+              {
+                "label": "Document Activity Report",
+                "script": "ActivityReport.py"
+              },
+              {
+                "label": "Documents Modified",
+                "script": "DocumentsModified.py"
+              },
+              {
+                "label": "New Docs with Publication Status",
+                "script": "NewDocsWithPubStatus.py"
+              },
+              {
+                "label": "New Document Count",
+                "script": "NewDocReport.py"
+              },
+              {
+                "label": "Unchanged Documents",
+                "script": "UnchangedDocs.py"
+              }
+            ]
+          },
+          {
+            "label": "Problem Reports",
+            "children": [
+              {
+                "label": "External Map Failures Report",
+                "script": "ExternMapFailures.py"
+              },
+              {
+                "label": "Invalid Documents",
+                "script": "InvalidDocs.py"
+              },
+              {
+                "label": "URL Check",
+                "script": "CheckUrls.py",
+                "permission": "RUN LONG REPORT"
+              }
+            ]
+          },
+          {
+            "label": "Miscellaneous Document QC Report",
+            "script": "MiscSearch.py"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "CIAT/OCC",
+    "children": [
+      {
+        "label": "Audio",
+        "children": [
+          {
+            "label": "Audio Download",
+            "script": "FtpAudio.py",
+            "permission": "AUDIO DOWNLOAD"
+          },
+          {
+            "label": "Audio Import",
+            "script": "LoadGlossaryAudioFiles.py",
+            "permission": "AUDIO IMPORT"
+          },
+          {
+            "label": "Audio Request Spreadsheet",
+            "script": "AudioRequestSpreadsheet.py"
+          },
+          {
+            "label": "Audio Review Glossary Term",
+            "script": "GlossaryTermAudioReview.py",
+            "permission": "REVIEW TERM AUDIO"
+
+          }
+        ]
+      },
+      {
+        "label": "Mailers",
+        "children": [
+          {
+            "label": "SummaryMailers (Advisory Board)",
+            "script": "SummaryMailerReqForm.py",
+            "permission": "SUMMARY MAILERS"
+          },
+          {
+            "label": "PDQ\u00ae Board Member Correspondence Mailers",
+            "script": "BoardMemberMailerReqForm.py"
+          }
+        ]
+      },
+      {
+        "label": "General Reports",
+        "children": [
+          {
+            "label": "Document Versions",
+            "children": [
+              {
+                "label": "Document Version History",
+                "script": "DocVersionHistory.py"
+              },
+              {
+                "label": "Docs Mod Since Last Pub Version",
+                "script": "ModWithoutPubVersion.py"
+              },
+              {
+                "label": "Versions that Replaced CWDs",
+                "script": "ReplaceCWDReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Document Content Reports",
+            "children": [
+              {
+                "label": "Show CDR Document XML",
+                "script": "ShowCdrDocument.py"
+              },
+              {
+                "label": "Show Summary Elements",
+                "script": "ShowSummaryIncludes.py"
+              },
+              {
+                "label": "URL List Report",
+                "script": "UrlListReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Locked Documents",
+            "children": [
+              {
+                "label": "Checked Out Documents",
+                "script": "CheckedOutDocs.py"
+              },
+              {
+                "label": "Checked Out Documents With No Activity",
+                "script": "InactivityReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Document Processing Reports",
+            "children": [
+              {
+                "label": "Date Last Modified",
+                "script": "DateLastModified.py"
+              },
+              {
+                "label": "Document Activity Report",
+                "script": "ActivityReport.py"
+              },
+              {
+                "label": "Documents Modified",
+                "script": "DocumentsModified.py"
+              },
+              {
+                "label": "Global Change Test Results",
+                "script": "ShowGlobalChangeTestResults.py"
+              },
+              {
+                "label": "New Docs with Publication Status",
+                "script": "NewDocsWithPubStatus.py"
+              },
+              {
+                "label": "New Document Count",
+                "script": "NewDocReport.py"
+              },
+              {
+                "label": "Unchanged Documents",
+                "script": "UnchangedDocs.py"
+              }
+            ]
+          },
+          {
+            "label": "Document Links",
+            "children": [
+              {
+                "label": "Linked Documents",
+                "script": "LinkedDocs.py"
+              },
+              {
+                "label": "Linked Media Documents",
+                "script": "MediaLinks.py"
+              }
+            ]
+          },
+          {
+            "label": "Problem Reports",
+            "children": [
+              {
+                "label": "External Map Failures Report",
+                "script": "ExternMapFailures.py"
+              },
+              {
+                "label": "Invalid Documents",
+                "script": "InvalidDocs.py"
+              },
+              {
+                "label": "URL Check",
+                "script": "CheckUrls.py",
+                "permission": "RUN LONG REPORT"
+
+              }
+            ]
+          },
+          {
+            "label": "Miscellaneous General Reports",
+            "children": [
+              {
+                "label": "Batch Job Status",
+                "script": "getBatchStatus.py"
+              },
+              {
+                "label": "Current Sessions",
+                "script": "ActiveLogins.py?prompt=yes"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Drug Information Reports",
+        "children": [
+          {
+            "label": "DIS QC Reports",
+            "children": [
+              {
+                "label": "Drug Information QC Report",
+                "script": "QcReport.py?DocType=DrugInformationSummary&DocVersion=0"
+              },
+              {
+                "label": "Publish Preview",
+                "script": "QcReport.py?DocType=DrugInformationSummary&ReportType=pp&DocVersion=0"
+              }
+            ]
+          },
+          {
+            "label": "Processing Reports",
+            "children": [
+              {
+                "label": "Drug Date Last Modified Report",
+                "script": "DrugDateLastModified.py"
+              },
+              {
+                "label": "Comprehensive Review Dates",
+                "script": "DrugCRD.py"
+              },
+              {
+                "label": "DIS Processing Report",
+                "script": "DISProcessingStatusReport.py"
+              },
+              {
+                "label": "DIS with Markup Report",
+                "script": "DISWithMarkup.py"
+              },
+                  {
+                "label": "DIS Type Of Change",
+                "script": "DISTypeChangeReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Find DIS Documents",
+            "children": [
+              {
+                "label": "Advanced Search",
+                "script": "DISSearch.py?type=advanced"
+              },
+              {
+                "label": "Drug Information Summaries Lists",
+                "script": "DISLists.py"
+              }
+            ]
+          },
+          {
+            "label": "DIS Content Reports",
+            "children": [
+              {
+                "label": "DIS By Drug Type Report",
+                "script": "DISByDrugType.py"
+              },
+              {
+                "label": "Drug Description Report",
+                "script": "DrugDescriptionReport.py"
+              },
+              {
+                "label": "Drug Indications Report",
+                "script": "DrugIndicationsReport.py"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Glossary Term Reports",
+        "children": [
+          {
+            "label": "Glossary QC Reports",
+            "children": [
+              {
+                "label": "GTC QC Report",
+                "script": "QcReport.py?DocType=GlossaryTermConcept"
+              },
+              {
+                "label": "GTC Full QC Report (Full)",
+                "script": "GlossaryConceptFull.py?initial-menu-page=true"
+              },
+              {
+                "label": "GTN QC Report",
+                "script": "QcReport.py?DocType=GlossaryTermName&DocVersion=0"
+              },
+              {
+                "label": "GTN QC Report (With Concept)",
+                "script": "QcReport.py?DocType=GlossaryTermName&ReportType=gtnwc&DocVersion=0"
+              },
+              {
+                "label": "Publish Preview",
+                "script": "QcReport.py?DocType=GlossaryTermName&ReportType=pp"
+              },
+              {
+                "label": "Documents Linked to GTN",
+                "script": "GlossaryTermLinks.py"
+              }
+            ]
+          },
+          {
+            "label": "Glossary Processing Reports",
+            "children": [
+              {
+                "label": "GTC by English Definition Status",
+                "script": "GlossaryConceptByDefinitionStatus.py?report=English"
+              },
+              {
+                "label": "GTC by Spanish Definition Status",
+                "script": "GlossaryConceptByDefinitionStatus.py?report=Spanish"
+              },
+              {
+                "label": "GTC Documents Modified Report",
+                "script": "GlossaryConceptDocsModified.py"
+              },
+              {
+                "label": "GTN Documents Modified Report",
+                "script": "GlossaryNameDocsModified.py"
+              },
+              {
+                "label": "Translation Job Workflow Report",
+                "script": "glossary-translation-job-report.py"
+              },
+              {
+                "label": "Processing Status Report",
+                "script": "GlossaryProcessingStatusReport.py"
+              },
+              {
+                "label": "New Published Glossary Terms",
+                "script": "NewlyPublishedGlossaryTerms.py"
+              }
+            ]
+          },
+          {
+            "label": "Glossary Search Reports",
+            "children": [
+              {
+                "label": "Keyword Search Report",
+                "script": "GlossaryKeywordSearchReport.py"
+              },
+              {
+                "label": "Term and Variant Search Report",
+                "script": "GlossaryTermPhrases.py"
+              },
+              {
+                "label": "GTC By Type Report",
+                "script": "GlossaryConceptByTypeReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Glossary Content Reports",
+            "children": [
+              {
+                "label": "HP Glossary Terms Report",
+                "script": "HPGlossaryTermsReport.py"
+              },
+              {
+                "label": "Pronunciation by Term Stem",
+                "script": "PronunciationByWordStem.py"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Media Reports",
+        "children": [
+          {
+            "label": "Media Content Reports",
+            "children": [
+              {
+                "label": "Media Doc QC Report",
+                "script": "QcReport.py?DocType=Media&ReportType=img&DocVersion=0"
+              },
+              {
+                "label": "Image Demographic Info Report",
+                "script": "ImageDemographicInformationReport.py"
+              },
+              {
+                "label": "Caption and Content Report",
+                "script": "MediaCaptionContent.py"
+              },
+              {
+                "label": "Media Images Report",
+                "script": "MediaLanguageCompare.py"
+              }
+            ]
+          },
+          {
+            "label": "Media Processing Reports",
+            "children": [
+              {
+                "label": "Meeting Recording Tracking",
+                "script": "RecordingTrackingReport.py"
+              },
+              {
+                "label": "Images Processing Status Report",
+                "script": "ImageMediaProcessingStatusReport.py"
+              },
+              {
+                "label": "Media Doc Publishing Report",
+                "script": "PublishedMediaDocuments.py"
+              },
+              {
+                "label": "Pronunciation Recordings Tracking",
+                "script": "PronunciationRecordings.py"
+              },
+              {
+                "label": "Pronunciation Review Statistics",
+                "script": "GlossaryTermAudioReviewReport.py"
+              },
+              {
+                "label": "Translation Job Workflow Report",
+                "script": "media-translation-job-report.py"
+              },
+              {
+                "label": "Media Permissions Report",
+                "script": "MediaPermissionsReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Find Media Documents",
+            "children": [
+              {
+                "label": "Advanced Search",
+                "script": "MediaSearch.py"
+              },
+              {
+                "label": "Media Keyword Search Report",
+                "script": "MediaKeywordSearchReport.py"
+              },
+              {
+                "label": "Media Lists",
+                "script": "MediaLists.py"
+              }
+            ]
+          },
+          {
+            "label": "Media Usage Reports",
+            "children": [
+              {
+                "label": "Linked Media Documents",
+                "script": "MediaLinks.py"
+              },
+              {
+                "label": "Media in Summary Report",
+                "script": "MediaInSummary.py"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Summary Reports",
+        "children": [
+          {
+            "label": "Summary QC Reports",
+            "children": [
+              {
+                "label": "HP Bold/Underline QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=bu"
+              },
+              {
+                "label": "HP Redline/Strikeout QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=rs"
+              },
+              {
+                "label": "PT Bold/Underline QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=patbu"
+              },
+              {
+                "label": "PT Redline/Strikeout QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pat"
+              },
+              {
+                "label": "Publish Preview Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pp"
+              }
+            ]
+          },
+          {
+            "label": "Summary Processing Reports",
+            "children": [
+              {
+                "label": "Changes to Summaries",
+                "script": "ChangesToSummaries.py"
+              },
+              {
+                "label": "History of Summary Changes",
+                "script": "SummaryChanges.py"
+              },
+              {
+                "label": "Date Last Modified",
+                "script": "SummaryDateLastModified.py"
+              },
+              {
+                "label": "Type Of Change",
+                "script": "SummaryTypeChangeReport.py"
+              },
+              {
+                "label": "Comprehensive Review Dates",
+                "script": "SummaryCRD.py"
+              },
+              {
+                "label": "Translation Job Workflow Report",
+                "script": "translation-job-report.py"
+              },
+              {
+                "label": "Summaries Cleanup",
+                "script": "SummarySectionCleanup.py"
+              }
+            ]
+          },
+          {
+            "label": "Summary Content Reports",
+            "children": [
+              {
+                "label": "Current Markup",
+                "script": "SummariesWithMarkup.py"
+              },
+              {
+                "label": "Metadata",
+                "script": "SummaryMetaData.py"
+              },
+              {
+                "label": "TOC Levels",
+                "script": "SummariesTocReport.py"
+              },
+              {
+                "label": "Type of Comments",
+                "script": "SummaryComments.py"
+              },
+              {
+                "label": "Standard Wording",
+                "script": "SummaryStandardWording.py"
+              },
+              {
+                "label": "SVPC Summaries Report",
+                "script": "SVPCSummariesReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Summaries With Links",
+            "children": [
+              {
+                "label": "Citations in Alphabetical Order",
+                "script": "SummaryCitations.py"
+              },
+              {
+                "label": "Non-Journal Article Citations",
+                "script": "SummariesWithNonJournalArticleCitations.py"
+              },
+              {
+                "label": "Summary Internal Links",
+                "script": "ocecdr-3650.py"
+              },
+              {
+                "label": "Summaries with ProtocolRef Links",
+                "script": "SummaryProtocolRefLinks.py?prompt=yes"
+              },
+              {
+                "label": "Updated SummaryRef Titles",
+                "script": "UpdatedSummaryRefTitles.py?prompt=yes"
+              }
+            ]
+          },
+          {
+            "label": "Summary Mailer Reports",
+            "children": [
+              {
+                "label": "Summary Mailer Report",
+                "script": "SummaryMailerReport.py?flavor=standard"
+              },
+              {
+                "label": "Summary Mailer History Report",
+                "script": "SummaryMailerReport.py?flavor=historical"
+              }
+            ]
+          },
+          {
+            "label": "Titles in Alphabetical Order",
+            "script": "SummariesLists.py"
+          }
+        ]
+      },
+      {
+        "label": "Terminology Reports",
+        "children": [
+          {
+            "label": "Term Usage",
+            "script": "TermUsage.py"
+          },
+          {
+            "label": "Terminology QC Report",
+            "script": "TermSearch.py"
+          },
+          {
+            "label": "Drug Term Reports",
+            "children": [
+              {
+                "label": "Drug Review Report",
+                "script": "DrugReviewReport.py"
+              },
+              {
+                "label": "Clinical Trials Drug Analysis Report",
+                "script": "RecentCTGovProtocols.py"
+              }
+            ]
+          },
+          {
+            "label": "Term Hierarchy Reports",
+            "children": [
+              {
+                "label": "Term Hierarchy Tree",
+                "script": "TermHierarchyTree.py?prompt=yes"
+              },
+              {
+                "label": "Cancer Diagnosis Hierarchy",
+                "script": "DiseaseDiagnosisTerms.py?prompt=yes"
+              },
+              {
+                "label": "Intervention or Procedure Terms",
+                "script": "InterventionAndProcedureTerms.py"
+              }
+            ]
+          },
+          {
+            "label": "NCI Thesaurus (EVS)",
+            "children": [
+              {
+                "label": "EVS Concepts",
+                "script": "SyncWithEVS.py"
+              },
+              {
+                "label": "Concepts Not Marked Public",
+                "script": "ocecdr-3588.py?prompt=yes"
+              },
+              {
+                "label": "Unsuppress Drug Terms",
+                "script": "SuppressedDrugTerms.py"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Other Document Types",
+        "children": [
+          {
+            "label": "Board Member Information",
+            "children": [
+              {
+                "label": "Board Member Information QC Report",
+                "script": "QcReport.py?DocType=PDQBoardMemberInfo"
+              },
+              {
+                "label": "Board Roster Reports",
+                "script": "BoardRoster.py"
+              },
+              {
+                "label": "PDQ Board Listings",
+                "script": "PdqBoards.py"
+              }
+            ]
+          },
+          {
+            "label": "Citations",
+            "children": [
+              {
+                "label": "Citation QC Report",
+                "script": "QcReport.py?DocType=Citation"
+              },
+              {
+                "label": "Advanced Citation Search",
+                "script": "CiteSearch.py"
+              },
+              {
+                "label": "Unverified Citations",
+                "script": "UnverifiedCitations.py"
+              },
+              {
+                "label": "Citations In Summaries",
+                "script": "CitationsInSummaries.py",
+                "permission": "RUN LONG REPORT"
+
+              },
+              {
+                "label": "New Citations Report",
+                "script": "NewCitations.py"
+              }
+            ]
+          },
+          {
+            "label": "Documentation",
+            "script": "Help.py"
+          },
+          {
+            "label": "Geographic Documents",
+            "children": [
+              {
+                "label": "Country QC Report",
+                "script": "CountrySearch.py"
+              },
+              {
+                "label": "Political Subunit QC Report",
+                "script": "PoliticalSubUnitSearch.py"
+              }
+            ]
+          },
+          {
+            "label": "Persons and Organizations",
+            "children": [
+              {
+                "label": "Organization QC Report",
+                "script": "OrgSearch2.py"
+              },
+              {
+                "label": "Person QC Report",
+                "script": "PersonSearch.py"
+              }
+            ]
+          },
+          {
+            "label": "Miscellaneous Documents",
+            "script": "MiscSearch.py"
+          }
+        ]
+      },
+      {
+        "label": "Advanced Search",
+        "script": "AdvancedSearch.py"
+      },
+      {
+        "label": "Translations",
+        "children": [
+          {
+            "label": "Create World Server Translated Summary",
+            "script": "post-translated-summary.py",
+            "permission": "CREATE WS SUMMARIES"
+          },
+          {
+            "label": "Fetch English Summary For Translation",
+            "script": "get-english-summary.py"
+          },
+          {
+            "label": "Translation Job Queues",
+            "script": "TranslationJobQueues.py",
+            "permission": "MANAGE TRANSLATION QUEUE"
+          }
+        ]
+      },
+      {
+        "label": "Utilities",
+        "children": [
+          {
+            "label": "Batch Job Status",
+            "script": "getBatchStatus.py"
+          },
+          {
+            "label": "Create Spanish Spellcheck Files for use with XMetaL",
+            "script": "SpanishSpellcheckerFiles.py"
+          },
+          {
+            "label": "Replace CWD with Older Version",
+            "script": "ReplaceCWDwithVersion.py"
+          },
+          {
+            "label": "Replace Doc with New Doc",
+            "script": "ReplaceDocWithNewDoc.py"
+          },
+          {
+            "label": "Update Mapping Table",
+            "script": "EditExternalMap.py"
+          },
+          {
+            "label": "Update Pre-Medline Citations",
+            "script": "UpdatePreMedlineCitations.py",
+            "permission": "MODIFY DOCUMENT:Citation"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Developers",
+    "children": [
+      {
+        "label": "Publishing",
+        "children": [
+          {
+            "label": "Publishing - Create Job",
+            "script": "Publishing.py",
+            "permission": "USE PUBLISHING SYSTEM"
+          },
+          {
+            "label": "Publishing - Fail Job",
+            "script": "FailBatchJob.py",
+            "permission": "SET_SYS_VALUE"
+          },
+          {
+            "label": "Re-Publishing",
+            "script": "Republish.py",
+            "permission": "USE PUBLISHING SYSTEM"
+          },
+          {
+            "label": "Filter Document",
+            "script": "Filter.py"
+          },
+          {
+            "label": "Publishing Reports",
+            "children": [
+              {
+                "label": "Published Document Count",
+                "script": "CountByDoctype.py"
+              },
+              {
+                "label": "Publishing Job Activities",
+                "script": "PubStatus.py"
+              },
+              {
+                "label": "Publishing Job Statistics",
+                "script": "PubStatsByDate.py"
+              }
+            ]
+          },
+          {
+            "label": "Mailers",
+            "children": [
+              {
+                "label": "SummaryMailers (Advisory Board)",
+                "script": "SummaryMailerReqForm.py",
+                "permission": "SUMMARY MAILERS"
+              },
+              {
+                "label": "PDQ\u00ae Board Member Correspondence Mailers",
+                "script": "BoardMemberMailerReqForm.py"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Configuration",
+        "children": [
+          {
+            "label": "Client Files",
+            "children": [
+              {
+                "label": "Fetch Client File",
+                "script": "FetchClientFile.py"
+              },
+              {
+                "label": "Install Client File",
+                "script": "InstallClientFile.py",
+                "permission": "MANAGE CLIENT FILES"
+              },
+              {
+                "label": "Remove Client File",
+                "script": "RemoveClientFile.py",
+                "permission": "MANAGE CLIENT FILES"
+              },
+              {
+                "label": "XMetaL CDR Icons",
+                "script": "xmetal-icons.py"
+              }
+            ]
+          },
+          {
+            "label": "Database Control Tables",
+            "children": [
+              {
+                "label": "Control Values",
+                "script": "EditControlValues.py",
+                "permission": "SET_SYS_VALUE"
+              },
+              {
+                "label": "Linking Tables",
+                "script": "EditLinkControl.py"
+              },
+              {
+                "label": "Mapping Table",
+                "script": "EditExternalMap.py"
+              },
+              {
+                "label": "Query Term Definitions",
+                "script": "EditQueryTermDefs.py"
+              },
+              {
+                "label": "Value Tables",
+                "script": "edit-value-table.py",
+                "permission": "MANAGE DB TABLES"
+              },
+              {
+                "label": "Database Tables/Columns",
+                "script": "db-tables.py"
+              }
+            ]
+          },
+          {
+            "label": "Document Types",
+            "children": [
+              {
+                "label": "Manage Document Types",
+                "script": "EditDocTypes.py"
+              },
+              {
+                "label": "Manage DTDs",
+                "script": "PostDTD.py"
+              },
+              {
+                "label": "Post Schema",
+                "script": "post-schema.py",
+                "permission": "MODIFY DOCUMENT:schema"
+              },
+              {
+                "label": "Show Schema",
+                "script": "GetSchema.py"
+              }
+            ]
+          },
+          {
+            "label": "Filters",
+            "children": [
+              {
+                "label": "Manage Filters",
+                "script": "EditFilters.py"
+              },
+              {
+                "label": "Manage Filter Sets",
+                "script": "EditFilterSets.py"              }
+            ]
+          },
+          {
+            "label": "Roles and Permissions",
+            "children": [
+              {
+                "label": "Actions",
+                "script": "EditActions.py"
+              },
+              {
+                "label": "Groups",
+                "script": "EditGroups.py"
+              },
+              {
+                "label": "Users",
+                "script": "EditUsers.py"
+              }
+            ]
+          },
+          {
+            "label": "Scheduled Jobs",
+            "script": "Scheduler.py",
+            "permission": "MANAGE SCHEDULER"
+          },
+          {
+            "label": "Server Settings",
+            "children": [
+              {
+                "label": "Configuration Files",
+                "script": "EditConfig.py",
+                "permission": "SET_SYS_VALUE"
+              },
+              {
+                "label": "Fetch Tier Settings",
+                "script": "fetch-tier-settings.py?prompt=yes",
+                "permission": "GET SYS CONFIG"
+              },
+              {
+                "label": "Manage Glossary Servers",
+                "script": "glossary-servers.py",
+                "permission": "MANAGE GLOSSARY SERVERS"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "General Reports",
+        "children": [
+          {
+            "label": "Document Versions",
+            "children": [
+              {
+                "label": "Document Version History",
+                "script": "DocVersionHistory.py"
+              },
+              {
+                "label": "Docs Mod Since Last Pub Version",
+                "script": "ModWithoutPubVersion.py"
+              },
+              {
+                "label": "Versions that Replaced CWDs",
+                "script": "ReplaceCWDReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Document Content Reports",
+            "children": [
+              {
+                "label": "Show CDR Document XML",
+                "script": "ShowCdrDocument.py"
+              },
+              {
+                "label": "Show Summary Elements",
+                "script": "ShowSummaryIncludes.py"
+              },
+              {
+                "label": "URL List Report",
+                "script": "UrlListReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Locked Documents",
+            "children": [
+              {
+                "label": "Checked Out Documents",
+                "script": "CheckedOutDocs.py"
+              },
+              {
+                "label": "Checked Out Documents With No Activity",
+                "script": "InactivityReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Document Processing Reports",
+            "children": [
+              {
+                "label": "Date Last Modified",
+                "script": "DateLastModified.py"
+              },
+              {
+                "label": "Document Activity Report",
+                "script": "ActivityReport.py"
+              },
+              {
+                "label": "Documents Modified",
+                "script": "DocumentsModified.py"
+              },
+              {
+                "label": "Global Change Test Results",
+                "script": "ShowGlobalChangeTestResults.py"
+              },
+              {
+                "label": "New Docs with Publication Status",
+                "script": "NewDocsWithPubStatus.py"
+              },
+              {
+                "label": "New Document Count",
+                "script": "NewDocReport.py"
+              },
+              {
+                "label": "Unchanged Documents",
+                "script": "UnchangedDocs.py"
+              }
+            ]
+          },
+          {
+            "label": "Document Links",
+            "children": [
+              {
+                "label": "Linked Documents",
+                "script": "LinkedDocs.py"
+              },
+              {
+                "label": "Linked Media Documents",
+                "script": "MediaLinks.py"
+              }
+            ]
+          },
+          {
+            "label": "Problem Reports",
+            "children": [
+              {
+                "label": "External Map Failures Report",
+                "script": "ExternMapFailures.py"
+              },
+              {
+                "label": "Invalid Documents",
+                "script": "InvalidDocs.py"
+              },
+              {
+                "label": "URL Check",
+                "script": "CheckUrls.py",
+                "permission": "RUN LONG REPORT"
+
+              }
+            ]
+          },
+          {
+            "label": "Miscellaneous General Reports",
+            "children": [
+              {
+                "label": "Batch Job Status",
+                "script": "getBatchStatus.py"
+              },
+              {
+                "label": "Current Sessions",
+                "script": "ActiveLogins.py?prompt=yes"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Drug Information Reports",
+        "children": [
+          {
+            "label": "DIS QC Reports",
+            "children": [
+              {
+                "label": "Drug Information QC Report",
+                "script": "QcReport.py?DocType=DrugInformationSummary&DocVersion=0"
+              },
+              {
+                "label": "Publish Preview",
+                "script": "QcReport.py?DocType=DrugInformationSummary&ReportType=pp&DocVersion=0"
+              }
+            ]
+          },
+          {
+            "label": "Processing Reports",
+            "children": [
+              {
+                "label": "Drug Date Last Modified Report",
+                "script": "DrugDateLastModified.py"
+              },
+              {
+                "label": "Comprehensive Review Dates",
+                "script": "DrugCRD.py"
+              },
+              {
+                "label": "DIS Processing Report",
+                "script": "DISProcessingStatusReport.py"
+              },
+              {
+                "label": "DIS with Markup Report",
+                "script": "DISWithMarkup.py"
+              },
+                  {
+                "label": "DIS Type Of Change",
+                "script": "DISTypeChangeReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Find DIS Documents",
+            "children": [
+              {
+                "label": "Advanced Search",
+                "script": "DISSearch.py?type=advanced"
+              },
+              {
+                "label": "Drug Information Summaries Lists",
+                "script": "DISLists.py"
+              }
+            ]
+          },
+          {
+            "label": "DIS Content Reports",
+            "children": [
+              {
+                "label": "DIS By Drug Type Report",
+                "script": "DISByDrugType.py"
+              },
+              {
+                "label": "Drug Description Report",
+                "script": "DrugDescriptionReport.py"
+              },
+              {
+                "label": "Drug Indications Report",
+                "script": "DrugIndicationsReport.py"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Glossary Term Reports",
+        "children": [
+          {
+            "label": "Glossary QC Reports",
+            "children": [
+              {
+                "label": "GTC QC Report",
+                "script": "QcReport.py?DocType=GlossaryTermConcept"
+              },
+              {
+                "label": "GTC Full QC Report (Full)",
+                "script": "GlossaryConceptFull.py?initial-menu-page=true"
+              },
+              {
+                "label": "GTN QC Report",
+                "script": "QcReport.py?DocType=GlossaryTermName&DocVersion=0"
+              },
+              {
+                "label": "GTN QC Report (With Concept)",
+                "script": "QcReport.py?DocType=GlossaryTermName&ReportType=gtnwc&DocVersion=0"
+              },
+              {
+                "label": "Publish Preview",
+                "script": "QcReport.py?DocType=GlossaryTermName&ReportType=pp"
+              },
+              {
+                "label": "Documents Linked to GTN",
+                "script": "GlossaryTermLinks.py"
+              }
+            ]
+          },
+          {
+            "label": "Glossary Processing Reports",
+            "children": [
+              {
+                "label": "GTC by English Definition Status",
+                "script": "GlossaryConceptByDefinitionStatus.py?report=English"
+              },
+              {
+                "label": "GTC by Spanish Definition Status",
+                "script": "GlossaryConceptByDefinitionStatus.py?report=Spanish"
+              },
+              {
+                "label": "GTC Documents Modified Report",
+                "script": "GlossaryConceptDocsModified.py"
+              },
+              {
+                "label": "GTN Documents Modified Report",
+                "script": "GlossaryNameDocsModified.py"
+              },
+              {
+                "label": "Translation Job Workflow Report",
+                "script": "glossary-translation-job-report.py"
+              },
+              {
+                "label": "Processing Status Report",
+                "script": "GlossaryProcessingStatusReport.py"
+              },
+              {
+                "label": "New Published Glossary Terms",
+                "script": "NewlyPublishedGlossaryTerms.py"
+              }
+            ]
+          },
+          {
+            "label": "Glossary Search Reports",
+            "children": [
+              {
+                "label": "Keyword Search Report",
+                "script": "GlossaryKeywordSearchReport.py"
+              },
+              {
+                "label": "Term and Variant Search Report",
+                "script": "GlossaryTermPhrases.py"
+              },
+              {
+                "label": "GTC By Type Report",
+                "script": "GlossaryConceptByTypeReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Glossary Content Reports",
+            "children": [
+              {
+                "label": "HP Glossary Terms Report",
+                "script": "HPGlossaryTermsReport.py"
+              },
+              {
+                "label": "Pronunciation by Term Stem",
+                "script": "PronunciationByWordStem.py"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Media Reports",
+        "children": [
+          {
+            "label": "Media Content Reports",
+            "children": [
+              {
+                "label": "Media Doc QC Report",
+                "script": "QcReport.py?DocType=Media&ReportType=img&DocVersion=0"
+              },
+              {
+                "label": "Image Demographic Info Report",
+                "script": "ImageDemographicInformationReport.py"
+              },
+              {
+                "label": "Caption and Content Report",
+                "script": "MediaCaptionContent.py"
+              },
+              {
+                "label": "Media Images Report",
+                "script": "MediaLanguageCompare.py"
+              }
+            ]
+          },
+          {
+            "label": "Media Processing Reports",
+            "children": [
+              {
+                "label": "Meeting Recording Tracking",
+                "script": "RecordingTrackingReport.py"
+              },
+              {
+                "label": "Images Processing Status Report",
+                "script": "ImageMediaProcessingStatusReport.py"
+              },
+              {
+                "label": "Media Doc Publishing Report",
+                "script": "PublishedMediaDocuments.py"
+              },
+              {
+                "label": "Pronunciation Recordings Tracking",
+                "script": "PronunciationRecordings.py"
+              },
+              {
+                "label": "Pronunciation Review Statistics",
+                "script": "GlossaryTermAudioReviewReport.py"
+              },
+              {
+                "label": "Translation Job Workflow Report",
+                "script": "media-translation-job-report.py"
+              },
+              {
+                "label": "Media Permissions Report",
+                "script": "MediaPermissionsReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Find Media Documents",
+            "children": [
+              {
+                "label": "Advanced Search",
+                "script": "MediaSearch.py"
+              },
+              {
+                "label": "Media Keyword Search Report",
+                "script": "MediaKeywordSearchReport.py"
+              },
+              {
+                "label": "Media Lists",
+                "script": "MediaLists.py"
+              }
+            ]
+          },
+          {
+            "label": "Media Usage Reports",
+            "children": [
+              {
+                "label": "Linked Media Documents",
+                "script": "MediaLinks.py"
+              },
+              {
+                "label": "Media in Summary Report",
+                "script": "MediaInSummary.py"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Summary Reports",
+        "children": [
+          {
+            "label": "Summary QC Reports",
+            "children": [
+              {
+                "label": "HP Bold/Underline QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=bu"
+              },
+              {
+                "label": "HP Redline/Strikeout QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=rs"
+              },
+              {
+                "label": "PT Bold/Underline QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=patbu"
+              },
+              {
+                "label": "PT Redline/Strikeout QC Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pat"
+              },
+              {
+                "label": "Publish Preview Report",
+                "script": "QcReport.py?DocType=Summary&DocVersion=-1&ReportType=pp"
+              }
+            ]
+          },
+          {
+            "label": "Summary Processing Reports",
+            "children": [
+              {
+                "label": "Changes to Summaries",
+                "script": "ChangesToSummaries.py"
+              },
+              {
+                "label": "History of Summary Changes",
+                "script": "SummaryChanges.py"
+              },
+              {
+                "label": "Date Last Modified",
+                "script": "SummaryDateLastModified.py"
+              },
+              {
+                "label": "Type Of Change",
+                "script": "SummaryTypeChangeReport.py"
+              },
+              {
+                "label": "Comprehensive Review Dates",
+                "script": "SummaryCRD.py"
+              },
+              {
+                "label": "Translation Job Workflow Report",
+                "script": "translation-job-report.py"
+              },
+              {
+                "label": "Summaries Cleanup",
+                "script": "SummarySectionCleanup.py"
+              }
+            ]
+          },
+          {
+            "label": "Summary Content Reports",
+            "children": [
+              {
+                "label": "Current Markup",
+                "script": "SummariesWithMarkup.py"
+              },
+              {
+                "label": "Metadata",
+                "script": "SummaryMetaData.py"
+              },
+              {
+                "label": "TOC Levels",
+                "script": "SummariesTocReport.py"
+              },
+              {
+                "label": "Type of Comments",
+                "script": "SummaryComments.py"
+              },
+              {
+                "label": "Standard Wording",
+                "script": "SummaryStandardWording.py"
+              },
+              {
+                "label": "SVPC Summaries Report",
+                "script": "SVPCSummariesReport.py"
+              }
+            ]
+          },
+          {
+            "label": "Summaries With Links",
+            "children": [
+              {
+                "label": "Citations in Alphabetical Order",
+                "script": "SummaryCitations.py"
+              },
+              {
+                "label": "Non-Journal Article Citations",
+                "script": "SummariesWithNonJournalArticleCitations.py"
+              },
+              {
+                "label": "Summary Internal Links",
+                "script": "ocecdr-3650.py"
+              },
+              {
+                "label": "Summaries with ProtocolRef Links",
+                "script": "SummaryProtocolRefLinks.py?prompt=yes"
+              },
+              {
+                "label": "Updated SummaryRef Titles",
+                "script": "UpdatedSummaryRefTitles.py?prompt=yes"
+              }
+            ]
+          },
+          {
+            "label": "Summary Mailer Reports",
+            "children": [
+              {
+                "label": "Summary Mailer Report",
+                "script": "SummaryMailerReport.py?flavor=standard"
+              },
+              {
+                "label": "Summary Mailer History Report",
+                "script": "SummaryMailerReport.py?flavor=historical"
+              }
+            ]
+          },
+          {
+            "label": "Titles in Alphabetical Order",
+            "script": "SummariesLists.py"
+          }
+        ]
+      },
+      {
+        "label": "Terminology Reports",
+        "children": [
+          {
+            "label": "Term Usage",
+            "script": "TermUsage.py"
+          },
+          {
+            "label": "Terminology QC Report",
+            "script": "TermSearch.py"
+          },
+          {
+            "label": "Drug Term Reports",
+            "children": [
+              {
+                "label": "Drug Review Report",
+                "script": "DrugReviewReport.py"
+              },
+              {
+                "label": "Clinical Trials Drug Analysis Report",
+                "script": "RecentCTGovProtocols.py"
+              }
+            ]
+          },
+          {
+            "label": "Term Hierarchy Reports",
+            "children": [
+              {
+                "label": "Term Hierarchy Tree",
+                "script": "TermHierarchyTree.py?prompt=yes"
+              },
+              {
+                "label": "Cancer Diagnosis Hierarchy",
+                "script": "DiseaseDiagnosisTerms.py?prompt=yes"
+              },
+              {
+                "label": "Intervention or Procedure Terms",
+                "script": "InterventionAndProcedureTerms.py"
+              }
+            ]
+          },
+          {
+            "label": "NCI Thesaurus (EVS)",
+            "children": [
+              {
+                "label": "EVS Concepts",
+                "script": "SyncWithEVS.py"
+              },
+              {
+                "label": "Concepts Not Marked Public",
+                "script": "ocecdr-3588.py?prompt=yes"
+              },
+              {
+                "label": "Unsuppress Drug Terms",
+                "script": "SuppressedDrugTerms.py"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "label": "Other Document Types",
+        "children": [
+          {
+            "label": "Board Member Information",
+            "children": [
+              {
+                "label": "Board Member Information QC Report",
+                "script": "QcReport.py?DocType=PDQBoardMemberInfo"
+              },
+              {
+                "label": "Board Roster Reports",
+                "script": "BoardRoster.py"
+              },
+              {
+                "label": "PDQ Board Listings",
+                "script": "PdqBoards.py"
+              }
+            ]
+          },
+          {
+            "label": "Citations",
+            "children": [
+              {
+                "label": "Citation QC Report",
+                "script": "QcReport.py?DocType=Citation"
+              },
+              {
+                "label": "Advanced Citation Search",
+                "script": "CiteSearch.py"
+              },
+              {
+                "label": "Unverified Citations",
+                "script": "UnverifiedCitations.py"
+              },
+              {
+                "label": "Citations In Summaries",
+                "script": "CitationsInSummaries.py",
+                "permission": "RUN LONG REPORT"
+
+              },
+              {
+                "label": "New Citations Report",
+                "script": "NewCitations.py"
+              }
+            ]
+          },
+          {
+            "label": "Documentation",
+            "script": "Help.py"
+          },
+          {
+            "label": "Geographic Documents",
+            "children": [
+              {
+                "label": "Country QC Report",
+                "script": "CountrySearch.py"
+              },
+              {
+                "label": "Political Subunit QC Report",
+                "script": "PoliticalSubUnitSearch.py"
+              }
+            ]
+          },
+          {
+            "label": "Persons and Organizations",
+            "children": [
+              {
+                "label": "Organization QC Report",
+                "script": "OrgSearch2.py"
+              },
+              {
+                "label": "Person QC Report",
+                "script": "PersonSearch.py"
+              }
+            ]
+          },
+          {
+            "label": "Miscellaneous Documents",
+            "script": "MiscSearch.py"
+          }
+        ]
+      },
+      {
+        "label": "Advanced Search",
+        "script": "AdvancedSearch.py"
+      },
+      {
+        "label": "Utilities",
+        "children": [
+          {
+            "label": "Log Viewers",
+            "children": [
+              {
+                "label": "View Server Logs",
+                "script": "log-tail.py",
+                "permission": "VIEW LOGS"
+              },
+              {
+                "label": "View Client Logs",
+                "script": "ShowClientLogs.py"
+              },
+              {
+                "label": "Global Change Test Results",
+                "script": "ShowGlobalChangeTestResults.py"
+              }
+            ]
+          },
+          {
+            "label": "Manage Locks",
+            "children": [
+              {
+                "label": "Clear FileSweeper Lock File",
+                "script": "clear-filesweeper-lockfile.py",
+                "permission": "MANAGE SCHEDULER"
+              },
+              {
+                "label": "Unlock Media Sync Queue",
+                "script": "UnlockMedia.py",
+                "permission": "USE PUBLISHING SYSTEM"
+              }
+
+            ]
+          },
+          {
+            "label": "Manage Document Statuses",
+            "children": [
+              {
+                "label": "Unblock Document",
+                "script": "UnblockDoc.py"
+              },
+              {
+                "label": "Delete CDR Documents",
+                "script": "del-some-docs.py"
+              },
+              {
+                "label": "Restore Deleted Documents",
+                "script": "RestoreDeletedDocs.py"
+              }
+            ]
+          },
+          {
+            "label": "Email Logged-in Users",
+            "script": "MessageLoggedInUsers.py",
+            "permission": "EMAIL USERS"
+          },
+          {
+            "label": "Replace CWD with Older Version",
+            "script": "ReplaceCWDwithVersion.py"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Guest",
+    "children": [
+      {
+        "label": "Advanced Search",
+        "script": "AdvancedSearch.py"
+      },
+      {
+        "label": "Terminology Reports",
+        "children": [
+          {
+            "label": "Term Usage",
+            "script": "TermUsage.py"
+          },
+          {
+            "label": "Terminology QC Report",
+            "script": "TermSearch.py"
+          },
+          {
+            "label": "Drug Term Reports",
+            "children": [
+              {
+                "label": "Drug Review Report",
+                "script": "DrugReviewReport.py"
+              },
+              {
+                "label": "Clinical Trials Drug Analysis Report",
+                "script": "RecentCTGovProtocols.py"
+              }
+            ]
+          },
+          {
+            "label": "Term Hierarchy Reports",
+            "children": [
+              {
+                "label": "Term Hierarchy Tree",
+                "script": "TermHierarchyTree.py?prompt=yes"
+              },
+              {
+                "label": "Cancer Diagnosis Hierarchy",
+                "script": "DiseaseDiagnosisTerms.py?prompt=yes"
+              },
+              {
+                "label": "Intervention or Procedure Terms",
+                "script": "InterventionAndProcedureTerms.py"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

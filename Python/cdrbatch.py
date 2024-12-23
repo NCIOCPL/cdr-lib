@@ -6,10 +6,10 @@
 #
 # JIRA::OCECDR-3800 - eliminated security vulnerabilities
 # ----------------------------------------------------------------------
-import sys
-import cdr
+from sys import exit as sys_exit
+from cdr import DEFAULT_LOGDIR, Logging
 from cdrapi import db
-import cdrcgi
+from cdrcgi import Controller, HTMLPage
 
 # ----------------------------------------------------------------------
 # Module level constants
@@ -50,8 +50,8 @@ _ST_JOB_VALID = ST_IN_PROCESS, ST_STOPPED, ST_COMPLETED, ST_ABORTED
 
 # Logging
 LOGNAME = "BatchJobs"
-LF = f"{cdr.DEFAULT_LOGDIR}/{LOGNAME}"
-LOGGER = cdr.Logging.get_logger(LOGNAME)
+LF = f"{DEFAULT_LOGDIR}/{LOGNAME}"
+LOGGER = Logging.get_logger(LOGNAME)
 
 
 # ------------------------------------------------------------------
@@ -598,7 +598,7 @@ class CdrBatch:
             self.fail("Database error queueing job: %s" % e)
 
         if not self.__conn.autocommit:
-            cdrcgi.bail("autocommit has been turned off")
+            Controller.bail("autocommit has been turned off")
 
         # Get the job id
         try:
@@ -680,7 +680,7 @@ class CdrBatch:
 
         # Exit here
         if exit:
-            sys.exit(1)
+            sys_exit(1)
 
     # ------------------------------------------------------------------
     # Check current status
@@ -775,54 +775,43 @@ class CdrBatch:
     # ------------------------------------------------------------------
     # Show the user how to monitor the status of the report job.
     # ------------------------------------------------------------------
-    def show_status_page(self, session, title, subtitle, script,
-                         extra_buttons=None):
-        """
-        Build a cdrcgi.HTMLPage object showing a link which can be followed
+    def show_status_page(self, session, **opts):
+        """Show the status of this batch job.
+
+        Builds a cdrcgi.HTMLPage object showing a link which can be followed
         to view the status of the batch job just queued up.  Send the page
         to the user's browser.
 
-        Pass:
-            session       - message string(s) to write
-            title         - string for banner and /html/head/title element
-            subtitle      - string to display below the banner
-            script        - handler for buttons
-            extra_buttons - action buttons to be prepended to the
-                            buttons for jumping to the main menu
-                            or logging out; a single button can
-                            be passed as a string; multiple buttons
-                            are passed as a sequence of strings (optional)
+        Required positional argument:
+          session - current session of the user
+
+        Optional keyword arguments:
+          title - overrides the string for banner and /html/head/title element
+          subtitle - string to display instead of the job title
+          script - handler for buttons
+          buttons - action buttons to be drawn
         """
 
-        button_names = extra_buttons or []
-        if isinstance(button_names, bytes):
-            button_names = str(button_names, "utf-8")
-        if not isinstance(button_names, (list, tuple)):
-            button_names = [button_names]
-        button_names += [cdrcgi.MAINMENU, cdrcgi.Controller.LOG_OUT]
-        buttons = []
-        for name in button_names:
-            if isinstance(name, str):
-                button = cdrcgi.HTMLPage.button(name)
-            else:
-                button = name
-            buttons.append(button)
-        parms = f"{cdrcgi.SESSION}={session}&jobId={self.__jobId}"
-        url = f"getBatchStatus.py?{parms}"
-        link = cdrcgi.HTMLPage.B.A("link", href=url)
-        start = "To monitor the status of the job, click this "
-        item = "View Batch Job Status"
-        finish = f" or use the CDR Administration menu to select '{item}'."
         opts = dict(
             session=session,
-            buttons=buttons,
-            action=script,
-            subtitle=subtitle,
+            buttons=opts.get("buttons"),
+            action=opts.get("script"),
+            subtitle=opts.get("subtitle") or self.getJobName(),
         )
-        page = cdrcgi.HTMLPage(cdrcgi.Controller.TITLE, **opts)
-        fieldset = page.fieldset()
-        message = "Report has been queued for background processing"
-        fieldset.append(page.B.H4(message))
-        fieldset.append(page.B.P(start, link, finish))
+        title = opts.get("title", "").strip() or Controller.TITLE
+        page = HTMLPage(title, **opts)
+        fieldset = page.fieldset("Report Queued for Background Processing")
+        parms = f"{Controller.SESSION}={session}&jobId={self.__jobId}"
+        url = f"getBatchStatus.py?{parms}"
+        args = (
+            "To monitor the status of the job, click this ",
+            HTMLPage.B.A("link", href=url),
+            ". You can also use the ",
+            HTMLPage.B.EM("Batch Job Status"),
+            " report on the ",
+            HTMLPage.B.EM("Utilities"),
+            " menu.",
+        )
+        fieldset.append(page.B.P(*args))
         page.form.append(fieldset)
         page.send()

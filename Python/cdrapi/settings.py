@@ -326,6 +326,27 @@ class Tier:
             return "DEV"
 
     @staticmethod
+    def get_control_value(session, group, name):
+        """Fetch a named control value from the database.
+
+        Required positional arguments:
+          session - needed for database access
+          group - string naming the control group for the value
+          name - string for the name of the value within the group
+
+        Return:
+          string for the requested value if found; otherwise None
+        """
+
+        query = (
+            "SELECT val FROM ctl WHERE grp = ? AND name = ? "
+            "AND inactivated IS NULL"
+        )
+        session.cursor.execute(query, (group, name))
+        row = session.cursor.fetchone()
+        return row.val if row else None
+
+    @staticmethod
     def set_control_value(session, group, name, value, **opts):
         """
         Add or update a row in the `ctl` table
