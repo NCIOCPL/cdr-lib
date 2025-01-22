@@ -711,7 +711,10 @@ class Controller:
                     self.B.CLASS("usa-section")
                 )
 
-        page = ErrorPage(message, opts.get("extra"))
+        try:
+            page = ErrorPage(message, opts.get("extra"))
+        except Exception:
+            page = ErrorPage(cls.TAMPERING, {})
         logfile = opts.get("logfile")
         if logfile:
             if logfile.lower().endswith(".log"):
