@@ -1031,21 +1031,21 @@ class Control:
                     headers = list(node.iter("h3", "h4"))
                     if headers and "kpBox" not in headers[0].get("id", ""):
                         links = B.UL()
-                        outer_link = nested_links = None
+                        parent = nested_links = None
                         for header in headers:
                             link = deepcopy(header)
                             link.set("href", "#" + link.get("id"))
                             del link.attrib["id"]
                             link.tag = "a"
                             if header.tag == "h3":
-                                outer_link = link
+                                parent = B.LI(link)
                                 nested_links = None
-                                links.append(B.LI(link))
+                                links.append(parent)
                             else:
                                 if nested_links is None:
                                     nested_links = B.UL(B.LI(link))
-                                    if outer_link is not None:
-                                        outer_link.append(nested_links)
+                                    if parent is not None:
+                                        parent.append(nested_links)
                                     else:
                                         links.append(nested_links)
                                 else:
