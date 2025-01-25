@@ -1958,11 +1958,10 @@ class HTMLPage(FormFieldFactory):
 
     BASE = Controller.BASE
     VERSION = "202101071440"
-    USWDS = "https://cdnjs.cloudflare.com/ajax/libs/uswds/3.6.0"
     APIS = "https://ajax.googleapis.com/ajax/libs"
-    JQUERY = "/js/jquery-3.7.1.min.js"
-    JQUERY_UI = "/js/jquery-ui-1.13.2.min.js"
-    JQUERY_CSS = "/stylesheets/jquery-ui-1.13.2.css"
+    JQUERY = "/js/jquery.min.js"
+    JQUERY_UI = "/js/jquery-ui.min.js"
+    JQUERY_CSS = "/stylesheets/jquery-ui.min.css"
     CSS_LINKS = (
         dict(href="/uswds/css/uswds.min.css", rel="stylesheet"),
         dict(href=JQUERY_CSS, rel="stylesheet"),
