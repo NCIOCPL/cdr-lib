@@ -782,7 +782,7 @@ class Controller:
             None if no valid address is found
         """
 
-        realname, address = parse_email_address(address)
+        _, address = parse_email_address(address)
         if address and cls.EMAIL_PATTERN.match(address):
             if ".." not in address:
                 return address
@@ -804,7 +804,11 @@ class Controller:
             opts = dict(HTMLPage.STRING_OPTS, encoding="unicode")
             page = lxml_html.tostring(page, **opts)
         mime_type = mime_type or f"text/{text_type}"
-        string = f"Content-type: {mime_type};charset=utf-8\n\n{page}"
+        headers = "\n".join([
+            f"Content-type: {mime_type};charset=utf-8",
+            "X-Content-Type-Options: nosniff",
+        ])
+        string = f"{headers}\n\n{page}"
         sys_stdout.buffer.write(string.encode("utf-8"))
         sys_exit(0)
 
@@ -3764,7 +3768,8 @@ class Excel:
     def send(self):
         headers = (
             f"Content-type: {self.book.mime_type}",
-            f"Content-disposition: attachment; filename={self.filename}"
+            f"Content-disposition: attachment; filename={self.filename}",
+            "X-Content-Type-Options: nosniff",
         )
         headers = "\r\n".join(headers) + "\r\n\r\n"
         sys_stdout.buffer.write(headers.encode("utf-8"))
