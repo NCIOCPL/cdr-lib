@@ -2588,6 +2588,7 @@ class HTMLPage(FormFieldFactory):
             ".break-all, .break-all * { word-break: break-all; }",
             f".usa-form a:visited {{ color: {self.LINK_COLOR}; }}",
             ".error { color: red; font-weight: bold; }",
+            ".usa-menu-btn { margin-left: 1rem; }",
         )
         head.append(self.B.STYLE("\n".join(style)))
         return head
@@ -2906,9 +2907,12 @@ class HTMLPage(FormFieldFactory):
             ("CMS", "https://www-cms.cancer.gov", True),
             ("Filter", f"Filter.py?{session_parm}", False),
             ("Menus", f"show-menu-hierarchy.py?{session_parm}", True),
-            ("Queries", f"CdrQueries.py?{session_parm}", True),
-            ("Search", f"AdvancedSearch.py?{session_parm}", False),
         ]
+        if session and session.can_do("RUN SQL QUERIES"):
+            values = "Queries", f"CdrQueries.py?{session_parm}", True
+            link_values.append(values)
+        values = "Search", f"AdvancedSearch.py?{session_parm}", False
+        link_values.append(values)
         if session_name == "guest":
             values = "Log In", "/"
         else:
