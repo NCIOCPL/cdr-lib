@@ -527,6 +527,10 @@
             "script": "MiscSearch.py"
           }
         ]
+      },
+      {
+        "label": "CDR Documentation",
+        "script": "Help.py"
       }
     ]
   },
@@ -1203,10 +1207,6 @@
             ]
           },
           {
-            "label": "Documentation",
-            "script": "Help.py"
-          },
-          {
             "label": "Geographic Documents",
             "children": [
               {
@@ -1290,6 +1290,10 @@
             "permission": "MODIFY DOCUMENT:Citation"
           }
         ]
+      },
+      {
+        "label": "CDR Documentation",
+        "script": "Help.py"
       }
     ]
   },
@@ -2117,10 +2121,6 @@
             ]
           },
           {
-            "label": "Documentation",
-            "script": "Help.py"
-          },
-          {
             "label": "Geographic Documents",
             "children": [
               {
@@ -2220,6 +2220,10 @@
             "script": "ReplaceCWDwithVersion.py"
           }
         ]
+      },
+      {
+        "label": "CDR Documentation",
+        "script": "Help.py"
       }
     ]
   },
@@ -2272,6 +2276,10 @@
             ]
           }
         ]
+      },
+      {
+        "label": "CDR Documentation",
+        "script": "Help.py"
       }
     ]
   }
