@@ -1305,7 +1305,7 @@
         "children": [
           {
             "label": "Publishing - Create Job",
-            "script": "Publishing.py",
+            "script": "publishing.py",
             "permission": "USE PUBLISHING SYSTEM"
           },
           {
