@@ -555,7 +555,7 @@
             "script": "AudioRequestSpreadsheet.py"
           },
           {
-            "label": "Audio Review Glossary Term",
+            "label": "Audio Review Glossary Terms",
             "script": "GlossaryTermAudioReview.py",
             "permission": "REVIEW TERM AUDIO"
 
