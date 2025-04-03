@@ -2574,6 +2574,7 @@ class HTMLPage(FormFieldFactory):
             ".usa-file-input { max-width: none; }",
             ".date-range-fields > div { display: inline-block; }",
             "body.report h1 { margin-bottom: 3rem; }",
+            "#report-form > h1 { margin-top: 0; }",
             "table.usa-table { margin-bottom: 3rem; }",
             ".report-footer {",
             "  font-style: italic; font-size: .9em; text-align: center;",
