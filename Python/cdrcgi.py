@@ -2902,7 +2902,7 @@ class HTMLPage(FormFieldFactory):
         session_name = session and str(session) or "guest"
         session_parm = f"{Controller.SESSION}={session_name}"
         link_values = [
-            ("Help", f"Help.py?{session_parm}&id=365", False),
+            ("Help", f"Help.py?{session_parm}", True),
             ("NCI Web Site", "https://www.cancer.gov", True),
             ("CMS", "https://www-cms.cancer.gov", True),
             ("Filter", f"Filter.py?{session_parm}", False),

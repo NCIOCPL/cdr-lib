@@ -527,10 +527,6 @@
             "script": "MiscSearch.py"
           }
         ]
-      },
-      {
-        "label": "CDR Documentation",
-        "script": "Help.py"
       }
     ]
   },
@@ -1290,10 +1286,6 @@
             "permission": "MODIFY DOCUMENT:Citation"
           }
         ]
-      },
-      {
-        "label": "CDR Documentation",
-        "script": "Help.py"
       }
     ]
   },
@@ -2220,10 +2212,6 @@
             "script": "ReplaceCWDwithVersion.py"
           }
         ]
-      },
-      {
-        "label": "CDR Documentation",
-        "script": "Help.py"
       }
     ]
   },
@@ -2276,10 +2264,6 @@
             ]
           }
         ]
-      },
-      {
-        "label": "CDR Documentation",
-        "script": "Help.py"
       }
     ]
   }
