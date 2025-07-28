@@ -598,6 +598,8 @@ if FULL:
                 doc = cdr.getDoc(self.session, filter_id, **opts)
                 doc.xml = filter1
                 doc_id = cdr.repDoc(self.session, doc=str(doc), tier=self.TIER)
+                if not isinstance(doc_id, str):
+                    doc_id = doc_id.decode("utf-8")
                 self.assertTrue(doc_id.startswith("CDR"))
             xml = u"<xxtest><a>gimte</a></xxtest>"
             doc = cdr.makeCdrDoc(xml, "xxtest")

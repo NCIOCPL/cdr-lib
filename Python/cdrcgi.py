@@ -290,7 +290,7 @@ class Controller:
     SUMMARY_SELECTION_METHODS = "id", "title", "board"
     EMAIL_PATTERN = re_compile(r"[^@]+@[^@\.]+\.[^@]+$")
     KEEP_COMPLETE_TITLES = False
-    SAME_WINDOW = "jQuery('#primary-form').attr('target', '_self');"
+    SAME_WINDOW = "document.getElementById('primary-form').target = '_self';"
     NONBREAKING_HYPHEN = "\u2011"
 
     def __init__(self, **opts):
@@ -510,9 +510,11 @@ class Controller:
             boards = self.board
         checked = "all" in boards or not boards
         opts = dict(label="All Boards", value="all", checked=checked)
+        opts["onclick"] = "check_board('all');"
         fieldset.append(page.checkbox("board", **opts))
         for value, label in self.get_boards().items():
             opts = dict(value=value, label=label, classes="ind")
+            opts["onclick"] = f"check_board({value});"
             if value in boards:
                 opts["checked"] = True
             fieldset.append(page.checkbox("board", **opts))
@@ -599,6 +601,7 @@ class Controller:
                 value = method.split()[-1].lower()
                 checked = value == self.selection_method
                 opts = dict(label=f"By {method}", value=value, checked=checked)
+                opts["onclick"] = f"check_selection_method('{value}');"
                 fieldset.append(page.radio_button("selection_method", **opts))
             page.form.append(fieldset)
             self.add_board_fieldset(page)
@@ -711,7 +714,10 @@ class Controller:
                     self.B.CLASS("usa-section")
                 )
 
-        page = ErrorPage(message, opts.get("extra"))
+        try:
+            page = ErrorPage(message, opts.get("extra"))
+        except Exception:
+            page = ErrorPage(cls.TAMPERING, {})
         logfile = opts.get("logfile")
         if logfile:
             if logfile.lower().endswith(".log"):
@@ -776,7 +782,7 @@ class Controller:
             None if no valid address is found
         """
 
-        realname, address = parse_email_address(address)
+        _, address = parse_email_address(address)
         if address and cls.EMAIL_PATTERN.match(address):
             if ".." not in address:
                 return address
@@ -798,7 +804,11 @@ class Controller:
             opts = dict(HTMLPage.STRING_OPTS, encoding="unicode")
             page = lxml_html.tostring(page, **opts)
         mime_type = mime_type or f"text/{text_type}"
-        string = f"Content-type: {mime_type};charset=utf-8\n\n{page}"
+        headers = "\n".join([
+            f"Content-type: {mime_type};charset=utf-8",
+            "X-Content-Type-Options: nosniff",
+        ])
+        string = f"{headers}\n\n{page}"
         sys_stdout.buffer.write(string.encode("utf-8"))
         sys_exit(0)
 
@@ -816,11 +826,11 @@ class Controller:
 
         return f"""\
 function {function_name}(value) {{
-    if (value == "{show_value}")
-        jQuery(".{class_name}").show();
-    else
-        jQuery(".{class_name}").hide();
-}}"""
+  const display = value === "{show_value}" ? "block" : "none";
+  const elements = document.querySelectorAll(".{class_name}");
+  elements.forEach(element => element.style.display = display);
+}}
+"""
 
     # ----------------------------------------------------------------
     # Instance properties.
@@ -1077,44 +1087,40 @@ function {function_name}(value) {{
         "Local JavaScript to manage sections of the form dynamically."
 
         return """\
+// Make a set with an "all values" option behave sensibly.
 function check_set(name, val) {
-    var all_selector = "#" + name + "-all";
-    var ind_selector = "#" + name + "-set .ind";
-    if (val == "all") {
-        if (jQuery(all_selector).prop("checked"))
-            jQuery(ind_selector).prop("checked", false);
-        else
-            jQuery(all_selector).prop("checked", true);
+  const all = document.getElementById(`${name}-all`);
+  const ind = document.querySelectorAll(`#${name}-set .ind`);
+  if (val === "all") {
+    if (all.checked) {
+      ind.forEach(cb => cb.checked = false);
+    } else {
+      all.checked = true;
     }
-    else if (jQuery(ind_selector + ":checked").length > 0)
-        jQuery(all_selector).prop("checked", false);
-    else
-        jQuery(all_selector).prop("checked", true);
+  } else {
+    all.checked = !Array.from(ind).some(cb => cb.checked);
+  }
 }
-function check_board(board) { check_set("board", board); }
+
+// Convenience alias for calling check_set for boards.
+const check_board = board => check_set("board", board);
+
+// Show the block used by the current selection method.
 function check_selection_method(method) {
-    switch (method) {
-        case 'id':
-            jQuery('.by-board-block').hide();
-            jQuery('.by-id-block').show();
-            jQuery('.by-title-block').hide();
-            break;
-        case 'board':
-            jQuery('.by-board-block').show();
-            jQuery('.by-id-block').hide();
-            jQuery('.by-title-block').hide();
-            break;
-        case 'title':
-            jQuery('.by-board-block').hide();
-            jQuery('.by-id-block').hide();
-            jQuery('.by-title-block').show();
-            break;
-    }
+  ["id", "board", "title"].forEach(name => {
+    const display = name === method ? "block" : "none";
+    const elements = document.querySelectorAll(`.by-${name}-block`);
+    elements.forEach(e => e.style.display = display);
+  });
 }
-jQuery(function() {
-    var method = jQuery("input[name='selection_method']:checked").val();
-    check_selection_method(method);
-});"""
+
+// Show the block which matches the initial selection method.
+document.addEventListener("DOMContentLoaded",  () => {
+  const selector = "input[name='selection_method']:checked";
+  const method = document.querySelector(selector).value ?? '';
+  check_selection_method(method);
+});
+"""
 
     @cached_property
     def summary_titles(self):
@@ -1742,9 +1748,9 @@ class FormFieldFactory:
         if value is None:
             value = ""
         value = str(value)
-        onclick = kwargs.get("onclick", f"check_{group}('{value}')")
+        onclick = kwargs.get("onclick")
         if onclick:
-            widget.set("onclick", onclick.replace("-", "_"))
+            widget.set("onclick", onclick)
 
         # For these fields, the label follows the widget.
         label = kwargs.get("label", value.replace("_", " ").title())
@@ -1948,23 +1954,11 @@ class HTMLPage(FormFieldFactory):
     sequence of strings. This class does it the way it should always
     have been done, by building an object tree, using the html.builder
     support in the lxml package.
-
-    Be sure to keep the JQUERY... class values. They're not used here,
-    but other scripts use them.
     """
 
     BASE = Controller.BASE
-    VERSION = "202101071440"
-    USWDS = "https://cdnjs.cloudflare.com/ajax/libs/uswds/3.6.0"
-    APIS = "https://ajax.googleapis.com/ajax/libs"
-    JQUERY = "/js/jquery-3.7.1.min.js"
-    JQUERY_UI = "/js/jquery-ui-1.13.2.min.js"
-    JQUERY_CSS = "/stylesheets/jquery-ui-1.13.2.css"
-    CSS_LINKS = (
-        dict(href="/uswds/css/uswds.min.css", rel="stylesheet"),
-        dict(href=JQUERY_CSS, rel="stylesheet"),
-    )
-    SCRIPT_LINKS = dict(src=JQUERY), dict(src=JQUERY_UI)
+    CSS_LINKS = [dict(href="/uswds/css/uswds.min.css", rel="stylesheet")]
+    SCRIPT_LINKS = []
     PRIMARY_FORM_ID = "primary-form"
     STRING_OPTS = dict(pretty_print=True, doctype="<!DOCTYPE html>")
     OFFICIAL_WEBSITE = "An official website of the United States government"
@@ -1979,7 +1973,6 @@ class HTMLPage(FormFieldFactory):
     )
     MENU_PARMS = {
         "glossaryconceptbydefinitionstatus.py": ["report"],
-        "help.py": ["id"],
         "interventionandprocedureterms.py": ["IncludeAlternateNames"],
         "qcreport.py": ["DocType", "ReportType"],
         "summarymailerreport.py": ["flavor"],
@@ -2011,7 +2004,7 @@ class HTMLPage(FormFieldFactory):
                 set to "get" to override default of "post")
 
             scripts
-                urls for js to load (default: jQuery and jQueryUI URLs)
+                urls for js to load (default: an empty list)
 
             session
                 object representing the current CDR login context
@@ -2020,7 +2013,7 @@ class HTMLPage(FormFieldFactory):
                 used as the title of the page (not well named)
 
             stylesheets
-                urls for CSS to load (default: CDR and jQueryUI CSS)
+                urls for CSS to load (default: USWDS CSS)
         """
 
         self.__title = title
@@ -2581,6 +2574,7 @@ class HTMLPage(FormFieldFactory):
             ".usa-file-input { max-width: none; }",
             ".date-range-fields > div { display: inline-block; }",
             "body.report h1 { margin-bottom: 3rem; }",
+            "#report-form > h1 { margin-top: 0; }",
             "table.usa-table { margin-bottom: 3rem; }",
             ".report-footer {",
             "  font-style: italic; font-size: .9em; text-align: center;",
@@ -2594,6 +2588,7 @@ class HTMLPage(FormFieldFactory):
             ".break-all, .break-all * { word-break: break-all; }",
             f".usa-form a:visited {{ color: {self.LINK_COLOR}; }}",
             ".error { color: red; font-weight: bold; }",
+            ".usa-menu-btn { margin-left: 1rem; }",
         )
         head.append(self.B.STYLE("\n".join(style)))
         return head
@@ -2907,14 +2902,17 @@ class HTMLPage(FormFieldFactory):
         session_name = session and str(session) or "guest"
         session_parm = f"{Controller.SESSION}={session_name}"
         link_values = [
-            ("Help", f"HelpSearch.py?{session_parm}", False),
+            ("Help", f"Help.py?{session_parm}", True),
             ("NCI Web Site", "https://www.cancer.gov", True),
             ("CMS", "https://www-cms.cancer.gov", True),
             ("Filter", f"Filter.py?{session_parm}", False),
             ("Menus", f"show-menu-hierarchy.py?{session_parm}", True),
-            ("Queries", f"CdrQueries.py?{session_parm}", True),
-            ("Search", f"AdvancedSearch.py?{session_parm}", False),
         ]
+        if session and session.can_do("RUN SQL QUERIES"):
+            values = "Queries", f"CdrQueries.py?{session_parm}", True
+            link_values.append(values)
+        values = "Search", f"AdvancedSearch.py?{session_parm}", False
+        link_values.append(values)
         if session_name == "guest":
             values = "Log In", "/"
         else:
@@ -3774,7 +3772,8 @@ class Excel:
     def send(self):
         headers = (
             f"Content-type: {self.book.mime_type}",
-            f"Content-disposition: attachment; filename={self.filename}"
+            f"Content-disposition: attachment; filename={self.filename}",
+            "X-Content-Type-Options: nosniff",
         )
         headers = "\r\n".join(headers) + "\r\n\r\n"
         sys_stdout.buffer.write(headers.encode("utf-8"))

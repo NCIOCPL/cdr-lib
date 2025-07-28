@@ -551,7 +551,7 @@
             "script": "AudioRequestSpreadsheet.py"
           },
           {
-            "label": "Audio Review Glossary Term",
+            "label": "Audio Review Glossary Terms",
             "script": "GlossaryTermAudioReview.py",
             "permission": "REVIEW TERM AUDIO"
 
@@ -1203,10 +1203,6 @@
             ]
           },
           {
-            "label": "Documentation",
-            "script": "Help.py"
-          },
-          {
             "label": "Geographic Documents",
             "children": [
               {
@@ -1301,7 +1297,7 @@
         "children": [
           {
             "label": "Publishing - Create Job",
-            "script": "Publishing.py",
+            "script": "publishing.py",
             "permission": "USE PUBLISHING SYSTEM"
           },
           {
@@ -2115,10 +2111,6 @@
                 "script": "NewCitations.py"
               }
             ]
-          },
-          {
-            "label": "Documentation",
-            "script": "Help.py"
           },
           {
             "label": "Geographic Documents",

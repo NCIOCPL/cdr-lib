@@ -37,18 +37,19 @@ def connect(**opts):
     if not password:
         raise Exception("user {!r} unknown on {!r}".format(user, tier.name))
     server = opts.get("server") or f"{tier.sql_server},{tier.port(Query.DB)}"
-    if platform.system().lower() == "windows":
-        parms = dict(
-            Driver="{ODBC Driver 17 for SQL Server}",
-            Server=server,
-            Database=opts.get("database", Query.DB),
-            Uid=user,
-            Pwd=password,
-            Timeout=timeout
-        )
-        conn_string = ";".join(["{}={}".format(*p) for p in parms.items()])
-    else:
-        conn_string = f"DSN=CDR{tier.name.upper()};UID={user};PWD={password}"
+    parms = dict(
+        Driver="{ODBC Driver 17 for SQL Server}",
+        Server=server,
+        Database=opts.get("database", Query.DB),
+        Uid=user,
+        Pwd=password,
+        Timeout=timeout
+    )
+    if platform.system().lower() != "windows":
+        parms["Driver"] = "{ODBC Driver 18 for SQL Server}"
+        parms["Encrypt"] = "yes"
+        parms["TrustServerCertificate"] = "yes"
+    conn_string = ";".join(["{}={}".format(*p) for p in parms.items()])
     if opts.get("debug"):
         print(conn_string)
     opts = dict(timeout=timeout, autocommit=autocommit)
